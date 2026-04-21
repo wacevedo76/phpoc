@@ -5,8 +5,9 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from poc_ledger import POCLedger, parse_time
-from crypto_utils import CryptoManager
+from core.ledger import LedgerDomain
+from security.crypto import CryptoManager
+from storage.file_store import LedgerStore
 
 class TestCrypto(unittest.TestCase):
     def setUp(self):
@@ -44,7 +45,8 @@ class TestLedger(unittest.TestCase):
         self.staging_file = self.test_dir / "staging.json"
         self.ledger_file = self.test_dir / "ledger.json"
         self.crypto = CryptoManager("test-pass")
-        self.ledger = POCLedger(self.crypto, self.staging_file, self.ledger_file)
+        self.store = LedgerStore(self.staging_file, self.ledger_file)
+        self.ledger = LedgerDomain(self.crypto, self.store)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)
@@ -82,24 +84,24 @@ class TestLedger(unittest.TestCase):
         decrypted_meta = json.loads(self.crypto.decrypt(data["metadata_enc"]))
         self.assertEqual(decrypted_meta, metadata)
         
-        self.assertTrue(self.ledger.verify_ledger())
+        self.assertTrue(self.ledger.verify())
 
     def test_overlap_detection(self):
-        now = int(time.time())
-        self.ledger.capture_habit("Task 1", now - 1000, now - 500)
+        now = int(time.time()*1000)
+        self.ledger.capture_habit("Task 1", now, is_active=True)
         
-        # Overlap
-        self.ledger.capture_habit("Task 2", now - 600, now - 400)
+        # Collision should raise ValueError
+        with self.assertRaises(ValueError):
+            self.ledger.capture_habit("Task 2", now, is_active=True)
         
-        staging_data = json.loads(self.staging_file.read_text())
+        staging_data = self.store.read_staging()
         self.assertEqual(len(staging_data), 1)
-        self.assertEqual(staging_data[0]["data"]["title"], "Task 1")
 
     def test_immutable_history(self):
         # 1. Establish a history
         self.ledger.capture_habit("Past Habit", int(time.time())-86400, int(time.time()))
         self.ledger.sync_day()
-        self.assertTrue(self.ledger.verify_ledger())
+        self.assertTrue(self.ledger.verify())
 
         # 2. Attempt to tamper with past data
         ledger_data = json.loads(self.ledger_file.read_text())
@@ -108,7 +110,7 @@ class TestLedger(unittest.TestCase):
         self.ledger_file.write_text(json.dumps(ledger_data))
         
         # 3. Assert breach
-        self.assertFalse(self.ledger.verify_ledger(), "Ledger failed to detect historical tampering")
+        self.assertFalse(self.ledger.verify(), "Ledger failed to detect historical tampering")
 
 def test_utils():
     # External non-class test
