@@ -1,38 +1,30 @@
 # Personal History Project: Session Handoff
 
+## Primary Goals
+- **Cross-Platform Portability:** The ledger format and logic must work across Linux, macOS, and Windows without complex system dependencies (e.g., preference for Python-native crypto over GPG binaries).
+- **Software-Agnostic Format:** The ledger is a plain-text JSON structure that can be verified by any tool following the specification.
+- **Privacy-First Reputation:** Encrypt time-sensitive data (start/stop) while keeping non-sensitive metadata (titles, durations) visible for "reputation" aggregation.
+- **Low Friction Identity:** Use password-based keys (KDFs) for encryption and integrity to avoid the UX burden of GPG key management.
+- **Data Integrity:** Guarantee a chain-of-trust where each day's entry is cryptographically linked to the previous one.
+
 ## Current Status
-- **Branch:** `POC` (Rebuilding from scratch to fix "Real World" verification issues).
+- **Repository:** ~/Gemini/phpoc (New clean-slate POC repo).
 - **Core Concept:** A software-agnostic, Git-like, time-based reputation ledger.
-- **Key File:** `poc_ledger.py` (A simplified, ~150 line implementation of the entire lifecycle).
+- **Key File:** poc_ledger.py (Enhanced with overlap checks and reputation reporting).
 
-## Progress Made
-1.  **Architecture Defined:**
-    - **Capture Phase:** Encrypt `startTime` and `stopTime` using **GPG** (asymmetric encryption) before any hashing.
-    - **Integrity Phase:** Hash the resulting JSON object (containing encrypted blobs) to create a "sealed" entry.
-    - **Staging Phase:** Entries live in a local `staging.json` where the user can review, delete, or privatize them before the final commit.
-    - **Sync/Commit Phase:** Aggregate a day's habits, hash the entire block, and link it to the `prev_hash` of the previous day.
-2.  **POC Script (`poc_ledger.py`) Features:**
-    - Uses system GPG automatically (respecting `.zshrc` or default settings).
-    - Implements deterministic hashing (`sort_keys=True`) to ensure files verify consistently.
-    - Successfully verified the "Real World" loop: Add -> Sync -> Verify.
-
-## How to Resume
-1.  **Activate Environment:** Ensure you are in the `POC` branch.
-2.  **Test the Loop:**
-    ```bash
-    python3 poc_ledger.py add     # Add "Reading"
-    python3 poc_ledger.py sync    # Commit the day
-    python3 poc_ledger.py verify  # Check the math
-    ```
-3.  **Data Locations:**
-    - `~/.config/personal_history_poc/staging.json` (The local DB)
-    - `~/.config/personal_history_poc/ledger.json` (The "Blockchain")
+## Progress Made (Current Session)
+1.  **Migration:** Successfully moved the POC to a dedicated repository for focused development.
+2.  **Duration Consistency:** Implemented overlap detection in `poc_ledger.py`.
+3.  **Reputation Summary:** Added the `rep` command to aggregate durations across the entire ledger.
+4.  **Pure-Python Crypto:** Transitioned from OpenSSL subprocess calls to a custom `crypto_utils.py` providing AES-CTR and PBKDF2. Achieved true cross-platform portability with zero binary dependencies.
+5.  **Keyed Integrity:** Implemented HMAC-based "sealing" of day hashes.
+6.  **Security & Privacy:**
+    - Replaced hardcoded passphrases with `getpass` prompts.
+    - Encrypted habit `metadata` within the ledger.
+7.  **CLI UX:** Refactored to `argparse` and added a `list` command for detailed, decrypted habit history.
+8.  **Verification:** Created a comprehensive `unittest`-based test suite in `tests/run_tests.py`.
 
 ## Next Steps
-- [ ] **Duration Consistency:** Add logic to ensure habits don't overlap (current `add` defaults to 2-minute duration).
-- [ ] **Reputation Summary:** Write a script to sum up `duration` fields across the ledger without decrypting the times.
-- [ ] **Digital Signatures:** Incorporate `gpg --sign` into the `sync_day` process to prove the user's identity.
-- [ ] **Refactoring:** Once the POC is solid, migrate these simplified patterns back into the main `ph/` package structure.
-
----
-*Created on 2026-04-20 - Gemini CLI*
+- [ ] **Identity Export:** Create a command to export the derived keys or "identity" to allow ledger verification on other machines.
+- [ ] **Flexible Date Ranges:** Extend the `rep` and `list` commands to support specific date ranges (e.g., `--from` and `--to`).
+- [ ] **Ledger Pruning/Archiving:** Consider strategies for managing long-term ledger growth.
