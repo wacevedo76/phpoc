@@ -95,39 +95,61 @@ class PureAESCTR:
 # --- High Level Crypto API ---
 
 class CryptoManager:
-    def __init__(self, passphrase):
-        self.passphrase = passphrase.encode()
+    def __init__(self, master_key: bytes):
+        """
+        Initialize with a 32-byte master key.
+        This key should be derived from a passphrase using a strong KDF (like PBKDF2)
+        by the Authenticator.
+        """
+        if len(master_key) != 32:
+            raise ValueError("Master key must be 32 bytes.")
+        self.master_key = master_key
 
-    def _derive_key(self, salt, length=16):
-        # Using standard library PBKDF2
-        return hashlib.pbkdf2_hmac('sha256', self.passphrase, salt, 100000, length)
+    def _derive_sub_key(self, salt: bytes, length: int = 16) -> bytes:
+        """
+        Derives a sub-key from the master key using a fast KDF (HMAC-based).
+        This avoids re-running expensive PBKDF2 for every block.
+        """
+        return hmac.new(self.master_key, salt, hashlib.sha256).digest()[:length]
 
-    def encrypt(self, text):
+    def sign(self, data_str: str, identity_secret: bytes) -> str:
+        """
+        Signs data using the Identity Secret. 
+        Uses HMAC-SHA256 as a proxy for Ed25519 to remain zero-dependency.
+        """
+        return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
+
+    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
+        """Verifies the HMAC signature."""
+        expected = self.sign(data_str, identity_secret)
+        return hmac.compare_digest(expected, signature)
+
+    def encrypt(self, text: str) -> str:
         salt = os.urandom(16)
         nonce = os.urandom(8)
-        key = self._derive_key(salt)
+        key = self._derive_sub_key(salt)
         aes = PureAESCTR(key)
         ciphertext = aes.process(text.encode(), nonce)
         # Package as: salt(16) + nonce(8) + ciphertext
         return (salt + nonce + ciphertext).hex()
 
-    def decrypt(self, hex_data):
+    def decrypt(self, hex_data: str) -> str:
         data = bytes.fromhex(hex_data)
         salt = data[:16]
         nonce = data[16:24]
         ciphertext = data[24:]
-        key = self._derive_key(salt)
+        key = self._derive_sub_key(salt)
         aes = PureAESCTR(key)
         decrypted = aes.process(ciphertext, nonce)
         return decrypted.decode()
 
-    def seal(self, data_str):
+    def seal(self, data_str: str) -> str:
         """Creates an HMAC-SHA256 signature (seal) of the data."""
         # Derive a separate integrity key
-        key = self._derive_key(b"integrity-key-salt", 32)
+        key = self._derive_sub_key(b"integrity-key-salt", 32)
         return hmac.new(key, data_str.encode(), hashlib.sha256).hexdigest()
 
-    def verify_seal(self, data_str, signature):
+    def verify_seal(self, data_str: str, signature: str) -> bool:
         """Verifies an HMAC-SHA256 signature."""
         expected = self.seal(data_str)
         return hmac.compare_digest(expected, signature)

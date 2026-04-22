@@ -1,0 +1,65 @@
+import json
+import time
+import hashlib
+from pathlib import Path
+from security.crypto import CryptoManager
+from security.recovery import RecoveryManager
+
+class LedgerFactory:
+    """Handles the creation and initial setup of the ledger environment."""
+
+    @staticmethod
+    def initialize(ledger_path: Path, pdk: bytes, username: str, email: str, identity_secret: Optional[bytes] = None) -> str:
+        if ledger_path.exists():
+            return None # Ledger already exists
+
+        # 1. Generate the Sovereign Master Key (Seed)
+        seed = RecoveryManager.generate_recovery_seed()
+        mk = RecoveryManager.seed_to_key(seed)
+        
+        # 2. Initialize Crypto with the Sovereign MK
+        crypto = CryptoManager(mk)
+        
+        # 3. Generate Identity (Proxy for Ed25519)
+        import os
+        if identity_secret is None:
+            identity_secret = os.urandom(32)
+        
+        # Public key is just a hash of the secret for this proxy
+        identity_pub_key = hashlib.sha256(identity_secret).hexdigest()
+        
+        # 4. Encrypt the Seed and Identity Secret with the Passphrase Derived Key (PDK)
+        encrypted_seed = RecoveryManager.encrypt_seed(seed, pdk)
+        encrypted_identity = crypto.encrypt(identity_secret.hex())
+
+        date_str = time.strftime("%Y-%m-%d")
+        identity_metadata = {
+            "username": username,
+            "email": email,
+            "recovery_seed_enc": encrypted_seed,
+            "identity_pub_key": identity_pub_key
+        }
+
+        genesis = {
+            "type": "genesis",
+            "day_index": 0,
+            "date": date_str,
+            "identity": identity_metadata,
+            "prev_hash": "0" * 64,
+            "entries": [],
+            "signature": ""
+        }
+        
+        # 5. Seal and Sign the Genesis
+        genesis_json = json.dumps(genesis, sort_keys=True)
+        genesis["day_hash"] = crypto.seal(genesis_json)
+        genesis["signature"] = crypto.sign(genesis["day_hash"], identity_secret)
+        
+        # Save Identity File
+        id_path = ledger_path.parent / "identity.json"
+        id_path.write_text(json.dumps({"identity_secret_enc": encrypted_identity}, indent=2))
+
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_path.write_text(json.dumps([genesis], indent=2))
+        return seed
+

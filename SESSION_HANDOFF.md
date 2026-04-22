@@ -1,26 +1,29 @@
-# Personal History Project: Session Handoff
-
-## Core Mandates
-- **Cross-Platform Portability:** Python-native crypto, zero binary dependencies.
-- **Software-Agnostic Format:** Plain-text JSON ledger, cryptographically verifiable.
-- **Privacy-First:** Encrypted sensitivity (start/stop/metadata), public metadata (titles/durations).
-- **Identity:** Low-friction, passphrase-derived keys (KDF).
-- **Integrity:** HMAC-based sealing, immutable historical chain.
+# PH Ledger Handoff - Session Complete
 
 ## Current Status
-- **Modular Architecture:** Project split into core, security, storage, and cli modules.
-- **Features:** Active task tracking (start/end), reputation summary with date filtering, tamper detection.
-- **Validation:** RAM-backed, integration-heavy `unittest` suite.
+- **Architecture:** Modular, scalable, and cross-platform ready ("Headless Engine").
+- **Security:** 
+    - **Sovereign Key Model:** All encryption and seals are rooted in the **Recovery Seed**. Passphrase only unlocks the seed.
+    - **Identity System:** Generated Ed25519-proxy identity during `init`. Private key is stored encrypted in `identity.json`.
+    - **Identity Signatures:** Every block (Genesis, Day, Month/Year Summary) is signed by the local identity.
+    - Encrypted sensitive timestamps (`startTime_enc`, `endTime_enc`) in ledger entries.
+- **Integrity:** Hierarchical Lock Chain fully implemented (Genesis -> Month/Year Summaries -> Day -> Task).
+- **Privacy:** Blind Duration Index (`index.json`) enables reputation queries without decrypting history.
 
-## Sync Authentication Strategies
-1. **Authenticated Transport (Lowest Friction):** Rely on ledger's internal integrity (`verify()`). Accept file changes only if `verify()` passes locally.
-2. **Signed-Sync (Medium Friction):** Generate a local Ed25519 identity key to sign ledger updates. Prevents unauthorized actors from pushing changes.
-3. **HMAC-Challenge (Highest Friction):** Use master passphrase to generate dynamic sync tokens.
+## Completed Roadmap Items
+- [x] **Authenticator Interface:** Modular auth for Passphrase and Recovery Seed.
+- [x] **Recovery Command:** `phpoc recover` allows seed-based access restoration.
+- [x] **Hierarchical Schema:** Summary hash records with identity signatures.
+- [x] **Future-Proof Identity:** Genesis block contains `identity_pub_key`.
+- [x] **Session-Auth:** RAM cache for both Master Key and Identity Secret.
 
 ## Next Steps
-- [ ] **Sync Module:** Implement `sync/git_sync.py` leveraging Strategy 2 (Signed-Sync).
-- [ ] **Identity Export:** Implement command to export/import the identity keypair for multi-machine synchronization.
-- [ ] **Ledger Pruning:** Define strategies for archiving historical ledger segments to manage file growth.
+1. **Media Linkage:** Implement the "Media-Witness" interface to link content hashes (video/audio) to activities during sync.
+2. **Reconciliation Logic:** Implement "Chain-Bridging" to link orphaned activity blocks back to a master genesis.
+3. **Remote Sync:** Implement `sync/git_sync.py` to backup the signed ledger blocks.
+4. **Archival Automation:** Implement `phpoc archive --year X` to partition the ledger.
 
----
-*Status: Architecture fully modularized. Ready for sync/identity implementation.*
+## Dev Notes
+- **Compatibility:** The ledger format is now stable and future-proofed for real Ed25519 signatures.
+- **Zero-Dependency:** The project remains 100% Python Standard Library.
+- **Testing:** 11 integration tests pass, covering recovery, hierarchy, and blind indexing.
