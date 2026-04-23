@@ -17,7 +17,7 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 | Block signing with Ed25519-proxy (HMAC-SHA256) | ✅ | — | Every block signed |
 | Verify command | ✅ | — | Full chain + entry hash verification |
 | Tamper detection | ✅ | — | Any modification breaks downstream chain |
-| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep |
+| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep. [No block](ROADMAP-BLOCKS.md) |
 | **Hardware-backed identity (TPM/SE)** | 🔮 | Low | Future-proofing for mobile/embedded |
 
 ---
@@ -30,8 +30,8 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 | Encrypted metadata (AES-CTR) | ✅ | — | metadata_enc in every entry |
 | Blind duration index (index.json) | ✅ | — | Reputation queries without decryption |
 | Recovery Seed with encryption (PDK) | ✅ | — | Seed encrypted with passphrase-derived key |
-| **Media Witness linkage** | 🔜 | High | Content hashes linked to activities — see below |
-| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history |
+| **Media Witness linkage** | 🔜 | High | Content hashes linked to activities — see below. [No block](ROADMAP-BLOCKS.md) |
+| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. [No block](ROADMAP-BLOCKS.md) |
 
 ---
 
@@ -41,9 +41,9 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 |---|---|---|---|
 | Partitionable chain design | ✅ | — | Each block independently sealed |
 | Year/Month summary blocks | ✅ | — | I/O optimization for partial traversals |
-| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file |
-| **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks |
-| **Remote sync** (`sync/git_sync.py`) | 🔜 | Medium | Git-backed encrypted backup |
+| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. [No block](ROADMAP-BLOCKS.md) |
+| **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks. ⚠️ [Blocked by R1, R4](ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation) |
+| **Remote sync** (`sync/git_sync.py`) | 🔜 | Medium | Git-backed encrypted backup. ⚠️ [Blocked by R1, R2, R3](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards) |
 | **Database backend** (SQLite, etc.) | 🔮 | Low | Via AbstractLedgerStore |
 | **Multi-device sync** (CRDT-based) | 🔮 | Low | Conflict-free merging across devices |
 
@@ -74,7 +74,7 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 | Passphrase-based seed unlock | ✅ | — | PBKDF2(passphrase) → AES decrypt seed |
 | `phpoc recover` command | ✅ | — | Seed → new passphrase → re-seal Genesis |
 | Identity file (identity.json) | ✅ | — | Encrypted secret + pub key |
-| **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability |
+| **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability. ⚠️ [Blocked by R2](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
 | **Multi-identity support** (aliases/permissions) | 🔮 | Low | Multiple signing keys per ledger |
 | **AI-agent verifiable reports** | 🔮 | Low | Signed third-party verification of habits |
 
@@ -86,6 +86,8 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 
 #### Media Linkage
 Link content hashes (SHA-256 of video/audio/photos) to specific activities.
+
+**Block status:** ✅ [No block](ROADMAP-BLOCKS.md) — independent of all current blockers.
 
 **Design sketch:**
 ```json
@@ -111,6 +113,10 @@ Link content hashes (SHA-256 of video/audio/photos) to specific activities.
 #### Reconciliation Logic (Chain-Bridging)
 Link orphaned activity blocks back to a master genesis.
 
+**Block status:** ⚠️ [Blocked by R1, R4](ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation)
+- **R1 (AES-CTR malleability):** Re-keying orphaned entries changes their hashes; no auth tag means manipulated ciphertext during transit is undetectable at the entry level.
+- **R4 (content proof):** The current design sketch says "check each block's seal" — but re-encrypted entries break entry hashes. A content-integrity mechanism must be designed before implementation.
+
 **Use case:** User has activity blocks from a previous/external system; wants to graft them into the ledger without losing the chain of trust.
 
 **Design approach:**
@@ -121,6 +127,11 @@ Link orphaned activity blocks back to a master genesis.
 #### Remote Sync (git-based)
 Backup signed ledger blocks to a git remote.
 
+**Block status:** ⚠️ [Blocked by R1, R2, R3](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards)
+- **R1 (AES-CTR malleability):** No auth tag on encrypted fields means git intermediaries could silently corrupt ciphertext.
+- **R2 (identity fallback):** Syncing `ledger.json` without `identity.json` produces unsigned blocks on the receiving machine.
+- **R3 (KDF strength):** 100K PBKDF2 iterations is below current OWASP standards, weakening protection against offline attacks on synced ledger files.
+
 **Design approach:**
 - Encrypt ledger JSON before commit (or commit as-is since it's already encrypted)
 - Push to private git repo (GitHub, GitLab, self-hosted)
@@ -128,6 +139,8 @@ Backup signed ledger blocks to a git remote.
 
 #### Archival Automation
 Move old year data to separate file.
+
+**Block status:** ✅ [No block](ROADMAP-BLOCKS.md) — independent of all current blockers.
 
 **Design approach:**
 - `phpoc archive --year 2024` → creates `archive_2024.json`
