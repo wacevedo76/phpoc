@@ -2,6 +2,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
+from typing import Optional
 from security.crypto import CryptoManager
 from security.recovery import RecoveryManager
 
@@ -55,11 +56,13 @@ class LedgerFactory:
         genesis["day_hash"] = crypto.seal(genesis_json)
         genesis["signature"] = crypto.sign(genesis["day_hash"], identity_secret)
         
+        # Create directory first
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        
         # Save Identity File
         id_path = ledger_path.parent / "identity.json"
         id_path.write_text(json.dumps({"identity_secret_enc": encrypted_identity}, indent=2))
 
-        ledger_path.parent.mkdir(parents=True, exist_ok=True)
         ledger_path.write_text(json.dumps([genesis], indent=2))
         return seed
 

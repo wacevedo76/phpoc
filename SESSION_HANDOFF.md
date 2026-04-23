@@ -1,29 +1,53 @@
-# PH Ledger Handoff - Session Complete
+# PH Ledger — Session Handoff
 
-## Current Status
-- **Architecture:** Modular, scalable, and cross-platform ready ("Headless Engine").
-- **Security:** 
-    - **Sovereign Key Model:** All encryption and seals are rooted in the **Recovery Seed**. Passphrase only unlocks the seed.
-    - **Identity System:** Generated Ed25519-proxy identity during `init`. Private key is stored encrypted in `identity.json`.
-    - **Identity Signatures:** Every block (Genesis, Day, Month/Year Summary) is signed by the local identity.
-    - Encrypted sensitive timestamps (`startTime_enc`, `endTime_enc`) in ledger entries.
-- **Integrity:** Hierarchical Lock Chain fully implemented (Genesis -> Month/Year Summaries -> Day -> Task).
-- **Privacy:** Blind Duration Index (`index.json`) enables reputation queries without decrypting history.
+## Current State
+- **Branch:** `main` — all commits merged, working tree has uncommitted fixes
+- **Tests:** 16/16 passing (test_modular: 12, test_hierarchy: 2, test_recovery: 2)
+- **Dependencies:** Pure Python 3.x standard library — zero external deps
 
-## Completed Roadmap Items
-- [x] **Authenticator Interface:** Modular auth for Passphrase and Recovery Seed.
-- [x] **Recovery Command:** `phpoc recover` allows seed-based access restoration.
-- [x] **Hierarchical Schema:** Summary hash records with identity signatures.
-- [x] **Future-Proof Identity:** Genesis block contains `identity_pub_key`.
-- [x] **Session-Auth:** RAM cache for both Master Key and Identity Secret.
+## Recent Fixes (uncommitted)
+- `core/factory.py`: Fixed `mkdir()` ordering — identity file was written before config dir existed
+- `cli/interface.py`: Removed duplicate `show_rep()` method; fixed `list_habits()` — was collecting synced entries but never printing them; extracted `_print_entry()` helper
+- `main.py`: `verify` command now prints `True`/`False` instead of silent return
 
-## Next Steps
-1. **Media Linkage:** Implement the "Media-Witness" interface to link content hashes (video/audio) to activities during sync.
-2. **Reconciliation Logic:** Implement "Chain-Bridging" to link orphaned activity blocks back to a master genesis.
-3. **Remote Sync:** Implement `sync/git_sync.py` to backup the signed ledger blocks.
-4. **Archival Automation:** Implement `phpoc archive --year X` to partition the ledger.
+## Crypto Architecture Checklist
+| Feature | Status | Notes |
+|---|---|---|
+| Sovereign Key Model (Seed → Master Key) | ✅ | Seed generated from 32 bytes urandom |
+| Passphrase wraps Seed (PDK encrypted) | ✅ | PBKDF2(passphrase, "session-salt") |
+| Identity Ed25519-proxy (HMAC-SHA256) | ✅ | Secret encrypted with Master Key |
+| Block signing (all block types) | ✅ | Genesis, Day, Month/Year Summary |
+| Encrypted timestamps (start/end) | ✅ | AES-CTR with unique nonce per field |
+| Blind duration index (index.json) | ✅ | Fast rep queries without decryption |
+| Session RAM cache (/dev/shm) | ✅ | One auth per boot |
 
-## Dev Notes
-- **Compatibility:** The ledger format is now stable and future-proofed for real Ed25519 signatures.
-- **Zero-Dependency:** The project remains 100% Python Standard Library.
-- **Testing:** 11 integration tests pass, covering recovery, hierarchy, and blind indexing.
+## Chain Structure
+```
+Genesis (sealed + signed)
+  └── Year Summary (sealed + signed)
+        └── Month Summary (sealed + signed)
+              └── Day (sealed + signed)
+                    └── Entries (hashed individually)
+```
+
+## CLI Commands
+| Command | Auth Required | Description |
+|---|---|---|
+| `init` | No | Creates ledger + identity + seed |
+| `recover` | No (seed) | Seed-based passphrase reset |
+| `add start <title>` | Optional | Starts active task |
+| `add end <title>` | Optional | Ends active task |
+| `add oneoff` | Optional | Captures completed task |
+| `view` | Optional | Shows running tasks |
+| `sync` | Yes | Commits staging → immutable ledger |
+| `verify` | Yes | Full chain integrity check |
+| `rep [days] [--from] [--to]` | Yes | Blind-index reputation summary |
+| `list {all,synced,staged} [days]...` | Yes | Decrypted detailed listing |
+
+## Roadmap (Unstarted)
+1. **Media Linkage** — Link content hashes (video/audio) to activities
+2. **Reconciliation** — Chain-bridging for orphaned blocks
+3. **Remote Sync** — `sync/git_sync.py` for git-based backup
+4. **Archival** — `phpoc archive --year X` for ledger partitioning
+
+See `CHANGELOG.md` for full history and `ROADMAP.md` for detailed planning.

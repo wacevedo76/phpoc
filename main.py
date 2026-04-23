@@ -49,10 +49,27 @@ def main():
     rep_parser.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
     rep_parser.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
 
-    list_parser = subparsers.add_parser("list", help="List detailed habits (requires decryption)")
-    list_parser.add_argument("days", type=int, nargs="?", help="Limit to last N days")
-    list_parser.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
-    list_parser.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+    # List command with subcommands for source
+    list_parser = subparsers.add_parser("list", help="List detailed habits")
+    list_subparsers = list_parser.add_subparsers(dest="source", required=True)
+
+    # List all activities (synced + staged)
+    list_all_p = list_subparsers.add_parser("all", help="List all activities (synced and staged)")
+    list_all_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
+    list_all_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
+    list_all_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+
+    # List only synced activities
+    list_synced_p = list_subparsers.add_parser("synced", help="List only synced activities")
+    list_synced_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
+    list_synced_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
+    list_synced_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+
+    # List only staged activities
+    list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
+    list_staged_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
+    list_staged_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
+    list_staged_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
 
     args = parser.parse_args()
 
@@ -78,10 +95,10 @@ def main():
         
         seed = LedgerFactory.initialize(LEDGER_PATH, pdk, username, email)
         if seed:
-            print(f"\nLedger initialized.")
+            print(f"Ledger initialized.")
             print(f"!!! IMPORTANT: Save this recovery seed in a secure place !!!")
             print(f"RECOVERY SEED: {seed}")
-            print(f"!!! You will NOT be able to recover your data without this seed if you lose your password !!!\n")
+            print(f"!!! You will NOT be able to recover your data without this seed if you lose your password !!!")
             
             # Cache the newly created sovereign key for this session
             mk = RecoveryManager.seed_to_key(seed)
@@ -98,7 +115,7 @@ def main():
             
         mk = rec_auth.get_key()
         # Seed is valid, now set new passphrase
-        print("\nSeed Verified. Set your new passphrase.")
+        print("Seed Verified. Set your new passphrase.")
         while True:
             p1 = getpass.getpass("New Passphrase: ")
             p2 = getpass.getpass("Confirm New Passphrase: ")
@@ -161,11 +178,12 @@ def main():
     elif args.command == "sync":
         ledger.sync_day()
     elif args.command == "verify":
-        ledger.verify()
+        result = ledger.verify()
+        print(result)
     elif args.command == "rep":
         cli.show_rep(args.days, from_date=args.from_date, to_date=args.to_date)
     elif args.command == "list":
-        cli.list_habits(args.days, from_date=args.from_date, to_date=args.to_date)
+        cli.list_habits(args.source, args.days, from_date=args.from_date, to_date=args.to_date)
 
 if __name__ == "__main__":
     main()
