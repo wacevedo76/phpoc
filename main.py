@@ -5,7 +5,7 @@ import json
 import hashlib
 import base64
 from pathlib import Path
-from security.crypto import CryptoManager
+from security.crypto import CryptoManager, NoAuthCryptoManager
 from security.auth import PassphraseAuthenticator, RecoveryAuthenticator
 from security.recovery import RecoveryManager
 from storage.file_store import LedgerStore
@@ -15,6 +15,7 @@ from cli.interface import CLIInterface
 
 CONFIG_DIR = Path.home() / ".config" / "personal_history_poc"
 LEDGER_PATH = CONFIG_DIR / "ledger.json"
+INDEX_PATH = CONFIG_DIR / "index.json"
 
 def main():
     parser = argparse.ArgumentParser(description="PHPOC Ledger")
@@ -123,13 +124,28 @@ def main():
         print("Passphrase reset successful. You can now use your new passphrase.")
         return
 
-    # For all other commands, attempt to use session or prompt once
-    if not auth.authenticate():
-        print("Authentication failed.")
-        exit(1)
+    # --- Lazy Authentication Logic ---
+    
+    # List of commands that REQUIRE a valid passphrase
+    # (Reading the ledger, verifying history, or performing a sync)
+    require_auth = ["sync", "verify", "rep", "list", "view"]
+    
+    crypto = None
+    if args.command in require_auth:
+        if not auth.authenticate():
+            print("Passphrase required for this operation.")
+            exit(1)
+        crypto = CryptoManager(auth.get_key())
+    else:
+        # Check if we happen to have a session already
+        cached_key = auth.get_key()
+        if cached_key:
+            crypto = CryptoManager(cached_key)
+        else:
+            # Add/Start/End commands can use NoAuth mode (Stage in plain-text)
+            crypto = NoAuthCryptoManager()
 
-    crypto = CryptoManager(auth.get_key())
-    store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH)
+    store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
     ledger = LedgerDomain(crypto, store)
     cli = CLIInterface(ledger)
     

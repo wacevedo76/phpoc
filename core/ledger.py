@@ -2,11 +2,11 @@ import json
 import hashlib
 import time
 from typing import Optional, List, Dict, Any
-from security.crypto import CryptoManager
+from security.crypto import AbstractCryptoManager
 from storage.interface import AbstractLedgerStore
 
 class LedgerDomain:
-    def __init__(self, crypto: CryptoManager, store: AbstractLedgerStore):
+    def __init__(self, crypto: AbstractCryptoManager, store: AbstractLedgerStore):
         self.crypto = crypto
         self.store = store
 
@@ -37,7 +37,13 @@ class LedgerDomain:
         found = False
         for entry in staging:
             if entry["data"]["title"] == title and entry["data"].get("is_active"):
-                start_epoch = int(self.crypto.decrypt(entry["data"]["startTime_enc"]))
+                # Decrypt current start time (might be plain: if lazy-added)
+                start_val = entry["data"]["startTime_enc"]
+                if start_val.startswith("plain:"):
+                    start_epoch = int(start_val[6:])
+                else:
+                    start_epoch = int(self.crypto.decrypt(start_val))
+                
                 entry["data"]["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
                 entry["data"]["duration"] = end_epoch - start_epoch
                 entry["data"]["is_active"] = False
@@ -67,11 +73,31 @@ class LedgerDomain:
         to_sync = [e for e in staging if not e["data"].get("is_active", False)]
         if not to_sync: return None
 
-        # Group by date
+        # Group by date and ENSURE ENCRYPTION
         days_to_sync = {}
         for entry in to_sync:
-            # Use decrypted startTime to determine the date
-            start_epoch = int(self.crypto.decrypt(entry["data"]["startTime_enc"]))
+            data = entry["data"]
+            # 1. Resolve startTime
+            if data["startTime_enc"].startswith("plain:"):
+                start_epoch = int(data["startTime_enc"][6:])
+                # Re-encrypt properly for ledger
+                data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
+            else:
+                start_epoch = int(self.crypto.decrypt(data["startTime_enc"]))
+
+            # 2. Resolve endTime
+            if data["endTime_enc"] and data["endTime_enc"].startswith("plain:"):
+                end_epoch = int(data["endTime_enc"][6:])
+                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+            
+            # 3. Resolve Metadata
+            if data["metadata_enc"].startswith("plain:"):
+                meta_json = data["metadata_enc"][6:]
+                data["metadata_enc"] = self.crypto.encrypt(meta_json)
+
+            # Re-calculate entry hash after potential re-encryption
+            entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
             date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
             if date_str not in days_to_sync:
                 days_to_sync[date_str] = []

@@ -7,7 +7,7 @@ import tempfile
 import hashlib
 from pathlib import Path
 from core.ledger import LedgerDomain
-from security.crypto import CryptoManager
+from security.crypto import CryptoManager, NoAuthCryptoManager
 from security.recovery import RecoveryManager
 from storage.file_store import LedgerStore
 
@@ -136,6 +136,30 @@ class TestLedger(unittest.TestCase):
         
         # 3. Assert breach
         self.assertFalse(self.ledger.verify(), "Ledger failed to detect historical tampering")
+
+    def test_lazy_encryption_flow(self):
+        # 1. Capture habit without auth (NoAuthCryptoManager)
+        lazy_ledger = LedgerDomain(NoAuthCryptoManager(), self.store)
+        start = int(time.time()*1000) - 100000
+        lazy_ledger.capture_habit("Lazy Task", start, start + 50000)
+        
+        staging_data = self.store.read_staging()
+        self.assertTrue(staging_data[0]["data"]["startTime_enc"].startswith("plain:"))
+        
+        # 2. Sync with real auth
+        self.ledger.sync_day()
+        
+        # 3. Verify it was encrypted in the ledger
+        ledger_data = self.store.read_ledger()
+        day_rec = next(r for r in ledger_data if r.get("type") == "day" and any(e["data"]["title"] == "Lazy Task" for e in r["entries"]))
+        entry = next(e for e in day_rec["entries"] if e["data"]["title"] == "Lazy Task")
+        
+        self.assertFalse(entry["data"]["startTime_enc"].startswith("plain:"))
+        # Should be decryptable with real key
+        dec_start = int(self.crypto.decrypt(entry["data"]["startTime_enc"]))
+        self.assertEqual(dec_start, start)
+        
+        self.assertTrue(self.ledger.verify())
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import struct
+from abc import ABC, abstractmethod
 
 # --- Pure Python AES Implementation (Simplified for POC) ---
 # Based on public domain/MIT implementations for portability
@@ -94,7 +95,21 @@ class PureAESCTR:
 
 # --- High Level Crypto API ---
 
-class CryptoManager:
+class AbstractCryptoManager(ABC):
+    @abstractmethod
+    def encrypt(self, text: str) -> str: pass
+    @abstractmethod
+    def decrypt(self, hex_data: str) -> str: pass
+    @abstractmethod
+    def seal(self, data_str: str) -> str: pass
+    @abstractmethod
+    def verify_seal(self, data_str: str, signature: str) -> bool: pass
+    @abstractmethod
+    def sign(self, data_str: str, identity_secret: bytes) -> str: pass
+    @abstractmethod
+    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool: pass
+
+class CryptoManager(AbstractCryptoManager):
     def __init__(self, master_key: bytes):
         """
         Initialize with a 32-byte master key.
@@ -153,3 +168,19 @@ class CryptoManager:
         """Verifies an HMAC-SHA256 signature."""
         expected = self.seal(data_str)
         return hmac.compare_digest(expected, signature)
+
+class NoAuthCryptoManager(AbstractCryptoManager):
+    """Fallback crypto manager for when no passphrase is provided (Staging only)."""
+    def encrypt(self, text: str) -> str:
+        return f"plain:{text}"
+    def decrypt(self, hex_data: str) -> str:
+        if hex_data.startswith("plain:"): return hex_data[6:]
+        raise ValueError("Cannot decrypt without passphrase")
+    def seal(self, data_str: str) -> str:
+        return hashlib.sha256(data_str.encode()).hexdigest()
+    def verify_seal(self, data_str: str, signature: str) -> bool:
+        return self.seal(data_str) == signature
+    def sign(self, data_str: str, identity_secret: bytes) -> str:
+        return "unsigned"
+    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
+        return signature == "unsigned"
