@@ -18,6 +18,14 @@ class CLIInterface:
         self.ledger.end_habit(title, int(time.time()*1000))
         print(f"✓ Stopped tracking: {title}")
 
+    def add_pause(self, title):
+        self.ledger.pause_habit(title, int(time.time()*1000))
+        print(f"✓ Paused: {title}")
+
+    def add_unpause(self, title):
+        self.ledger.unpause_habit(title, int(time.time()*1000))
+        print(f"✓ Resumed: {title}")
+
     def view_active(self):
         staging = self.ledger.store.read_staging()
         active = [e for e in staging if e["data"].get("is_active")]
@@ -32,7 +40,31 @@ class CLIInterface:
             # Decrypt startTime for viewing
             start_epoch = int(self.ledger.crypto.decrypt(data["startTime_enc"]))
             started = time.strftime("%H:%M:%S", time.localtime(start_epoch/1000))
-            print(f"[{started}] {data['title']}")
+            
+            # Show pause indicator and active duration so far
+            # Compute active duration up to now, excluding pauses
+            pauses_enc = data.get("pauses_enc")
+            pauses = []
+            if pauses_enc:
+                if pauses_enc.startswith("plain:"):
+                    pauses = json.loads(pauses_enc[6:])
+                else:
+                    pauses = json.loads(self.ledger.crypto.decrypt(pauses_enc))
+
+            if data.get("is_paused"):
+                # Task is paused — show duration up to the pause start
+                if pauses and pauses[-1].get("pause_stop") is None:
+                    paused_since = pauses[-1]["pause_start"]
+                    duration_ms = self.ledger._compute_duration(start_epoch, paused_since, pauses)
+                    pause_time = time.strftime("%H:%M:%S", time.localtime(paused_since/1000))
+                    print(f"[{started}] {data['title']} (⏸ paused at {pause_time}, active: {duration_ms // 60000}m)")
+                else:
+                    print(f"[{started}] {data['title']} (⏸ paused)")
+            else:
+                # Task is actively running — show live duration (excluding past pauses)
+                now = int(time.time() * 1000)
+                duration_ms = self.ledger._compute_duration(start_epoch, now, pauses)
+                print(f"[{started}] {data['title']} (active: {duration_ms // 60000}m)")
 
     def show_rep(self, days_limit=None, from_date=None, to_date=None):
         # Use Blind Index for speed and privacy

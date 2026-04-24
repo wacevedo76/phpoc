@@ -10,6 +10,44 @@ class LedgerDomain:
         self.crypto = crypto
         self.store = store
 
+    def _compute_duration(self, start_epoch, end_epoch, pauses):
+        """
+        Compute active duration as wall time minus all completed pause intervals.
+        `pauses` is a list of {"pause_start": ..., "pause_stop": ...} dicts.
+        Intervals with pause_stop=None (ongoing pause) are skipped.
+        """
+        total_pause_ms = 0
+        for p in pauses:
+            if p.get("pause_stop") is not None:
+                total_pause_ms += p["pause_stop"] - p["pause_start"]
+        return (end_epoch - start_epoch) - total_pause_ms
+
+    def _decrypt_pauses(self, data):
+        """Decrypt pauses_enc from entry data. Returns list of pause dicts.
+        Handles plain: prefix (lazy auth) and missing field (old entries)."""
+        pauses_enc = data.get("pauses_enc")
+        if pauses_enc is None:
+            return []
+        if pauses_enc.startswith("plain:"):
+            return json.loads(pauses_enc[6:])
+        return json.loads(self.crypto.decrypt(pauses_enc))
+
+    def _encrypt_pauses(self, pauses):
+        """Encrypt a pauses list and return the hex string."""
+        return self.crypto.encrypt(json.dumps(pauses))
+
+    def _reconcile_plain_pauses(self, data):
+        """If pauses_enc is plain:, decrypt in place and re-encrypt with real crypto.
+        Returns the (possibly updated) pauses list."""
+        pauses_enc = data.get("pauses_enc")
+        if pauses_enc is not None and pauses_enc.startswith("plain:"):
+            pauses = json.loads(pauses_enc[6:])
+            data["pauses_enc"] = self._encrypt_pauses(pauses)
+            return pauses
+        if pauses_enc is not None:
+            return json.loads(self.crypto.decrypt(pauses_enc))
+        return []
+
     def capture_habit(self, title, start_epoch, stop_epoch=None, metadata=None, is_active=False):
         staging = self.store.read_staging()
         
@@ -22,8 +60,10 @@ class LedgerDomain:
             "title": title,
             "duration": (stop_epoch - start_epoch) if stop_epoch else 0,
             "is_active": is_active,
+            "is_paused": False,
             "startTime_enc": self.crypto.encrypt(str(start_epoch)),
             "endTime_enc": self.crypto.encrypt(str(stop_epoch)) if stop_epoch else None,
+            "pauses_enc": self.crypto.encrypt("[]"),
             "metadata_enc": self.crypto.encrypt(json.dumps(metadata or {}))
         }
         
@@ -37,24 +77,99 @@ class LedgerDomain:
         found = False
         for entry in staging:
             if entry["data"]["title"] == title and entry["data"].get("is_active"):
-                # Decrypt current start time (might be plain: if lazy-added)
-                start_val = entry["data"]["startTime_enc"]
+                data = entry["data"]
+
+                # Resolve start epoch (handle plain: prefix)
+                start_val = data["startTime_enc"]
                 if start_val.startswith("plain:"):
                     start_epoch = int(start_val[6:])
                 else:
                     start_epoch = int(self.crypto.decrypt(start_val))
-                
-                entry["data"]["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
-                entry["data"]["duration"] = end_epoch - start_epoch
-                entry["data"]["is_active"] = False
+
+                # Auto-unpause if currently paused
+                pauses = self._reconcile_plain_pauses(data)
+                if data.get("is_paused"):
+                    # Close the last interval's pause_stop
+                    if pauses and pauses[-1].get("pause_stop") is None:
+                        pauses[-1]["pause_stop"] = end_epoch
+                        data["pauses_enc"] = self._encrypt_pauses(pauses)
+                    data["is_paused"] = False
+
+                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+                data["duration"] = self._compute_duration(start_epoch, end_epoch, pauses)
+                data["is_active"] = False
                 # Re-calculate hash since data changed
-                entry["hash"] = hashlib.sha256(json.dumps(entry["data"], sort_keys=True).encode()).hexdigest()
+                entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
                 found = True
                 break
         
         if not found:
             raise ValueError(f"No active task found for: {title}")
             
+        self.store.write_staging(staging)
+
+    def pause_habit(self, title, pause_epoch):
+        """Pause a running task. Raises ValueError if not found, not active, or already paused."""
+        staging = self.store.read_staging()
+        found = False
+        for entry in staging:
+            if entry["data"]["title"] == title and entry["data"].get("is_active"):
+                data = entry["data"]
+                if data.get("is_paused"):
+                    raise ValueError(f"Task '{title}' is already paused.")
+
+                pauses = self._reconcile_plain_pauses(data)
+                next_index = len(pauses) + 1
+                pauses.append({
+                    "pause_index": next_index,
+                    "pause_start": pause_epoch,
+                    "pause_stop": None
+                })
+                data["pauses_enc"] = self._encrypt_pauses(pauses)
+                data["is_paused"] = True
+                # Re-calculate hash since data changed
+                entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+                found = True
+                break
+
+        if not found:
+            raise ValueError(f"No active task found for: {title}")
+
+        self.store.write_staging(staging)
+
+    def unpause_habit(self, title, unpause_epoch):
+        """Unpause a paused task. Raises ValueError if not found, not active, or not paused."""
+        staging = self.store.read_staging()
+        found = False
+        for entry in staging:
+            if entry["data"]["title"] == title and entry["data"].get("is_active"):
+                data = entry["data"]
+                if not data.get("is_paused"):
+                    raise ValueError(f"Task '{title}' is not paused.")
+
+                pauses = self._reconcile_plain_pauses(data)
+                if pauses and pauses[-1].get("pause_stop") is None:
+                    pauses[-1]["pause_stop"] = unpause_epoch
+
+                data["pauses_enc"] = self._encrypt_pauses(pauses)
+                data["is_paused"] = False
+
+                # Recompute active duration so far
+                start_val = data["startTime_enc"]
+                if start_val.startswith("plain:"):
+                    start_epoch = int(start_val[6:])
+                else:
+                    start_epoch = int(self.crypto.decrypt(start_val))
+                data["duration"] = self._compute_duration(start_epoch, unpause_epoch, pauses)
+
+                # Re-calculate hash since data changed
+                entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+                found = True
+                break
+
+        if not found:
+            raise ValueError(f"No active task found for: {title}")
+
         self.store.write_staging(staging)
 
     def _get_identity_secret(self) -> Optional[bytes]:
@@ -94,6 +209,11 @@ class LedgerDomain:
             if data["metadata_enc"].startswith("plain:"):
                 meta_json = data["metadata_enc"][6:]
                 data["metadata_enc"] = self.crypto.encrypt(meta_json)
+
+            # 4. Resolve pauses_enc
+            if "pauses_enc" in data and data["pauses_enc"].startswith("plain:"):
+                pauses_json = data["pauses_enc"][6:]
+                data["pauses_enc"] = self.crypto.encrypt(pauses_json)
 
             # Re-calculate entry hash after potential re-encryption
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()

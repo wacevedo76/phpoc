@@ -29,6 +29,10 @@ def main():
     start_p.add_argument("title")
     end_p = add_sub.add_parser("end", help="End a task")
     end_p.add_argument("title")
+    pause_p = add_sub.add_parser("pause", help="Pause a task")
+    pause_p.add_argument("title")
+    unpause_p = add_sub.add_parser("unpause", help="Resume a paused task")
+    unpause_p.add_argument("title")
 
     # Init command
     subparsers.add_parser("init", help="Initialize a new ledger")
@@ -173,6 +177,10 @@ def main():
             cli.add_start(args.title)
         elif args.subcommand == "end":
             cli.add_end(args.title)
+        elif args.subcommand == "pause":
+            cli.add_pause(args.title)
+        elif args.subcommand == "unpause":
+            cli.add_unpause(args.title)
     elif args.command == "view":
         cli.view_active()
     elif args.command == "sync":
