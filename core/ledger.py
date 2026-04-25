@@ -48,8 +48,19 @@ class LedgerDomain:
             return json.loads(self.crypto.decrypt(pauses_enc))
         return []
 
-    def capture_habit(self, title, start_epoch, stop_epoch=None, metadata=None, is_active=False):
+    def capture_habit(self, title, start_epoch, stop_epoch=None, metadata=None, is_active=False, tags=None):
         staging = self.store.read_staging()
+
+        # Normalize tags: lowercase, strip, dedup, remove empties
+        normalized_tags = []
+        if tags is not None:
+            seen = set()
+            for t in tags:
+                clean = t.strip().lower()
+                if clean and clean not in seen:
+                    seen.add(clean)
+                    normalized_tags.append(clean)
+            normalized_tags.sort()
         
         # Collision Check
         for entry in staging:
@@ -64,7 +75,8 @@ class LedgerDomain:
             "startTime_enc": self.crypto.encrypt(str(start_epoch)),
             "endTime_enc": self.crypto.encrypt(str(stop_epoch)) if stop_epoch else None,
             "pauses_enc": self.crypto.encrypt("[]"),
-            "metadata_enc": self.crypto.encrypt(json.dumps(metadata or {}))
+            "metadata_enc": self.crypto.encrypt(json.dumps(metadata or {})),
+            "tags": normalized_tags
         }
         
         entry_hash = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()

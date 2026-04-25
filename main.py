@@ -24,9 +24,12 @@ def main():
     # Add command
     add_parser = subparsers.add_parser("add", help="Add a new habit")
     add_sub = add_parser.add_subparsers(dest="subcommand")
-    add_sub.add_parser("oneoff", help="Capture a completed task")
+    oneoff_p = add_sub.add_parser("oneoff", help="Capture a completed task")
+    oneoff_p.add_argument("title", nargs="?", help="Task title (optional, will prompt if omitted)")
+    oneoff_p.add_argument("--tag", dest="tags", action="append", default=[], help="Add a tag (e.g. --tag music --tag learning)")
     start_p = add_sub.add_parser("start", help="Start a task")
     start_p.add_argument("title")
+    start_p.add_argument("--tag", dest="tags", action="append", default=[], help="Add a tag (e.g. --tag music --tag learning)")
     end_p = add_sub.add_parser("end", help="End a task")
     end_p.add_argument("title")
     pause_p = add_sub.add_parser("pause", help="Pause a task")
@@ -41,7 +44,12 @@ def main():
     subparsers.add_parser("recover", help="Recover access using seed and set new passphrase")
 
     # View command
-    subparsers.add_parser("view", help="View active tasks")
+    view_parser = subparsers.add_parser("view", help="View active tasks")
+    view_parser.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
+
+    # Tags command
+    subparsers.add_parser("tags", help="List all unique tags ever used")
+
     # Sync command
     subparsers.add_parser("sync", help="Sync staged habits to the ledger")
     # Verify command
@@ -149,7 +157,7 @@ def main():
     
     # List of commands that REQUIRE a valid passphrase
     # (Reading the ledger, verifying history, or performing a sync)
-    require_auth = ["sync", "verify", "rep", "list", "view"]
+    require_auth = ["sync", "verify", "rep", "list", "view", "tags"]
     
     crypto = None
     if args.command in require_auth:
@@ -172,9 +180,20 @@ def main():
     
     if args.command == "add":
         if args.subcommand == "oneoff":
-            cli.add_oneoff(input("Title: "), int(time.time()*1000)-120000, int(time.time()*1000))
+            title = args.title
+            if not title:
+                title = input("Title: ")
+            tags = CLIInterface._normalize_tag_args(args.tags) if hasattr(args, 'tags') and args.tags else None
+            if tags is None and not args.tags:
+                # Prompt for tags if --tag not provided
+                tag_input = input("Tags (comma-separated, or leave blank): ").strip()
+                if tag_input:
+                    raw_tags = [t.strip() for t in tag_input.split(",")]
+                    tags = CLIInterface._normalize_tag_args(raw_tags)
+            cli.add_oneoff(title, int(time.time()*1000)-120000, int(time.time()*1000), tags=tags)
         elif args.subcommand == "start":
-            cli.add_start(args.title)
+            tags = CLIInterface._normalize_tag_args(args.tags) if hasattr(args, 'tags') and args.tags else None
+            cli.add_start(args.title, tags=tags)
         elif args.subcommand == "end":
             cli.add_end(args.title)
         elif args.subcommand == "pause":
@@ -182,7 +201,10 @@ def main():
         elif args.subcommand == "unpause":
             cli.add_unpause(args.title)
     elif args.command == "view":
-        cli.view_active()
+        show_tags = args.tags if hasattr(args, 'tags') else False
+        cli.view_active(show_tags=show_tags)
+    elif args.command == "tags":
+        _list_tags(ledger, cli)
     elif args.command == "sync":
         ledger.sync_day()
     elif args.command == "verify":
@@ -192,6 +214,33 @@ def main():
         cli.show_rep(args.days, from_date=args.from_date, to_date=args.to_date)
     elif args.command == "list":
         cli.list_habits(args.source, args.days, from_date=args.from_date, to_date=args.to_date)
+
+
+def _list_tags(ledger, cli):
+    """Collect and print all unique tags from staging and synced entries."""
+    all_tags = set()
+
+    # From staging
+    staging = ledger.store.read_staging()
+    for entry in staging:
+        all_tags.update(entry["data"].get("tags", []))
+
+    # From synced ledger
+    ledger_data = ledger.get_ledger_data()
+    for day in ledger_data:
+        if day.get("type") != "day":
+            continue
+        for entry in day.get("entries", []):
+            all_tags.update(entry["data"].get("tags", []))
+
+    sorted_tags = sorted(all_tags)
+    if sorted_tags:
+        print("\n--- Tags ---")
+        for t in sorted_tags:
+            print(f"  @{t}")
+    else:
+        print("No tags found.")
+
 
 if __name__ == "__main__":
     main()
