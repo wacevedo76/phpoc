@@ -219,31 +219,27 @@ class InteractiveCLIStrategy(SyncStrategy):
         while True:
             print(f"\nEditing #{target_idx}: {entry['title']}")
             # Show original vs proposed
+            orig_start_str = time.strftime("%H:%M", time.localtime(entry["start_epoch"] // 1000))
             orig_end_str = time.strftime("%H:%M", time.localtime(entry["end_epoch"] // 1000))
-            orig_dur_m = entry["duration"] // 60000
-            orig_dur_s = (entry["duration"] % 60000) // 1000
+            prop_start_str = time.strftime("%H:%M", time.localtime(entry["start_epoch"] // 1000))
             prop_end_str = time.strftime("%H:%M", time.localtime(current_end // 1000))
             prop_dur = current_end - entry["start_epoch"]
-            prop_dur_m = prop_dur // 60000
-            prop_dur_s = (prop_dur % 60000) // 1000
 
-            print(f"  Original: end {orig_end_str}, duration {orig_dur_m}m{orig_dur_s}s"
+            print(f"  Original: {orig_start_str}-{orig_end_str}, duration {self._format_duration(entry['duration'])}"
                   f"{'  comment: \"' + entry['comment'] + '\"' if entry.get('comment') else ''}")
-            print(f"  Proposed: end {prop_end_str}, duration {prop_dur_m}m{prop_dur_s}s"
+            print(f"  Proposed: {prop_start_str}-{prop_end_str}, duration {self._format_duration(prop_dur)}"
                   f"{'  comment: \"' + current_comment + '\"' if current_comment else ''}")
             print()
 
             # End time
-            end_input = input(f"  End time (blank=keep {prop_end_str}, HH:MM, +N[m|h|s], or epoch ms): ").strip()
+            end_input = input(f"  End time (blank=keep {prop_end_str}, HH:MM, +N[m|h|s], N[h][m][s] duration, or epoch ms): ").strip()
             if end_input:
                 new_end = self._parse_end_time(end_input, entry)
                 if new_end is not None:
                     current_end = new_end
                     prop_end_str = time.strftime("%H:%M", time.localtime(current_end // 1000))
                     prop_dur = current_end - entry["start_epoch"]
-                    prop_dur_m = prop_dur // 60000
-                    prop_dur_s = (prop_dur % 60000) // 1000
-                    print(f"    New end: {prop_end_str}, duration: {prop_dur_m}m{prop_dur_s}s")
+                    print(f"    New end: {prop_end_str}, duration: {self._format_duration(prop_dur)}")
                 else:
                     print(f"    Invalid format, keeping {prop_end_str}.")
 
@@ -312,12 +308,11 @@ class InteractiveCLIStrategy(SyncStrategy):
     def _format_entry_line(p, overrides, excluded):
         """Build a formatted line for an entry."""
         tags_str = f" [@{', @'.join(p['tags'])}]" if p["tags"] else ""
+        start_str = time.strftime("%H:%M", time.localtime(p["start_epoch"] // 1000)) if p["start_epoch"] else "??"
         end_str = time.strftime("%H:%M", time.localtime(p["end_epoch"] // 1000)) if p["end_epoch"] else "??"
-        dur_m = p["duration"] // 60000
-        dur_s = (p["duration"] % 60000) // 1000
         comment_str = f' "{p["comment"]}"' if p.get("comment") else ""
 
-        line = f"  #{p['entry_index']}: {p['title']}{tags_str} | {p['date']} | {end_str} | {dur_m}m{dur_s}s{comment_str}"
+        line = f"  #{p['entry_index']}: {p['title']}{tags_str} | {p['date']} | {start_str}-{end_str} | {InteractiveCLIStrategy._format_duration(p['duration'])}{comment_str}"
 
         # Modified indicator
         if p["entry_index"] in overrides:
@@ -337,14 +332,23 @@ class InteractiveCLIStrategy(SyncStrategy):
     def _print_proposed_line(p, overrides):
         """Print the proposed changes line for a modified entry."""
         override = overrides[p["entry_index"]]
+        start_epoch = p["start_epoch"]
+        start_str = time.strftime("%H:%M", time.localtime(start_epoch // 1000))
         end_epoch = override.get("end_epoch", p["end_epoch"])
         end_str = time.strftime("%H:%M", time.localtime(end_epoch // 1000))
-        dur = end_epoch - p["start_epoch"]
-        dur_m = dur // 60000
-        dur_s = (dur % 60000) // 1000
+        dur = end_epoch - start_epoch
         comment = override.get("comment", p.get("comment"))
         comment_str = f'  comment: "{comment}"' if comment else ""
-        print(f"       proposed: end {end_str}, duration {dur_m}m{dur_s}s{comment_str}")
+        print(f"       proposed: {start_str}-{end_str}, duration {InteractiveCLIStrategy._format_duration(dur)}{comment_str}")
+
+    @staticmethod
+    def _format_duration(ms):
+        """Format milliseconds to HH:MM:SS string."""
+        total_seconds = ms // 1000
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        s = total_seconds % 60
+        return f"{h:02d}h{m:02d}m{s:02d}s"
 
     @staticmethod
     def _show_help(help_items):
