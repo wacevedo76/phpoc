@@ -48,7 +48,7 @@ class LedgerDomain:
             return json.loads(self.crypto.decrypt(pauses_enc))
         return []
 
-    def capture_habit(self, title, start_epoch, stop_epoch=None, metadata=None, is_active=False, tags=None):
+    def capture_habit(self, title, start_epoch, stop_epoch=None, metadata=None, is_active=False, tags=None, comment=None, media=None):
         staging = self.store.read_staging()
 
         # Normalize tags: lowercase, strip, dedup, remove empties
@@ -76,15 +76,18 @@ class LedgerDomain:
             "endTime_enc": self.crypto.encrypt(str(stop_epoch)) if stop_epoch else None,
             "pauses_enc": self.crypto.encrypt("[]"),
             "metadata_enc": self.crypto.encrypt(json.dumps(metadata or {})),
-            "tags": normalized_tags
+            "tags": normalized_tags,
+            "media": media if media is not None else []
         }
+        if comment is not None:
+            entry["comment"] = comment
         
         entry_hash = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
         staging.append({"hash": entry_hash, "data": entry, "start_epoch": start_epoch})
         self.store.write_staging(staging)
         return entry_hash[:10]
 
-    def end_habit(self, title, end_epoch):
+    def end_habit(self, title, end_epoch, comment=None):
         staging = self.store.read_staging()
         found = False
         for entry in staging:
@@ -110,6 +113,10 @@ class LedgerDomain:
                 data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
                 data["duration"] = self._compute_duration(start_epoch, end_epoch, pauses)
                 data["is_active"] = False
+
+                if comment is not None:
+                    data["comment"] = comment
+
                 # Re-calculate hash since data changed
                 entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
                 found = True
@@ -120,7 +127,48 @@ class LedgerDomain:
             
         self.store.write_staging(staging)
 
-    def pause_habit(self, title, pause_epoch):
+    def end_habit_at(self, title, end_epoch, comment=None):
+        """End a habit at a specific past timestamp. Computes correct duration.
+        Raises ValueError if task not found, not active, or already ended."""
+        staging = self.store.read_staging()
+        found = False
+        for entry in staging:
+            if entry["data"]["title"] == title and entry["data"].get("is_active"):
+                data = entry["data"]
+
+                # Resolve start epoch
+                start_val = data["startTime_enc"]
+                if start_val.startswith("plain:"):
+                    start_epoch = int(start_val[6:])
+                else:
+                    start_epoch = int(self.crypto.decrypt(start_val))
+
+                # Auto-unpause if currently paused
+                pauses = self._reconcile_plain_pauses(data)
+                if data.get("is_paused"):
+                    if pauses and pauses[-1].get("pause_stop") is None:
+                        pauses[-1]["pause_stop"] = end_epoch
+                        data["pauses_enc"] = self._encrypt_pauses(pauses)
+                    data["is_paused"] = False
+
+                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+                data["duration"] = self._compute_duration(start_epoch, end_epoch, pauses)
+                data["is_active"] = False
+
+                if comment is not None:
+                    data["comment"] = comment
+
+                # Re-calculate hash
+                entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+                found = True
+                break
+
+        if not found:
+            raise ValueError(f"No active task found for: {title}")
+
+        self.store.write_staging(staging)
+
+    def pause_habit(self, title, pause_epoch, comment=None):
         """Pause a running task. Raises ValueError if not found, not active, or already paused."""
         staging = self.store.read_staging()
         found = False
@@ -132,11 +180,14 @@ class LedgerDomain:
 
                 pauses = self._reconcile_plain_pauses(data)
                 next_index = len(pauses) + 1
-                pauses.append({
+                pause_record = {
                     "pause_index": next_index,
                     "pause_start": pause_epoch,
                     "pause_stop": None
-                })
+                }
+                if comment is not None:
+                    pause_record["comment"] = comment
+                pauses.append(pause_record)
                 data["pauses_enc"] = self._encrypt_pauses(pauses)
                 data["is_paused"] = True
                 # Re-calculate hash since data changed
@@ -149,7 +200,7 @@ class LedgerDomain:
 
         self.store.write_staging(staging)
 
-    def unpause_habit(self, title, unpause_epoch):
+    def unpause_habit(self, title, unpause_epoch, comment=None):
         """Unpause a paused task. Raises ValueError if not found, not active, or not paused."""
         staging = self.store.read_staging()
         found = False
@@ -162,6 +213,8 @@ class LedgerDomain:
                 pauses = self._reconcile_plain_pauses(data)
                 if pauses and pauses[-1].get("pause_stop") is None:
                     pauses[-1]["pause_stop"] = unpause_epoch
+                    if comment is not None:
+                        pauses[-1]["comment"] = comment
 
                 data["pauses_enc"] = self._encrypt_pauses(pauses)
                 data["is_paused"] = False
@@ -184,6 +237,49 @@ class LedgerDomain:
 
         self.store.write_staging(staging)
 
+    def get_pending_sync(self):
+        """Return a human-readable preview of entries ready to sync.
+        Only includes completed (non-active, non-paused) entries.
+        Returns list of dicts with title, start_epoch, end_epoch, duration, tags, date, entry_index, comment, media."""
+        staging = self.store.read_staging()
+        pending = []
+        for idx, entry in enumerate(staging):
+            data = entry["data"]
+            if data.get("is_active", False):
+                continue
+            if data.get("is_paused", False):
+                continue
+
+            # Decrypt timestamps
+            start_val = data["startTime_enc"]
+            if start_val.startswith("plain:"):
+                start_epoch = int(start_val[6:])
+            else:
+                start_epoch = int(self.crypto.decrypt(start_val))
+
+            end_val = data["endTime_enc"]
+            if end_val.startswith("plain:"):
+                end_epoch = int(end_val[6:])
+            else:
+                end_epoch = int(self.crypto.decrypt(end_val)) if end_val else None
+
+            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+
+            preview = {
+                "entry_index": idx,
+                "title": data["title"],
+                "start_epoch": start_epoch,
+                "end_epoch": end_epoch,
+                "duration": data.get("duration", 0),
+                "tags": data.get("tags", []),
+                "date": date_str,
+                "comment": data.get("comment"),
+                "media": data.get("media", []),
+            }
+            pending.append(preview)
+
+        return pending
+
     def _get_identity_secret(self) -> Optional[bytes]:
         id_data = self.store.read_identity()
         if not id_data: return None
@@ -193,6 +289,182 @@ class LedgerDomain:
             return bytes.fromhex(self.crypto.decrypt(enc_secret))
         except Exception:
             return None
+
+    def sync_day_with_selection(self, selected_indices, end_time_overrides=None, comment_overrides=None, media_overrides=None):
+        """Sync only the entries at selected_indices (from get_pending_sync()).
+        Accepts optional per-entry overrides:
+          end_time_overrides: {entry_index: {"end_epoch": int}}
+          comment_overrides:  {entry_index: {"comment": str}}
+          media_overrides:    {entry_index: {"media": list}}
+        Unselected entries remain in staging."""
+        staging = self.store.read_staging()
+        all_completed = [e for e in staging if not e["data"].get("is_active", False)]
+
+        selected = [all_completed[i] for i in selected_indices if i < len(all_completed)] if selected_indices else []
+        if not selected:
+            return None
+
+        # Apply overrides before syncing
+        for idx, entry in enumerate(selected):
+            data = entry["data"]
+            orig_idx = selected_indices[idx] if idx < len(selected_indices) else None
+
+            if end_time_overrides and orig_idx is not None and orig_idx in end_time_overrides:
+                override = end_time_overrides[orig_idx]
+                new_end = override["end_epoch"]
+                data["endTime_enc"] = self.crypto.encrypt(str(new_end))
+
+                # Recompute duration
+                start_val = data["startTime_enc"]
+                if start_val.startswith("plain:"):
+                    start_epoch = int(start_val[6:])
+                else:
+                    start_epoch = int(self.crypto.decrypt(start_val))
+                pauses = self._reconcile_plain_pauses(data)
+                data["duration"] = self._compute_duration(start_epoch, new_end, pauses)
+
+            if comment_overrides and orig_idx is not None and orig_idx in comment_overrides:
+                data["comment"] = comment_overrides[orig_idx]["comment"]
+
+            if media_overrides and orig_idx is not None and orig_idx in media_overrides:
+                data["media"] = media_overrides[orig_idx]["media"]
+
+            entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+        # Group by date and encrypt
+        days_to_sync = {}
+        for entry in selected:
+            data = entry["data"]
+            # Resolve startTime
+            if data["startTime_enc"].startswith("plain:"):
+                start_epoch = int(data["startTime_enc"][6:])
+                data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
+            else:
+                start_epoch = int(self.crypto.decrypt(data["startTime_enc"]))
+
+            # Resolve endTime
+            if data["endTime_enc"] and data["endTime_enc"].startswith("plain:"):
+                end_epoch = int(data["endTime_enc"][6:])
+                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+
+            # Resolve Metadata
+            if data["metadata_enc"].startswith("plain:"):
+                meta_json = data["metadata_enc"][6:]
+                data["metadata_enc"] = self.crypto.encrypt(meta_json)
+
+            # Resolve pauses_enc
+            if "pauses_enc" in data and data["pauses_enc"].startswith("plain:"):
+                pauses_json = data["pauses_enc"][6:]
+                data["pauses_enc"] = self.crypto.encrypt(pauses_json)
+
+            entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+            if date_str not in days_to_sync:
+                days_to_sync[date_str] = []
+            days_to_sync[date_str].append(entry)
+
+        ledger = self.store.read_ledger()
+        index = self.store.read_index()
+        identity_secret = self._get_identity_secret()
+
+        for date_str in sorted(days_to_sync.keys()):
+            prev_record = ledger[-1]
+
+            prev_date = time.strptime(prev_record.get("date", "1970-01-01"), "%Y-%m-%d")
+            curr_date = time.strptime(date_str, "%Y-%m-%d")
+
+            if curr_date.tm_year > prev_date.tm_year and prev_record.get("type") != "year_summary":
+                year_summary = {
+                    "type": "year_summary", "year": prev_date.tm_year,
+                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "date": date_str
+                }
+                year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
+                if identity_secret:
+                    year_summary["signature"] = self.crypto.sign(year_summary["year_hash"], identity_secret)
+                ledger.append(year_summary)
+                prev_record = ledger[-1]
+
+            if curr_date.tm_mon > prev_date.tm_mon and prev_record.get("type") != "month_summary":
+                month_summary = {
+                    "type": "month_summary",
+                    "month": f"{prev_date.tm_year}-{prev_date.tm_mon:02d}",
+                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "date": date_str
+                }
+                month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
+                if identity_secret:
+                    month_summary["signature"] = self.crypto.sign(month_summary["month_hash"], identity_secret)
+                ledger.append(month_summary)
+                prev_record = ledger[-1]
+
+            if date_str not in index:
+                index[date_str] = {}
+            for entry in days_to_sync[date_str]:
+                title = entry["data"]["title"]
+                duration = entry["data"]["duration"]
+                index[date_str][title] = index[date_str].get(title, 0) + duration
+
+            day_content = {
+                "type": "day",
+                "day_index": prev_record.get("day_index", 0) + 1 if prev_record.get("type") == "day" else 1,
+                "date": date_str,
+                "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                "entries": [{"hash": e["hash"], "data": e["data"]} for e in days_to_sync[date_str]]
+            }
+
+            day_json = json.dumps(day_content, sort_keys=True)
+            day_content["day_hash"] = self.crypto.seal(day_json)
+            if identity_secret:
+                day_content["signature"] = self.crypto.sign(day_content["day_hash"], identity_secret)
+            ledger.append(day_content)
+
+        self.store.write_ledger(ledger)
+        self.store.write_index(index)
+
+        # Remove only the synced entries from staging, keep active + unsynced completed
+        synced_indices_set = set()
+        for all_idx, entry in enumerate(all_completed):
+            if entry in selected:
+                synced_indices_set.add(id(entry))
+
+        new_staging = []
+        for entry in staging:
+            keep = True
+            if not entry["data"].get("is_active", False):
+                if id(entry) in synced_indices_set:
+                    keep = False
+            if keep:
+                new_staging.append(entry)
+        self.store.write_staging(new_staging)
+        return ledger[-1].get("day_hash")[:10]
+
+    def sync_with_strategy(self, strategy):
+        """Sync using a SyncStrategy for confirmation.
+
+        The strategy receives pending entries via get_pending_sync() and returns
+        a SyncDecision. This method executes that decision.
+
+        Args:
+            strategy: A SyncStrategy instance.
+
+        Returns:
+            The day_hash prefix if entries were synced, or None.
+        """
+        from core.sync_confirmation import SyncDecision
+        pending = self.get_pending_sync()
+        decision = strategy.decide(pending)
+
+        if decision.cancelled or not decision.has_selection:
+            return None
+
+        return self.sync_day_with_selection(
+            decision.selected_indices,
+            end_time_overrides=decision.end_time_overrides,
+            comment_overrides=decision.comment_overrides,
+            media_overrides=decision.media_overrides,
+        )
 
     def sync_day(self):
         staging = self.store.read_staging()

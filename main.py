@@ -51,7 +51,8 @@ def main():
     subparsers.add_parser("tags", help="List all unique tags ever used")
 
     # Sync command
-    subparsers.add_parser("sync", help="Sync staged habits to the ledger")
+    sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger")
+    sync_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -206,7 +207,9 @@ def main():
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
-        ledger.sync_day()
+        from core.sync_confirmation import AutoSyncStrategy, InteractiveCLIStrategy
+        strategy = AutoSyncStrategy() if getattr(args, 'yes', False) else InteractiveCLIStrategy()
+        ledger.sync_with_strategy(strategy)
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
@@ -214,6 +217,7 @@ def main():
         cli.show_rep(args.days, from_date=args.from_date, to_date=args.to_date)
     elif args.command == "list":
         cli.list_habits(args.source, args.days, from_date=args.from_date, to_date=args.to_date)
+
 
 
 def _list_tags(ledger, cli):
