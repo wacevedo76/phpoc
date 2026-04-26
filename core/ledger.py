@@ -290,12 +290,11 @@ class LedgerDomain:
         except Exception:
             return None
 
-    def sync_day_with_selection(self, selected_indices, end_time_overrides=None, comment_overrides=None, media_overrides=None):
+    def sync_day_with_selection(self, selected_indices, overrides=None):
         """Sync only the entries at selected_indices (from get_pending_sync()).
-        Accepts optional per-entry overrides:
-          end_time_overrides: {entry_index: {"end_epoch": int}}
-          comment_overrides:  {entry_index: {"comment": str}}
-          media_overrides:    {entry_index: {"media": list}}
+        Accepts optional per-entry overrides dict:
+          overrides: {entry_index: {"end_epoch": int, "comment": str, "media": list}}
+        Only fields that are present in the override dict are applied.
         Unselected entries remain in staging."""
         staging = self.store.read_staging()
         all_completed = [e for e in staging if not e["data"].get("is_active", False)]
@@ -303,31 +302,34 @@ class LedgerDomain:
         selected = [all_completed[i] for i in selected_indices if i < len(all_completed)] if selected_indices else []
         if not selected:
             return None
+        overrides = overrides or {}
 
         # Apply overrides before syncing
         for idx, entry in enumerate(selected):
             data = entry["data"]
             orig_idx = selected_indices[idx] if idx < len(selected_indices) else None
 
-            if end_time_overrides and orig_idx is not None and orig_idx in end_time_overrides:
-                override = end_time_overrides[orig_idx]
-                new_end = override["end_epoch"]
-                data["endTime_enc"] = self.crypto.encrypt(str(new_end))
+            if orig_idx is not None and orig_idx in overrides:
+                ov = overrides[orig_idx]
 
-                # Recompute duration
-                start_val = data["startTime_enc"]
-                if start_val.startswith("plain:"):
-                    start_epoch = int(start_val[6:])
-                else:
-                    start_epoch = int(self.crypto.decrypt(start_val))
-                pauses = self._reconcile_plain_pauses(data)
-                data["duration"] = self._compute_duration(start_epoch, new_end, pauses)
+                if "end_epoch" in ov:
+                    new_end = ov["end_epoch"]
+                    data["endTime_enc"] = self.crypto.encrypt(str(new_end))
 
-            if comment_overrides and orig_idx is not None and orig_idx in comment_overrides:
-                data["comment"] = comment_overrides[orig_idx]["comment"]
+                    # Recompute duration
+                    start_val = data["startTime_enc"]
+                    if start_val.startswith("plain:"):
+                        start_epoch = int(start_val[6:])
+                    else:
+                        start_epoch = int(self.crypto.decrypt(start_val))
+                    pauses = self._reconcile_plain_pauses(data)
+                    data["duration"] = self._compute_duration(start_epoch, new_end, pauses)
 
-            if media_overrides and orig_idx is not None and orig_idx in media_overrides:
-                data["media"] = media_overrides[orig_idx]["media"]
+                if "comment" in ov:
+                    data["comment"] = ov["comment"]
+
+                if "media" in ov:
+                    data["media"] = ov["media"]
 
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -461,9 +463,7 @@ class LedgerDomain:
 
         return self.sync_day_with_selection(
             decision.selected_indices,
-            end_time_overrides=decision.end_time_overrides,
-            comment_overrides=decision.comment_overrides,
-            media_overrides=decision.media_overrides,
+            overrides=decision.overrides if decision.overrides else None,
         )
 
     def sync_day(self):

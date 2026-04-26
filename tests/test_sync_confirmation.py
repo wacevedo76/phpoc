@@ -322,7 +322,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"end_epoch": start + 300000}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            end_time_overrides=overrides
+            overrides=overrides
         )
         ledger_data = self.ledger.get_ledger_data()
         day_rec = next(d for d in ledger_data if d.get("type") == "day")
@@ -340,7 +340,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"end_epoch": start + 300000}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            end_time_overrides=overrides
+            overrides=overrides
         )
         self.assertTrue(self.ledger.verify())
 
@@ -351,7 +351,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"comment": "Fixed the overrun"}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            comment_overrides=overrides
+            overrides=overrides
         )
         ledger_data = self.ledger.get_ledger_data()
         day_rec = next(d for d in ledger_data if d.get("type") == "day")
@@ -365,7 +365,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"comment": "Note"}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            comment_overrides=overrides
+            overrides=overrides
         )
         self.assertTrue(self.ledger.verify())
 
@@ -377,7 +377,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"media": media}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            media_overrides=overrides
+            overrides=overrides
         )
         ledger_data = self.ledger.get_ledger_data()
         day_rec = next(d for d in ledger_data if d.get("type") == "day")
@@ -392,7 +392,7 @@ class TestSyncConfirmed(unittest.TestCase):
         overrides = {pending[0]["entry_index"]: {"media": media}}
         self.ledger.sync_day_with_selection(
             [pending[0]["entry_index"]],
-            media_overrides=overrides
+            overrides=overrides
         )
         self.assertTrue(self.ledger.verify())
 

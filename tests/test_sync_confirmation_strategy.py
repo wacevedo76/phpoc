@@ -67,9 +67,7 @@ class TestSyncDecision(unittest.TestCase):
     def test_default_constructor(self):
         d = SyncDecision()
         self.assertEqual(d.selected_indices, [])
-        self.assertIsNone(d.end_time_overrides)
-        self.assertIsNone(d.comment_overrides)
-        self.assertIsNone(d.media_overrides)
+        self.assertEqual(d.overrides, {})
         self.assertFalse(d.cancelled)
 
     def test_has_selection_with_indices(self):
@@ -87,13 +85,13 @@ class TestSyncDecision(unittest.TestCase):
     def test_with_overrides(self):
         d = SyncDecision(
             selected_indices=[0],
-            end_time_overrides={0: {"end_epoch": 1000}},
-            comment_overrides={0: {"comment": "Fixed"}},
-            media_overrides={0: {"media": [{"name": "x.jpg"}]}},
+            overrides={
+                0: {"end_epoch": 1000, "comment": "Fixed", "media": [{"name": "x.jpg"}]},
+            },
         )
-        self.assertEqual(d.end_time_overrides[0]["end_epoch"], 1000)
-        self.assertEqual(d.comment_overrides[0]["comment"], "Fixed")
-        self.assertEqual(d.media_overrides[0]["media"][0]["name"], "x.jpg")
+        self.assertEqual(d.overrides[0]["end_epoch"], 1000)
+        self.assertEqual(d.overrides[0]["comment"], "Fixed")
+        self.assertEqual(d.overrides[0]["media"][0]["name"], "x.jpg")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -136,9 +134,7 @@ class TestAutoSyncStrategy(unittest.TestCase):
     def test_no_overrides(self):
         s = AutoSyncStrategy()
         d = s.decide(SAMPLE_PENDING)
-        self.assertIsNone(d.end_time_overrides)
-        self.assertIsNone(d.comment_overrides)
-        self.assertIsNone(d.media_overrides)
+        self.assertEqual(d.overrides, {})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -467,8 +463,8 @@ class TestStage1WithOverrides(unittest.TestCase):
         """No changes made, no overrides passed to sync."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0, 1, 2])
-        self.assertIsNone(d.end_time_overrides)
-        self.assertIsNone(d.comment_overrides)
+        self.assertEqual(d.overrides, {})
+        self.assertEqual(d.overrides, {})
 
     @patch("builtins.input", side_effect=[
         "E",        # enter edit mode
@@ -483,9 +479,9 @@ class TestStage1WithOverrides(unittest.TestCase):
     def test_stage1_sync_with_end_time_override(self, mock_input):
         """End time override is passed to sync decision."""
         d = self.strategy.decide(SAMPLE_PENDING)
-        self.assertIn(1, d.end_time_overrides)
+        self.assertIn(1, d.overrides)
         expected_end = SAMPLE_PENDING[1]["end_epoch"] + 30 * 60000
-        self.assertEqual(d.end_time_overrides[1]["end_epoch"], expected_end)
+        self.assertEqual(d.overrides[1]["end_epoch"], expected_end)
 
     @patch("builtins.input", side_effect=[
         "E",        # enter edit mode
@@ -500,8 +496,8 @@ class TestStage1WithOverrides(unittest.TestCase):
     def test_stage1_sync_with_comment_override(self, mock_input):
         """Comment override is passed to sync decision."""
         d = self.strategy.decide(SAMPLE_PENDING)
-        self.assertIn(0, d.comment_overrides)
-        self.assertEqual(d.comment_overrides[0]["comment"], "My note")
+        self.assertIn(0, d.overrides)
+        self.assertEqual(d.overrides[0]["comment"], "My note")
 
     @patch("builtins.input", side_effect=[
         "E",        # enter edit mode
@@ -516,8 +512,9 @@ class TestStage1WithOverrides(unittest.TestCase):
     def test_stage1_sync_with_both_overrides(self, mock_input):
         """Both end time and comment overrides can coexist."""
         d = self.strategy.decide(SAMPLE_PENDING)
-        self.assertIn(0, d.end_time_overrides)
-        self.assertIn(0, d.comment_overrides)
+        self.assertIn(0, d.overrides)
+        self.assertIn("end_epoch", d.overrides[0])
+        self.assertIn("comment", d.overrides[0])
 
     @patch("builtins.input", side_effect=[
         "E",        # edit mode
@@ -533,7 +530,7 @@ class TestStage1WithOverrides(unittest.TestCase):
         """Negative offset subtracts from end time."""
         d = self.strategy.decide(SAMPLE_PENDING)
         expected = SAMPLE_PENDING[1]["end_epoch"] - 30 * 60000
-        self.assertEqual(d.end_time_overrides[1]["end_epoch"], expected)
+        self.assertEqual(d.overrides[1]["end_epoch"], expected)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -698,8 +695,8 @@ class TestFullSyncFlow(unittest.TestCase):
         """Basic happy path: sync all as-is."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0, 1, 2])
-        self.assertIsNone(d.end_time_overrides)
-        self.assertIsNone(d.comment_overrides)
+        self.assertEqual(d.overrides, {})
+        self.assertEqual(d.overrides, {})
 
     @patch("builtins.input", side_effect=["C"])
     def test_cancel_returns_nothing(self, mock_input):
@@ -715,9 +712,10 @@ class TestFullSyncFlow(unittest.TestCase):
         """Edit one entry, sync with overrides."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0, 1, 2])
-        self.assertIn(0, d.end_time_overrides)
-        self.assertIn(0, d.comment_overrides)
-        self.assertEqual(d.comment_overrides[0]["comment"], "Fixed!")
+        self.assertIn(0, d.overrides)
+        self.assertIn("end_epoch", d.overrides[0])
+        self.assertIn("comment", d.overrides[0])
+        self.assertEqual(d.overrides[0]["comment"], "Fixed!")
 
     @patch("builtins.input", side_effect=[
         "E", "0", "+30m", "", "", "A",
@@ -729,10 +727,13 @@ class TestFullSyncFlow(unittest.TestCase):
         """Edit all three entries then sync."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0, 1, 2])
-        self.assertIn(0, d.end_time_overrides)
-        self.assertIn(1, d.end_time_overrides)
-        self.assertIn(2, d.end_time_overrides)
-        self.assertIn(2, d.comment_overrides)
+        self.assertIn(0, d.overrides)
+        self.assertIn(1, d.overrides)
+        self.assertIn(2, d.overrides)
+        self.assertIn("end_epoch", d.overrides[0])
+        self.assertIn("end_epoch", d.overrides[1])
+        self.assertIn("end_epoch", d.overrides[2])
+        self.assertIn("comment", d.overrides[2])
 
     @patch("builtins.input", side_effect=[
         "E", "0", "+30m", "", "", "A",
@@ -742,7 +743,7 @@ class TestFullSyncFlow(unittest.TestCase):
         """Edit #0, mark #1 as removed, sync excludes #1."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0, 2])
-        self.assertIn(0, d.end_time_overrides)
+        self.assertIn(0, d.overrides)
         self.assertNotIn(1, d.selected_indices)
 
     @patch("builtins.input", side_effect=[
@@ -775,7 +776,7 @@ class TestFullSyncFlow(unittest.TestCase):
         """Edit #0, re-edit with no changes — stale end_epoch override kept since user didn't change it."""
         d = self.strategy.decide(SAMPLE_PENDING)
         # The stale override (with end_epoch from first edit) remains
-        self.assertIn(0, d.end_time_overrides)
+        self.assertIn(0, d.overrides)
 
     @patch("builtins.input", side_effect=[
         "E", "0", "+10m", "", "", "A",
@@ -786,7 +787,7 @@ class TestFullSyncFlow(unittest.TestCase):
         """Editing same habit twice keeps only the latest modification."""
         d = self.strategy.decide(SAMPLE_PENDING)
         expected = SAMPLE_PENDING[0]["end_epoch"] + 20 * 60000
-        self.assertEqual(d.end_time_overrides[0]["end_epoch"], expected)
+        self.assertEqual(d.overrides[0]["end_epoch"], expected)
 
     @patch("builtins.input", side_effect=[
         "R", "0", "R", "1", "B",
@@ -807,8 +808,9 @@ class TestFullSyncFlow(unittest.TestCase):
         """Edit #0, remove #1 and #2."""
         d = self.strategy.decide(SAMPLE_PENDING)
         self.assertEqual(d.selected_indices, [0])
-        self.assertIn(0, d.end_time_overrides)
-        self.assertIn(0, d.comment_overrides)
+        self.assertIn(0, d.overrides)
+        self.assertIn("end_epoch", d.overrides[0])
+        self.assertIn("comment", d.overrides[0])
 
 
 if __name__ == "__main__":

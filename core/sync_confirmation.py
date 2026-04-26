@@ -8,7 +8,7 @@ confirmation UX without touching the domain layer.
 
 import json
 import time
-from typing import Optional, List, Dict, Any, Set
+from typing import List, Dict, Any, Set
 from dataclasses import dataclass, field
 
 
@@ -18,15 +18,15 @@ class SyncDecision:
 
     Attributes:
         selected_indices: List of entry_index values (from get_pending_sync()) to sync.
-        end_time_overrides: Optional dict mapping entry_index -> {"end_epoch": int}
-        comment_overrides:  Optional dict mapping entry_index -> {"comment": str}
-        media_overrides:    Optional dict mapping entry_index -> {"media": list}
+        overrides: Optional dict mapping entry_index -> {
+            "end_epoch": int,      // optional override
+            "comment": str,        // optional override
+            "media": list,         // optional override
+        }
         cancelled: If True, the user cancelled the entire sync operation.
     """
     selected_indices: List[int] = field(default_factory=list)
-    end_time_overrides: Optional[Dict[int, Dict[str, Any]]] = None
-    comment_overrides: Optional[Dict[int, Dict[str, Any]]] = None
-    media_overrides: Optional[Dict[int, Dict[str, Any]]] = None
+    overrides: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     cancelled: bool = False
 
     @property
@@ -90,12 +90,12 @@ class InteractiveCLIStrategy(SyncStrategy):
             return SyncDecision(cancelled=True)
 
         # In-memory state for this session
-        overrides: Dict[int, Dict[str, Any]] = {}      # entry_index -> {end_epoch, comment, media}
+        edit_overrides: Dict[int, Dict[str, Any]] = {}  # entry_index -> {end_epoch, comment, media}
         excluded: Set[int] = set()                      # entry_index values marked for removal
 
         while True:
             # Stage 1: Overview
-            choice = self._stage1_overview(pending, overrides, excluded)
+            choice = self._stage1_overview(pending, edit_overrides, excluded)
 
             if choice == "S":
                 # Build final selected_indices from non-excluded entries
@@ -104,27 +104,14 @@ class InteractiveCLIStrategy(SyncStrategy):
                 if not selected:
                     print("All entries have been marked for removal. Nothing to sync.")
                     continue
-                return SyncDecision(
-                    selected_indices=selected,
-                    end_time_overrides=overrides if any(
-                        "end_epoch" in v for v in overrides.values()
-                    ) else None,
-                    comment_overrides={
-                        k: {"comment": v["comment"]}
-                        for k, v in overrides.items() if "comment" in v
-                    } or None,
-                    media_overrides={
-                        k: {"media": v["media"]}
-                        for k, v in overrides.items() if "media" in v
-                    } or None,
-                )
+                return InteractiveCLIStrategy._build_sync_decision(selected, edit_overrides)
 
             elif choice == "C":
                 print("Sync cancelled.")
                 return SyncDecision(cancelled=True)
 
             elif choice == "E":
-                self._stage2_edit_menu(pending, overrides, excluded)
+                self._stage2_edit_menu(pending, edit_overrides, excluded)
                 # Loop back to Stage 1
 
             elif choice == "R":
@@ -305,6 +292,30 @@ class InteractiveCLIStrategy(SyncStrategy):
     # ── Helpers ──────────────────────────────────────────────────────
 
     @staticmethod
+    def _build_sync_decision(selected, overrides):
+        """Build a SyncDecision from selected indices and overrides dict.
+
+        Single-pass helper that extracts end_epoch, comment, and media
+        overrides from the internal overrides dict into the SyncDecision
+        format. Returns None for override fields that have no entries.
+        """
+        result_overrides = {}
+        for idx, ov in sorted(overrides.items()):
+            filtered = {}
+            if "end_epoch" in ov:
+                filtered["end_epoch"] = ov["end_epoch"]
+            if "comment" in ov:
+                filtered["comment"] = ov["comment"]
+            if "media" in ov:
+                filtered["media"] = ov["media"]
+            if filtered:
+                result_overrides[idx] = filtered
+        return SyncDecision(
+            selected_indices=selected,
+            overrides=result_overrides if result_overrides else {},
+        )
+
+    @staticmethod
     def _format_entry_line(p, overrides, excluded):
         """Build a formatted line for an entry.
 
@@ -337,8 +348,8 @@ class InteractiveCLIStrategy(SyncStrategy):
         print(self._format_entry_line(p, overrides, excluded))
 
     @staticmethod
-    def _print_proposed_line(p, overrides):
-        """Print the proposed changes line for a modified entry."""
+    def _format_proposed_line(p, overrides):
+        """Build a formatted proposed-changes line for a modified entry."""
         override = overrides[p["entry_index"]]
         start_epoch = p["start_epoch"]
         start_str = time.strftime("%H:%M", time.localtime(start_epoch // 1000))
@@ -347,7 +358,12 @@ class InteractiveCLIStrategy(SyncStrategy):
         dur = end_epoch - start_epoch
         comment = override.get("comment", p.get("comment"))
         comment_str = f'  comment: "{comment}"' if comment else ""
-        print(f"       proposed: {start_str}-{end_str}, duration {InteractiveCLIStrategy._format_duration(dur)}{comment_str}")
+        return f"       proposed: {start_str}-{end_str}, duration {InteractiveCLIStrategy._format_duration(dur)}{comment_str}"
+
+    @staticmethod
+    def _print_proposed_line(p, overrides):
+        """Print the proposed changes line for a modified entry."""
+        print(InteractiveCLIStrategy._format_proposed_line(p, overrides))
 
     @staticmethod
     def _format_duration(ms):
@@ -385,72 +401,99 @@ class InteractiveCLIStrategy(SyncStrategy):
                 return choice
             print(f"Invalid choice. Options: {', '.join(sorted(effective_options))}")
 
+    # ── End time parsing ─────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_offset(end_input, current_end):
+        """Parse +N[m|h|s] or -N[m|h|s] offset from current end time.
+
+        Returns new epoch ms, or None on failure.
+        """
+        try:
+            offset_str = end_input.lstrip("+-").strip()
+            if offset_str.endswith("m"):
+                offset_ms = int(offset_str[:-1]) * 60000
+            elif offset_str.endswith("h"):
+                offset_ms = int(offset_str[:-1]) * 3600000
+            elif offset_str.endswith("s"):
+                offset_ms = int(offset_str[:-1]) * 1000
+            else:
+                offset_ms = int(offset_str) * 60000
+            if end_input.startswith("-"):
+                offset_ms = -offset_ms
+            return current_end + offset_ms
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_duration(end_input, start_epoch):
+        """Parse N[h][m][s] absolute duration from start.
+
+        Returns epoch ms (start + duration), or None on failure.
+        """
+        import re
+        has_digits_before_unit = bool(re.search(r"\d+(?:h|m|s)", end_input))
+        if not has_digits_before_unit:
+            return None
+        try:
+            h = m = s = 0
+            h_match = re.search(r"(\d+)h", end_input)
+            m_match = re.search(r"(\d+)m", end_input)
+            s_match = re.search(r"(\d+)s", end_input)
+            if h_match:
+                h = int(h_match.group(1))
+            if m_match:
+                m = int(m_match.group(1))
+            if s_match:
+                s = int(s_match.group(1))
+            duration_ms = (h * 3600 + m * 60 + s) * 1000
+            return start_epoch + duration_ms
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_clock_time(end_input, date):
+        """Parse HH:MM / HH:MM:SS clock time or raw epoch ms.
+
+        Returns epoch ms, or None on failure.
+        """
+        from datetime import timezone, datetime
+        try:
+            parts = end_input.split(":")
+            date_parts = date.split("-")
+            if len(parts) == 2:
+                h, m = int(parts[0]), int(parts[1])
+                s = 0
+            elif len(parts) == 3:
+                h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+            else:
+                raise ValueError
+            dt = datetime(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
+                          h, m, s, tzinfo=timezone.utc)
+            return int(dt.timestamp() * 1000)
+        except (ValueError, IndexError):
+            try:
+                return int(end_input)
+            except ValueError:
+                return None
+
     @staticmethod
     def _parse_end_time(end_input, entry):
         """Parse end time input into epoch ms. Returns None on failure.
 
+        Dispatches to _parse_offset, _parse_duration, or _parse_clock_time
+        depending on the format detected.
+
         Supported formats:
-          HH:MM or HH:MM:SS     — clock time on entry's date (UTC)
-          +N[h][m][s] or -N...  — offset from current end time
-          N[h][m][s]            — absolute duration from start time
-          <epoch ms>            — raw epoch ms
+          +N[m|h|s] or -N...  — offset from current end time
+          N[h][m][s]           — absolute duration from start time
+          HH:MM or HH:MM:SS    — clock time on entry's date (UTC)
+          <epoch ms>           — raw epoch ms
         """
         end_input = end_input.strip()
-        new_end = None
         if end_input.startswith("+") or end_input.startswith("-"):
-            try:
-                offset_str = end_input.lstrip("+-").strip()
-                if offset_str.endswith("m"):
-                    offset_ms = int(offset_str[:-1]) * 60000
-                elif offset_str.endswith("h"):
-                    offset_ms = int(offset_str[:-1]) * 3600000
-                elif offset_str.endswith("s"):
-                    offset_ms = int(offset_str[:-1]) * 1000
-                else:
-                    offset_ms = int(offset_str) * 60000
-                if end_input.startswith("-"):
-                    offset_ms = -offset_ms
-                new_end = entry["end_epoch"] + offset_ms
-            except ValueError:
-                pass
-        elif "h" in end_input or "m" in end_input or "s" in end_input:
-            # Absolute duration: e.g. 1h20m, 45m, 2h, 90s
-            try:
-                import re
-                has_digits_before_unit = bool(re.search(r"\d+(?:h|m|s)", end_input))
-                if has_digits_before_unit:
-                    h = m = s = 0
-                    h_match = re.search(r"(\d+)h", end_input)
-                    m_match = re.search(r"(\d+)m", end_input)
-                    s_match = re.search(r"(\d+)s", end_input)
-                    if h_match:
-                        h = int(h_match.group(1))
-                    if m_match:
-                        m = int(m_match.group(1))
-                    if s_match:
-                        s = int(s_match.group(1))
-                    duration_ms = (h * 3600 + m * 60 + s) * 1000
-                    new_end = entry["start_epoch"] + duration_ms
-            except ValueError:
-                pass
-        else:
-            try:
-                parts = end_input.split(":")
-                from datetime import timezone, datetime
-                date_parts = entry["date"].split("-")
-                if len(parts) == 2:
-                    h, m = int(parts[0]), int(parts[1])
-                    s = 0
-                elif len(parts) == 3:
-                    h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
-                else:
-                    raise ValueError
-                dt = datetime(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
-                              h, m, s, tzinfo=timezone.utc)
-                new_end = int(dt.timestamp() * 1000)
-            except (ValueError, IndexError):
-                try:
-                    new_end = int(end_input)
-                except ValueError:
-                    pass
-        return new_end
+            return InteractiveCLIStrategy._parse_offset(end_input, entry["end_epoch"])
+        import re
+        if re.search(r"\d+(?:h|m|s)", end_input):
+            return InteractiveCLIStrategy._parse_duration(end_input, entry["start_epoch"])
+        return InteractiveCLIStrategy._parse_clock_time(end_input, entry["date"])
