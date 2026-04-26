@@ -306,13 +306,21 @@ class InteractiveCLIStrategy(SyncStrategy):
 
     @staticmethod
     def _format_entry_line(p, overrides, excluded):
-        """Build a formatted line for an entry."""
-        tags_str = f" [@{', @'.join(p['tags'])}]" if p["tags"] else ""
-        start_str = time.strftime("%H:%M", time.localtime(p["start_epoch"] // 1000)) if p["start_epoch"] else "??"
-        end_str = time.strftime("%H:%M", time.localtime(p["end_epoch"] // 1000)) if p["end_epoch"] else "??"
-        comment_str = f' "{p["comment"]}"' if p.get("comment") else ""
+        """Build a formatted line for an entry.
 
-        line = f"  #{p['entry_index']}: {p['title']}{tags_str} | {p['date']} | {start_str}-{end_str} | {InteractiveCLIStrategy._format_duration(p['duration'])}{comment_str}"
+        Shows proposed values when overrides exist.
+        """
+        tags_str = f" [@{', @'.join(p['tags'])}]" if p["tags"] else ""
+        override = overrides.get(p["entry_index"], {})
+
+        end_epoch = override.get("end_epoch", p["end_epoch"])
+        start_str = time.strftime("%H:%M", time.localtime(p["start_epoch"] // 1000)) if p["start_epoch"] else "??"
+        end_str = time.strftime("%H:%M", time.localtime(end_epoch // 1000)) if end_epoch else "??"
+        dur = end_epoch - p["start_epoch"]
+        comment = override.get("comment", p.get("comment"))
+        comment_str = f' "{comment}"' if comment else ""
+
+        line = f"  #{p['entry_index']}: {p['title']}{tags_str} | {p['date']} | {start_str}-{end_str} | {InteractiveCLIStrategy._format_duration(dur)}{comment_str}"
 
         # Modified indicator
         if p["entry_index"] in overrides:
