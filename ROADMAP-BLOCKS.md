@@ -33,41 +33,24 @@ All 16 existing tests pass. Manual tamper test confirms rejection.
 
 ---
 
-## 🔴 R2 — Identity File (`identity.json`) Has No In-Ledger Fallback
+## ~~🔴 R2 — Identity File (`identity.json`) Has No In-Ledger Fallback~~ ✅ RESOLVED
 
 **Backlog ID:** R2 (BACKLOG.md)
 
-### The Problem
+**Resolution (2026-04-28, branch `R2-identity-fallback`):**
 
-The identity secret (32-byte Ed25519-proxy signing key) is stored **only** in `identity.json`, a separate file alongside `ledger.json`. It is encrypted with the Master Key (derived from the Recovery Seed). During `recover`, the seed and passphrase are updated but `identity.json` is **never touched** — this works because the Master Key doesn't change.
+Embedded a copy of the encrypted identity secret inside the genesis block's `identity.identity_secret_enc_fallback` field:
 
-If `identity.json` is lost or corrupted:
-- The Master Key still works (seed → MK), so existing blocks remain decryptable
-- `_get_identity_secret()` returns `None` → `sync_day()` appends **unsigned** blocks
-- The ledger transitions from signed blocks to unsigned blocks mid-chain
-- Signature verification for old blocks is permanently broken (secret is gone)
-- No recovery path exists within the current design
+- **`core/factory.py`:** During `init`, writes `encrypted_identity` to both `identity.json` and the new `identity_secret_enc_fallback` field in genesis.
+- **`core/ledger.py` (`_get_identity_secret()`):** Tries `identity.json` → decrypt. Falls back to genesis fallback → decrypt. Returns `None` if neither exists (graceful degradation).
+- **`main.py` (`recover` handler):** Reads the encrypted identity from `identity.json` and copies it into the genesis fallback during re-seal.
+- **Existing ledgers:** No migration needed. If the fallback field is absent, `_get_identity_secret()` simply returns `None` as before. New `init` or `recover` on upgraded code populates it.
+- **All 16 tests pass.** Manual test confirms all three paths: normal, fallback, and absent.
 
-### Design Goals Impacted
-
-| Goal | Impact |
-|---|---|
-| [Recovery & Identity](DESIGN_GOALS.md#5-recovery--identity) | Identity recovery is not possible; identity portability requires manual multi-file backup |
-| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | Blocks after identity loss are unsigned, breaking the signature chain |
-
-### Roadmap Items Blocked
-
-| Roadmap Item | Priority | Why It's Blocked |
-|---|---|---|
-| **Single-file export** (`phpoc export --combined`) | 🔮 Low | The planned design merges identity into Genesis for portability. The current split-file design means users must back up two files. A ledger-only backup (`ledger.json`) is incomplete — the identity is orphaned. |
-| **Remote Sync (git-based)** | 🔜 Medium | The roadmap design sketch says "commit as-is since it's already encrypted." If only `ledger.json` is synced (the natural git-commit pattern), pulling onto a new machine results in unsigned blocks. The receiving machine has no identity key. |
-| **Real Ed25519 signatures** | 🔮 Low | Real Ed25519 keys are more sensitive than HMAC secrets — losing the private key is permanent. An in-ledger fallback becomes essential before real signatures can be safely adopted. |
-
-### Resolution Path
-
-1. **Embed a fallback copy** of the encrypted identity secret inside the genesis block's `identity` field (e.g., `identity_secret_enc_fallback`). The `init` flow already reads from `identity.json`; add a duplicate write into the genesis JSON. On `recover`, do the same. `_get_identity_secret()` would try `identity.json` first, then fall back to the genesis.
-2. **Add a warning** on `init` that `identity.json` must be backed up.
-3. **Optionally add** a `phpoc recover --regenerate-identity` sub-command that generates a new identity key, re-signs all existing blocks, and stores the new key in both `identity.json` and the genesis fallback.
+**What this unblocks:**
+- ✅ Single-file export — identity can be reconstructed from genesis alone
+- ✅ Remote Sync (git-based) — syncing `ledger.json` carries identity
+- ✅ Real Ed25519 signatures — private key loss no longer fatal
 
 ---
 
@@ -142,17 +125,17 @@ Before implementing Reconciliation, decide on one of:
 |---|---|---|
 | **Media Witness linkage** | 🔜 High | None |
 | **Reconciliation / Chain-Bridging** | 🔜 Medium | ~~R1~~ ✅, R4 (content proof design) |
-| **Remote Sync (git-based)** | 🔜 Medium | ~~R1~~ ✅, R2 (identity fallback), ~~R3~~ ✅ |
+| **Remote Sync (git-based)** | 🔜 Medium | ~~R1~~ ✅, ~~R2~~ ✅, ~~R3~~ ✅ |
 | **Archival Automation** | 🔜 Medium | None |
-| **Real Ed25519 signatures** | 🔮 Low | R2 (identity fallback — private key loss is permanent without in-ledger copy) |
+| **Real Ed25519 signatures** | 🔮 Low | ~~R2~~ ✅ — no longer blocked |
 | **Shareable Export** (`phpoc export --public`) | 🔮 Low | ~~R1~~ ✅ |
-| **Single-file export** | 🔮 Low | R2 (identity fallback) |
+| **Single-file export** | 🔮 Low | ~~R2~~ ✅ — identity embedded in genesis |
 | **Plausible deniability mode** | 🔮 Low | None |
 
-### Quick Wins (No New Dependencies, Minimal Code)
+### Quick Wins (No New Dependencies, Minimal Code) — ✅ All Done
 
 1. ~~**R1 mitigation:**~~ ✅ Done — encrypt-then-MAC tag added to `CryptoManager.encrypt()` / `decrypt()`
 2. ~~**R3 fix:**~~ ✅ Done — PBKDF2 iterations bumped to 600K
-3. **R2 mitigation:** Embed encrypted identity secret in genesis block `identity` field (~5 lines in `factory.py` and `_get_identity_secret()`)
+3. ~~**R2 mitigation:**~~ ✅ Done — identity fallback embedded in genesis
 
-These changes unblock all current roadmap items except the R4 design decision for Reconciliation.
+All three blockers are resolved. The remaining item blocking Reconciliation is **R4** — the design decision for entry-level content proof.

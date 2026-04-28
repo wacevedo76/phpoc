@@ -64,6 +64,21 @@ If `identity.json` is lost or corrupted:
 
 **Severity:** 🔴 High — blocks 2 roadmap items (Single-file export, Remote Sync)
 
+**Resolution (2026-04-28, branch `R2-identity-fallback`):**
+
+Embedded a copy of the encrypted identity secret inside the genesis block's `identity.identity_secret_enc_fallback` field:
+
+- **`core/factory.py`:** During `init`, the encrypted identity secret is now written to both `identity.json` and the genesis block's new `identity_secret_enc_fallback` field.
+- **`core/ledger.py` (`_get_identity_secret()`):** Tries `identity.json` first. If that fails, falls back to decrypting `identity_secret_enc_fallback` from the genesis block. If neither exists, returns `None` (graceful degradation — blocks become unsigned but data remains accessible).
+- **`main.py` (`recover` handler):** Also updates the genesis fallback during passphrase recovery, so the fallback stays in sync with the latest identity.
+- **No migration needed:** Existing ledgers without the fallback field continue to work — `_get_identity_secret()` simply won't find it and returns `None`. The fallback only activates after a re-init or recovery on upgraded code.
+- **Tested:** All 16 existing tests pass. Manual test confirms: (1) identity.json present → normal path, (2) identity.json deleted → genesis fallback, (3) no fallback at all → returns None.
+
+**What this unblocks:**
+- ✅ Single-file export — identity can be reconstructed from genesis alone
+- ✅ Remote Sync (git-based) — syncing only `ledger.json` is sufficient; identity comes with it
+- ✅ Real Ed25519 signatures — private key loss is no longer permanent (fallback exists)
+
 ---
 
 ### R3. PBKDF2 Iteration Count Is Below Current Recommendations

@@ -38,7 +38,8 @@ class LedgerFactory:
             "username": username,
             "email": email,
             "recovery_seed_enc": encrypted_seed,
-            "identity_pub_key": identity_pub_key
+            "identity_pub_key": identity_pub_key,
+            "identity_secret_enc_fallback": encrypted_identity
         }
 
         genesis = {

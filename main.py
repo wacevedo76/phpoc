@@ -145,8 +145,13 @@ def main():
         
         ledger_data[0]["identity"]["recovery_seed_enc"] = new_enc_seed
         
-        # 2. Re-seal the genesis (using MK)
+        # 2. Re-encrypt identity secret with same MK and embed as fallback
         crypto = CryptoManager(mk)
+        if "identity_secret_enc" in json.loads(LEDGER_PATH.parent.joinpath("identity.json").read_text()):
+            enc_identity = json.loads(LEDGER_PATH.parent.joinpath("identity.json").read_text())["identity_secret_enc"]
+            ledger_data[0]["identity"]["identity_secret_enc_fallback"] = enc_identity
+
+        # 3. Re-seal the genesis (using MK)
         check_data = {k: v for k, v in ledger_data[0].items() if k != "day_hash"}
         ledger_data[0]["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
         

@@ -281,14 +281,28 @@ class LedgerDomain:
         return pending
 
     def _get_identity_secret(self) -> Optional[bytes]:
+        # Try identity.json first
         id_data = self.store.read_identity()
-        if not id_data: return None
-        enc_secret = id_data.get("identity_secret_enc")
-        if not enc_secret: return None
+        if id_data:
+            enc_secret = id_data.get("identity_secret_enc")
+            if enc_secret:
+                try:
+                    return bytes.fromhex(self.crypto.decrypt(enc_secret))
+                except Exception:
+                    pass
+
+        # Fallback: check genesis block for embedded identity secret
         try:
-            return bytes.fromhex(self.crypto.decrypt(enc_secret))
+            ledger = self.store.read_ledger()
+            if ledger and len(ledger) > 0:
+                genesis = ledger[0]
+                enc_fallback = genesis.get("identity", {}).get("identity_secret_enc_fallback")
+                if enc_fallback:
+                    return bytes.fromhex(self.crypto.decrypt(enc_fallback))
         except Exception:
-            return None
+            pass
+
+        return None
 
     def sync_day_with_selection(self, selected_indices, overrides=None):
         """Sync only the entries at selected_indices (from get_pending_sync()).
