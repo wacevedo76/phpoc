@@ -59,30 +59,38 @@ def main():
     # Rep/List commands...
     rep_parser = subparsers.add_parser("rep", help="Show reputation summary")
     rep_parser.add_argument("days", type=int, nargs="?", help="Limit to last N days")
-    rep_parser.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
-    rep_parser.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+    rep_parser.add_argument("--date", help="Specific date (YYYY-MM-DD)")
+    rep_parser.add_argument("--week", help="ISO week (YYYY-Www) or date within week (YYYY-MM-DD)")
+    rep_parser.add_argument("--month", help="Month (YYYY-MM or MM)")
+    rep_parser.add_argument("--year", help="Year (YYYY)")
+    rep_parser.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, or MM)")
+    rep_parser.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, or MM)")
 
     # List command with subcommands for source
     list_parser = subparsers.add_parser("list", help="List detailed habits")
     list_subparsers = list_parser.add_subparsers(dest="source", required=True)
 
+    # Helper to add common date filter args to a subparser
+    def _add_date_args(p):
+        p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
+        p.add_argument("--date", help="Specific date (YYYY-MM-DD)")
+        p.add_argument("--week", help="ISO week (YYYY-Www) or date within week (YYYY-MM-DD)")
+        p.add_argument("--month", help="Month (YYYY-MM or MM)")
+        p.add_argument("--year", help="Year (YYYY)")
+        p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, or MM)")
+        p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, or MM)")
+
     # List all activities (synced + staged)
     list_all_p = list_subparsers.add_parser("all", help="List all activities (synced and staged)")
-    list_all_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
-    list_all_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
-    list_all_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+    _add_date_args(list_all_p)
 
     # List only synced activities
     list_synced_p = list_subparsers.add_parser("synced", help="List only synced activities")
-    list_synced_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
-    list_synced_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
-    list_synced_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+    _add_date_args(list_synced_p)
 
     # List only staged activities
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
-    list_staged_p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
-    list_staged_p.add_argument("--from", dest="from_date", help="Start date (YYYY-MM-DD)")
-    list_staged_p.add_argument("--to", dest="to_date", help="End date (YYYY-MM-DD)")
+    _add_date_args(list_staged_p)
 
     args = parser.parse_args()
 
@@ -219,9 +227,27 @@ def main():
         result = ledger.verify()
         print(result)
     elif args.command == "rep":
-        cli.show_rep(args.days, from_date=args.from_date, to_date=args.to_date)
+        from_str, to_str = CLIInterface._resolve_date_filters(
+            days=args.days,
+            date=getattr(args, 'date', None),
+            week=getattr(args, 'week', None),
+            month=getattr(args, 'month', None),
+            year=getattr(args, 'year', None),
+            from_date=args.from_date,
+            to_date=args.to_date,
+        )
+        cli.show_rep(args.days, from_date=from_str, to_date=to_str)
     elif args.command == "list":
-        cli.list_habits(args.source, args.days, from_date=args.from_date, to_date=args.to_date)
+        from_str, to_str = CLIInterface._resolve_date_filters(
+            days=args.days,
+            date=getattr(args, 'date', None),
+            week=getattr(args, 'week', None),
+            month=getattr(args, 'month', None),
+            year=getattr(args, 'year', None),
+            from_date=args.from_date,
+            to_date=args.to_date,
+        )
+        cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
 
 
 

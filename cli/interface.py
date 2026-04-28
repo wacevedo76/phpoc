@@ -1,5 +1,8 @@
 import json
 import time
+import calendar
+import re
+from datetime import datetime
 from core.ledger import LedgerDomain
 
 class CLIInterface:
@@ -147,7 +150,7 @@ class CLIInterface:
 
         from_str = from_date
         to_str = to_date
-        if days_limit:
+        if days_limit is not None and from_str is None:
             limit_epoch = time.time() - (days_limit * 86400)
             from_str = time.strftime("%Y-%m-%d", time.localtime(limit_epoch))
 
@@ -165,8 +168,8 @@ class CLIInterface:
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None):
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
-        # Convert days_limit to from_date if provided
-        if days_limit:
+        # Convert days_limit to from_date if from_date is not already set
+        if days_limit is not None and from_date is None:
             limit_epoch = time.time() - (days_limit * 86400)
             from_date = time.strftime("%Y-%m-%d", time.localtime(limit_epoch))
 
@@ -233,6 +236,150 @@ class CLIInterface:
             if source in ['staged', 'all'] and date_str in staged_by_date:
                 for entry_data in staged_by_date[date_str]:
                     self._print_entry(entry_data)
+
+    @staticmethod
+    def _resolve_date_filters(days=None, date=None, week=None, month=None, year=None,
+                               from_date=None, to_date=None):
+        """
+        Resolve all date filter arguments into (from_str, to_str) in YYYY-MM-DD format.
+
+        - Each range filter (date, week, month, year) narrows to its bounds.
+        - from_date and to_date act as partial bounds (lower / upper).
+        - days is only used if date is None (date overrides days).
+        - MM-only values borrow year from --year or current year.
+        - Conflicts print WARN: to stderr and return (None, None).
+
+        Returns (from_str, to_str) where None means unbounded.
+        """
+        from_str = None
+        to_str = None
+
+        def _narrow(lo, hi):
+            """Intersect a [lo, hi] range into the current bounds."""
+            nonlocal from_str, to_str
+            if lo is not None:
+                if from_str is None or lo > from_str:
+                    from_str = lo
+            if hi is not None:
+                if to_str is None or hi < to_str:
+                    to_str = hi
+
+        def _month_range(year_val, month_val):
+            """Return (first_day, last_day) for a given year/month."""
+            last = calendar.monthrange(year_val, month_val)[1]
+            return (f"{year_val:04d}-{month_val:02d}-01",
+                    f"{year_val:04d}-{month_val:02d}-{last:02d}")
+
+        def _parse_date_input(val, hint_year=None):
+            """Parse a date value into (from_str, to_str) bounds.
+            Supports: YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, MM.
+            """
+            val = str(val).strip()
+
+            # YYYY-MM-DD
+            m = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', val)
+            if m:
+                return (val, val)
+
+            # YYYY-MM
+            m = re.match(r'^(\d{4})-(\d{2})$', val)
+            if m:
+                y, mo = int(m.group(1)), int(m.group(2))
+                return _month_range(y, mo)
+
+            # YYYY
+            m = re.match(r'^(\d{4})$', val)
+            if m:
+                return (f"{val}-01-01", f"{val}-12-31")
+
+            # MM/YY
+            m = re.match(r'^(\d{2})/(\d{2})$', val)
+            if m:
+                mo, ys = int(m.group(1)), int(m.group(2))
+                y = 2000 + ys
+                return _month_range(y, mo)
+
+            # MM (month only, borrow year)
+            m = re.match(r'^(\d{2})$', val)
+            if m:
+                mo = int(m.group(1))
+                y = hint_year or datetime.now().year
+                return _month_range(y, mo)
+
+            raise ValueError(f"Unrecognized date format: {val}")
+
+        def _iso_week_range(week_str):
+            """Parse '2026-W17' or '2026-04-22' into (monday, sunday)."""
+            week_str = str(week_str).strip()
+
+            # Try ISO week format: YYYY-Www
+            m = re.match(r'^(\d{4})-W(\d{2})$', week_str)
+            if m:
+                year, week = int(m.group(1)), int(m.group(2))
+                # fromisocalendar available in Python 3.8+
+                monday = datetime.fromisocalendar(year, week, 1)
+                sunday = datetime.fromisocalendar(year, week, 7)
+                return (monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d"))
+
+            # Try date format: YYYY-MM-DD
+            m = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', week_str)
+            if m:
+                d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                # Find Monday of the ISO week containing this date
+                iso_year, iso_week, _ = d.isocalendar()
+                monday = datetime.fromisocalendar(iso_year, iso_week, 1)
+                sunday = datetime.fromisocalendar(iso_year, iso_week, 7)
+                return (monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d"))
+
+            raise ValueError(f"Unrecognized week format: {week_str}")
+
+        # --- Resolution order ---
+
+        hint_year = None
+        if year:
+            hint_year = int(year)
+
+        # 1. Range filters (date, week, month, year) — narrow to intersection
+        if date:
+            lo, hi = _parse_date_input(date)
+            _narrow(lo, hi)
+        elif days is not None:
+            limit_epoch = time.time() - (days * 86400)
+            lo = time.strftime("%Y-%m-%d", time.localtime(limit_epoch))
+            _narrow(lo, None)
+
+        if week:
+            lo, hi = _iso_week_range(week)
+            _narrow(lo, hi)
+
+        if month:
+            lo, hi = _parse_date_input(month, hint_year=hint_year)
+            _narrow(lo, hi)
+
+        if year:
+            _narrow(f"{year}-01-01", f"{year}-12-31")
+
+        # 2. Partial bounds (from_date, to_date)
+        if from_date is not None:
+            lo, _ = _parse_date_input(from_date, hint_year=hint_year)
+            if lo is not None:
+                if from_str is None or lo > from_str:
+                    from_str = lo
+
+        if to_date is not None:
+            _, hi = _parse_date_input(to_date, hint_year=hint_year)
+            if hi is not None:
+                if to_str is None or hi < to_str:
+                    to_str = hi
+
+        # 3. Conflict detection
+        if from_str is not None and to_str is not None and from_str > to_str:
+            import sys
+            print(f"WARN: Date range conflict — from ({from_str}) is after to ({to_str})",
+                  file=sys.stderr)
+            return (None, None)
+
+        return (from_str, to_str)
 
     def _print_entry(self, entry_data):
         """Helper method to print an entry (synced or staged)."""
