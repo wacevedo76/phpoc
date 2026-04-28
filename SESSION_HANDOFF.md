@@ -1,14 +1,18 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `cli-ux` — CLI/UX improvements for date filtering
+- **Branch:** `main` — all CLI/UX improvements merged, protocol vision documented
 - **Tests:** 353/353 passing (test_modular: 12, test_hierarchy: 2, test_recovery: 2, test_date_filters: 38, + sync/tags/pause tests)
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** clean, all changes committed
+- **Stale branches:** All deleted — only `main` + `origin/main` remain
 
-## Previous Session — Blockers Resolved (on `main`)
+---
 
-All four roadmap blockers (R1–R4) resolved in prior session, merged into `main`:
+## Session History
+
+### Prior Session — Blocker Resolution (R1–R4)
+All four roadmap blockers resolved on `main`:
 
 | Blocker | Resolution | Branch |
 |---------|-----------|--------|
@@ -17,45 +21,34 @@ All four roadmap blockers (R1–R4) resolved in prior session, merged into `main
 | **R3** — PBKDF2 600K | Bumped iterations 100K → 600K (OWASP 2026) | `R1-AES-CTR-Malleability` |
 | **R4** — Content Proof | Plaintext content_hash per entry | `R4-content-proof-design` |
 
-## This Session — CLI/UX Improvements (branch `cli-ux`)
+All branches merged and deleted.
 
-### Bug Fix: `list` ignoring `days` positional
-- `list_habits()` accepted `days_limit` parameter but never converted it to a `from_date` filter
-- `list synced 1` showed all history instead of last day
-- Fixed: `days_limit` now correctly converts to a `from_date` string (matching `show_rep()` behavior)
-- **Commit:** `d726965`
+### This Session — CLI/UX + Protocol Vision
 
-### New Feature: Rich Date Filtering
-Added `_resolve_date_filters()` static method to `CLIInterface` — a centralized date filter resolver supporting multiple input formats and filter chaining via intersection.
+**Bug Fix: `list` ignoring `days` positional**
+- `list_habits()` accepted `days_limit` but never applied it as a filter
+- Fixed: now converts `days_limit` → `from_date` (matching `show_rep()` behavior)
+- Commit: `d726965`
 
-**New CLI flags on `list` and `rep`:**
+**New Feature: Rich Date Filtering**
+- `_resolve_date_filters()` static method on `CLIInterface`
+- New CLI flags: `--date`, `--week`, `--month`, `--year`
+- Flexible `--from`/`--to` formats: YYYY-MM-DD, YYYY-MM, YYYY, MM/YY, MM
+- Filter chaining via intersection; conflict detection with `WARN:` to stderr
+- 38 new tests in `tests/test_date_filters.py`
+- Commit: `9a64948`
 
-| Flag | Example | Description |
-|------|---------|-------------|
-| `--date` | `--date 2026-04-28` | Exact day (overrides `days` positional) |
-| `--week` | `--week 2026-W17` | ISO week |
-| `--week` | `--week 2026-04-22` | Resolves date to its containing week |
-| `--month` | `--month 2026-04` | Full month |
-| `--month` | `--month 04` | Month only — borrows year from `--year` or current year |
-| `--year` | `--year 2026` | Full year |
-| `--from` | `--from 04/26` | Now accepts flexible formats |
-| `--to` | `--to 2026-06` | Now accepts flexible formats |
+**Protocol Vision Documented**
+- `VISION.md` — full protocol pitch: platform-free personal data, compartmentalized social networking, reputation without gatekeepers
+- `DESIGN_GOALS.md` — added §0 Protocol Vision at top; strikethrough on resolved blockers
+- `ROADMAP.md` — reorganized with §0 Protocol Layer as top priority; all historical blockers noted as resolved; new items: Format Spec, Portable Export, Remote Sync, Mobile/Wearable/Web POCs
+- `BACKLOG.md` — reorganized with new P1–P10 protocol items; R1–R4 moved to historical record; priorities updated
+- Commit: `c52e961`
 
-**Flexible `--from`/`--to` formats:** `YYYY-MM-DD`, `YYYY-MM`, `YYYY`, `MM/YY`, `MM` (borrows year from `--year` or current year)
-
-**Filter chaining:** All filters combine via intersection — narrows to the smallest unit of time specified. E.g.:
-- `--year 2026 --month 04` → April 2026
-- `--year 2026 --month 04 --week 2026-W17` → that specific week
-- `--year 2026 --month 04 --week 2026-W17 --date 2026-04-22` → that exact day
-
-**Conflict detection:** Prints `WARN:` to stderr when bounds are incompatible (e.g., `--year 2025 --date 2026-04-28`).
-
-**Files changed:**
-- `cli/interface.py` — added `_resolve_date_filters()` + imports (`calendar`, `re`, `datetime`)
-- `main.py` — added new CLI args, wired resolver into `list` and `rep` dispatch
-- `tests/test_date_filters.py` — 38 new tests (format parsing, chaining, conflicts, edge cases)
-
-**Commit:** `9a64948`
+**Branch Cleanup**
+- `cli-ux` merged to `main` and deleted
+- All stale branches (R1-AES-CTR-Malleability, R2-identity-fallback, R4-content-proof-design, feature-habit-pause, feature-sync_confirmation, feature-tags, ledger-creation, modularization) deleted
+- Only `main` + `origin/main` remain
 
 ## Crypto Architecture Checklist
 | Feature | Status | Notes |
@@ -93,23 +86,25 @@ Genesis (sealed + signed, identity fallback embedded)
 | `rep [days] [--date/--week/--month/--year/--from/--to]` | Yes | Blind-index reputation summary with rich date filtering |
 | `list {all,synced,staged} [days] [--date/--week/--month/--year/--from/--to]` | Yes | Decrypted detailed listing with rich date filtering |
 
-## Roadmap — All Unblocked
+## Next Up (Priority Order)
 
-| Item | Priority | Notes |
-|------|----------|-------|
-| **Media Witness linkage** | 🔜 High | Link content hashes to activities. No blockers. |
-| **Reconciliation / Chain-Bridging** | 🔜 Medium | R1+R4 resolved. content_hash enables plaintext verification after re-keying. |
-| **Remote Sync (git-based)** | 🔜 Medium | R1+R2+R3 resolved. Auth tags, identity fallback, 600K KDF. |
-| **Archival Automation** | 🔜 Medium | `phpoc archive --year X`. No blockers. |
-| **CLI/UX improvements** | 🔜 In Progress | Rich date filtering done. Next: colored output, table formatting, summaries, plugin system. |
-| **Real Ed25519 signatures** | 🔮 Low | R2 resolved — key loss no longer permanent. |
-| **Shareable Export** | 🔮 Low | R1 resolved — entry-level integrity assured. |
-| **Single-file export** | 🔮 Low | R2 resolved — identity in genesis. |
+| Priority | Item | Description | Dependencies |
+|---|---|---|---|
+| 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
+| 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
+| 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |
+| 🥇 High | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
+| 🥈 Medium | **P5 — Mobile POC** | Minimal Swift/Kotlin ledger reader/writer | P1, P2 |
+| 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | P1, P2 |
+| 🥈 Medium | **P7 — Web Viewer** | Static HTML page that renders exported segments | P2 |
 
 ## Architecture Notes
-- Cloud-folder sync strategy preferred (Dropbox/iCloud/etc) — no provider-specific code needed
-- Storage layer already abstracted via `AbstractLedgerStore`
-- `NoAuthCryptoManager` unchanged (local per-device staging convenience)
-- Date filtering is pure CLI-layer: no core/security/storage changes
+- **Protocol, not just a tool:** PHPOC is now explicitly positioned as an open data format. The CLI is the reference implementation.
+- **Compartmentalized data:** The format enforces separation at the data level — a platform sees only what you authorize.
+- **Zero-dependency commitment:** Core engine remains pure Python stdlib. Mobile implementations are independent.
+- **All historical blockers resolved:** R1 (auth tag), R2 (identity fallback), R3 (600K KDF), R4 (content hash) — all finished.
+- See `VISION.md` for the full protocol pitch, `ROADMAP.md` for the feature roadmap, `BACKLOG.md` for task-level tracking.
 
-See `CHANGELOG.md` for full history and `ROADMAP.md` / `ROADMAP-BLOCKS.md` for detailed planning.
+---
+
+See `CHANGELOG.md` for full history.
