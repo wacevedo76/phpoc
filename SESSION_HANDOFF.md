@@ -1,11 +1,12 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` — CLI/UX improvements, revert, staging normalization
-- **Tests:** 360/360 passing (test_modular: 12, test_hierarchy: 2, test_recovery: 2, test_date_filters: 38, test_sync_confirmation: 63, + sync/tags/pause/revert tests)
+- **Branch:** `main` — all fixes committed (normalization, display guards, --till)
+- **Tests:** 360/360 passing
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** clean, all changes committed
-- **Stale branches:** All deleted — only `main` + `origin/main` remain
+- **Config dir:** `~/.config/personal_history_poc/` is now a git repo (initial commit with staging, ledger, index)
+- **Sandbox:** `/tmp/test_user_history/` is a clean copy of config for safe experimentation
 
 ---
 
@@ -80,25 +81,33 @@ All branches merged and deleted.
 - All stale branches (R1-AES-CTR-Malleability, R2-identity-fallback, R4-content-proof-design, feature-habit-pause, feature-sync_confirmation, feature-tags, ledger-creation, modularization) deleted
 - Only `main` + `origin/main` remain
 
-**New Feature: `phpoc sync --since MM-DD`**
-- `--since MM-DD` (or `--since YYYY-MM-DD`) filters pending entries by date before the sync strategy sees them
-- Only entries with `date >= since_date` are offered for sync — perfect for syncing yesterday's entries while ignoring broken today entries
-- `MM-DD` borrows the current year; `YYYY-MM-DD` uses the full date
+**New Feature: `phpoc sync --till MM-DD`**
+- `--till MM-DD` (renamed from `--since` for clearer semantics) filters pending entries by date before sync
+- Only entries with `date <= till_date` are offered for sync — syncs everything up to and including that date
+- `MM-DD` borrows current year; `YYYY-MM-DD` also works
 - Works with both `--yes` (auto) and interactive modes
-- Implementation: `_resolve_since_date()` in main.py + filter in `sync_with_strategy()`
+- Implementation: `_resolve_till_date()` in main.py, `till_date` param on `sync_with_strategy()`
 - Commit: `041a245`
 
-**U1 — Sync Removal Auth Tag Mismatch Reproduction and Fix**
-- Reproduced the exact scenario: staging entry where `pauses_enc` was encrypted with a DIFFERENT crypto key than `startTime_enc`
-- `get_pending_sync()` succeeded on the bad entry (only decrypts startTime_enc, not pauses_enc)
-- `sync_day_with_selection()` failed at line 411 with auth tag mismatch when trying to decrypt pauses_enc
-- Full 11-entry staging test (mimicking user's actual data):
-  - Entry 0: "1" with pauses_enc encrypted by wrong key
-  - Entries 1-2: numbered entries marked for removal
-  - Entries 3-10: real activities to sync
-- Workflow test: remove indices [0,1,2] → sync [3..10] → verify (True) → list all (8 synced + 3 staged) → all pass
-- Fix: `_normalize_staging_entry()` converts hex-encrypted fields to `plain:` at start of `sync_day_with_selection()`. Entries with undecryptable fields are skipped with `WARN:` message.
-- **Remaining:** User needs to test with their actual passphrase
+**Bug Fix: plain: prefix guards in display paths**
+- `_print_entry()`, `list_habits()` staging grouping, and `view_active()` all called `crypto.decrypt()` without checking for `plain:` prefix
+- Would crash with `ValueError: non-hexadecimal number found in fromhex()` when listing entries with `plain:` formatted fields
+- Fixed by adding `startswith("plain:")` check before each decrypt call
+- Commit: `ad7060a`
+
+**U1 — Sync Removal Auth Tag Mismatch — WIN: Partial Resolve**
+- **Reproduced:** staging entries where some encrypted fields are bound to a DIFFERENT crypto key than current session
+- **Fix (commit `9727637`):** `_normalize_staging_entry()` converts hex-encrypted staging fields to `plain:` before sync. Entries with undecryptable fields are skipped with `WARN:` instead of crashing.
+- **Fix (commit `ad7060a`):** `_print_entry()`, `list_habits()` grouping, and `view_active()` now handle `plain:` prefix in all display paths
+- **User test result (2026-04-29):** `ph sync --yes --till 04-27` ran successfully:
+  - ✅ "Cooking - Diner" synced cleanly
+  - ✅ "Tidying - Kitchen" synced cleanly
+  - ✅ "1", "2", "1" (04-28 test entries) left in staging untouched
+  - ✅ "Working on phpoc", "Music", "YT", "Nitrotype", "Tidying" (04-28) left in staging
+  - ⚠️ "Learning Pi agent" skipped with WARN: "undecryptable data (stale crypto context)"
+  - ✅ `ph list all` displayed without crash (all 360 tests passing)
+- **Remaining:** "Learning Pi agent" has at least one encrypted field that can't be decrypted — needs manual conversion or the `repair_staging.py` script
+- **Remaining:** The numbered entries ("1", "2", "1") from 04-28 also have hex-encrypted fields from the old revert format — may or may not be decryptable with current key
 
 ## Crypto Architecture Checklist
 | Feature | Status | Notes |
@@ -131,7 +140,7 @@ Genesis (sealed + signed, identity fallback embedded)
 | `add end <title>` | Optional | Ends active task |
 | `add oneoff` | Optional | Captures completed task |
 | `view` | Optional | Shows running tasks |
-| `sync [--yes] [--since MM-DD]` | Yes | Commits staging → immutable ledger (interactive or --yes auto); `--since` filters to entries on/after date |
+| `sync [--yes] [--till MM-DD]` | Yes | Commits staging → immutable ledger (interactive or --yes auto); `--till` syncs only entries up to and including that date |
 | `verify` | Yes | Full chain integrity check (incl. content_hash) |
 | `rep [days] [--date/--week/--month/--year/--from/--to]` | Yes | Blind-index reputation summary with rich date filtering |
 | `list {all,synced,staged} [days] [--date/--week/--month/--year/--from/--to]` | Yes | Decrypted detailed listing with rich date filtering |
@@ -140,33 +149,29 @@ Genesis (sealed + signed, identity fallback embedded)
 
 ## Unresolved Issues
 
-### D1 — Git Versioning of Config Directory (NEW)
-- **Action needed:** Convert `~/.config/personal_history_poc/` to a git repo
-- **Why:** Track before/after states of staging/ledger/index files during sync debugging
-- **How:** `cd ~/.config/personal_history_poc && git init && git add -A && git commit -m "Initial snapshot" && git tag -a pre-fix -m "Staging before normalization fix"`
-- **Workflow:** Commit before each `phpoc sync` attempt, diff after to see exact changes
-- **Backlog ref:** D1 in BACKLOG.md (critical priority)
+### D1 — Git Versioning of Config Directory ✅
+- **Done:** User git-initted `~/.config/personal_history_poc/` with initial commit of staging.json, ledger.json, index.json
+- **Template:** `/tmp/test_user_history/` recreated from config dir for safe experimentation
+- **Workflow:** `git add -A && git commit -m "before"` → run test → `git diff HEAD -- staging.json`
 
-### U1 — Sync Removal Auth Tag Mismatch
-- **Symptom:** `phpoc sync` → toggle removal (`R`) → press `S` → `ValueError: Encrypted data integrity check failed: auth tag mismatch` at `sync_day_with_selection()` line ~411, `pauses_json_str = self.crypto.decrypt(data["pauses_enc"])`
-- **Root cause reproduced:** Staging entries where `pauses_enc` is encrypted with a DIFFERENT crypto key than `startTime_enc`. This happens when revert (old code) copies encrypted fields from ledger back to staging, and the crypto context changed between sync sessions.
-- **Fix (commit `9727637`):** `_normalize_staging_entry()` runs at the start of `sync_day_with_selection()`. It decrypts each encrypted staging field using the current crypto manager and converts to `plain:` format. If decryption fails (auth tag mismatch), the entry is **skipped with `WARN:` message** instead of crashing.
-- **Verification:** Tested with 11-entry staging (1 bad entry with wrong key). Workflow: remove bad+numbered entries → sync remaining 8 → verify (True) → list all (correct).
-- **Still open:** User needs to run `phpoc sync` on their actual data to confirm fix works with their passphrase.
-- **User's staging state** (`/home/pi/.config/personal_history_poc/staging.json`):
-  - 11 entries, all with hex-encrypted `pauses_enc` (old revert format)
-  - Indices 0-2: numbered "1", "2", "1" (0m durations, test entries)
-  - Indices 3-10: real activities (Cooking, Tidying, Working, Music, etc.)
-  - Entry 0 may have pauses_enc from a different crypto context
-- **One-time migration script** available at `scripts/repair_staging.py` to convert all encrypted fields to plain: format if sync still fails
-- **Next step:** User will convert `~/.config/personal_history_poc/` to a git repo (D1 in BACKLOG.md) for before/after snapshots during debugging
+### U1 — Stale Crypto Context in Reverted Entries (PARTIALLY RESOLVED)
+- **Symptom:** Some staging entries (from old revert code) have encrypted fields bound to a different crypto key. Sync now skips them gracefully with `WARN:` instead of crashing.
+- **Fix (commit `9727637`):** `_normalize_staging_entry()` converts hex→plain: at sync start; undecryptable entries skipped.
+- **Fix (commit `ad7060a`):** All display paths handle `plain:` prefix.
+- **Temp workaround for syncing:** `ph sync --yes --till YYYY-MM-DD` syncs everything up to a date, leaving broken entries for later.
+- **Permanent fix needed:** Either:
+  a) Revert the broken day blocks and re-revert with fixed code (`revert_entries()` now produces `plain:` format) — if those entries were ever in the ledger
+  b) Run `scripts/repair_staging.py` to manually convert all hex fields to `plain:`
+  c) Manually edit staging.json to remove stale entries
+- **Status:** "Learning Pi agent" confirmed to have undecryptable fields. Remaining 04-28 entries untested but likely same issue.
+- **Ongoing investigation:** Using `/tmp/test_user_history/` as sandbox copy, tracked via git diff on `~/.config/personal_history_poc/
 
 ## Next Up (Priority Order)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
-| 🔴 Critical | **U1 — Sync Removal Auth Tag Mismatch** | Verify normalization fix; git-version config for before/after snapshots | User data + passphrase |
-| 🔴 Critical | **D1 — Git Versioning of Config** | `git init` in `~/.config/personal_history_poc/` for state tracking | User action |
+| 🔴 Critical | **U1 — Stale Crypto Context** | Repair reverted entries with mismatched encryption key ("Learning Pi agent" + possibly 04-28 entries). Options: revert blocks + re-revert with fixed code, or run repair_staging.py | None — investigation phase |
+| 🔴 Critical | **D1 — Git Versioning of Config** ✅ | Git-initted, first commit done. Debug workflow: commit before test, diff after | Done |
 | 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
 | 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |
