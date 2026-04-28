@@ -1,8 +1,8 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` — all CLI/UX improvements merged, protocol vision documented
-- **Tests:** 353/353 passing (test_modular: 12, test_hierarchy: 2, test_recovery: 2, test_date_filters: 38, + sync/tags/pause tests)
+- **Branch:** `main` — CLI/UX improvements, revert, staging normalization
+- **Tests:** 360/360 passing (test_modular: 12, test_hierarchy: 2, test_recovery: 2, test_date_filters: 38, test_sync_confirmation: 63, + sync/tags/pause/revert tests)
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** clean, all changes committed
 - **Stale branches:** All deleted — only `main` + `origin/main` remain
@@ -51,6 +51,30 @@ All branches merged and deleted.
 - Display shows `[23:30 - 03:30]` with no indicator that 03:30 is next day
 - Documented as P11 in BACKLOG.md with three fix options (display marker, filter inclusion, or split-at-sync)
 
+**Bug Fix: Staging Index Mapping in sync_day_with_selection()**
+- `selected_indices` (staging-level indices) were incorrectly used to index into `all_completed` (a filtered list)
+- Fixed by indexing directly into `staging[]` with a set membership check
+- 2 new tests: `test_sync_partial_with_active_entries` and `test_sync_partial_remove_with_active_entries`
+- Commit: `37eecab`
+
+**Revert Feature (replaces prune)**
+- `prune_entries()` (arbitrary block editing) replaced with `revert_entries(count)` — truncates only from end of chain
+- New CLI: `phpoc revert <count>` and `phpoc revert --list`
+- 5 new tests
+- Commit: `c152861`
+
+**Revert Fix: Convert encrypted fields to plain: format**
+- Reverted entries carried encrypted `pauses_enc`/`metadata_enc` from ledger
+- Sync pipeline expects `plain:` format (NoAuthCryptoManager compat)
+- Now converts all encrypted fields back to `plain:` during revert
+- Commit: `e0a3e9d`
+
+**Sync Normalization (graceful decryption fallback)**
+- `_normalize_staging_entry()` converts hex-encrypted staging fields to `plain:` before sync
+- If decryption fails (auth tag mismatch), entry is skipped with `WARN:` message
+- Handles stale encrypted data from old reverts or different crypto context
+- Commit: `9727637`
+
 **Branch Cleanup**
 - `cli-ux` merged to `main` and deleted
 - All stale branches (R1-AES-CTR-Malleability, R2-identity-fallback, R4-content-proof-design, feature-habit-pause, feature-sync_confirmation, feature-tags, ledger-creation, modularization) deleted
@@ -87,15 +111,32 @@ Genesis (sealed + signed, identity fallback embedded)
 | `add end <title>` | Optional | Ends active task |
 | `add oneoff` | Optional | Captures completed task |
 | `view` | Optional | Shows running tasks |
-| `sync` | Yes | Commits staging → immutable ledger |
+| `sync` | Yes | Commits staging → immutable ledger (interactive confirmation) |
 | `verify` | Yes | Full chain integrity check (incl. content_hash) |
 | `rep [days] [--date/--week/--month/--year/--from/--to]` | Yes | Blind-index reputation summary with rich date filtering |
 | `list {all,synced,staged} [days] [--date/--week/--month/--year/--from/--to]` | Yes | Decrypted detailed listing with rich date filtering |
+| `revert <count>` | Yes | Remove last N day blocks from ledger, restore entries to staging |
+| `revert --list` | Yes | Show ledger summary with recent day blocks |
+
+## Unresolved Issues
+
+### U1 — Sync Removal Auth Tag Mismatch (HIGH PRIORITY)
+- **Symptom:** When using `phpoc sync` → toggle removal (`R`) → press `S` to sync, user gets:
+  `ValueError: Encrypted data integrity check failed: auth tag mismatch`
+  at `sync_day_with_selection()` line ~411, `pauses_json_str = self.crypto.decrypt(data["pauses_enc"])`
+- **Stack trace:** `main.py:232` → `sync_with_strategy()` → `sync_day_with_selection()`
+- **Confirmed:** User's staging has 11 entries with hex-encrypted `pauses_enc` (not `plain:` format)
+- **Could NOT reproduce:** All test scenarios (clean data, old-style revert, multiple revert cycles, mixed format entries) pass without error
+- **Partial fix:** Added `_normalize_staging_entry()` that converts encrypted fields to `plain:` before sync, skipping undecryptable entries with a warning (commit `9727637`)
+- **Likely cause:** Staging entries carry encrypted data from a stale/different crypto context — `pauses_enc` auth tag doesn't match current master key
+- **Still open:** User needs to test the fix on their actual data to confirm resolution
+- **Notes:** `get_pending_sync()` works (decrypts `startTime_enc`/`endTime_enc` successfully); the failure is only on `pauses_enc` in the grouping section of `sync_day_with_selection()`
 
 ## Next Up (Priority Order)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
+| 🔴 Critical | **U1 — Sync Removal Auth Tag Mismatch** | Verify fix works on user's actual data; debug further if still failing | User's actual staging data |
 | 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
 | 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |
