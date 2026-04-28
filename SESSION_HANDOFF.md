@@ -132,6 +132,13 @@ Genesis (sealed + signed, identity fallback embedded)
 
 ## Unresolved Issues
 
+### D1 — Git Versioning of Config Directory (NEW)
+- **Action needed:** Convert `~/.config/personal_history_poc/` to a git repo
+- **Why:** Track before/after states of staging/ledger/index files during sync debugging
+- **How:** `cd ~/.config/personal_history_poc && git init && git add -A && git commit -m "Initial snapshot" && git tag -a pre-fix -m "Staging before normalization fix"`
+- **Workflow:** Commit before each `phpoc sync` attempt, diff after to see exact changes
+- **Backlog ref:** D1 in BACKLOG.md (critical priority)
+
 ### U1 — Sync Removal Auth Tag Mismatch
 - **Symptom:** `phpoc sync` → toggle removal (`R`) → press `S` → `ValueError: Encrypted data integrity check failed: auth tag mismatch` at `sync_day_with_selection()` line ~411, `pauses_json_str = self.crypto.decrypt(data["pauses_enc"])`
 - **Root cause reproduced:** Staging entries where `pauses_enc` is encrypted with a DIFFERENT crypto key than `startTime_enc`. This happens when revert (old code) copies encrypted fields from ledger back to staging, and the crypto context changed between sync sessions.
@@ -143,13 +150,15 @@ Genesis (sealed + signed, identity fallback embedded)
   - Indices 0-2: numbered "1", "2", "1" (0m durations, test entries)
   - Indices 3-10: real activities (Cooking, Tidying, Working, Music, etc.)
   - Entry 0 may have pauses_enc from a different crypto context
-- **One-time migration script** available to convert all encrypted fields to plain: format if sync still fails
+- **One-time migration script** available at `scripts/repair_staging.py` to convert all encrypted fields to plain: format if sync still fails
+- **Next step:** User will convert `~/.config/personal_history_poc/` to a git repo (D1 in BACKLOG.md) for before/after snapshots during debugging
 
 ## Next Up (Priority Order)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
-| 🔴 Critical | **U1 — Sync Removal Auth Tag Mismatch** | Verify fix works on user's actual data; debug further if still failing | User's actual staging data |
+| 🔴 Critical | **U1 — Sync Removal Auth Tag Mismatch** | Verify normalization fix; git-version config for before/after snapshots | User data + passphrase |
+| 🔴 Critical | **D1 — Git Versioning of Config** | `git init` in `~/.config/personal_history_poc/` for state tracking | User action |
 | 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
 | 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |

@@ -11,6 +11,56 @@
 
 ---
 
+## 🔴 D1. Git Versioning of Config Directory
+
+**Type:** Debugging infrastructure
+**Priority:** Critical — enables state tracking for the sync auth bug investigation
+**Blocked by:** Nothing — user action, not code change
+
+Convert `~/.config/personal_history_poc/` into a git repository so that
+changes to staging, ledger, and index files are tracked. This provides:
+
+- **Before/after snapshots:** See exactly what `sync`, `revert`, or `add` changed
+- **Safe undo:** `git checkout <hash>` to revert to known-good state
+- **Reproducible debugging:** Run an experiment, compare diffs, revert cleanly
+- **Chain of custody:** Proves what the staging looked like before each sync attempt
+
+**Instructions (user executes on their machine):**
+
+```bash
+cd ~/.config/personal_history_poc
+# If the dir isn't already a git repo:
+git init
+git add -A
+git commit -m "Initial snapshot — staging with 11 encrypted entries"
+
+# Make a tag for the current state
+git tag -a pre-fix -m "Staging state before normalization fix"
+```
+
+**Workflow for debugging the sync auth bug:**
+
+```bash
+# Before each sync attempt, snapshot:
+git add -A && git commit -m "before sync attempt"
+
+# Run sync ...
+phpoc sync
+
+# After sync, snapshot again:
+git add -A && git commit -m "after sync attempt"
+
+# If things go wrong, compare:
+git diff HEAD~1 -- staging.json  # what changed in staging?
+git diff HEAD~1 -- ledger.json   # what blocks were added?
+```
+
+**Definition of done:**
+- User has run `git init` + first commit in config directory
+- At least one before/after sync snapshot captured
+- Diffs show what happened to staging during the failed sync
+
+
 ## 🔴 P1. Format Specification (PHPSPEC.md)
 
 **Type:** Protocol foundation
@@ -399,6 +449,7 @@ Two concurrent `main.py` processes could race on read/write of the cached key fi
 
 | Priority | Items |
 |---|---|
+| 🔴 Critical | D1 (Git versioning of config for debugging), U1 (Sync auth tag mismatch) |
 | 🔴 Highest | P1 (Format Spec) |
 | 🔴 High | P2 (Portable Export), P3 (Remote Sync), P4 (CLI polish) |
 | 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span), P12 (Chain Head Witness) |
