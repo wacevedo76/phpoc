@@ -237,6 +237,42 @@ Link content hashes (SHA-256 of video/audio/photos) to specific activities.
 
 ---
 
+## 🟡 P11. Day-Boundary Spanning Activities
+
+**Type:** Edge case / UX polish
+**Priority:** Medium
+**Roadmap ref:** [§4 — UX](ROADMAP.md#4-user-experience--accessibility-reference-implementation)
+**Blocked by:** Nothing — can start now.
+
+Activities that cross midnight (e.g., 23:30 → 03:30) are stored under their start date only.
+This creates two issues:
+
+### 1. Display Ambiguity
+```
+Date: 2026-04-28
+  [23:30 - 03:30] Late Night Coding (240m)
+```
+`03:30` is the next day but there's no visual indicator. User sees "23:30 - 03:30" and may misinterpret.
+
+### 2. Date Filter Misses Spanning Entries
+`list synced --date 2026-04-29` would **not** show the activity above,
+even though 4 hours of it happened on the 29th. The filter checks the day-block's date
+("2026-04-28"), not the entry's end time.
+
+**Potential fixes (choose one or combine):**
+- **A — Display marker only:** Detect cross-day entries, append `⏭` or `(next day)`
+- **B — Include spanning entries in filters:** When filtering by date range, also peek at
+the previous day and include entries whose end date falls within range
+- **C — Split at sync time:** Split crossing entries into two (one per day), like Toggl/Clockify
+
+**Notes:**
+- Fix A is trivial (`_print_entry` in `cli/interface.py`)
+- Fix B requires decrypting entry timestamps during the filter pass (slightly more work,
+still cheap)
+- Fix C changes the sync data model (most invasive, cleanest result)
+
+---
+
 ## 🔮 Future Items (Low Priority)
 
 | ID | Item | Notes |
@@ -310,7 +346,7 @@ Two concurrent `main.py` processes could race on read/write of the cached key fi
 |---|---|
 | 🔴 Highest | P1 (Format Spec) |
 | 🔴 High | P2 (Portable Export), P3 (Remote Sync), P4 (CLI polish) |
-| 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness) |
+| 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span) |
 | 🔮 Future | F1–F9 (Ed25519, Shareable Export, CRDT sync, etc.) |
 | ✅ Resolved | R1–R4 (historical roadblocks) |
 | 🟢 Low | B1–B3 (cosmetic bugs) |

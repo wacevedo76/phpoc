@@ -42,8 +42,14 @@ All branches merged and deleted.
 - `VISION.md` — full protocol pitch: platform-free personal data, compartmentalized social networking, reputation without gatekeepers
 - `DESIGN_GOALS.md` — added §0 Protocol Vision at top; strikethrough on resolved blockers
 - `ROADMAP.md` — reorganized with §0 Protocol Layer as top priority; all historical blockers noted as resolved; new items: Format Spec, Portable Export, Remote Sync, Mobile/Wearable/Web POCs
-- `BACKLOG.md` — reorganized with new P1–P10 protocol items; R1–R4 moved to historical record; priorities updated
+- `BACKLOG.md` — reorganized with P1–P11 protocol items; R1–R4 moved to historical record; priorities updated
 - Commit: `c52e961`
+
+**Edge Case Identified: Day-Boundary Spanning Activities**
+- Activities crossing midnight (e.g., 23:30 → 03:30) stored under start date only
+- Date filters miss entries that span INTO the filtered range but started before it
+- Display shows `[23:30 - 03:30]` with no indicator that 03:30 is next day
+- Documented as P11 in BACKLOG.md with three fix options (display marker, filter inclusion, or split-at-sync)
 
 **Branch Cleanup**
 - `cli-ux` merged to `main` and deleted
@@ -97,6 +103,7 @@ Genesis (sealed + signed, identity fallback embedded)
 | 🥈 Medium | **P5 — Mobile POC** | Minimal Swift/Kotlin ledger reader/writer | P1, P2 |
 | 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | P1, P2 |
 | 🥈 Medium | **P7 — Web Viewer** | Static HTML page that renders exported segments | P2 |
+| 🥈 Medium | **P11 — Day-Boundary Span** | Activities crossing midnight: display marker, filter inclusion, or split-at-sync | None |
 
 ## Architecture Notes
 - **Protocol, not just a tool:** PHPOC is now explicitly positioned as an open data format. The CLI is the reference implementation.
