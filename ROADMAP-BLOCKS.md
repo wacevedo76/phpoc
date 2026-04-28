@@ -1,7 +1,8 @@
 # Roadmap Blocks — PH Ledger (phpoc)
 
 > Issues that directly block or materially impact planned roadmap items.
-> Cross-references `BACKLOG.md` for details and `ROADMAP.md` for affected features.
+> Cross-references [DESIGN_GOALS.md](DESIGN_GOALS.md) for affected design goals,
+> [BACKLOG.md](BACKLOG.md) for details, and [ROADMAP.md](ROADMAP.md) for affected features.
 
 ---
 
@@ -23,6 +24,13 @@ However, the **entry hash** (`entry["hash"] = sha256(json.dumps(entry["data"]))`
 - The block seal covers the entry hash + ciphertext — so the block remains valid
 
 The plaintext can be silently corrupted and the block will still verify.
+
+### Design Goals Impacted
+
+| Goal | Impact |
+|---|---|
+| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | Entry-level plaintext integrity is compromised |
+| [Privacy & Anti-Forensics](DESIGN_GOALS.md#2-privacy--anti-forensics) | Export integrity guarantees cannot be assured without auth tags |
 
 ### Roadmap Items Blocked
 
@@ -53,12 +61,20 @@ If `identity.json` is lost or corrupted:
 - Signature verification for old blocks is permanently broken (secret is gone)
 - No recovery path exists within the current design
 
+### Design Goals Impacted
+
+| Goal | Impact |
+|---|---|
+| [Recovery & Identity](DESIGN_GOALS.md#5-recovery--identity) | Identity recovery is not possible; identity portability requires manual multi-file backup |
+| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | Blocks after identity loss are unsigned, breaking the signature chain |
+
 ### Roadmap Items Blocked
 
 | Roadmap Item | Priority | Why It's Blocked |
 |---|---|---|
 | **Single-file export** (`phpoc export --combined`) | 🔮 Low | The planned design merges identity into Genesis for portability. The current split-file design means users must back up two files. A ledger-only backup (`ledger.json`) is incomplete — the identity is orphaned. |
 | **Remote Sync (git-based)** | 🔜 Medium | The roadmap design sketch says "commit as-is since it's already encrypted." If only `ledger.json` is synced (the natural git-commit pattern), pulling onto a new machine results in unsigned blocks. The receiving machine has no identity key. |
+| **Real Ed25519 signatures** | 🔮 Low | Real Ed25519 keys are more sensitive than HMAC secrets — losing the private key is permanent. An in-ledger fallback becomes essential before real signatures can be safely adopted. |
 
 ### Resolution Path
 
@@ -80,6 +96,12 @@ Current OWASP recommendation: **600,000+ iterations** for PBKDF2-HMAC-SHA256.
 NIST SP 800-132: recommends at least 10,000 (2010-era guidance, now considered low).
 
 The test suite uses 100 iterations, which is fine for CI performance.
+
+### Design Goal Impacted
+
+| Goal | Impact |
+|---|---|
+| [Privacy & Anti-Forensics](DESIGN_GOALS.md#2-privacy--anti-forensics) | Weaker KDF reduces brute-force resistance for offline attacks on synced/exported ledger files |
 
 ### Roadmap Item Affected
 
@@ -112,6 +134,12 @@ For the designed Reconciliation flow ("Bridge" block linking orphaned chain), bl
 - The new hash breaks any pre-existing chain-of-trust for individual entries
 - The current `verify()` entry-hash loop cannot distinguish between "content was re-keyed" and "content was tampered with"
 
+### Design Goal Impacted
+
+| Goal | Impact |
+|---|---|
+| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | No mechanism exists to verify plaintext content after re-encryption |
+
 ### Roadmap Item Blocked
 
 | Roadmap Item | Priority | Why It's Blocked |
@@ -136,8 +164,9 @@ Before implementing Reconciliation, decide on one of:
 | **Reconciliation / Chain-Bridging** | 🔜 Medium | R1 (AES-CTR malleability), R4 (content proof design) |
 | **Remote Sync (git-based)** | 🔜 Medium | R1 (AES-CTR malleability), R2 (identity fallback), R3 (KDF strength) |
 | **Archival Automation** | 🔜 Medium | None |
+| **Real Ed25519 signatures** | 🔮 Low | R2 (identity fallback — private key loss is permanent without in-ledger copy) |
+| **Shareable Export** (`phpoc export --public`) | 🔮 Low | R1 (entry-level integrity auth tag needed for export guarantees) |
 | **Single-file export** | 🔮 Low | R2 (identity fallback) |
-| **Real Ed25519 signatures** | 🔮 Low | None (independent of these issues) |
 | **Plausible deniability mode** | 🔮 Low | None |
 
 ### Quick Wins (No New Dependencies, Minimal Code)
