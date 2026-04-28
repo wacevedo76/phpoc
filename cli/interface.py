@@ -108,7 +108,11 @@ class CLIInterface:
             data = entry["data"]
             task_id = id_map.get(data["title"], "?")
             # Decrypt startTime for viewing
-            start_epoch = int(self.ledger.crypto.decrypt(data["startTime_enc"]))
+            start_val = data["startTime_enc"]
+            if start_val.startswith("plain:"):
+                start_epoch = int(start_val[6:])
+            else:
+                start_epoch = int(self.ledger.crypto.decrypt(start_val))
             started = time.strftime("%H:%M:%S", time.localtime(start_epoch/1000))
 
             # Show pause indicator and active duration so far
@@ -205,7 +209,11 @@ class CLIInterface:
         staged_by_date = {}
         for entry in staged_data:
             if not entry["data"].get("is_active", False): # Only consider completed staged tasks for listing
-                start_epoch = int(self.ledger.crypto.decrypt(entry["data"]["startTime_enc"]))
+                start_val = entry["data"]["startTime_enc"]
+                if start_val.startswith("plain:"):
+                    start_epoch = int(start_val[6:])
+                else:
+                    start_epoch = int(self.ledger.crypto.decrypt(start_val))
                 date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
                 if date_str not in staged_by_date:
                     staged_by_date[date_str] = []
@@ -384,14 +392,33 @@ class CLIInterface:
     def _print_entry(self, entry_data):
         """Helper method to print an entry (synced or staged)."""
         data = entry_data["data"]
-        start_epoch = int(self.ledger.crypto.decrypt(data["startTime_enc"]))
-        stop_epoch = int(self.ledger.crypto.decrypt(data["endTime_enc"])) if data["endTime_enc"] else None
+
+        start_val = data["startTime_enc"]
+        if start_val.startswith("plain:"):
+            start_epoch = int(start_val[6:])
+        else:
+            start_epoch = int(self.ledger.crypto.decrypt(start_val))
+
+        if data["endTime_enc"]:
+            end_val = data["endTime_enc"]
+            if end_val.startswith("plain:"):
+                stop_epoch = int(end_val[6:])
+            else:
+                stop_epoch = int(self.ledger.crypto.decrypt(end_val))
+        else:
+            stop_epoch = None
 
         start_str = time.strftime("%H:%M", time.localtime(start_epoch/1000))
         stop_str = time.strftime("%H:%M", time.localtime(stop_epoch/1000)) if stop_epoch else "??"
 
         meta_enc = data.get("metadata_enc")
-        meta = json.loads(self.ledger.crypto.decrypt(meta_enc)) if meta_enc else {}
+        if meta_enc:
+            if meta_enc.startswith("plain:"):
+                meta = json.loads(meta_enc[6:])
+            else:
+                meta = json.loads(self.ledger.crypto.decrypt(meta_enc))
+        else:
+            meta = {}
 
         # Add source indicator
         source_indicator = " (Staged)" if entry_data["source"] == "staged" else ""
