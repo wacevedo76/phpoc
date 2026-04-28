@@ -95,9 +95,9 @@ def main():
     # Revert command
     revert_p = subparsers.add_parser("revert", help="Undo the last N synced day blocks")
     revert_p.add_argument("count", type=int, nargs="?",
-                          help="Number of day blocks to revert from the end")
+                          help="Number of day blocks to revert (not individual entries)")
     revert_p.add_argument("--list", action="store_true",
-                          help="Show ledger summary and revertable blocks")
+                          help="Show ledger summary with recent day blocks")
 
     args = parser.parse_args()
 
