@@ -313,6 +313,57 @@ class TestSyncConfirmed(unittest.TestCase):
         staging = self.store.read_staging()
         self.assertEqual(len(staging), 1)
 
+    def test_sync_partial_with_active_entries(self):
+        """Active entries in staging don't break index mapping for sync selection."""
+        now = int(time.time() * 1000)
+        # Create an active entry (no end_epoch) — should NOT be in get_pending_sync
+        self.ledger.capture_habit("ActiveA", now - 7200000, is_active=True)
+        self.ledger.capture_habit("Keep", now - 6000000, now - 3600000)
+        # Another active entry
+        self.ledger.capture_habit("ActiveB", now - 3000000, is_active=True)
+        self.ledger.capture_habit("AlsoKeep", now - 1800000, now)
+        pending = self.ledger.get_pending_sync()
+        # Should only return the two completed entries
+        self.assertEqual(len(pending), 2)
+        self.assertEqual({p["title"] for p in pending}, {"Keep", "AlsoKeep"})
+        # Sync all — even though active entries intersperse staging
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for day in ledger_data:
+            if day.get("type") != "day": continue
+            for entry in day.get("entries", []):
+                synced_titles.add(entry["data"]["title"])
+        self.assertEqual(synced_titles, {"Keep", "AlsoKeep"})
+        # Active entries remain in staging
+        staging = self.store.read_staging()
+        staging_titles = [e["data"]["title"] for e in staging]
+        self.assertEqual(set(staging_titles), {"ActiveA", "ActiveB"})
+
+    def test_sync_partial_remove_with_active_entries(self):
+        """Removing an entry with active entries in staging doesn't break index mapping."""
+        now = int(time.time() * 1000)
+        self.ledger.capture_habit("Active", now - 10800000, is_active=True)
+        self.ledger.capture_habit("Keep", now - 7200000, now - 3600000)
+        self.ledger.capture_habit("Remove", now - 3500000, now)
+        pending = self.ledger.get_pending_sync()
+        self.assertEqual(len(pending), 2)
+        # Only sync "Keep", exclude "Remove"
+        keep_idx = [p["entry_index"] for p in pending if p["title"] == "Keep"]
+        self.ledger.sync_day_with_selection(keep_idx)
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for day in ledger_data:
+            if day.get("type") != "day": continue
+            for entry in day.get("entries", []):
+                synced_titles.add(entry["data"]["title"])
+        self.assertEqual(synced_titles, {"Keep"})
+        # Remove stayed in staging for optional re-edit
+        staging = self.store.read_staging()
+        staging_titles = [e["data"]["title"] for e in staging]
+        self.assertIn("Remove", staging_titles)
+        self.assertIn("Active", staging_titles)
+
     def test_sync_with_end_time_override(self):
         now = int(time.time() * 1000)
         start = now - 3600000

@@ -345,9 +345,9 @@ class LedgerDomain:
         Only fields that are present in the override dict are applied.
         Unselected entries remain in staging."""
         staging = self.store.read_staging()
-        all_completed = [e for e in staging if not e["data"].get("is_active", False)]
-
-        selected = [all_completed[i] for i in selected_indices if i < len(all_completed)] if selected_indices else []
+        selected_set = set(selected_indices) if selected_indices else set()
+        selected = [staging[i] for i in selected_set
+                     if i < len(staging) and not staging[i]["data"].get("is_active", False)]
         if not selected:
             return None
         overrides = overrides or {}
@@ -499,16 +499,13 @@ class LedgerDomain:
         self.store.write_index(index)
 
         # Remove only the synced entries from staging, keep active + unsynced completed
-        synced_indices_set = set()
-        for all_idx, entry in enumerate(all_completed):
-            if entry in selected:
-                synced_indices_set.add(id(entry))
+        selected_ids = {id(entry) for entry in selected}
 
         new_staging = []
         for entry in staging:
             keep = True
             if not entry["data"].get("is_active", False):
-                if id(entry) in synced_indices_set:
+                if id(entry) in selected_ids:
                     keep = False
             if keep:
                 new_staging.append(entry)
