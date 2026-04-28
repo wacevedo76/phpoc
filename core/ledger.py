@@ -280,6 +280,40 @@ class LedgerDomain:
 
         return pending
 
+    @staticmethod
+    def _compute_content_hash(title: str, start_epoch: int, end_epoch_str: str,
+                              metadata_json: str, pauses_json: str,
+                              tags: list, comment: str, media: list,
+                              duration: int) -> str:
+        """Compute a content hash from resolved plaintext values.
+
+        This hash represents the entry's plaintext content and survives
+        re-encryption since it's based on actual values, not ciphertext.
+
+        Args:
+            title: Activity title.
+            start_epoch: Start time in epoch ms (as int).
+            end_epoch_str: End time as string (epoch ms), or "".
+            metadata_json: JSON string of metadata.
+            pauses_json: JSON string of pauses list.
+            tags: Sorted list of tag strings.
+            comment: Comment string.
+            media: List of media references.
+            duration: Duration in ms.
+        """
+        content = {
+            "title": title,
+            "startTime": str(start_epoch),
+            "endTime": end_epoch_str if end_epoch_str else "",
+            "metadata": metadata_json if metadata_json else "{}",
+            "pauses": pauses_json if pauses_json else "[]",
+            "tags": sorted(tags),
+            "comment": comment if comment else "",
+            "media": sorted(media),
+            "duration": duration,
+        }
+        return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
     def _get_identity_secret(self) -> Optional[bytes]:
         # Try identity.json first
         id_data = self.store.read_identity()
@@ -351,27 +385,52 @@ class LedgerDomain:
         days_to_sync = {}
         for entry in selected:
             data = entry["data"]
-            # Resolve startTime
+
+            # Resolve all plaintext values before encryption
             if data["startTime_enc"].startswith("plain:"):
                 start_epoch = int(data["startTime_enc"][6:])
-                data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
             else:
                 start_epoch = int(self.crypto.decrypt(data["startTime_enc"]))
 
-            # Resolve endTime
-            if data["endTime_enc"] and data["endTime_enc"].startswith("plain:"):
-                end_epoch = int(data["endTime_enc"][6:])
-                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+            end_epoch = None
+            if data["endTime_enc"]:
+                if data["endTime_enc"].startswith("plain:"):
+                    end_epoch = int(data["endTime_enc"][6:])
+                else:
+                    end_epoch = int(self.crypto.decrypt(data["endTime_enc"]))
 
-            # Resolve Metadata
             if data["metadata_enc"].startswith("plain:"):
-                meta_json = data["metadata_enc"][6:]
-                data["metadata_enc"] = self.crypto.encrypt(meta_json)
+                meta_json_str = data["metadata_enc"][6:]
+            else:
+                meta_json_str = self.crypto.decrypt(data["metadata_enc"])
 
-            # Resolve pauses_enc
-            if "pauses_enc" in data and data["pauses_enc"].startswith("plain:"):
-                pauses_json = data["pauses_enc"][6:]
-                data["pauses_enc"] = self.crypto.encrypt(pauses_json)
+            if "pauses_enc" in data and data["pauses_enc"]:
+                if data["pauses_enc"].startswith("plain:"):
+                    pauses_json_str = data["pauses_enc"][6:]
+                else:
+                    pauses_json_str = self.crypto.decrypt(data["pauses_enc"])
+            else:
+                pauses_json_str = "[]"
+
+            # Now encrypt fields for ledger storage
+            data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
+            data["endTime_enc"] = self.crypto.encrypt(str(end_epoch)) if end_epoch is not None else data.get("endTime_enc")
+            data["metadata_enc"] = self.crypto.encrypt(meta_json_str)
+            if "pauses_enc" in data:
+                data["pauses_enc"] = self.crypto.encrypt(pauses_json_str)
+
+            # Compute content hash from resolved plaintext values (before final entry hash)
+            data["content_hash"] = self._compute_content_hash(
+                title=data["title"],
+                start_epoch=start_epoch,
+                end_epoch_str=str(end_epoch) if end_epoch is not None else "",
+                metadata_json=meta_json_str,
+                pauses_json=pauses_json_str,
+                tags=data.get("tags", []),
+                comment=data.get("comment", ""),
+                media=data.get("media", []),
+                duration=data.get("duration", 0),
+            )
 
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -490,28 +549,52 @@ class LedgerDomain:
         days_to_sync = {}
         for entry in to_sync:
             data = entry["data"]
-            # 1. Resolve startTime
+
+            # Resolve all plaintext values before encryption
             if data["startTime_enc"].startswith("plain:"):
                 start_epoch = int(data["startTime_enc"][6:])
-                # Re-encrypt properly for ledger
-                data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
             else:
                 start_epoch = int(self.crypto.decrypt(data["startTime_enc"]))
 
-            # 2. Resolve endTime
-            if data["endTime_enc"] and data["endTime_enc"].startswith("plain:"):
-                end_epoch = int(data["endTime_enc"][6:])
-                data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
-            
-            # 3. Resolve Metadata
-            if data["metadata_enc"].startswith("plain:"):
-                meta_json = data["metadata_enc"][6:]
-                data["metadata_enc"] = self.crypto.encrypt(meta_json)
+            end_epoch = None
+            if data["endTime_enc"]:
+                if data["endTime_enc"].startswith("plain:"):
+                    end_epoch = int(data["endTime_enc"][6:])
+                else:
+                    end_epoch = int(self.crypto.decrypt(data["endTime_enc"]))
 
-            # 4. Resolve pauses_enc
-            if "pauses_enc" in data and data["pauses_enc"].startswith("plain:"):
-                pauses_json = data["pauses_enc"][6:]
-                data["pauses_enc"] = self.crypto.encrypt(pauses_json)
+            if data["metadata_enc"].startswith("plain:"):
+                meta_json_str = data["metadata_enc"][6:]
+            else:
+                meta_json_str = self.crypto.decrypt(data["metadata_enc"])
+
+            if "pauses_enc" in data and data["pauses_enc"]:
+                if data["pauses_enc"].startswith("plain:"):
+                    pauses_json_str = data["pauses_enc"][6:]
+                else:
+                    pauses_json_str = self.crypto.decrypt(data["pauses_enc"])
+            else:
+                pauses_json_str = "[]"
+
+            # Now encrypt fields for ledger storage
+            data["startTime_enc"] = self.crypto.encrypt(str(start_epoch))
+            data["endTime_enc"] = self.crypto.encrypt(str(end_epoch)) if end_epoch is not None else data.get("endTime_enc")
+            data["metadata_enc"] = self.crypto.encrypt(meta_json_str)
+            if "pauses_enc" in data:
+                data["pauses_enc"] = self.crypto.encrypt(pauses_json_str)
+
+            # Compute content hash from resolved plaintext values (before final entry hash)
+            data["content_hash"] = self._compute_content_hash(
+                title=data["title"],
+                start_epoch=start_epoch,
+                end_epoch_str=str(end_epoch) if end_epoch is not None else "",
+                metadata_json=meta_json_str,
+                pauses_json=pauses_json_str,
+                tags=data.get("tags", []),
+                comment=data.get("comment", ""),
+                media=data.get("media", []),
+                duration=data.get("duration", 0),
+            )
 
             # Re-calculate entry hash after potential re-encryption
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
@@ -615,8 +698,33 @@ class LedgerDomain:
                 
             if current.get("type", "day") == "day":
                 for entry in current["entries"]:
-                    if hashlib.sha256(json.dumps(entry["data"], sort_keys=True).encode()).hexdigest() != entry["hash"]:
+                    data = entry["data"]
+                    # Standard entry hash check
+                    if hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest() != entry["hash"]:
                         return False
+                    # Optional content hash check — verifies plaintext survives re-encryption
+                    if "content_hash" in data:
+                        try:
+                            # Decrypt fields to reconstruct plaintext for hash comparison
+                            # Build a copy of data with encrypted fields decrypted
+                            plain = dict(data)
+                            for enc_field in ["startTime_enc", "endTime_enc", "metadata_enc", "pauses_enc"]:
+                                if enc_field in plain and plain[enc_field]:
+                                    plain[enc_field] = self.crypto.decrypt(plain[enc_field])
+                            if hashlib.sha256(json.dumps({
+                                "title": plain.get("title", ""),
+                                "startTime": plain.get("startTime_enc", ""),
+                                "endTime": plain.get("endTime_enc", ""),
+                                "metadata": plain.get("metadata_enc", ""),
+                                "pauses": plain.get("pauses_enc", ""),
+                                "tags": sorted(plain.get("tags", [])),
+                                "comment": plain.get("comment", ""),
+                                "media": sorted(plain.get("media", [])),
+                                "duration": plain.get("duration", 0),
+                            }, sort_keys=True).encode()).hexdigest() != data["content_hash"]:
+                                return False
+                        except Exception:
+                            return False
         return True
 
     def get_ledger_data(self):

@@ -126,6 +126,19 @@ This verification only checks block-level seals, not entry-level content. If orp
 
 **Severity:** 🟡 Medium — must be resolved before Reconciliation implementation begins
 
+**Resolution (2026-04-28, branch `R4-content-proof-design`):**
+
+Implemented Option 2 (plaintext content hash proof) as the design choice:
+
+- **`_compute_content_hash()`** — New static method in `LedgerDomain` that takes resolved plaintext values (title, start epoch, end epoch string, metadata JSON, pauses JSON, tags, comment, media, duration) and produces a canonical SHA-256 hash.
+- **`sync_day()` and `sync_day_with_selection()`** — Both now resolve plaintext values *before* encryption, compute the `content_hash`, then encrypt. The `content_hash` field is stored in the entry data and covered by the entry hash.
+- **`verify()`** — Extended to check `content_hash` when present. Decrypts encrypted fields, reconstructs the plaintext canonical dict, and compares hashes. Old entries without `content_hash` are skipped (backward compatible). Tampered `content_hash` or corrupted encrypted fields cause verification failure.
+- **Overhead:** ~64 bytes per entry (SHA-256 hex string). Negligible at any realistic scale (~2MB over 10 years at 20 entries/day).
+- **Backward compatibility:** Existing synced entries lack `content_hash` — `verify()` handles this gracefully (silent skip). New entries always have it.
+- **Reconciliation path:** When reconciling orphaned blocks, verify `content_hash` after decryption to prove plaintext integrity. Re-keying produces a new entry hash but the `content_hash` remains valid.
+
+All 16 existing tests pass. Manual test confirms content hash creation, verification, and tamper detection.
+
 ---
 
 ## 🐛 Bugs & Functional Issues

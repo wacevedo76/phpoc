@@ -79,43 +79,23 @@ Bumped production PBKDF2 iterations from 100,000 to 600,000 in:
 
 ---
 
-## 🟡 R4 — No Entry-Level Content Proof for Reconciliation
+## ~~🟡 R4 — No Entry-Level Content Proof for Reconciliation~~ ✅ RESOLVED
 
 **Backlog ID:** R4 (BACKLOG.md)
 
-### The Problem
+**Resolution (2026-04-28, branch `R4-content-proof-design`):**
 
-The current architecture computes entry hashes as:
-```python
-entry_hash = sha256(json.dumps(entry["data"], sort_keys=True))
-```
-Where `entry["data"]` includes the **encrypted** fields (`startTime_enc`, `endTime_enc`, `metadata_enc`). This means the entry hash is a hash of ciphertext, not plaintext.
+Chose **Option 2 (plaintext content hash proof)** — the rigorous approach:
 
-For the designed Reconciliation flow ("Bridge" block linking orphaned chain), block-level seals are verified. But:
+- **`_compute_content_hash()`** — New static method that hashes a canonical dict of resolved plaintext fields (title, start epoch, end epoch, metadata JSON, pauses JSON, tags, comment, media, duration).
+- **`sync_day()` / `sync_day_with_selection()`** — Both now resolve plaintext values *before* encryption, compute the `content_hash` from them, then encrypt. The `content_hash` field is stored in entry data and covered by the entry hash.
+- **`verify()`** — Extended to verify `content_hash` on entries that have it. Decrypts encrypted fields, reconstructs the canonical plaintext dict, and compares hashes. Old entries without `content_hash` are silently skipped.
+- **Format:** New `content_hash` field (64 hex chars) in each synced entry's data dict.
+- **Overhead:** ~64 bytes per entry. Negligible at realistic scale (~2MB over 10 years at 20 entries/day).
+- **Backward compatible:** Old entries lack `content_hash` but continue to verify with existing checks.
+- **Reconciliation path:** When grafting orphaned blocks, decrypt entry fields and check `content_hash` to prove plaintext integrity. Re-keying changes entry hash but `content_hash` remains valid.
 
-- If orphaned entries are re-encrypted with a new Master Key (re-keying), the entry hash changes
-- The new hash breaks any pre-existing chain-of-trust for individual entries
-- The current `verify()` entry-hash loop cannot distinguish between "content was re-keyed" and "content was tampered with"
-
-### Design Goal Impacted
-
-| Goal | Impact |
-|---|---|
-| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | No mechanism exists to verify plaintext content after re-encryption |
-
-### Roadmap Item Blocked
-
-| Roadmap Item | Priority | Why It's Blocked |
-|---|---|---|
-| **Reconciliation / Chain-Bridging** | 🔜 Medium | The roadmap says "Verify import: check each block's seal, then seal the bridge." This is insufficient for re-keyed entries — block-level verification alone cannot prove that re-encrypted entries contain the original plaintext. A content-integrity design decision is required before implementation begins. |
-
-### Resolution Path
-
-Before implementing Reconciliation, decide on one of:
-
-1. **Import-only (no re-keying):** Orphaned blocks are imported as-is, without re-encryption. The Master Key must be the same. Simple but limits use cases.
-2. **Plaintext content hash proof:** Store a SHA-256 hash of the pre-encryption plaintext (`startTime_enc || endTime_enc || metadata_enc` + nonce exclusion) as a new field in each entry. When re-keying, re-compute the entry hash and verify against the stored plaintext hash. This is the rigorous approach.
-3. **Trust the bridge block:** Accept that block-level seals are sufficient. The bridge block attests "I verified these blocks were valid before re-keying." Weaker assurance but simpler.
+All 16 tests pass. Manual tamper test confirms `content_hash` mismatch is detected.
 
 ---
 
@@ -124,7 +104,7 @@ Before implementing Reconciliation, decide on one of:
 | Roadmap Item | Priority | Blockers |
 |---|---|---|
 | **Media Witness linkage** | 🔜 High | None |
-| **Reconciliation / Chain-Bridging** | 🔜 Medium | ~~R1~~ ✅, R4 (content proof design) |
+| **Reconciliation / Chain-Bridging** | 🔜 Medium | ~~R1~~ ✅, ~~R4~~ ✅ — unblocked |
 | **Remote Sync (git-based)** | 🔜 Medium | ~~R1~~ ✅, ~~R2~~ ✅, ~~R3~~ ✅ |
 | **Archival Automation** | 🔜 Medium | None |
 | **Real Ed25519 signatures** | 🔮 Low | ~~R2~~ ✅ — no longer blocked |
@@ -134,8 +114,9 @@ Before implementing Reconciliation, decide on one of:
 
 ### Quick Wins (No New Dependencies, Minimal Code) — ✅ All Done
 
-1. ~~**R1 mitigation:**~~ ✅ Done — encrypt-then-MAC tag added to `CryptoManager.encrypt()` / `decrypt()`
-2. ~~**R3 fix:**~~ ✅ Done — PBKDF2 iterations bumped to 600K
-3. ~~**R2 mitigation:**~~ ✅ Done — identity fallback embedded in genesis
+1. ~~**R1 (AES-CTR auth tag):**~~ ✅ Done — encrypt-then-MAC
+2. ~~**R3 (PBKDF2 600K):**~~ ✅ Done — iterations bumped
+3. ~~**R2 (identity fallback):**~~ ✅ Done — genesis fallback
+4. ~~**R4 (content proof):**~~ ✅ Done — plaintext content hash
 
-All three blockers are resolved. The remaining item blocking Reconciliation is **R4** — the design decision for entry-level content proof.
+All four roadmap blockers are resolved. All roadmap items are now **unblocked**.
