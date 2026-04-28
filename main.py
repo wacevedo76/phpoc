@@ -53,6 +53,7 @@ def main():
     # Sync command
     sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger")
     sync_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+    sync_parser.add_argument("--since", help="Only sync entries since this date (MM-DD or YYYY-MM-DD)")
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -229,7 +230,8 @@ def main():
     elif args.command == "sync":
         from core.sync_confirmation import AutoSyncStrategy, InteractiveCLIStrategy
         strategy = AutoSyncStrategy() if getattr(args, 'yes', False) else InteractiveCLIStrategy()
-        ledger.sync_with_strategy(strategy)
+        since_date = _resolve_since_date(args.since) if args.since else None
+        ledger.sync_with_strategy(strategy, since_date=since_date)
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
@@ -314,6 +316,17 @@ def _list_tags(ledger, cli):
             print(f"  @{t}")
     else:
         print("No tags found.")
+
+
+def _resolve_since_date(date_str: str) -> str:
+    """Parse --since value to YYYY-MM-DD. Supports MM-DD or YYYY-MM-DD."""
+    import re, datetime
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+        return date_str
+    if re.match(r'^\d{2}-\d{2}$', date_str):
+        return f"{datetime.date.today().year}-{date_str}"
+    print(f"WARN: Invalid --since format '{date_str}'. Use MM-DD or YYYY-MM-DD. Ignoring.")
+    return None
 
 
 if __name__ == "__main__":

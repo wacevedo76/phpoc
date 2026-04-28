@@ -552,7 +552,7 @@ class LedgerDomain:
         self.store.write_staging(new_staging)
         return ledger[-1].get("day_hash")[:10]
 
-    def sync_with_strategy(self, strategy):
+    def sync_with_strategy(self, strategy, since_date=None):
         """Sync using a SyncStrategy for confirmation.
 
         The strategy receives pending entries via get_pending_sync() and returns
@@ -560,12 +560,20 @@ class LedgerDomain:
 
         Args:
             strategy: A SyncStrategy instance.
+            since_date: Optional date string (YYYY-MM-DD). Only entries with
+                        date >= since_date will be offered to the strategy.
 
         Returns:
             The day_hash prefix if entries were synced, or None.
         """
         from core.sync_confirmation import SyncDecision
         pending = self.get_pending_sync()
+        if since_date:
+            pending = [p for p in pending if p["date"] >= since_date]
+        pending.sort(key=lambda p: p["entry_index"])
+        if not pending:
+            print("Nothing to sync.")
+            return None
         decision = strategy.decide(pending)
 
         if decision.cancelled or not decision.has_selection:
