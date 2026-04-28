@@ -762,13 +762,24 @@ class LedgerDomain:
                 date_str = block["date"]
                 for entry in block.get("entries", []):
                     data = dict(entry["data"])  # shallow copy
+
+                    # Convert encrypted fields back to plain: format for staging,
+                    # so the sync pipeline treats them consistently with
+                    # freshly-created entries (NoAuthCryptoManager compat).
+                    start_epoch = int(self.crypto.decrypt(data["startTime_enc"]))
+                    data["startTime_enc"] = f"plain:{start_epoch}"
+                    if data.get("endTime_enc"):
+                        end_epoch = self.crypto.decrypt(data["endTime_enc"])
+                        data["endTime_enc"] = f"plain:{end_epoch}"
+                    data["metadata_enc"] = f"plain:{self.crypto.decrypt(data['metadata_enc'])}"
+                    if data.get("pauses_enc"):
+                        data["pauses_enc"] = f"plain:{self.crypto.decrypt(data['pauses_enc'])}"
+
                     # Reconstruct staging entry from synced data
                     staging_entry = {
                         "hash": entry["hash"],
                         "data": data,
-                        "start_epoch": int(
-                            self.crypto.decrypt(data.get("startTime_enc", "0"))
-                        ),
+                        "start_epoch": start_epoch,
                     }
                     staging.append(staging_entry)
                     entries_restored += 1
