@@ -92,10 +92,12 @@ def main():
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
     _add_date_args(list_staged_p)
 
-    # Prune command
-    prune_p = subparsers.add_parser("prune", help="Remove entries from the ledger")
-    prune_p.add_argument("titles", nargs="*", help="Titles of entries to remove")
-    prune_p.add_argument("--list", action="store_true", help="List all synced entries first")
+    # Revert command
+    revert_p = subparsers.add_parser("revert", help="Undo the last N synced day blocks")
+    revert_p.add_argument("count", type=int, nargs="?",
+                          help="Number of day blocks to revert from the end")
+    revert_p.add_argument("--list", action="store_true",
+                          help="Show ledger summary and revertable blocks")
 
     args = parser.parse_args()
 
@@ -253,30 +255,39 @@ def main():
             to_date=args.to_date,
         )
         cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
-    elif args.command == "prune":
+    elif args.command == "revert":
         if args.list:
-            print("\n=== Synced Entries ===")
+            print("\n=== Ledger Summary ===")
             ledger_data = ledger.get_ledger_data()
-            for block in ledger_data:
-                if block.get("type", "day") == "day":
+            day_blocks = [(i, b) for i, b in enumerate(ledger_data)
+                          if b.get("type", "day") == "day"]
+            print(f"Total blocks: {len(ledger_data)} ({len(day_blocks)} day blocks)")
+            print()
+            if day_blocks:
+                # Show last 5 day blocks
+                print("Most recent day blocks (revertable):")
+                for idx, (block_idx, block) in enumerate(day_blocks[-5:],
+                                                         start=max(1, len(day_blocks)-4)):
                     date_str = block["date"]
-                    for entry in block.get("entries", []):
-                        title = entry["data"]["title"]
-                        print(f"  {date_str}  {title}")
+                    titles = [e["data"]["title"] for e in block.get("entries", [])]
+                    print(f"  #{idx}: {date_str} — {', '.join(titles)}")
             return
-        if not args.titles:
-            print("Usage: phpoc prune TITLE [TITLE ...]")
-            print("       phpoc prune --list   (show all synced entries first)")
+        if args.count is None:
+            print("Usage: phpoc revert COUNT")
+            print("       phpoc revert --list  (show ledger summary)")
             return
-        count = ledger.prune_entries(set(args.titles))
-        print(f"Pruned {count} entries from the ledger.")
-        if count > 0:
-            # Run verify to confirm chain integrity after re-chaining
+        count = ledger.revert_entries(args.count)
+        if count == -1:
+            print(f"Cannot revert {args.count} day blocks — not enough day blocks in the ledger.")
+        elif count == 0:
+            print("Nothing to revert.")
+        else:
+            print(f"Reverted {args.count} day block(s), restored {count} entr{'y' if count == 1 else 'ies'} to staging.")
             result = ledger.verify()
             if result:
-                print("Chain integrity verified.")
+                print("Chain intact and verified.")
             else:
-                print("WARN: Chain verification failed after prune.")
+                print("WARN: Chain verification failed.")
 
 
 def _list_tags(ledger, cli):
