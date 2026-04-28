@@ -92,6 +92,11 @@ def main():
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
     _add_date_args(list_staged_p)
 
+    # Prune command
+    prune_p = subparsers.add_parser("prune", help="Remove entries from the ledger")
+    prune_p.add_argument("titles", nargs="*", help="Titles of entries to remove")
+    prune_p.add_argument("--list", action="store_true", help="List all synced entries first")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -248,7 +253,30 @@ def main():
             to_date=args.to_date,
         )
         cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
-
+    elif args.command == "prune":
+        if args.list:
+            print("\n=== Synced Entries ===")
+            ledger_data = ledger.get_ledger_data()
+            for block in ledger_data:
+                if block.get("type", "day") == "day":
+                    date_str = block["date"]
+                    for entry in block.get("entries", []):
+                        title = entry["data"]["title"]
+                        print(f"  {date_str}  {title}")
+            return
+        if not args.titles:
+            print("Usage: phpoc prune TITLE [TITLE ...]")
+            print("       phpoc prune --list   (show all synced entries first)")
+            return
+        count = ledger.prune_entries(set(args.titles))
+        print(f"Pruned {count} entries from the ledger.")
+        if count > 0:
+            # Run verify to confirm chain integrity after re-chaining
+            result = ledger.verify()
+            if result:
+                print("Chain integrity verified.")
+            else:
+                print("WARN: Chain verification failed after prune.")
 
 
 def _list_tags(ledger, cli):

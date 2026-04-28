@@ -724,5 +724,129 @@ class LedgerDomain:
                             return False
         return True
 
+    def prune_entries(self, titles_to_remove: set):
+        """Remove entries with matching titles from the ledger and re-chain.
+
+        Rewrites the chain from the first modified block forward, recomputing
+        all hashes and signatures. Returns the number of entries pruned.
+        Empty day blocks are removed from the chain.
+        """
+        ledger = self.store.read_ledger()
+        index = self.store.read_index()
+        identity_secret = self._get_identity_secret()
+
+        if not ledger:
+            return 0
+
+        total_pruned = 0
+        first_modified = None
+        new_ledger = [ledger[0]]  # Genesis is always kept as-is
+
+        # Phase 1: Walk through ledger, remove matching entries from day blocks
+        for i in range(1, len(ledger)):
+            block = dict(ledger[i])
+            if block.get("type", "day") == "day":
+                original_count = len(block.get("entries", []))
+                kept = [e for e in block.get("entries", [])
+                        if e["data"]["title"] not in titles_to_remove]
+                pruned = original_count - len(kept)
+                if pruned > 0:
+                    total_pruned += pruned
+                    # Update index: subtract durations of pruned entries
+                    date_str = block["date"]
+                    for e in block["entries"]:
+                        if e["data"]["title"] in titles_to_remove:
+                            title = e["data"]["title"]
+                            duration = e["data"].get("duration", 0)
+                            if date_str in index and title in index[date_str]:
+                                index[date_str][title] -= duration
+                                if index[date_str][title] <= 0:
+                                    del index[date_str][title]
+                            if date_str in index and not index[date_str]:
+                                del index[date_str]
+
+                if kept:
+                    block["entries"] = kept
+                    new_ledger.append(block)
+                    if first_modified is None:
+                        first_modified = len(new_ledger) - 1
+                # If no entries left, drop the block entirely (don't append)
+                # The next block's prev_hash will link to the previous kept block
+            else:
+                # Summary block — keep as-is, may need re-hashing later
+                new_ledger.append(block)
+
+        if total_pruned == 0:
+            return 0
+
+        # Phase 2: Re-chain from first_modified onward
+        for i in range(first_modified, len(new_ledger)):
+            block = new_ledger[i]
+            prev = new_ledger[i - 1]
+            prev_hash = prev.get("day_hash") or prev.get("month_hash") or prev.get("year_hash")
+            block["prev_hash"] = prev_hash
+
+            if block.get("type", "day") == "day":
+                # Recompute entry hashes (data unchanged)
+                for entry in block["entries"]:
+                    entry["hash"] = hashlib.sha256(
+                        json.dumps(entry["data"], sort_keys=True).encode()
+                    ).hexdigest()
+
+                # Re-seal day block
+                hash_key = "day_hash"
+                day_data_for_seal = {
+                    "type": "day",
+                    "day_index": block["day_index"],
+                    "date": block["date"],
+                    "prev_hash": block["prev_hash"],
+                    "entries": block["entries"],
+                }
+                block[hash_key] = self.crypto.seal(
+                    json.dumps(day_data_for_seal, sort_keys=True)
+                )
+                if identity_secret:
+                    block["signature"] = self.crypto.sign(
+                        block[hash_key], identity_secret
+                    )
+                else:
+                    block.pop("signature", None)
+
+            elif block.get("type") == "month_summary":
+                hash_key = "month_hash"
+                seal_data = {k: v for k, v in block.items()
+                             if k not in (hash_key, "signature")}
+                block[hash_key] = self.crypto.seal(
+                    json.dumps(seal_data, sort_keys=True)
+                )
+                if identity_secret:
+                    block["signature"] = self.crypto.sign(
+                        block[hash_key], identity_secret
+                    )
+                else:
+                    block.pop("signature", None)
+
+            elif block.get("type") == "year_summary":
+                hash_key = "year_hash"
+                seal_data = {k: v for k, v in block.items()
+                             if k not in (hash_key, "signature")}
+                block[hash_key] = self.crypto.seal(
+                    json.dumps(seal_data, sort_keys=True)
+                )
+                if identity_secret:
+                    block["signature"] = self.crypto.sign(
+                        block[hash_key], identity_secret
+                    )
+                else:
+                    block.pop("signature", None)
+
+            else:
+                # Genesis or unknown — keep as-is
+                pass
+
+        self.store.write_ledger(new_ledger)
+        self.store.write_index(index)
+        return total_pruned
+
     def get_ledger_data(self):
         return self.store.read_ledger()

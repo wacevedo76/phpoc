@@ -670,5 +670,100 @@ class TestMediaLinks(unittest.TestCase):
         self.assertEqual(len(staging[0]["data"]["media"]), 3)
 
 
+class TestPruneEntries(unittest.TestCase):
+    """prune_entries() removes entries from the ledger and re-chains."""
+
+    def setUp(self):
+        base_dir = "/dev/shm" if os.path.exists("/dev/shm") else None
+        self.test_dir = Path(tempfile.mkdtemp(dir=base_dir))
+        self.ledger, self.crypto, self.store, self.sf, self.lf, self.ixf = \
+            _setup_ledger(self.test_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_prune_removes_entry_by_title(self):
+        now = int(time.time() * 1000)
+        self.ledger.capture_habit("Keep", now - 7200000, now - 3600000)
+        self.ledger.capture_habit("Remove", now - 3600000, now)
+        # Sync both
+        pending = self.ledger.get_pending_sync()
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        self.assertTrue(self.ledger.verify())
+
+        # Prune "Remove"
+        count = self.ledger.prune_entries({"Remove"})
+        self.assertEqual(count, 1)
+        self.assertTrue(self.ledger.verify())
+
+        # Verify "Remove" is gone from ledger
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for block in ledger_data:
+            if block.get("type", "day") == "day":
+                for entry in block.get("entries", []):
+                    synced_titles.add(entry["data"]["title"])
+        self.assertEqual(synced_titles, {"Keep"})
+
+    def test_prune_removes_multiple_entries(self):
+        now = int(time.time() * 1000)
+        self.ledger.capture_habit("A", now - 7200000, now - 4800000)
+        self.ledger.capture_habit("B", now - 4800000, now - 2400000)
+        self.ledger.capture_habit("C", now - 2400000, now)
+        pending = self.ledger.get_pending_sync()
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        self.assertTrue(self.ledger.verify())
+
+        # Prune A and C
+        count = self.ledger.prune_entries({"A", "C"})
+        self.assertEqual(count, 2)
+        self.assertTrue(self.ledger.verify())
+
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for block in ledger_data:
+            if block.get("type", "day") == "day":
+                for entry in block.get("entries", []):
+                    synced_titles.add(entry["data"]["title"])
+        self.assertEqual(synced_titles, {"B"})
+
+    def test_prune_no_match_does_nothing(self):
+        now = int(time.time() * 1000)
+        self.ledger.capture_habit("Task", now - 3600000, now)
+        pending = self.ledger.get_pending_sync()
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        self.assertTrue(self.ledger.verify())
+
+        count = self.ledger.prune_entries({"NonExistent"})
+        self.assertEqual(count, 0)
+        self.assertTrue(self.ledger.verify())
+
+    def test_prune_multiple_days(self):
+        now = int(time.time() * 1000)
+        # Day 1
+        self.ledger.capture_habit("Keep", now - 90000000, now - 86400000)
+        self.ledger.capture_habit("Remove", now - 86400000, now - 82800000)
+        pending = self.ledger.get_pending_sync()
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        # Day 2
+        self.ledger.capture_habit("Remove", now - 40000000, now - 36000000)
+        self.ledger.capture_habit("AlsoKeep", now - 36000000, now - 30000000)
+        pending = self.ledger.get_pending_sync()
+        self.ledger.sync_day_with_selection([p["entry_index"] for p in pending])
+        self.assertTrue(self.ledger.verify())
+
+        count = self.ledger.prune_entries({"Remove"})
+        self.assertEqual(count, 2)
+        self.assertTrue(self.ledger.verify())
+
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for block in ledger_data:
+            if block.get("type", "day") == "day":
+                for entry in block.get("entries", []):
+                    synced_titles.add(entry["data"]["title"])
+        self.assertEqual(synced_titles, {"Keep", "AlsoKeep"})
+
+
 if __name__ == "__main__":
     unittest.main()
