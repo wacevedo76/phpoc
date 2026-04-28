@@ -23,7 +23,7 @@ All four roadmap blockers resolved on `main`:
 
 All branches merged and deleted.
 
-### This Session — CLI/UX + Protocol Vision
+### This Session — CLI/UX + Protocol Vision + Revert/Normalization Fixes
 
 **Bug Fix: `list` ignoring `days` positional**
 - `list_habits()` accepted `days_limit` but never applied it as a filter
@@ -80,6 +80,18 @@ All branches merged and deleted.
 - All stale branches (R1-AES-CTR-Malleability, R2-identity-fallback, R4-content-proof-design, feature-habit-pause, feature-sync_confirmation, feature-tags, ledger-creation, modularization) deleted
 - Only `main` + `origin/main` remain
 
+**U1 — Sync Removal Auth Tag Mismatch Reproduction and Fix**
+- Reproduced the exact scenario: staging entry where `pauses_enc` was encrypted with a DIFFERENT crypto key than `startTime_enc`
+- `get_pending_sync()` succeeded on the bad entry (only decrypts startTime_enc, not pauses_enc)
+- `sync_day_with_selection()` failed at line 411 with auth tag mismatch when trying to decrypt pauses_enc
+- Full 11-entry staging test (mimicking user's actual data):
+  - Entry 0: "1" with pauses_enc encrypted by wrong key
+  - Entries 1-2: numbered entries marked for removal
+  - Entries 3-10: real activities to sync
+- Workflow test: remove indices [0,1,2] → sync [3..10] → verify (True) → list all (8 synced + 3 staged) → all pass
+- Fix: `_normalize_staging_entry()` converts hex-encrypted fields to `plain:` at start of `sync_day_with_selection()`. Entries with undecryptable fields are skipped with `WARN:` message.
+- **Remaining:** User needs to test with their actual passphrase
+
 ## Crypto Architecture Checklist
 | Feature | Status | Notes |
 |---|---|---|
@@ -120,17 +132,18 @@ Genesis (sealed + signed, identity fallback embedded)
 
 ## Unresolved Issues
 
-### U1 — Sync Removal Auth Tag Mismatch (HIGH PRIORITY)
-- **Symptom:** When using `phpoc sync` → toggle removal (`R`) → press `S` to sync, user gets:
-  `ValueError: Encrypted data integrity check failed: auth tag mismatch`
-  at `sync_day_with_selection()` line ~411, `pauses_json_str = self.crypto.decrypt(data["pauses_enc"])`
-- **Stack trace:** `main.py:232` → `sync_with_strategy()` → `sync_day_with_selection()`
-- **Confirmed:** User's staging has 11 entries with hex-encrypted `pauses_enc` (not `plain:` format)
-- **Could NOT reproduce:** All test scenarios (clean data, old-style revert, multiple revert cycles, mixed format entries) pass without error
-- **Partial fix:** Added `_normalize_staging_entry()` that converts encrypted fields to `plain:` before sync, skipping undecryptable entries with a warning (commit `9727637`)
-- **Likely cause:** Staging entries carry encrypted data from a stale/different crypto context — `pauses_enc` auth tag doesn't match current master key
-- **Still open:** User needs to test the fix on their actual data to confirm resolution
-- **Notes:** `get_pending_sync()` works (decrypts `startTime_enc`/`endTime_enc` successfully); the failure is only on `pauses_enc` in the grouping section of `sync_day_with_selection()`
+### U1 — Sync Removal Auth Tag Mismatch
+- **Symptom:** `phpoc sync` → toggle removal (`R`) → press `S` → `ValueError: Encrypted data integrity check failed: auth tag mismatch` at `sync_day_with_selection()` line ~411, `pauses_json_str = self.crypto.decrypt(data["pauses_enc"])`
+- **Root cause reproduced:** Staging entries where `pauses_enc` is encrypted with a DIFFERENT crypto key than `startTime_enc`. This happens when revert (old code) copies encrypted fields from ledger back to staging, and the crypto context changed between sync sessions.
+- **Fix (commit `9727637`):** `_normalize_staging_entry()` runs at the start of `sync_day_with_selection()`. It decrypts each encrypted staging field using the current crypto manager and converts to `plain:` format. If decryption fails (auth tag mismatch), the entry is **skipped with `WARN:` message** instead of crashing.
+- **Verification:** Tested with 11-entry staging (1 bad entry with wrong key). Workflow: remove bad+numbered entries → sync remaining 8 → verify (True) → list all (correct).
+- **Still open:** User needs to run `phpoc sync` on their actual data to confirm fix works with their passphrase.
+- **User's staging state** (`/home/pi/.config/personal_history_poc/staging.json`):
+  - 11 entries, all with hex-encrypted `pauses_enc` (old revert format)
+  - Indices 0-2: numbered "1", "2", "1" (0m durations, test entries)
+  - Indices 3-10: real activities (Cooking, Tidying, Working, Music, etc.)
+  - Entry 0 may have pauses_enc from a different crypto context
+- **One-time migration script** available to convert all encrypted fields to plain: format if sync still fails
 
 ## Next Up (Priority Order)
 
