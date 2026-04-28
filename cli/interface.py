@@ -165,6 +165,11 @@ class CLIInterface:
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None):
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
+        # Convert days_limit to from_date if provided
+        if days_limit:
+            limit_epoch = time.time() - (days_limit * 86400)
+            from_date = time.strftime("%Y-%m-%d", time.localtime(limit_epoch))
+
         synced_data = []
         if source in ['synced', 'all']:
             synced_data = self.ledger.get_ledger_data() or [] # Ensure it's a list if None
