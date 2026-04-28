@@ -582,17 +582,15 @@ class LedgerDomain:
         if decision.cancelled:
             return None
 
-        if decision.has_removals:
-            # Delete removal-marked entries from staging
-            staging = self.store.read_staging()
-            removal_set = set(decision.removal_indices)
-            new_staging = [e for i, e in enumerate(staging)
-                           if e["data"].get("is_active", False) or i not in removal_set]
-            self.store.write_staging(new_staging)
-            removed_count = len(removal_set)
-
         if not decision.has_selection:
+            # Only removals, no entries to sync — delete from staging directly
             if decision.has_removals:
+                staging = self.store.read_staging()
+                removal_set = set(decision.removal_indices)
+                new_staging = [e for i, e in enumerate(staging)
+                               if e["data"].get("is_active", False) or i not in removal_set]
+                self.store.write_staging(new_staging)
+                removed_count = len(removal_set)
                 print(f"Removed {removed_count} {'entry' if removed_count == 1 else 'entries'} from staging.")
             return None
 
