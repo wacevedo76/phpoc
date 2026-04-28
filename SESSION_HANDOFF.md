@@ -2,9 +2,9 @@
 
 ## Current State
 - **Branch:** `main` — all fixes committed (normalization, display guards, --till, removal deletion)
-- **Tests:** 360/360 passing
+- **Tests:** 363/363 passing
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
-- **Working tree:** clean, all changes committed (latest: `42a9466`)
+- **Working tree:** clean, all changes committed (latest: `bfa349f`)
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
 - **Sandbox:** `/tmp/test_user_history_after/` has post-sync state for investigation
 
@@ -39,6 +39,9 @@ All branches merged and deleted.
 - `ad7060a` — fix: plain: prefix guards in _print_entry, list_habits, view_active
 - `77a2a96` — fix: [R]emove now actually deletes entries from staging (removal_indices via SyncDecision)
 - `42a9466` — docs: update SESSION_HANDOFF
+- `d025676` — docs: compact SESSION_HANDOFF with all fixes
+- `5c6cab7` — fix: don't delete staging early in sync_with_strategy (index shift bug)
+- `bfa349f` — tests: 3 regression tests for removal deletion index handling
 
 **Branches:** All stale branches deleted; only `main` + `origin/main` remain.
 
@@ -51,7 +54,7 @@ All branches merged and deleted.
   4. ✅ `[R]emove` now truly deletes entries from staging — mark stale entries for removal, press S to purge them
   5. ✅ `scripts/repair_staging.py` — one-time migration to convert all hex fields to plain:
 - **User proof-of-fix:** `ph sync --yes --till 04-27` synced 2 of 3 04-27 entries cleanly; "Learning Pi agent" skipped without crash. `ph list all` displayed without error.
-- **Pending:** User is about to test `[R]emove` on the 4 stale staging entries (1, 2, 1, Learning Pi agent), then sync the 5 real 04-28 entries.
+- **✅ User verified (2026-04-29):** Used `[R]emove` on 4 stale entries (1, 2, 1, Learning Pi agent) + synced 5 real entries (Working, Music, YT, Nitrotype, Tidying) with one-shot fix. All 5 reached ledger, all 4 stale entries deleted from staging. Chain integrity verified. Full scenario reproduces cleanly in automated regression tests.
 
 ## Crypto Architecture Checklist
 | Feature | Status | Notes |
@@ -98,21 +101,21 @@ Genesis (sealed + signed, identity fallback embedded)
 - **Template:** `/tmp/test_user_history/` recreated from config dir for safe experimentation
 - **Workflow:** `git add -A && git commit -m "before"` → run test → `git diff HEAD -- staging.json`
 
-### U1 — Stale Crypto Context in Reverted Entries ✅ (Fixes Ready)
+### U1 — Stale Crypto Context in Reverted Entries ✅ (Resolved)
 - **Symptom:** Old revert code left hex-encrypted fields in staging bound to a different key.
-- **All 5 fixes committed and tested (360 tests pass):**
+- **All 5 fixes committed and tested (363 tests pass):**
   1. `_normalize_staging_entry()` — converts hex→plain: at sync start; skips undecryptable entries
   2. `plain:` prefix guards in all display paths
   3. `--till MM-DD` — date-filtered syncing
   4. `[R]emove` now truly deletes entries from staging
   5. `scripts/repair_staging.py` — one-time migration
-- **Pending user verification:** User is about to `ph sync` with `[R]` on the 4 stale entries, confirm they're deleted and remaining 5 sync cleanly.
+- **✅ User verified (2026-04-29):** Interactive sync with [R] on 4 stale entries + sync of 5 real entries worked correctly. All 5 reached ledger, all 4 removed from staging.
 
 ## Next Up (Priority Order)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
-| 🔴 Critical | **U1 — Stale Crypto Context** | User testing `[R]emove` on stale entries + sync remaining 5. If clean, U1 is truly resolved. | All fixes committed (360 tests pass) |
+| ✅ Done | **U1 — Stale Crypto Context** | Fixed normalization, display guards, --till, removal deletion, repair script. User verified live. | All fixes committed (363 tests pass) |
 | ✅ Done | **D1 — Git Versioning of Config** | Git-initted, snapshots before/after each run | Done |
 | 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
 | 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |

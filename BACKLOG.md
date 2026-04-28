@@ -11,55 +11,12 @@
 
 ---
 
-## 🔴 D1. Git Versioning of Config Directory
+## ✅ D1. Git Versioning of Config Directory (Done)
 
 **Type:** Debugging infrastructure
-**Priority:** Critical — enables state tracking for the sync auth bug investigation
-**Blocked by:** Nothing — user action, not code change
+**Priority:** Critical — enabled state tracking for the sync auth bug investigation
 
-Convert `~/.config/personal_history_poc/` into a git repository so that
-changes to staging, ledger, and index files are tracked. This provides:
-
-- **Before/after snapshots:** See exactly what `sync`, `revert`, or `add` changed
-- **Safe undo:** `git checkout <hash>` to revert to known-good state
-- **Reproducible debugging:** Run an experiment, compare diffs, revert cleanly
-- **Chain of custody:** Proves what the staging looked like before each sync attempt
-
-**Instructions (user executes on their machine):**
-
-```bash
-cd ~/.config/personal_history_poc
-# If the dir isn't already a git repo:
-git init
-git add -A
-git commit -m "Initial snapshot — staging with 11 encrypted entries"
-
-# Make a tag for the current state
-git tag -a pre-fix -m "Staging state before normalization fix"
-```
-
-**Workflow for debugging the sync auth bug:**
-
-```bash
-# Before each sync attempt, snapshot:
-git add -A && git commit -m "before sync attempt"
-
-# Run sync ...
-phpoc sync
-
-# After sync, snapshot again:
-git add -A && git commit -m "after sync attempt"
-
-# If things go wrong, compare:
-git diff HEAD~1 -- staging.json  # what changed in staging?
-git diff HEAD~1 -- ledger.json   # what blocks were added?
-```
-
-**Definition of done:**
-- User has run `git init` + first commit in config directory
-- At least one before/after sync snapshot captured
-- Diffs show what happened to staging during the failed sync
-
+**Done:** User git-initted `~/.config/personal_history_poc/` with initial commit of staging.json, ledger.json, index.json. Before/after snapshots captured during debugging. Diffs confirmed index mapping bug and removal deletion behavior.
 
 ## 🔴 P1. Format Specification (PHPSPEC.md)
 
@@ -418,6 +375,21 @@ These were the four original roadmap blockers. All resolved.
 **Status:** ✅ Resolved (2026-04-28)
 **Resolution:** Added `_compute_content_hash()` — SHA-256 of canonical plaintext dict before encryption. Stored as `content_hash` per entry. Survives re-keying. `verify()` checks content_hash when present.
 
+### U1. Stale Crypto Context in Reverted Staging Entries
+
+**Status:** ✅ Resolved (2026-04-29)
+**Resolution:** Five-part fix:
+1. `_normalize_staging_entry()` converts hex-encrypted fields to `plain:` format at sync start, skipping undecryptable entries with `WARN:`
+2. `plain:` prefix guards added to all display paths (no crash on `list all`)
+3. `--till MM-DD` flag for date-filtered syncing (sync only entries up to a date)
+4. `[R]emove` now truly deletes entries from staging (not just excludes from selection)
+5. `scripts/repair_staging.py` one-time migration tool
+
+### D1. Git Versioning of Config Directory
+
+**Status:** ✅ Done (2026-04-29)
+**Resolution:** User git-initted `~/.config/personal_history_poc/` and captured before/after snapshots during debugging.
+
 ---
 
 ## 🐛 Bugs & Code Quality (Open)
@@ -449,10 +421,9 @@ Two concurrent `main.py` processes could race on read/write of the cached key fi
 
 | Priority | Items |
 |---|---|
-| 🔴 Critical | D1 (Git versioning of config for debugging), U1 (Sync auth tag mismatch) |
-| 🔴 Highest | P1 (Format Spec) |
-| 🔴 High | P2 (Portable Export), P3 (Remote Sync), P4 (CLI polish) |
+| 🥇 Highest | P1 (Format Spec) |
+| 🥇 High | P2 (Portable Export), P3 (Remote Sync), P4 (CLI polish) |
 | 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span), P12 (Chain Head Witness) |
 | 🔮 Future | F1–F9 (Ed25519, Shareable Export, CRDT sync, etc.) |
-| ✅ Resolved | R1–R4 (historical roadblocks) |
+| ✅ Resolved | R1–R4 (historical roadblocks), U1 (stale crypto context), D1 (git versioning of config) |
 | 🟢 Low | B1–B3 (cosmetic bugs) |
