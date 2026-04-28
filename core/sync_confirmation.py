@@ -26,12 +26,17 @@ class SyncDecision:
         cancelled: If True, the user cancelled the entire sync operation.
     """
     selected_indices: List[int] = field(default_factory=list)
+    removal_indices: Set[int] = field(default_factory=set)
     overrides: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     cancelled: bool = False
 
     @property
     def has_selection(self) -> bool:
         return bool(self.selected_indices) and not self.cancelled
+
+    @property
+    def has_removals(self) -> bool:
+        return bool(self.removal_indices) and not self.cancelled
 
 
 class SyncStrategy:
@@ -101,10 +106,15 @@ class InteractiveCLIStrategy(SyncStrategy):
                 # Build final selected_indices from non-excluded entries
                 selected = [p["entry_index"] for p in pending
                             if p["entry_index"] not in excluded]
-                if not selected:
-                    print("All entries have been marked for removal. Nothing to sync.")
+                if not selected and not excluded:
+                    print("No entries selected or marked for removal. Nothing to do.")
                     continue
-                return InteractiveCLIStrategy._build_sync_decision(selected, edit_overrides)
+                overrides = edit_overrides if edit_overrides else {}
+                return SyncDecision(
+                    selected_indices=selected,
+                    removal_indices=excluded.copy(),
+                    overrides=overrides,
+                )
 
             elif choice == "C":
                 print("Sync cancelled.")

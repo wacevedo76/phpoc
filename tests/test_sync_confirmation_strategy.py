@@ -402,13 +402,14 @@ class TestStage1Overview(unittest.TestCase):
 
     @patch("builtins.input", side_effect=[
         "R", "0", "R", "1", "R", "2", "B",  # mark all 3 removed, back to overview
-        "S",  # S with all removed: "nothing to sync", loops back
-        "C"   # Cancel from the re-displayed overview
+        "S",  # S with all removed: returns decision with removals
     ])
     def test_stage1_all_removed_then_try_sync(self, mock_input):
-        """All entries removed, S shows message and loops back."""
+        """All entries removed, S returns decision with removal_indices."""
         d = self.strategy.decide(SAMPLE_PENDING)
-        self.assertTrue(d.cancelled)
+        self.assertEqual(d.selected_indices, [])
+        self.assertEqual(d.removal_indices, {0, 1, 2})
+        self.assertFalse(d.cancelled)
 
     @patch("builtins.input", side_effect=[
         "R", "0", "R", "1", "R", "2", "B",

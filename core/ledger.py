@@ -360,12 +360,14 @@ class LedgerDomain:
                 data[field] = "plain:[]"
         return True
 
-    def sync_day_with_selection(self, selected_indices, overrides=None):
+    def sync_day_with_selection(self, selected_indices, overrides=None, removal_indices=None):
         """Sync only the entries at selected_indices (from get_pending_sync()).
         Accepts optional per-entry overrides dict:
           overrides: {entry_index: {"end_epoch": int, "comment": str, "media": list}}
         Only fields that are present in the override dict are applied.
-        Unselected entries remain in staging."""
+        Unselected entries remain in staging.
+        Entries at removal_indices (staging-level indices) are deleted from staging
+        after sync succeeds."""
         staging = self.store.read_staging()
         selected_set = set(selected_indices) if selected_indices else set()
         selected = [staging[i] for i in selected_set
@@ -538,14 +540,15 @@ class LedgerDomain:
         self.store.write_ledger(ledger)
         self.store.write_index(index)
 
-        # Remove only the synced entries from staging, keep active + unsynced completed
+        # Remove synced entries AND removal-marked entries from staging
         selected_ids = {id(entry) for entry in selected}
+        removal_set = set(removal_indices) if removal_indices else set()
 
         new_staging = []
-        for entry in staging:
+        for i, entry in enumerate(staging):
             keep = True
             if not entry["data"].get("is_active", False):
-                if id(entry) in selected_ids:
+                if id(entry) in selected_ids or i in removal_set:
                     keep = False
             if keep:
                 new_staging.append(entry)
@@ -576,13 +579,29 @@ class LedgerDomain:
             return None
         decision = strategy.decide(pending)
 
-        if decision.cancelled or not decision.has_selection:
+        if decision.cancelled:
             return None
 
-        return self.sync_day_with_selection(
+        if decision.has_removals:
+            # Delete removal-marked entries from staging
+            staging = self.store.read_staging()
+            removal_set = set(decision.removal_indices)
+            new_staging = [e for i, e in enumerate(staging)
+                           if e["data"].get("is_active", False) or i not in removal_set]
+            self.store.write_staging(new_staging)
+            removed_count = len(removal_set)
+
+        if not decision.has_selection:
+            if decision.has_removals:
+                print(f"Removed {removed_count} {'entry' if removed_count == 1 else 'entries'} from staging.")
+            return None
+
+        result = self.sync_day_with_selection(
             decision.selected_indices,
             overrides=decision.overrides if decision.overrides else None,
+            removal_indices=decision.removal_indices if decision.has_removals else None,
         )
+        return result
 
     def sync_day(self):
         staging = self.store.read_staging()
