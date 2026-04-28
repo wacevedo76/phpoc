@@ -364,6 +364,152 @@ class TestSyncConfirmed(unittest.TestCase):
         self.assertIn("Remove", staging_titles)
         self.assertIn("Active", staging_titles)
 
+    def test_sync_with_removals_and_selection_9entries(self):
+        """Regression: removal_indices in sync_day_with_selection() must use original
+        staging indices, not shifted indices after early deletion.
+        User scenario: 9 entries, remove 4 (indices 0-3), sync 5 (indices 4-8).
+        All 5 must reach the ledger; all 4 must be deleted from staging."""
+        base = int(time.time() * 1000) - 86400000
+
+        # 4 entries to remove + 5 to sync = 9 total
+        entries = [
+            ("One", base, base + 57000),
+            ("Two", base + 100000, base + 100000 + 41000),
+            ("Three", base + 200000, base + 200000 + 31000),
+            ("Stale", base + 300000, base + 300000 + 500000),
+            ("Working", base + 10000000, base + 10000000 + 9379000),
+            ("Music", base + 20000000, base + 20000000 + 1948000),
+            ("YT", base + 30000000, base + 30000000 + 4057000),
+            ("Nitrotype", base + 40000000, base + 40000000 + 3376000),
+            ("Tidying", base + 50000000, base + 50000000 + 9000000),
+        ]
+        for title, start, end in entries:
+            self.ledger.capture_habit(title, start, end)
+
+        staging = self.store.read_staging()
+        self.assertEqual(len(staging), 9)
+
+        # Sync with removals: remove indices 0-3, sync 4-8
+        self.ledger.sync_day_with_selection(
+            selected_indices=[4, 5, 6, 7, 8],
+            removal_indices={0, 1, 2, 3},
+        )
+
+        # All entries should be gone from staging (synced + removed)
+        staging = self.store.read_staging()
+        self.assertEqual(len(staging), 0)
+
+        # Ledger should have exactly the 5 real entries
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for day in ledger_data:
+            if day.get("type") != "day": continue
+            for entry in day.get("entries", []):
+                synced_titles.add(entry["data"]["title"])
+        expected = {"Working", "Music", "YT", "Nitrotype", "Tidying"}
+        self.assertEqual(synced_titles, expected, f"Got {synced_titles}, expected {expected}")
+
+        # Removal-marked entries NOT in ledger
+        self.assertNotIn("One", synced_titles)
+        self.assertNotIn("Two", synced_titles)
+        self.assertNotIn("Stale", synced_titles)
+
+        # Chain integrity intact
+        self.assertTrue(self.ledger.verify())
+
+    def test_sync_with_strategy_only_removals_no_selection(self):
+        """Edge case: all entries marked for removal, none to sync.
+        Should delete all from staging without creating any ledger block."""
+        from core.sync_confirmation import SyncStrategy, SyncDecision
+
+        base = int(time.time() * 1000) - 86400000
+
+        entries = [
+            ("TrashA", base, base + 1000),
+            ("TrashB", base + 100000, base + 100000 + 1000),
+        ]
+        for title, start, end in entries:
+            self.ledger.capture_habit(title, start, end)
+
+        pending = self.ledger.get_pending_sync()
+        self.assertEqual(len(pending), 2)
+
+        class RemoveAllStrategy(SyncStrategy):
+            def decide(self, pending):
+                all_indices = {p["entry_index"] for p in pending}
+                return SyncDecision(
+                    selected_indices=[],
+                    removal_indices=all_indices,
+                )
+
+        self.ledger.sync_with_strategy(RemoveAllStrategy())
+
+        # Staging should be empty
+        staging = self.store.read_staging()
+        self.assertEqual(len(staging), 0,
+                         f"Expected empty staging, got: {[e['data']['title'] for e in staging]}")
+
+        # No ledger blocks created
+        ledger_data = self.ledger.get_ledger_data()
+        day_count = sum(1 for d in ledger_data if d.get("type") == "day")
+        self.assertEqual(day_count, 0, "No ledger blocks should have been created")
+
+    def test_sync_with_strategy_removal_and_selection(self):
+        """Regression: sync_with_strategy() must not delete staging early when
+        both removals and selections exist. Early deletion shifts indices and causes
+        selected_indices to pick wrong entries."""
+        from core.sync_confirmation import SyncStrategy, SyncDecision
+
+        base = int(time.time() * 1000) - 86400000
+
+        # 4 removal + 5 keep = 9 entries
+        entries = [
+            ("R1", base, base + 1000),
+            ("R2", base + 100000, base + 100000 + 1000),
+            ("R3", base + 200000, base + 200000 + 1000),
+            ("R4", base + 300000, base + 300000 + 1000),
+            ("KeepA", base + 10000000, base + 10000000 + 3600000),
+            ("KeepB", base + 20000000, base + 20000000 + 1800000),
+            ("KeepC", base + 30000000, base + 30000000 + 2700000),
+            ("KeepD", base + 40000000, base + 40000000 + 1500000),
+            ("KeepE", base + 50000000, base + 50000000 + 900000),
+        ]
+        for title, start, end in entries:
+            self.ledger.capture_habit(title, start, end)
+
+        pending = self.ledger.get_pending_sync()
+        self.assertEqual(len(pending), 9)
+
+        # Build a strategy that returns a specific SyncDecision
+        class FixedDecision(SyncStrategy):
+            def decide(self, pending):
+                # This matches the user's scenario: remove first 4, sync remaining 5
+                selected = [p["entry_index"] for p in pending if p["title"].startswith("Keep")]
+                removed = {p["entry_index"] for p in pending if p["title"].startswith("R")}
+                return SyncDecision(
+                    selected_indices=selected,
+                    removal_indices=removed,
+                )
+
+        self.ledger.sync_with_strategy(FixedDecision())
+
+        # All entries gone from staging
+        staging = self.store.read_staging()
+        self.assertEqual(len(staging), 0, f"Expected empty staging, got: {[e['data']['title'] for e in staging]}")
+
+        # Ledger has exactly the 5 Keeps
+        ledger_data = self.ledger.get_ledger_data()
+        synced_titles = set()
+        for day in ledger_data:
+            if day.get("type") != "day": continue
+            for entry in day.get("entries", []):
+                synced_titles.add(entry["data"]["title"])
+        expected = {"KeepA", "KeepB", "KeepC", "KeepD", "KeepE"}
+        self.assertEqual(synced_titles, expected, f"Got {synced_titles}")
+        self.assertNotIn("R1", synced_titles)
+        self.assertNotIn("R2", synced_titles)
+        self.assertTrue(self.ledger.verify())
+
     def test_sync_with_end_time_override(self):
         now = int(time.time() * 1000)
         start = now - 3600000
