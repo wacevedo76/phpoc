@@ -80,6 +80,14 @@ All branches merged and deleted.
 - All stale branches (R1-AES-CTR-Malleability, R2-identity-fallback, R4-content-proof-design, feature-habit-pause, feature-sync_confirmation, feature-tags, ledger-creation, modularization) deleted
 - Only `main` + `origin/main` remain
 
+**New Feature: `phpoc sync --since MM-DD`**
+- `--since MM-DD` (or `--since YYYY-MM-DD`) filters pending entries by date before the sync strategy sees them
+- Only entries with `date >= since_date` are offered for sync — perfect for syncing yesterday's entries while ignoring broken today entries
+- `MM-DD` borrows the current year; `YYYY-MM-DD` uses the full date
+- Works with both `--yes` (auto) and interactive modes
+- Implementation: `_resolve_since_date()` in main.py + filter in `sync_with_strategy()`
+- Commit: `041a245`
+
 **U1 — Sync Removal Auth Tag Mismatch Reproduction and Fix**
 - Reproduced the exact scenario: staging entry where `pauses_enc` was encrypted with a DIFFERENT crypto key than `startTime_enc`
 - `get_pending_sync()` succeeded on the bad entry (only decrypts startTime_enc, not pauses_enc)
@@ -123,7 +131,7 @@ Genesis (sealed + signed, identity fallback embedded)
 | `add end <title>` | Optional | Ends active task |
 | `add oneoff` | Optional | Captures completed task |
 | `view` | Optional | Shows running tasks |
-| `sync` | Yes | Commits staging → immutable ledger (interactive confirmation) |
+| `sync [--yes] [--since MM-DD]` | Yes | Commits staging → immutable ledger (interactive or --yes auto); `--since` filters to entries on/after date |
 | `verify` | Yes | Full chain integrity check (incl. content_hash) |
 | `rep [days] [--date/--week/--month/--year/--from/--to]` | Yes | Blind-index reputation summary with rich date filtering |
 | `list {all,synced,staged} [days] [--date/--week/--month/--year/--from/--to]` | Yes | Decrypted detailed listing with rich date filtering |
