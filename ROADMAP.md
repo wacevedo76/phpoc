@@ -42,8 +42,8 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 | Partitionable chain design | ✅ | — | Each block independently sealed |
 | Year/Month summary blocks | ✅ | — | I/O optimization for partial traversals |
 | **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. [No block](ROADMAP-BLOCKS.md) |
-| **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks. ⚠️ [Blocked by R1, R4](ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation) |
-| **Remote sync** (`sync/git_sync.py`) | 🔜 | Medium | Git-backed encrypted backup. ⚠️ [Blocked by R1, R2, R3](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards) |
+| **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks. ✅ All blockers resolved — content_hash enables plaintext verification after re-keying. |
+| **Remote sync** (`sync/git_sync.py`) | 🔜 | Medium | Git-backed encrypted backup. ✅ All blockers resolved — auth tags, identity fallback, 600K KDF. |
 | **Database backend** (SQLite, etc.) | 🔮 | Low | Via AbstractLedgerStore |
 | **Multi-device sync** (CRDT-based) | 🔮 | Low | Conflict-free merging across devices |
 
@@ -74,7 +74,7 @@ PH Ledger (phpoc) — Planned features organized by design goal from DESIGN_GOAL
 | Passphrase-based seed unlock | ✅ | — | PBKDF2(passphrase) → AES decrypt seed |
 | `phpoc recover` command | ✅ | — | Seed → new passphrase → re-seal Genesis |
 | Identity file (identity.json) | ✅ | — | Encrypted secret + pub key |
-| **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability. ⚠️ [Blocked by R2](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
+| **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability. ✅ Block resolved — identity fallback embedded in genesis. |
 | **Multi-identity support** (aliases/permissions) | 🔮 | Low | Multiple signing keys per ledger |
 | **AI-agent verifiable reports** | 🔮 | Low | Signed third-party verification of habits |
 
@@ -113,9 +113,9 @@ Link content hashes (SHA-256 of video/audio/photos) to specific activities.
 #### Reconciliation Logic (Chain-Bridging)
 Link orphaned activity blocks back to a master genesis.
 
-**Block status:** ⚠️ [Blocked by R1, R4](ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation)
-- **R1 (AES-CTR malleability):** Re-keying orphaned entries changes their hashes; no auth tag means manipulated ciphertext during transit is undetectable at the entry level.
-- **R4 (content proof):** The current design sketch says "check each block's seal" — but re-encrypted entries break entry hashes. A content-integrity mechanism must be designed before implementation.
+**Block status:** ✅ [All resolved](ROADMAP-BLOCKS.md)
+- **R1:** Encrypt-then-MAC auth tag prevents undetected manipulation in transit.
+- **R4:** `content_hash` per entry — plaintext SHA-256 computed before encryption. Survives re-keying; verification compares decrypted plaintext against stored hash.
 
 **Use case:** User has activity blocks from a previous/external system; wants to graft them into the ledger without losing the chain of trust.
 
@@ -127,10 +127,10 @@ Link orphaned activity blocks back to a master genesis.
 #### Remote Sync (git-based)
 Backup signed ledger blocks to a git remote.
 
-**Block status:** ⚠️ [Blocked by R1, R2, R3](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards)
-- **R1 (AES-CTR malleability):** No auth tag on encrypted fields means git intermediaries could silently corrupt ciphertext.
-- **R2 (identity fallback):** Syncing `ledger.json` without `identity.json` produces unsigned blocks on the receiving machine.
-- **R3 (KDF strength):** 100K PBKDF2 iterations is below current OWASP standards, weakening protection against offline attacks on synced ledger files.
+**Block status:** ✅ [All resolved](ROADMAP-BLOCKS.md)
+- **R1:** Auth tag on all encrypted fields — tamper detection even if file is corrupted during sync.
+- **R2:** Identity secret travels with ledger (genesis fallback) — no need to keep `identity.json` in sync.
+- **R3:** 600K PBKDF2 iterations (OWASP 2026) — strong protection against offline attacks on synced files.
 
 **Design approach:**
 - Encrypt ledger JSON before commit (or commit as-is since it's already encrypted)
