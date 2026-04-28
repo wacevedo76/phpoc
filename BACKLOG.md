@@ -273,6 +273,61 @@ still cheap)
 
 ---
 
+## 🟡 P12. Chain Head Witness / External Anchoring
+
+**Type:** Integrity infrastructure
+**Priority:** Medium
+**Roadmap ref:** [§0 — Protocol Layer](ROADMAP.md#0-protocol-layer--platform-free-personal-data)
+**Blocked by:** Nothing — can start now.
+
+The current chain proves nothing if the same key can rewrite history.
+A single local copy can always be replaced wholesale.
+`revert` is for bug recovery, but nothing prevents a malicious rewrite.
+
+**Strategies to consider (Tier 1–4, increasing strength):**
+
+### Tier 1: External Witness (most practical)
+Publish the chain head hash somewhere outside the ledger.
+Later `verify` checks against the published anchor.
+
+```
+phpoc witness                       # prints current chain head hash
+phpoc witness --save ~/backups/      # writes hash to a dated file
+phpoc verify --anchor <hash>         # verify against a specific anchor
+```
+
+If the witness file is committed to a public git repo, posted to a Keybase proof,
+tweeted, or even emailed to yourself — you now have an immutable reference.
+Modifying the ledger afterwards would require finding and rewriting every
+external copy of that hash.
+
+### Tier 2: Distributed Witness (strongest)
+Multiple peers independently hold the chain and compare hashes before accepting
+updates. Requires a network protocol — beyond scope for personal CLI, but
+natural for multi-platform sync (P3, P5–P7).
+
+### Tier 3: Periodic Backup Snapshots (simplest)
+Auto-save chain head hash on every sync.
+
+```
+~/.config/phpoc/witnesses/
+  2026-04-25T10:00:00Z  a1b2c3d4...
+  2026-04-26T14:30:00Z  e5f6g7h8...
+```
+
+A divergence between the current chain head and the last dated witness means
+something changed after that date.
+
+### Tier 4: Signed Timestamps (third-party公证)
+Use a public timestamping service (OpenTimestamps, RFC 3161) to anchor a hash
+in a blockchain. Proves the chain existed in a specific state before a specific
+date. Requires an external dependency, but is the gold standard for
+long-term verifiability.
+
+**Consider during:** Multi-platform support (P5–P7), Remote Sync (P3)
+
+---
+
 ## 🔮 Future Items (Low Priority)
 
 | ID | Item | Notes |
@@ -346,7 +401,7 @@ Two concurrent `main.py` processes could race on read/write of the cached key fi
 |---|---|
 | 🔴 Highest | P1 (Format Spec) |
 | 🔴 High | P2 (Portable Export), P3 (Remote Sync), P4 (CLI polish) |
-| 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span) |
+| 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span), P12 (Chain Head Witness) |
 | 🔮 Future | F1–F9 (Ed25519, Shareable Export, CRDT sync, etc.) |
 | ✅ Resolved | R1–R4 (historical roadblocks) |
 | 🟢 Low | B1–B3 (cosmetic bugs) |
