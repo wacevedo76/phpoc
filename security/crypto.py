@@ -145,14 +145,32 @@ class CryptoManager(AbstractCryptoManager):
         key = self._derive_sub_key(salt)
         aes = PureAESCTR(key)
         ciphertext = aes.process(text.encode(), nonce)
-        # Package as: salt(16) + nonce(8) + ciphertext
-        return (salt + nonce + ciphertext).hex()
+        # Encrypt-then-MAC: authenticate (nonce || ciphertext) with integrity sub-key
+        integrity_key = self._derive_sub_key(salt + b"-integrity", 32)
+        tag = hmac.new(integrity_key, nonce + ciphertext, hashlib.sha256).digest()
+        # Package as: salt(16) + nonce(8) + ciphertext + tag(32)
+        return (salt + nonce + ciphertext + tag).hex()
 
     def decrypt(self, hex_data: str) -> str:
         data = bytes.fromhex(hex_data)
         salt = data[:16]
         nonce = data[16:24]
-        ciphertext = data[24:]
+        integrity_key = self._derive_sub_key(salt + b"-integrity", 32)
+
+        # Detect format by data length:
+        #   Old (no auth tag): salt(16) + nonce(8) + ciphertext
+        #   New (with auth tag): salt(16) + nonce(8) + ciphertext + tag(32)
+        has_tag = len(data) >= 24 + 32  # minimum: 16+8+0+32 = 56 bytes
+        if has_tag:
+            ciphertext = data[24:-32]
+            stored_tag = data[-32:]
+            expected_tag = hmac.new(integrity_key, nonce + ciphertext, hashlib.sha256).digest()
+            if not hmac.compare_digest(expected_tag, stored_tag):
+                raise ValueError("Encrypted data integrity check failed: auth tag mismatch")
+        else:
+            # Legacy format — no auth tag (backward compatibility)
+            ciphertext = data[24:]
+
         key = self._derive_sub_key(salt)
         aes = PureAESCTR(key)
         decrypted = aes.process(ciphertext, nonce)

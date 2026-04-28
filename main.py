@@ -104,7 +104,7 @@ def main():
             print("Passphrases do not match. Try again.")
         
         # PDK for initialization
-        pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 100000, 32)
+        pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 600000, 32)
         
         seed = LedgerFactory.initialize(LEDGER_PATH, pdk, username, email)
         if seed:
@@ -137,7 +137,7 @@ def main():
             print("Passphrases do not match.")
         
         # 1. Update Identity block in Ledger
-        pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 100000, 32)
+        pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 600000, 32)
         
         ledger_data = json.loads(LEDGER_PATH.read_text())
         seed_str = base64.b64encode(mk).decode('utf-8')

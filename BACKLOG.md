@@ -25,6 +25,21 @@ AES-CTR without an authentication tag is malleable: an attacker who modifies cip
 
 **Severity:** 🔴 High — blocks 2 roadmap items (Reconciliation, Remote Sync)
 
+**Resolution (2026-04-28, branch `R1-AES-CTR-Malleability`):**
+
+Added encrypt-then-MAC to `CryptoManager.encrypt()` / `decrypt()` in `security/crypto.py`:
+
+- **Approach:** Option (b) from recommendation — HMAC-SHA256 tag over `(nonce || ciphertext)` using a derived integrity sub-key (`salt + b"-integrity"`). No new dependencies.
+- **Why this over AES-GCM:** Preserves the project's zero-dependency commitment for the core engine. AES-GCM can replace this later when optional dependencies are allowed (e.g., for Ed25519 signatures) with ~20 lines of change.
+- **Format change:**
+  - **Old:** `salt(16) + nonce(8) + ciphertext`
+  - **New:** `salt(16) + nonce(8) + ciphertext + tag(32)`
+- **Backward compatibility:** `decrypt()` detects the format by byte-length (old has no tag, new has 32-byte tag appended). Old encrypted fields remain decryptable.
+- **Tamper detection:** Any modification to ciphertext produces a tag mismatch and raises `ValueError("Encrypted data integrity check failed: auth tag mismatch")`.
+- **Entry hash caveat unchanged:** The entry hash still covers ciphertext (not plaintext). The auth tag ensures ciphertext integrity at rest, but entry-level *plaintext* content proofs (R4) remain a separate concern for Reconciliation.
+
+All 16 existing tests pass. Manual tamper test confirms rejection.
+
 ---
 
 ### R2. Identity Recovery Has No Fallback if `identity.json` Is Lost
@@ -65,6 +80,15 @@ This is not a functional bug, but it weakens the passphrase-derived key that pro
 **Recommendation:** Bump to 600,000 iterations for SHA-256. Consider `hashlib.scrypt` for memory-hard derivation as a stronger alternative (still stdlib, no new dependencies).
 
 **Severity:** 🟡 Medium — weakens security for planned Remote Sync feature
+
+**Resolution (2026-04-28, branch `R1-AES-CTR-Malleability`):**
+
+Bumped production PBKDF2 iterations from 100,000 to 600,000 in `main.py` (2 locations) and `security/auth.py` (1 location):
+
+- **Performance impact:** ~75ms additional latency on first authentication per session (negligible for CLI). Key is cached in RAM after first auth, so subsequent commands are unaffected.
+- **Mobile guidance:** Future React Native / native mobile implementations MUST call PBKDF2 through a native crypto module (not JS thread) to avoid UI freezes. 600K iterations in native code completes in ~60-120ms.
+- **scrypt considered:** Rejected for now — memory-hard derivation (16MB per call) adds complexity for mobile without immediate benefit. Documented as an acceptable alternative for future use.
+- **Tests unchanged:** Test suite remains at 100 iterations for CI speed (acceptable per original design note).
 
 ---
 

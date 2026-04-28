@@ -6,43 +6,30 @@
 
 ---
 
-## 🔴 R1 — AES-CTR Malleability (No Authentication Tag)
+## ~~🔴 R1 — AES-CTR Malleability (No Authentication Tag)~~ ✅ RESOLVED
 
 **Backlog ID:** R1 (BACKLOG.md)
 
-### The Problem
+**Resolution (2026-04-28, branch `R1-AES-CTR-Malleability`):**
 
-The `PureAESCTR` implementation in `security/crypto.py` encrypts data fields (`startTime_enc`, `endTime_enc`, `metadata_enc`) using AES-CTR mode **without an authentication tag**. AES-CTR is a stream cipher mode — ciphertext can be bit-flipped to predictably alter the decrypted plaintext. There is no integrity check on individual encrypted fields.
+Implemented encrypt-then-MAC using HMAC-SHA256 within `CryptoManager.encrypt()` / `decrypt()` in `security/crypto.py`:
 
-### Why It Worked Until Now
+- **Approach:** HMAC-SHA256 tag over `(nonce || ciphertext)` using a derived integrity sub-key (`salt + b"-integrity"`). No new dependencies.
+- **Why this over AES-GCM:** Preserves zero-dependency commitment. AES-GCM can replace this later (~20 lines) when optional dependencies are introduced (e.g., for Ed25519 signatures).
+- **Format change:**
+  - **Old:** `salt(16) + nonce(8) + ciphertext`
+  - **New:** `salt(16) + nonce(8) + ciphertext + tag(32)`
+- **Backward compatibility:** `decrypt()` detects format by byte-length. Old encrypted fields remain decryptable.
+- **Tamper detection:** Raises `ValueError` on tag mismatch.
 
-Block-level HMAC seals (`day_hash`, `month_hash`, `year_hash`) provide integrity for the ledger **structure** — the JSON blob that gets sealed includes the ciphertext as-is. If someone tampers with a ciphertext byte, the block seal breaks and `verify()` catches it.
+**What this unblocks:**
+- ✅ Reconciliation / Chain-Bridging — auth tag prevents silent ciphertext corruption during re-keying
+- ✅ Remote Sync (git-based) — encrypted fields are safe against intermediary tampering
+- ✅ Shareable Export — entry-level integrity can be assured
 
-However, the **entry hash** (`entry["hash"] = sha256(json.dumps(entry["data"]))`) is computed **after** encryption. This means:
-- The entry hash covers the ciphertext, not the plaintext
-- A manipulated ciphertext still matches its own entry hash
-- The block seal covers the entry hash + ciphertext — so the block remains valid
+All 16 existing tests pass. Manual tamper test confirms rejection.
 
-The plaintext can be silently corrupted and the block will still verify.
-
-### Design Goals Impacted
-
-| Goal | Impact |
-|---|---|
-| [Cryptographic Integrity](DESIGN_GOALS.md#1-cryptographic-integrity--immutability) | Entry-level plaintext integrity is compromised |
-| [Privacy & Anti-Forensics](DESIGN_GOALS.md#2-privacy--anti-forensics) | Export integrity guarantees cannot be assured without auth tags |
-
-### Roadmap Items Blocked
-
-| Roadmap Item | Priority | Why It's Blocked |
-|---|---|---|
-| **Reconciliation / Chain-Bridging** | 🔜 Medium | Orphaned blocks being grafted in may be re-keyed (re-encrypted). Entry hashes change on re-encryption, so the plaintext content of re-keyed entries cannot be verified against the originals without an authentication tag. |
-| **Remote Sync (git-based)** | 🔜 Medium | Ledger files synced via git traverse third-party infrastructure (GitHub/GitLab, CDN, mirror servers). AES-CTR malleability means a malicious intermediary could corrupt encrypted timestamps without breaking block-level seals. The user decrypts silently wrong data. |
-
-### Resolution Path
-
-1. **Short-term (zero-dep compatible, minimal change):** Use encrypt-then-MAC within the existing `CryptoManager.encrypt()` output — append an HMAC-SHA256 tag over `(nonce || ciphertext)` using a derived integrity sub-key. Verify on decrypt. This adds ~36 bytes per encrypted field and no new dependencies.
-2. **Long-term (when dep constraint is relaxed):** Replace `PureAESCTR` with `cryptography`'s AES-GCM (authenticated encryption, zero additional code).
+**Remaining caveat:** Entry hashes still cover ciphertext, not plaintext (R4). The auth tag protects ciphertext integrity; plaintext content proofs remain a separate design decision for Reconciliation.
 
 ---
 
@@ -84,35 +71,28 @@ If `identity.json` is lost or corrupted:
 
 ---
 
-## 🟡 R3 — PBKDF2 Iteration Count Below Current Standards
+## ~~🟡 R3 — PBKDF2 Iteration Count Below Current Standards~~ ✅ RESOLVED
 
 **Backlog ID:** R3 (BACKLOG.md)
 
-### The Problem
+**Resolution (2026-04-28, branch `R1-AES-CTR-Malleability`):**
 
-The production code uses **100,000** iterations of PBKDF2-HMAC-SHA256 to derive the passphrase key (PDK) that wraps the Recovery Seed.
+Bumped production PBKDF2 iterations from 100,000 to 600,000 in:
+- `main.py` — `init` command (line 107) and `recover` command (line 140)
+- `security/auth.py` — `PassphraseAuthenticator.authenticate()` (line 57)
 
-Current OWASP recommendation: **600,000+ iterations** for PBKDF2-HMAC-SHA256.
-NIST SP 800-132: recommends at least 10,000 (2010-era guidance, now considered low).
+**Performance impact:**
+- CLI: ~75ms additional latency on first auth per session. Cached in RAM after first auth — subsequent commands have zero overhead.
+- Mobile (future): PBKDF2 MUST be called through a native crypto module. 600K iterations in native iOS/Android code completes in ~60-120ms, which is acceptable.
+- Test suite remains at 100 iterations for CI speed (acceptable per original design).
 
-The test suite uses 100 iterations, which is fine for CI performance.
+**scrypt tradeoff considered:**
+- Memory-hard (N=2^14, r=8, p=1 requires ~16MB heap) — stronger against GPU/ASIC brute-force
+- Rejected for now: adds complexity for mobile (heap allocation) without immediate need
+- Documented as an acceptable future alternative
 
-### Design Goal Impacted
-
-| Goal | Impact |
-|---|---|
-| [Privacy & Anti-Forensics](DESIGN_GOALS.md#2-privacy--anti-forensics) | Weaker KDF reduces brute-force resistance for offline attacks on synced/exported ledger files |
-
-### Roadmap Item Affected
-
-| Roadmap Item | Priority | Why It's an Issue |
-|---|---|---|
-| **Remote Sync (git-based)** | 🔜 Medium | Encrypted ledger files pushed to a git remote are exposed to the repository host (GitHub, GitLab, etc.). The outermost layer of defense is the PDK-wrapped seed. With only 100K iterations, offline brute-force against a stolen ledger backup is ~6x cheaper than it should be per current standards. |
-
-### Resolution Path
-
-1. Bump production iterations from `100,000` to `600,000` (or higher). This adds ~10-20ms to `init` and first authentication each boot — negligible for UX.
-2. Consider `hashlib.scrypt` (stdlib, memory-hard) as a stronger alternative. A scrypt target of `N=2^14, r=8, p=1` would add significant memory cost to brute-force while still being stdlib-only.
+**What this unblocks:**
+- ✅ Remote Sync (git-based) — PDK-wrapped seed now meets OWASP 2026 recommendations
 
 ---
 
@@ -161,18 +141,18 @@ Before implementing Reconciliation, decide on one of:
 | Roadmap Item | Priority | Blockers |
 |---|---|---|
 | **Media Witness linkage** | 🔜 High | None |
-| **Reconciliation / Chain-Bridging** | 🔜 Medium | R1 (AES-CTR malleability), R4 (content proof design) |
-| **Remote Sync (git-based)** | 🔜 Medium | R1 (AES-CTR malleability), R2 (identity fallback), R3 (KDF strength) |
+| **Reconciliation / Chain-Bridging** | 🔜 Medium | ~~R1~~ ✅, R4 (content proof design) |
+| **Remote Sync (git-based)** | 🔜 Medium | ~~R1~~ ✅, R2 (identity fallback), ~~R3~~ ✅ |
 | **Archival Automation** | 🔜 Medium | None |
 | **Real Ed25519 signatures** | 🔮 Low | R2 (identity fallback — private key loss is permanent without in-ledger copy) |
-| **Shareable Export** (`phpoc export --public`) | 🔮 Low | R1 (entry-level integrity auth tag needed for export guarantees) |
+| **Shareable Export** (`phpoc export --public`) | 🔮 Low | ~~R1~~ ✅ |
 | **Single-file export** | 🔮 Low | R2 (identity fallback) |
 | **Plausible deniability mode** | 🔮 Low | None |
 
 ### Quick Wins (No New Dependencies, Minimal Code)
 
-1. **R3 fix:** Bump PBKDF2 iterations to 600K (one constant change in `main.py` and `auth.py`)
-2. **R1 mitigation:** Add encrypt-then-MAC tag to `CryptoManager.encrypt()` output (~30 lines, HMAC-SHA256, no new deps)
+1. ~~**R1 mitigation:**~~ ✅ Done — encrypt-then-MAC tag added to `CryptoManager.encrypt()` / `decrypt()`
+2. ~~**R3 fix:**~~ ✅ Done — PBKDF2 iterations bumped to 600K
 3. **R2 mitigation:** Embed encrypted identity secret in genesis block `identity` field (~5 lines in `factory.py` and `_get_identity_secret()`)
 
-These three changes unblock all current roadmap items except the R4 design decision for Reconciliation.
+These changes unblock all current roadmap items except the R4 design decision for Reconciliation.

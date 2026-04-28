@@ -54,7 +54,7 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         if not passphrase:
             return False
         
-        pdk = hashlib.pbkdf2_hmac('sha256', passphrase.encode(), b"session-salt", 100000, 32)
+        pdk = hashlib.pbkdf2_hmac('sha256', passphrase.encode(), b"session-salt", 600000, 32)
         
         # 3. Read Ledger to find encrypted seed
         if not self.ledger_path.exists():
