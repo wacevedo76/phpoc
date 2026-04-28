@@ -95,6 +95,13 @@ All branches merged and deleted.
 - Fixed by adding `startswith("plain:")` check before each decrypt call
 - Commit: `ad7060a`
 
+**Bug Fix: [R]emove now actually deletes entries from staging**
+- Previously, `[R]` in interactive sync only excluded entries from `selected_indices` — they stayed in staging forever
+- Added `removal_indices: Set[int]` to `SyncDecision` dataclass
+- `sync_day_with_selection()` now accepts `removal_indices` parameter, deletes those staging entries during cleanup
+- `sync_with_strategy()` handles all-removed case (no entries to sync, only deletions)
+- Commit: `77a2a96`
+
 **U1 — Sync Removal Auth Tag Mismatch — WIN: Partial Resolve**
 - **Reproduced:** staging entries where some encrypted fields are bound to a DIFFERENT crypto key than current session
 - **Fix (commit `9727637`):** `_normalize_staging_entry()` converts hex-encrypted staging fields to `plain:` before sync. Entries with undecryptable fields are skipped with `WARN:` instead of crashing.
@@ -158,11 +165,12 @@ Genesis (sealed + signed, identity fallback embedded)
 - **Symptom:** Some staging entries (from old revert code) have encrypted fields bound to a different crypto key. Sync now skips them gracefully with `WARN:` instead of crashing.
 - **Fix (commit `9727637`):** `_normalize_staging_entry()` converts hex→plain: at sync start; undecryptable entries skipped.
 - **Fix (commit `ad7060a`):** All display paths handle `plain:` prefix.
+- **Fix (commit `77a2a96`):** Entries marked for removal via `[R]` are now ACTUALLY deleted from staging after sync (not just excluded from selected_indices).
 - **Temp workaround for syncing:** `ph sync --yes --till YYYY-MM-DD` syncs everything up to a date, leaving broken entries for later.
 - **Permanent fix needed:** Either:
-  a) Revert the broken day blocks and re-revert with fixed code (`revert_entries()` now produces `plain:` format) — if those entries were ever in the ledger
+  a) Revert the broken day blocks and re-revert with fixed code (`revert_entries()` now produces `plain:` format)
   b) Run `scripts/repair_staging.py` to manually convert all hex fields to `plain:`
-  c) Manually edit staging.json to remove stale entries
+  c) Use the interactive sync removal (`[R]`) to delete stale entries from staging
 - **Status:** "Learning Pi agent" confirmed to have undecryptable fields. Remaining 04-28 entries untested but likely same issue.
 - **Ongoing investigation:** Using `/tmp/test_user_history/` as sandbox copy, tracked via git diff on `~/.config/personal_history_poc/
 
@@ -170,7 +178,7 @@ Genesis (sealed + signed, identity fallback embedded)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
-| 🔴 Critical | **U1 — Stale Crypto Context** | Repair reverted entries with mismatched encryption key ("Learning Pi agent" + possibly 04-28 entries). Options: revert blocks + re-revert with fixed code, or run repair_staging.py | None — investigation phase |
+| 🔴 Critical | **U1 — Stale Crypto Context** | Repair reverted entries with mismatched encryption key ("Learning Pi agent" + possibly 04-28 entries). Options: revert blocks + re-revert with fixed code, run repair_staging.py, or use [R]emove sync to delete stale entries | None — investigation phase |
 | 🔴 Critical | **D1 — Git Versioning of Config** ✅ | Git-initted, first commit done. Debug workflow: commit before test, diff after | Done |
 | 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
 | 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
