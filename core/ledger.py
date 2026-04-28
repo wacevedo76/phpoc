@@ -338,6 +338,28 @@ class LedgerDomain:
 
         return None
 
+    def _normalize_staging_entry(self, data):
+        """Convert hex-encrypted staging fields back to plain: format.
+
+        This ensures all staging entries use the NoAuthCryptoManager-compatible
+        format expected by the sync pipeline, regardless of how they got into
+        staging (fresh add, revert from ledger, etc.).
+
+        Returns True if normalization succeeded, False if decryption failed
+        (stale/corrupt encrypted data from a different crypto context).
+        """
+        for field in ["startTime_enc", "endTime_enc", "metadata_enc", "pauses_enc"]:
+            val = data.get(field)
+            if val and not val.startswith("plain:"):
+                try:
+                    plaintext = self.crypto.decrypt(val)
+                    data[field] = f"plain:{plaintext}"
+                except Exception:
+                    return False
+            elif field == "pauses_enc" and val is None:
+                data[field] = "plain:[]"
+        return True
+
     def sync_day_with_selection(self, selected_indices, overrides=None):
         """Sync only the entries at selected_indices (from get_pending_sync()).
         Accepts optional per-entry overrides dict:
@@ -351,6 +373,24 @@ class LedgerDomain:
         if not selected:
             return None
         overrides = overrides or {}
+
+        # Normalize any hex-encrypted staging fields to plain: format before processing.
+        # This handles stale encrypted data from previous reverts (before the revert fix)
+        # or entries encrypted in a different crypto context.
+        skipped = []
+        normalized = []
+        for entry in selected:
+            if self._normalize_staging_entry(entry["data"]):
+                normalized.append(entry)
+            else:
+                skipped.append(entry["data"].get("title", "?"))
+        selected = normalized
+        if skipped:
+            print(f"WARN: Skipped {len(skipped)} entries with undecryptable data (stale crypto context):")
+            for title in skipped:
+                print(f"  - {title}")
+        if not selected:
+            return None
 
         # Apply overrides before syncing
         for idx, entry in enumerate(selected):
