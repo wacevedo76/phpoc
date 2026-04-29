@@ -125,7 +125,7 @@ With PHPOC:
 
 PHPOC currently exists as a **reference implementation** — a command-line tool that demonstrates the format, the chain, the encryption, the blind indexes, and the verification logic. It is pure Python, zero external dependencies, and MIT-licensed.
 
-The next step is to extract the **format specification** so anyone can implement a reader, writer, or viewer — on mobile, on wearable, in a browser, or as part of a social platform that respects compartmentalization.
+The **format specification** ([PHPSPEC.md](PHPSPEC.md)) is now complete — a standalone document defining the block structure, encryption scheme, key derivation, chain validation, content hashing, blind indexes, and staging area. Anyone can implement a reader, writer, or viewer — on mobile, on wearable, in a browser, or as part of a social platform that respects compartmentalization — by following the spec alone, without reference to the Python code.
 
 ---
 

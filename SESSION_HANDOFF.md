@@ -1,10 +1,10 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` — all fixes committed (normalization, display guards, --till, removal deletion)
+- **Branch:** `main` — all fixes committed + PHPSPEC.md complete
 - **Tests:** 363/363 passing
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
-- **Working tree:** clean, all changes committed (latest: `bfa349f`)
+- **Working tree:** PHPSPEC.md + migration script + doc updates ready to commit
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
 - **Sandbox:** `/tmp/test_user_history_after/` has post-sync state for investigation
 
@@ -45,6 +45,28 @@ All branches merged and deleted.
 
 **Branches:** All stale branches deleted; only `main` + `origin/main` remain.
 
+### This Session (Current) — Format Specification (PHPSPEC.md)
+
+**P1 — Format Spec completed:** Created [PHPSPEC.md](PHPSPEC.md) — a standalone format specification (v0.3.0 draft, ~1450 lines) covering:
+- §1–2: Overview, key derivation, Sovereign Key Model, identity
+- §3: Encryption scheme (AES-CTR + encrypt-then-MAC, wire format)
+- §4: Full JSON schemas for all 4 block types with field tables
+- §5: Chain validation (prev_hash linkage, seals, signatures, entry hashes, content hashes, full algorithm)
+- §6: Content hash algorithm (canonical form, normalization rules)
+- §7: Blind index (format, query protocol, rebuild-from-chain)
+- §8: Staging area (plain: prefix, sync pipeline)
+- §9: Implementation considerations (legacy formats, versioning with `format_version`, edge cases including chain splitting)
+- §10: Annotated 3-block example ledger
+
+**Key decisions documented in spec:**
+- `format_version` field added to genesis (§4.1) — explicitly versioned format evolution (§9.3)
+- One-time migration script at `scripts/migrate_format_version.py` for v0.2.0 → v0.3.0 upgrade
+- Chain splitting at any summary block boundary (§9.4.5) — foundation for Portable Export
+- Any field may be encrypted using `_enc` suffix convention (not hardcoded set)
+- Ledger is self-contained (identity secret fallback in genesis)
+
+**Scripts created:** `scripts/migrate_format_version.py` — argparse-based migration tool with dry-run, in-place, and target-version options.
+
 **U1 — Stale Crypto Context: current status**
 - Root cause: old revert code (pre-`e0a3e9d`) copied hex-encrypted fields from ledger to staging; some fields encrypted with a different key than current session
 - Fixes now in place:
@@ -59,14 +81,14 @@ All branches merged and deleted.
 ## Crypto Architecture Checklist
 | Feature | Status | Notes |
 |---|---|---|
-| Sovereign Key Model (Seed → Master Key) | ✅ | Seed generated from 32 bytes urandom |
-| Passphrase wraps Seed (PDK encrypted) | ✅ | PBKDF2(passphrase, "session-salt") at **600K iterations** |
-| Identity Ed25519-proxy (HMAC-SHA256) | ✅ | Secret encrypted with Master Key; fallback in genesis |
-| Block signing (all block types) | ✅ | Genesis, Day, Month/Year Summary |
-| Encrypted timestamps (start/end) | ✅ | AES-CTR + HMAC-SHA256 auth tag |
-| Encrypt-then-MAC (auth tag) | ✅ | Tampered ciphertext raises ValueError |
-| Plaintext content hash (content_hash) | ✅ | Per-entry SHA-256; survives re-encryption |
-| Blind duration index (index.json) | ✅ | Fast rep queries without decryption |
+| Sovereign Key Model (Seed → Master Key) | ✅ | Seed generated from 32 bytes urandom. Specified in [PHPSPEC §2](PHPSPEC.md#2-key-derivation-identity) |
+| Passphrase wraps Seed (PDK encrypted) | ✅ | PBKDF2(passphrase, "session-salt") at **600K iterations**. Specified in [PHPSPEC §2.4](PHPSPEC.md#24-passphrase-derived-key-pdk) |
+| Identity Ed25519-proxy (HMAC-SHA256) | ✅ | Secret encrypted with Master Key; fallback in genesis. Specified in [PHPSPEC §2.7](PHPSPEC.md#27-identity-representation) |
+| Block signing (all block types) | ✅ | Genesis, Day, Month/Year Summary. Specified in [PHPSPEC §5.3](PHPSPEC.md#53-identity-signatures) |
+| Encrypted timestamps (start/end) | ✅ | AES-CTR + HMAC-SHA256 auth tag. Specified in [PHPSPEC §3](PHPSPEC.md#3-encryption-scheme) |
+| Encrypt-then-MAC (auth tag) | ✅ | Tampered ciphertext raises ValueError. Specified in [PHPSPEC §3.3](PHPSPEC.md#33-authentication-tag) |
+| Plaintext content hash (content_hash) | ✅ | Per-entry SHA-256; survives re-encryption. Specified in [PHPSPEC §6](PHPSPEC.md#6-content-hash-algorithm) |
+| Blind duration index (index.json) | ✅ | Fast rep queries without decryption. Specified in [PHPSPEC §7](PHPSPEC.md#7-blind-index) |
 | Session RAM cache (/dev/shm) | ✅ | One auth per boot |
 
 ## Chain Structure
@@ -117,8 +139,8 @@ Genesis (sealed + signed, identity fallback embedded)
 |---|---|---|---|
 | ✅ Done | **U1 — Stale Crypto Context** | Fixed normalization, display guards, --till, removal deletion, repair script. User verified live. | All fixes committed (363 tests pass) |
 | ✅ Done | **D1 — Git Versioning of Config** | Git-initted, snapshots before/after each run | Done |
-| 🥇 Highest | **P1 — Format Spec (PHPSPEC.md)** | Document the block structure, encryption, chain validation as a standalone spec | None |
-| 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment | P1 |
+| ✅ Done | **P1 — Format Spec (PHPSPEC.md)** | Standalone spec document (block structure, encryption, chain validation, content hash, blind index, staging, versioning). See [PHPSPEC.md](PHPSPEC.md). Includes `format_version` field, migration script `scripts/migrate_format_version.py`, and chain splitting mechanics in §9.4.5. | Done |
+| 🥇 Highest | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting mechanics documented in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | P1 (done) |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |
 | 🥇 High | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
 | 🥈 Medium | **P5 — Mobile POC** | Minimal Swift/Kotlin ledger reader/writer | P1, P2 |
