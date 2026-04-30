@@ -1,10 +1,10 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` — all fixes committed + PHPSPEC.md complete
-- **Tests:** 363/363 passing
+- **Branch:** `main` — content hash extensibility changes staged
+- **Tests:** All passing (modular, pause, tags, sync_confirmation, hierarchy, recovery, date_filters)
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
-- **Working tree:** PHPSPEC.md + migration script + doc updates ready to commit
+- **Working tree:** Changes to `core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py` — not yet committed
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
 - **Sandbox:** `/tmp/test_user_history_after/` has post-sync state for investigation
 
@@ -45,7 +45,20 @@ All branches merged and deleted.
 
 **Branches:** All stale branches deleted; only `main` + `origin/main` remain.
 
-### This Session (Current) — Format Specification (PHPSPEC.md)
+### This Session (Current) — Extensible Content Hash (v0.4.0)
+
+**Content hash made extensible:** The `content_hash` algorithm was changed from a hardcoded 9-field canonical dict to an **all-keys iterator** that automatically covers any future fields added to activity data. Key changes:
+
+- `core/ledger.py`: `_compute_content_hash()` now takes `(data: dict, decrypt_fn)` and iterates all keys — decrypts `*_enc` fields, sorts lists, excludes `content_hash` itself, uses `sort_keys=True` for deterministic ordering
+- `PHPSPEC.md`: §5.5 and §6 rewritten with both legacy (v0.3.0, 9-field) and extensible (v0.4.0+, all-keys) algorithms documented. §9.3 version table updated with v0.4.0. Migration section added.
+- `scripts/migrate_format_version.py`: Full rewrite supporting v0.2.0→v0.3.0 (existing) and v0.3.0→v0.4.0 (new: content hash recompute + chain cascade). Auto-detects current version and dispatches appropriately.
+- `verify()`: Uses try-both approach — tries extensible algorithm first, falls back to legacy — handles mixed-version ledgers without format_version dependency.
+
+**Context saved for next session — user has remaining questions about the design before this can be considered resolved.**
+
+---
+
+### Prior Session — Format Specification (PHPSPEC.md)
 
 **P1 — Format Spec completed:** Created [PHPSPEC.md](PHPSPEC.md) — a standalone format specification (v0.3.0 draft, ~1450 lines) covering:
 - §1–2: Overview, key derivation, Sovereign Key Model, identity
@@ -137,6 +150,7 @@ Genesis (sealed + signed, identity fallback embedded)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
+| 🛑 Immediate | **P0 — Extensible Content Hash Design Review** | `content_hash` algorithm changed from hardcoded 9-field dict to all-keys iterator. User has remaining questions about the design. **NOT resolved yet.** Files touched: `core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py` | Staged but uncommitted |
 | ✅ Done | **U1 — Stale Crypto Context** | Fixed normalization, display guards, --till, removal deletion, repair script. User verified live. | All fixes committed (363 tests pass) |
 | ✅ Done | **D1 — Git Versioning of Config** | Git-initted, snapshots before/after each run | Done |
 | ✅ Done | **P1 — Format Spec (PHPSPEC.md)** | Standalone spec document (block structure, encryption, chain validation, content hash, blind index, staging, versioning). See [PHPSPEC.md](PHPSPEC.md). Includes `format_version` field, migration script `scripts/migrate_format_version.py`, and chain splitting mechanics in §9.4.5. | Done |
@@ -167,3 +181,4 @@ See `CHANGELOG.md` for full history.
 
 - 2026-04-30 — Fixed `oneoff` duration from 2 minutes to 1 second by changing `-120000` to `-1000` in `main.py` line 215 (`main.py`)
 - Marked `main.py` as HOT in MAP.md
+- 2026-04-30 — Extensible content_hash: changed from hardcoded 9-field dict to all-keys iterator that auto-covers future fields. Updated `_compute_content_hash()` in `core/ledger.py`, rewrite `PHPSPEC.md` §5.5/§6/§9.3, full rewrite of `scripts/migrate_format_version.py` with v0.3.0→v0.4.0 path. **Not resolved — user has remaining questions.** (`core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py`)

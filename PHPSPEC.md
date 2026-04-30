@@ -846,37 +846,43 @@ This ensures that no part of an entry's data (encrypted or plaintext) has been a
 
 The content hash (`content_hash` in `entry["data"]`) is an optional integrity check that survives re-encryption. While the entry hash (§5.4) would change if ciphertext fields are re-encrypted (e.g., by a different key), the content hash is computed from **plaintext values** and remains stable.
 
-#### Computation
+#### Algorithm (v0.4.0+)
 
-The content hash is `SHA-256` of a canonical dict built from resolved plaintext values:
+Starting with format v0.4.0, the content hash uses an **extensible algorithm** that iterates over **all** keys in the entry's data dict. This means any future fields added to the activity object are automatically covered without a spec update:
 
 ```python
 def compute_content_hash(entry_data: dict, decrypt_fn) -> str:
-    """Compute content hash from entry data, decrypting encrypted fields."""
-    # Decrypt encrypted fields to get plaintext
-    start_epoch = int(decrypt_fn(entry_data["startTime_enc"]))
-    end_time = decrypt_fn(entry_data["endTime_enc"]) if entry_data.get("endTime_enc") else ""
-    metadata = decrypt_fn(entry_data["metadata_enc"])
-    pauses = decrypt_fn(entry_data.get("pauses_enc", "")) if entry_data.get("pauses_enc") else "[]"
-    
-    # Build canonical plaintext dict
-    content = {
-        "title": entry_data.get("title", ""),
-        "startTime": str(start_epoch),
-        "endTime": end_time,
-        "metadata": metadata,
-        "pauses": pauses,
-        "tags": sorted(entry_data.get("tags", [])),
-        "comment": entry_data.get("comment", ""),
-        "media": sorted(entry_data.get("media", [])),
-        "duration": entry_data.get("duration", 0),
-    }
+    """Compute extensible content hash from all entry data fields.
+
+    Iterates all keys in the entry's data dict:
+    - Fields ending in ``_enc`` are decrypted via *decrypt_fn*
+    - List fields are sorted for deterministic output
+    - The ``content_hash`` field itself is excluded
+    - All other fields are included as-is
+
+    ``sort_keys=True`` normalizes JSON key ordering, making the hash
+    independent of insertion order.
+    """
+    content = {}
+    for key, value in entry_data.items():
+        if key == "content_hash":
+            continue
+        if key.endswith("_enc") and value is not None and value != "":
+            content[key] = decrypt_fn(value)
+        elif isinstance(value, list):
+            content[key] = sorted(value)
+        else:
+            content[key] = value
     return hashlib.sha256(
         json.dumps(content, sort_keys=True).encode()
     ).hexdigest()
 ```
 
-**Validation rule:** If `content_hash` is present in `entry["data"]`:
+> **For ledgers at v0.3.0 or earlier**, the legacy algorithm (hardcoded 9-field canonical dict, described in §6) is used instead. See §9.3 for version detection.
+
+#### Validation rule
+
+If `content_hash` is present in `entry["data"]`:
 
 ```
 compute_content_hash(entry["data"], decrypt) == entry["data"]["content_hash"]
@@ -886,10 +892,10 @@ If `content_hash` is absent, skip this check (legacy entries).
 
 #### Why Two Hashes?
 
-| Hash | Scope | Changes on re-encryption? | Purpose |
-|------|-------|--------------------------|---------|
-| `entry.hash` | Encrypted data dict | ✅ Yes | Tamper detection of stored data |
-| `entry.data.content_hash` | Plaintext values | ❌ No | Proof of content that survives key rotation |
+| Hash | Scope | Changes on re-encryption? | Extensible? | Purpose |
+|------|-------|--------------------------|-------------|---------|
+| `entry.hash` | Encrypted data dict | ✅ Yes | ✅ Auto (covers all keys) | Tamper detection of stored data |
+| `entry.data.content_hash` | Plaintext values | ❌ No | ✅ Auto (v0.4.0+) | Proof of content that survives key rotation |
 
 Both hashes should be verified during a full chain check.
 
@@ -927,7 +933,7 @@ def verify(ledger: list, master_key: bytes, identity_secret: bytes = None) -> bo
     return True
 ```
 
-> **Performance note:** Each entry's `content_hash` verification requires decrypting `startTime_enc`, `endTime_enc`, `metadata_enc`, and `pauses_enc` — making it the most expensive check. For large ledgers, implementations may wish to make this an opt-in deep check.
+> **Performance note (v0.4.0+):** The extensible content hash decrypts **all** `*_enc` fields in the data dict — including any future ones. For large ledgers with many encrypted fields, implementations may wish to make this an opt-in deep check. Legacy (pre-v0.4.0) content hashes only decrypt the four standard fields (`startTime_enc`, `endTime_enc`, `metadata_enc`, `pauses_enc`).
 
 ---
 
@@ -935,7 +941,60 @@ def verify(ledger: list, master_key: bytes, identity_secret: bytes = None) -> bo
 
 The content hash is a SHA-256 digest of a canonical plaintext representation of an entry. It survives re-encryption because it is computed from resolved plaintext values, not from ciphertext.
 
-### 6.1 Canonical Dict Construction
+The algorithm used depends on the ledger's format version:
+
+| Format Version | Algorithm | Coverage |
+|----------------|-----------|----------|
+| v0.3.0 and earlier | Legacy (hardcoded 9 fields) | Fixed set: startTime, endTime, metadata, pauses, tags, comment, media, title, duration |
+| v0.4.0+ | Extensible (iterates all keys) | **All** data fields, including any future additions |
+
+### 6.1 Extensible Algorithm (v0.4.0+)
+
+The extensible algorithm iterates over **all** keys in the entry's data dict, making it automatically forward-compatible with any future fields:
+
+```python
+def compute_content_hash(entry_data: dict, decrypt_fn) -> str:
+    """Compute extensible content hash from all entry data fields.
+
+    - Fields ending in ``_enc`` are decrypted via *decrypt_fn*
+    - List fields are sorted for deterministic output
+    - The ``content_hash`` field itself is excluded
+    - All other fields are included as-is
+
+    ``sort_keys=True`` normalizes JSON key ordering.
+    """
+    content = {}
+    for key, value in entry_data.items():
+        if key == "content_hash":
+            continue
+        if key.endswith("_enc") and value is not None and value != "":
+            content[key] = decrypt_fn(value)
+        elif isinstance(value, list):
+            content[key] = sorted(value)
+        else:
+            content[key] = value
+    return hashlib.sha256(
+        json.dumps(content, sort_keys=True).encode()
+    ).hexdigest()
+```
+
+**General normalization rules:**
+
+| Aspect | Rule |
+|--------|------|
+| `*_enc` fields | Decrypted via *decrypt_fn* before inclusion |
+| List fields (e.g., `tags`, `media`) | Sorted alphabetically |
+| `content_hash` | Excluded (prevents circular dependency) |
+| All other fields | Included as-is (strings, numbers, booleans, nulls) |
+| Key ordering | `sort_keys=True` normalizes to alphabetical order |
+
+> This hash is stable across key rotation, re-encryption, and format version changes — as long as the plaintext values are identical, the content hash will be identical.
+
+### 6.2 Legacy Algorithm (pre-v0.4.0)
+
+Ledgers at format version v0.3.0 or earlier use a hardcoded 9-field canonical dict. This algorithm is **not extensible** — any fields added beyond the predefined set are ignored by the content hash.
+
+#### Canonical Dict Construction
 
 ```python
 def build_content_dict(data: dict, decrypted: PlaintextValues) -> dict:
@@ -965,12 +1024,10 @@ def build_content_dict(data: dict, decrypted: PlaintextValues) -> dict:
 | `media` | Sorted alphabetically |
 | `duration` | Integer milliseconds |
 
-### 6.2 Algorithm
+#### Algorithm
 
 ```python
-import hashlib, json
-
-def compute_content_hash(
+def compute_content_hash_legacy(
     title: str,
     start_epoch: int,
     end_time_str: str,       # epoch ms as string, or ""
@@ -997,7 +1054,7 @@ def compute_content_hash(
     ).hexdigest()
 ```
 
-> This hash is stable across key rotation, re-encryption, and format version changes — as long as the plaintext values are identical, the content hash will be identical.
+> **Migration note:** Existing ledgers can be upgraded to v0.4.0 using the migration script (`scripts/migrate_format_version.py`), which recomputes all content hashes using the new algorithm and cascades the resulting changes through the full chain.
 
 ---
 
@@ -1189,18 +1246,20 @@ Every ledger has an explicit format version stored in the genesis block's `forma
 | Version | Detection |
 |---------|-----------|
 | **0.2.0** | Implicit — genesis has no `format_version` field. Pre-spec ledgers created before this document. |
-| **0.3.0+** | Explicit — `format_version` present in genesis. First version documented by this spec. |
+| **0.3.0** | Explicit — `format_version` present in genesis. Uses hardcoded 9-field content hash algorithm (§6.2). |
+| **0.4.0+** | Explicit — `format_version` present in genesis. Uses extensible content hash algorithm (§6.1). |
 
 #### Feature to Version Mapping
 
 | Feature | Version Added | Detection |
 |---------|---------------|-----------|
 | Auth tag (encrypt-then-MAC) | v0.2.0 | Ciphertext length ≥ 56 bytes |
-| `content_hash` | v0.2.0 | Presence of field in entry data |
+| `content_hash` (legacy, 9-field) | v0.2.0 | Presence of field in entry data; `format_version < 0.4.0` |
 | `identity_secret_enc_fallback` | v0.2.0 | Presence of field in genesis identity |
 | `pauses_enc` | v0.3.0 | Presence of field in entry data |
 | `tags`, `media` | v0.3.0 | Presence of fields in entry data |
 | `format_version` (explicit) | v0.3.0 | Presence of field in genesis |
+| `content_hash` (extensible, all-keys) | v0.4.0 | Presence of field in entry data; `format_version >= 0.4.0` |
 
 #### Policy for Future Changes
 
@@ -1208,8 +1267,11 @@ Every ledger has an explicit format version stored in the genesis block's `forma
 - Old ledgers must remain readable without migration
 - Encryption/decryption must accept both old and new wire formats
 - `format_version` in genesis MUST be updated when backward-incompatible changes are made
+- The content hash algorithm (v0.4.0+) automatically covers new data fields without requiring spec updates or version bumps for simple field additions
 
 #### One-Time Migration (v0.2.0 → v0.3.0)
+
+Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. Because `format_version` is included in the block seal, adding it changes `day_hash`, which **cascades through the entire chain**:
 
 Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. Because `format_version` is included in the block seal, adding it changes `day_hash`, which **cascades through the entire chain**:
 
@@ -1238,6 +1300,30 @@ def upgrade_020_to_030(ledger: list, master_key, identity_secret=None) -> list:
 > **Note:** This migration rewrites every block in the ledger. For small single-user ledgers this is instantaneous. The `format_version` is set to `"0.2.0"` (the version the data was actually created with), not the current spec version — this preserves accurate provenance.
 
 A standalone migration script is provided at `scripts/migrate_format_version.py`. Run with `--help` for usage details.
+
+#### Migration (v0.3.0 → v0.4.0)
+
+Ledgers at format v0.3.0 can be upgraded to v0.4.0 to adopt the extensible content hash algorithm. This migration:
+
+1. **Bumps** `format_version` in genesis from `"0.3.0"` to `"0.4.0"`
+2. **Recomputes** every entry's `content_hash` using the new all-keys algorithm (§6.1)
+3. **Recomputes** every entry's `hash` (the entry hash covers the data dict, which includes `content_hash`)
+4. **Cascades** through all block seals — changed entries → changed day blocks → changed prev_hash linkage → changed seals throughout the entire chain
+
+The migration script at `scripts/migrate_format_version.py` handles this automatically:
+
+```bash
+# Preview changes
+python3 scripts/migrate_format_version.py --dry-run
+
+# Apply migration (writes to ledger.json.migrated)
+python3 scripts/migrate_format_version.py
+
+# Apply in-place (creates ledger.json.bak backup)
+python3 scripts/migrate_format_version.py --in-place
+```
+
+> **Backward compatibility:** After migration, the `verify()` function checks `format_version` to select the correct content hash algorithm. Old ledgers without the migration remain fully verifiable using the legacy algorithm.
 
 ### 9.4 Edge Cases
 

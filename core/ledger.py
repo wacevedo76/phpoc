@@ -281,38 +281,37 @@ class LedgerDomain:
         return pending
 
     @staticmethod
-    def _compute_content_hash(title: str, start_epoch: int, end_epoch_str: str,
-                              metadata_json: str, pauses_json: str,
-                              tags: list, comment: str, media: list,
-                              duration: int) -> str:
-        """Compute a content hash from resolved plaintext values.
+    def _compute_content_hash(data: dict, decrypt_fn) -> str:
+        """Compute a content hash from all entry data fields.
 
-        This hash represents the entry's plaintext content and survives
-        re-encryption since it's based on actual values, not ciphertext.
+        Iterates all keys in the entry's data dict:
+        - Fields ending in ``_enc`` are decrypted via *decrypt_fn*
+        - List fields are sorted for deterministic output
+        - The ``content_hash`` field itself is excluded
+        - All other fields are included as-is
+
+        ``sort_keys=True`` normalizes JSON key ordering, making the hash
+        independent of insertion order. This means any future fields
+        added to the activity object are automatically covered without
+        requiring a spec update.
 
         Args:
-            title: Activity title.
-            start_epoch: Start time in epoch ms (as int).
-            end_epoch_str: End time as string (epoch ms), or "".
-            metadata_json: JSON string of metadata.
-            pauses_json: JSON string of pauses list.
-            tags: Sorted list of tag strings.
-            comment: Comment string.
-            media: List of media references.
-            duration: Duration in ms.
+            data: The entry's data dict (raw from ledger, with encrypted fields).
+            decrypt_fn: Callable that decrypts a single encrypted field value.
         """
-        content = {
-            "title": title,
-            "startTime": str(start_epoch),
-            "endTime": end_epoch_str if end_epoch_str else "",
-            "metadata": metadata_json if metadata_json else "{}",
-            "pauses": pauses_json if pauses_json else "[]",
-            "tags": sorted(tags),
-            "comment": comment if comment else "",
-            "media": sorted(media),
-            "duration": duration,
-        }
-        return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        content = {}
+        for key, value in data.items():
+            if key == "content_hash":
+                continue
+            if key.endswith("_enc") and value is not None and value != "":
+                content[key] = decrypt_fn(value)
+            elif isinstance(value, list):
+                content[key] = sorted(value)
+            else:
+                content[key] = value
+        return hashlib.sha256(
+            json.dumps(content, sort_keys=True).encode()
+        ).hexdigest()
 
     def _get_identity_secret(self) -> Optional[bytes]:
         # Try identity.json first
@@ -461,18 +460,9 @@ class LedgerDomain:
             if "pauses_enc" in data:
                 data["pauses_enc"] = self.crypto.encrypt(pauses_json_str)
 
-            # Compute content hash from resolved plaintext values (before final entry hash)
-            data["content_hash"] = self._compute_content_hash(
-                title=data["title"],
-                start_epoch=start_epoch,
-                end_epoch_str=str(end_epoch) if end_epoch is not None else "",
-                metadata_json=meta_json_str,
-                pauses_json=pauses_json_str,
-                tags=data.get("tags", []),
-                comment=data.get("comment", ""),
-                media=data.get("media", []),
-                duration=data.get("duration", 0),
-            )
+            # Compute content hash from all entry data fields (extensible —
+            # automatically covers any future keys via sort_keys=True)
+            data["content_hash"] = self._compute_content_hash(data, self.crypto.decrypt)
 
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
@@ -645,18 +635,9 @@ class LedgerDomain:
             if "pauses_enc" in data:
                 data["pauses_enc"] = self.crypto.encrypt(pauses_json_str)
 
-            # Compute content hash from resolved plaintext values (before final entry hash)
-            data["content_hash"] = self._compute_content_hash(
-                title=data["title"],
-                start_epoch=start_epoch,
-                end_epoch_str=str(end_epoch) if end_epoch is not None else "",
-                metadata_json=meta_json_str,
-                pauses_json=pauses_json_str,
-                tags=data.get("tags", []),
-                comment=data.get("comment", ""),
-                media=data.get("media", []),
-                duration=data.get("duration", 0),
-            )
+            # Compute content hash from all entry data fields (extensible —
+            # automatically covers any future keys via sort_keys=True)
+            data["content_hash"] = self._compute_content_hash(data, self.crypto.decrypt)
 
             # Re-calculate entry hash after potential re-encryption
             entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
@@ -767,24 +748,27 @@ class LedgerDomain:
                     # Optional content hash check — verifies plaintext survives re-encryption
                     if "content_hash" in data:
                         try:
-                            # Decrypt fields to reconstruct plaintext for hash comparison
-                            # Build a copy of data with encrypted fields decrypted
-                            plain = dict(data)
-                            for enc_field in ["startTime_enc", "endTime_enc", "metadata_enc", "pauses_enc"]:
-                                if enc_field in plain and plain[enc_field]:
-                                    plain[enc_field] = self.crypto.decrypt(plain[enc_field])
-                            if hashlib.sha256(json.dumps({
-                                "title": plain.get("title", ""),
-                                "startTime": plain.get("startTime_enc", ""),
-                                "endTime": plain.get("endTime_enc", ""),
-                                "metadata": plain.get("metadata_enc", ""),
-                                "pauses": plain.get("pauses_enc", ""),
-                                "tags": sorted(plain.get("tags", [])),
-                                "comment": plain.get("comment", ""),
-                                "media": sorted(plain.get("media", [])),
-                                "duration": plain.get("duration", 0),
-                            }, sort_keys=True).encode()).hexdigest() != data["content_hash"]:
-                                return False
+                            # Try extensible algorithm first (v0.4.0+). If it fails,
+                            # fall back to legacy hardcoded 9-field algorithm (pre-v0.4.0).
+                            # This handles mixed ledgers and avoids a format_version dependency.
+                            if self._compute_content_hash(data, self.crypto.decrypt) != data["content_hash"]:
+                                # Fall back to legacy v0.3.0 algorithm
+                                plain = dict(data)
+                                for enc_field in ["startTime_enc", "endTime_enc", "metadata_enc", "pauses_enc"]:
+                                    if enc_field in plain and plain[enc_field]:
+                                        plain[enc_field] = self.crypto.decrypt(plain[enc_field])
+                                if hashlib.sha256(json.dumps({
+                                    "title": plain.get("title", ""),
+                                    "startTime": plain.get("startTime_enc", ""),
+                                    "endTime": plain.get("endTime_enc", ""),
+                                    "metadata": plain.get("metadata_enc", ""),
+                                    "pauses": plain.get("pauses_enc", ""),
+                                    "tags": sorted(plain.get("tags", [])),
+                                    "comment": plain.get("comment", ""),
+                                    "media": sorted(plain.get("media", [])),
+                                    "duration": plain.get("duration", 0),
+                                }, sort_keys=True).encode()).hexdigest() != data["content_hash"]:
+                                    return False
                         except Exception:
                             return False
         return True
