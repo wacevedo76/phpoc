@@ -158,3 +158,12 @@ Genesis (sealed + signed, identity fallback embedded)
 ---
 
 See `CHANGELOG.md` for full history.
+
+---
+
+## Triage Log
+
+*Entries added by `/triage` template. Each entry: date — one-line summary (files touched).*
+
+- 2026-04-30 — Fixed `oneoff` duration from 2 minutes to 1 second by changing `-120000` to `-1000` in `main.py` line 215 (`main.py`)
+- Marked `main.py` as HOT in MAP.md

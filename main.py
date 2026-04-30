@@ -212,7 +212,7 @@ def main():
                 if tag_input:
                     raw_tags = [t.strip() for t in tag_input.split(",")]
                     tags = CLIInterface._normalize_tag_args(raw_tags)
-            cli.add_oneoff(title, int(time.time()*1000)-120000, int(time.time()*1000), tags=tags)
+            cli.add_oneoff(title, int(time.time()*1000)-1000, int(time.time()*1000), tags=tags)
         elif args.subcommand == "start":
             tags = CLIInterface._normalize_tag_args(args.tags) if hasattr(args, 'tags') and args.tags else None
             cli.add_start(args.title, tags=tags)
