@@ -10,7 +10,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 |---|---|---|---|
 | `main.py` | 333 | HOT | CLI entry — argparse dispatch to all commands |
 | `cli/interface.py` | 426 | COLD | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` |
-| `core/ledger.py` | 871 | COLD | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify`, `revert_entries` |
+| `core/ledger.py` | 855 | COLD | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` |
 | `core/sync_confirmation.py` | 509 | COLD | Strategy pattern: `AutoSyncStrategy`, `InteractiveCLIStrategy` (3-stage: overview→edit→sync) |
 | `core/factory.py` | 69 | COLD | `LedgerFactory.initialize()` — creates genesis + identity |
 | `security/crypto.py` | 204 | COLD | Pure AES-CTR + HMAC-SHA256. `CryptoManager`, `NoAuthCryptoManager` |
@@ -37,15 +37,15 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 | File | Lines | Purpose |
 |---|---|---|
-| `scripts/migrate_format_version.py` | 367 | Format migration v0.2.0 → v0.3.0 |
+| `scripts/migrate_format_version.py` | 616 | Format migration v0.2.0→v0.3.0 + v0.3.0→v0.4.0 (extensible content hash + chain cascade) |
 | `scripts/repair_staging.py` | 113 | Convert hex-encrypted staging fields to plain: format |
 
 ### Key docs
 | File | Lines | Use when... |
 |---|---|---|
-| `PHPSPEC.md` | 1,443 | Need block structure, encryption format, chain validation spec |
+| `PHPSPEC.md` | 1,529 | Need block structure, encryption format, chain validation spec, content hash (extensible + legacy) |
 | `VISION.md` | ~200 | Protocol philosophy, use cases |
-| `SESSION_HANDOFF.md` | 325 | Detailed session history, full crypto checklist |
+| `SESSION_HANDOFF.md` | ~190 | Detailed session history, full crypto checklist |
 | `BACKLOG.md` | ~400 | Task-level tracking |
 | `ROADMAP.md` | ~250 | Feature roadmap |
 

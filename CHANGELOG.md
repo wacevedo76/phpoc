@@ -2,7 +2,15 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
-## [0.3.0] — Unreleased (Working Tree Changes)
+## [0.4.0] — 36f4cec
+
+### Added
+- **Extensible content hash algorithm** — `_compute_content_hash()` now iterates all keys in entry data dict (v0.4.0+), automatically covering any future fields without spec updates. Legacy 9-field algorithm (v0.3.0) retained for backwards compatibility.
+- `PHPSPEC.md` §5.5, §6, §9.3 rewritten: both legacy and extensible algorithms documented with normalization rules, version table, and migration guide
+- `scripts/migrate_format_version.py` now supports v0.3.0→v0.4.0 migration path (bump format_version, recompute content hashes, cascade chain seals)
+- `verify()` try-both approach — tries extensible algorithm first, falls back to legacy — handles mixed-version ledgers without format_version dependency
+
+## [0.3.0] — Working Tree
 
 ### Fixed
 - `core/factory.py`: Config directory now created before writing identity/ledger files — fixes `FileNotFoundError` on first `init`

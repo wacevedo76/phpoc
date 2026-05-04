@@ -1,10 +1,10 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` — content hash extensibility changes staged
+- **Branch:** `main`
 - **Tests:** All passing (modular, pause, tags, sync_confirmation, hierarchy, recovery, date_filters)
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
-- **Working tree:** Changes to `core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py` — not yet committed
+- **Working tree:** Clean — all changes committed
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
 - **Sandbox:** `/tmp/test_user_history_after/` has post-sync state for investigation
 
@@ -54,7 +54,7 @@ All branches merged and deleted.
 - `scripts/migrate_format_version.py`: Full rewrite supporting v0.2.0→v0.3.0 (existing) and v0.3.0→v0.4.0 (new: content hash recompute + chain cascade). Auto-detects current version and dispatches appropriately.
 - `verify()`: Uses try-both approach — tries extensible algorithm first, falls back to legacy — handles mixed-version ledgers without format_version dependency.
 
-**Context saved for next session — user has remaining questions about the design before this can be considered resolved.**
+**Committed as `36f4cec`** — resolved. User may revisit with design questions later.
 
 ---
 
@@ -150,7 +150,7 @@ Genesis (sealed + signed, identity fallback embedded)
 
 | Priority | Item | Description | Dependencies |
 |---|---|---|---|
-| 🛑 Immediate | **P0 — Extensible Content Hash Design Review** | `content_hash` algorithm changed from hardcoded 9-field dict to all-keys iterator. User has remaining questions about the design. **NOT resolved yet.** Files touched: `core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py` | Staged but uncommitted |
+| ✅ Done | **P0 — Extensible Content Hash (v0.4.0)** | `content_hash` algorithm changed from hardcoded 9-field dict to all-keys iterator. Auto-covers future fields. See commit `36f4cec`. Files touched: `core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py` | Committed |
 | ✅ Done | **U1 — Stale Crypto Context** | Fixed normalization, display guards, --till, removal deletion, repair script. User verified live. | All fixes committed (363 tests pass) |
 | ✅ Done | **D1 — Git Versioning of Config** | Git-initted, snapshots before/after each run | Done |
 | ✅ Done | **P1 — Format Spec (PHPSPEC.md)** | Standalone spec document (block structure, encryption, chain validation, content hash, blind index, staging, versioning). See [PHPSPEC.md](PHPSPEC.md). Includes `format_version` field, migration script `scripts/migrate_format_version.py`, and chain splitting mechanics in §9.4.5. | Done |
@@ -181,4 +181,4 @@ See `CHANGELOG.md` for full history.
 
 - 2026-04-30 — Fixed `oneoff` duration from 2 minutes to 1 second by changing `-120000` to `-1000` in `main.py` line 215 (`main.py`)
 - Marked `main.py` as HOT in MAP.md
-- 2026-04-30 — Extensible content_hash: changed from hardcoded 9-field dict to all-keys iterator that auto-covers future fields. Updated `_compute_content_hash()` in `core/ledger.py`, rewrite `PHPSPEC.md` §5.5/§6/§9.3, full rewrite of `scripts/migrate_format_version.py` with v0.3.0→v0.4.0 path. **Not resolved — user has remaining questions.** (`core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py`)
+- 2026-04-30 — Extensible content_hash: changed from hardcoded 9-field dict to all-keys iterator that auto-covers future fields. Updated `_compute_content_hash()` in `core/ledger.py`, rewrite `PHPSPEC.md` §5.5/§6/§9.3, full rewrite of `scripts/migrate_format_version.py` with v0.3.0→v0.4.0 path. **Resolved — committed as `36f4cec`.** (`core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py`) - 2026-05-04 — P0 marked resolved, handoff updated. User may revisit design questions later.
