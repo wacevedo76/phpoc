@@ -167,10 +167,42 @@ def main():
             enc_identity = json.loads(LEDGER_PATH.parent.joinpath("identity.json").read_text())["identity_secret_enc"]
             ledger_data[0]["identity"]["identity_secret_enc_fallback"] = enc_identity
 
-        # 3. Re-seal the genesis (using MK)
-        check_data = {k: v for k, v in ledger_data[0].items() if k != "day_hash"}
+        # 3. Re-seal and re-sign the genesis (using MK)
+        # NOTE: verify() excludes "signature" from check_data when verifying the seal,
+        # so we must do the same here to be consistent.
+        check_data = {k: v for k, v in ledger_data[0].items() if k not in ["day_hash", "signature"]}
         ledger_data[0]["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
-        
+
+        # Get identity secret for re-signing
+        store = LedgerStore(LEDGER_PATH.parent / "staging.json", LEDGER_PATH, INDEX_PATH)
+        ledger_domain = LedgerDomain(crypto, store)
+        identity_secret = ledger_domain._get_identity_secret()
+        if identity_secret:
+            ledger_data[0]["signature"] = crypto.sign(ledger_data[0]["day_hash"], identity_secret)
+
+        # 4. Re-chain all subsequent blocks: update prev_hash, re-seal, re-sign
+        for i in range(1, len(ledger_data)):
+            block = ledger_data[i]
+            prev = ledger_data[i-1]
+
+            # Update prev_hash to point to the preceding block's current hash
+            block["prev_hash"] = prev.get("day_hash") or prev.get("month_hash") or prev.get("year_hash")
+
+            # Determine which hash key this block uses
+            hash_key = (
+                "day_hash" if block.get("type", "day") == "day" else
+                "month_hash" if block.get("type") == "month_summary" else
+                "year_hash"
+            )
+
+            # Re-seal (exclude hash_key and signature, matching verify())
+            seal_data = {k: v for k, v in block.items() if k not in [hash_key, "signature"]}
+            block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
+
+            # Re-sign if identity is available
+            if identity_secret and block.get("signature") is not None:
+                block["signature"] = crypto.sign(block[hash_key], identity_secret)
+
         LEDGER_PATH.write_text(json.dumps(ledger_data, indent=2))
         print("Passphrase reset successful. You can now use your new passphrase.")
         return

@@ -385,10 +385,51 @@ These were the four original roadmap blockers. All resolved.
 4. `[R]emove` now truly deletes entries from staging (not just excludes from selection)
 5. `scripts/repair_staging.py` one-time migration tool
 
+### U2. Recovery Command Breaks Chain Integrity
+
+**Status:** ✅ Resolved (2026-05-05)
+**Tags:** bug, chain-integrity, verification
+
+**Root cause:** The `recover` command modified the genesis block (new `recovery_seed_enc`,
+added `identity_secret_enc_fallback`) and re-sealed it, producing a new `day_hash`.
+However, it did **not** update block 1's `prev_hash` to match, breaking the chain
+hash link. Additionally, the recovery seal was computed over data **including** the
+`signature` field, while `verify()` computes its seal check **excluding** `signature`,
+causing a secondary seal mismatch.
+
+**Resolution:** `main.py` recover command now:
+1. Excludes `signature` from genesis check_data (matching `verify()` exactly)
+2. Re-signs genesis with identity secret
+3. Walks forward through **every subsequent block**, updating `prev_hash`,
+   re-sealing, and re-signing each one
+
+**Tests:** `tests/test_recovery_verify.py` (5 tests):
+- Recovery re-chains single-block and multi-block ledgers
+- Recovery without re-chaining correctly fails verify
+- Recovery across month boundaries (month_summary blocks)
+- New passphrase works for seed decryption after full recovery chain
+
 ### D1. Git Versioning of Config Directory
 
 **Status:** ✅ Done (2026-04-29)
 **Resolution:** User git-initted `~/.config/personal_history_poc/` and captured before/after snapshots during debugging.
+
+---
+
+## 🔮 Design Exploration — Multi-Device Session & Staging
+
+**File:** `DESIGN_MULTI_DEVICE_SESSION.md`
+
+Discovered during P2 (Portable Export) discussion. Cross-device staging introduces fundamental architectural questions:
+
+| Question | Status |
+|----------|--------|
+| Shared encrypted staging with session cookie (mutual exclusion) | Proposing Direction B |
+| Open questions: UX tradeoff, running task edge case, device identity, lock model, read vs write auth | Unresolved — see design note |
+| Equality correlation problem: device_id must be default field, randomized ciphertext, keyed-hash proof for attribution | Technique proposed in design note |
+
+**Blocks:** P3 (Remote Sync), P5 (Mobile POC), P6 (Wearable POC)
+**Prerequisite for:** Any cross-device workflow
 
 ---
 
@@ -426,4 +467,5 @@ Two concurrent `main.py` processes could race on read/write of the cached key fi
 | 🟡 Medium | P5 (Mobile), P6 (Wearable), P7 (Web Viewer), P8 (Archive), P9 (Reconciliation), P10 (Media Witness), P11 (Day-Boundary Span), P12 (Chain Head Witness) |
 | 🔮 Future | F1–F9 (Ed25519, Shareable Export, CRDT sync, etc.) |
 | ✅ Resolved | R1–R4 (historical roadblocks), U1 (stale crypto context), D1 (git versioning of config) |
+| 🔮 Design | D2 — Multi-Device Session & Staging Architecture (see [DESIGN_MULTI_DEVICE_SESSION.md](DESIGN_MULTI_DEVICE_SESSION.md)) |
 | 🟢 Low | B1–B3 (cosmetic bugs) |

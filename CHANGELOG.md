@@ -2,6 +2,28 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
+## [0.4.1] — f7f41f9
+
+### Fixed
+- **Recovery command breaks chain integrity** — `recover` modified the genesis block
+  (new `recovery_seed_enc`, added `identity_secret_enc_fallback`) and re-sealed it,
+  changing its `day_hash`, but never updated subsequent blocks' `prev_hash`.
+  This caused `verify()` to fail at block 1 with a chain hash mismatch.
+  Fix: after re-sealing the genesis, walk forward through every subsequent block
+  updating `prev_hash`, re-sealing, and re-signing.
+- **Seal/verify mismatch in recovery** — recovery code sealed genesis with
+  `signature` included in check_data, but `verify()` excludes `signature` from
+  its seal check. Fix: exclude `signature` from check_data during recovery,
+  matching `verify()` exactly.
+
+### Added
+- `tests/test_recovery_verify.py`: 5 integration tests covering:
+  - Recovery re-chains single-block ledger
+  - Recovery re-chains multi-block ledger
+  - Recovery WITHOUT re-chaining correctly fails verify
+  - Recovery across month boundaries (handles month_summary blocks)
+  - New passphrase works for seed decryption after recovery
+
 ## [0.4.0] — 36f4cec
 
 ### Added
