@@ -45,9 +45,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 |---|---|---|
 | `PHPSPEC.md` | 1,529 | Need block structure, encryption format, chain validation spec, content hash (extensible + legacy) |
 | `VISION.md` | ~200 | Protocol philosophy, use cases |
-| `SESSION_HANDOFF.md` | ~190 | Detailed session history, full crypto checklist |
-| `BACKLOG.md` | ~400 | Task-level tracking |
+| `SESSION_HANDOFF.md` | ~238 | Detailed session history, full crypto checklist |
+| `BACKLOG.md` | ~430 | Task-level tracking |
 | `ROADMAP.md` | ~250 | Feature roadmap |
+| `DESIGN_MULTI_DEVICE_SESSION.md` | ~120 | Multi-device session & staging architecture design exploration (D2) |
+| `ARCHITECTURAL_DECISIONS.md` | ~380 | Formal ADR document — all architectural decisions with context, rationale, consequences (ADR-001 through ADR-015) |
 
 ---
 

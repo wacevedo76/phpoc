@@ -1,5 +1,11 @@
 # PH Ledger — Session Handoff
 
+> **⚠️ Emergency Handoff (2026-05-04):** The user and assistant were discussing **Multi-Device Session & Staging Architecture** — a design exploration sparked by the downstream implications of Portable Export (P2).
+> **Key insight:** Cross-device staging is an attack vector that must be encrypted. Direction B was chosen: shared encrypted staging with a single active session cookie per device.
+> **Design document:** `DESIGN_MULTI_DEVICE_SESSION.md` (saved 2026-05-04)
+> **Also discussed:** Equality correlation problem for `device_id` field. Proposed solution: default field in every entry, randomized encryption, keyed-HMAC proof for attribution.
+> **Status:** 🟡 In progress — user paused discussion, will resume later.
+
 ## Current State
 - **Branch:** `main`
 - **Tests:** All passing (modular, pause, tags, sync_confirmation, hierarchy, recovery, date_filters)
@@ -131,6 +137,55 @@ Genesis (sealed + signed, identity fallback embedded)
 
 ## Unresolved Issues
 
+### D2 — Multi-Device Session & Staging Architecture 🚧 (Next Issue to Resolve)
+
+**File:** `DESIGN_MULTI_DEVICE_SESSION.md`
+
+Discovered during P2 (Portable Export) discussion. Cross-device staging introduces fundamental architectural questions that must be resolved before P2/P3/P5/P6 can proceed.
+
+**Context:** Portable Export unlocks cross-device sharing (laptop ↔ phone ↔ wearable). But the staging area — currently a local plaintext scratchpad — becomes an attack vector in a multi-device world. A shared staging area that's accessible from multiple devices must be encrypted, and device sessions must be mutually exclusive.
+
+**Key Design Decisions (Direction B — validated):**
+
+| Decision | Detail |
+|----------|--------|
+| Staging encryption | Shared staging is encrypted (Master Key). Communication between device and staging is also encrypted. |
+| Session model | Single active device at a time. Cookie stored in remote staging as source of truth. |
+| Cookie invalidation | 3 ways: (1) timeout (default ~30 min), (2) new auth on another device overwrites cookie (increments seq), (3) explicit `logout` command. |
+| Auth requirement | Auth is needed the first time user does *anything* on a device. Sync-to-ledger always requires fresh passphrase (ignores cached session). |
+| Local cache / remote sync | On auth, device pulls remote staging → local cache. `add`/`end`/`pause`/`unpause` push to both local + remote. |
+| Offline behavior (Q1) | **Lenient.** Local cache writes accumulate offline. On reconnect: unlocked days reconcile; locked days warn-and-discard. CLI prints warning for discarded entries. |
+| Sequence numbers (Q2/Q3 resolved) | Cookie includes monotonically-increasing sequence number. Every write includes the seq. Remote rejects stale seq writes → eliminates TOCTOU race. **AI-agent-proof.** |
+| Logout behavior (Q4) | Clears remote cookie only. Does NOT push local cache (remote already has latest writes). User must re-auth for next interaction. |
+| Offline view/list | If no network: warns "Network Unavailable — Local staging only" then displays ledger + local cached staging. |
+| Sync requires fresh passphrase | Every `sync` asks for passphrase regardless of cached session. Warns: "Paused activities will be lost." |
+| Device ID field | `device_id` is a **default field in every entry**, never optional (removes present/absent signal). |
+| Equality correlation | `device_id` uses randomized encryption (already AES-CTR with unique nonce). For attribution: keyed-HMAC proof `HMAC(device_secret, "entry:" + entry_index)` — unique per entry, verifiable by authorized user. |
+
+**Use Case (validated):**
+```
+Laptop tracks "Working" (running) + "Coffee" (ended). Writes to local + remote staging.
+User leaves, picks up phone.
+Phone auths → cookie seq incremented (laptop invalidated) → pulls fresh staging
+  → sees "Working" (running) on phone → can end it or add new entries
+Phone's writes go through (seq matches), laptop's stale writes rejected.
+```
+
+**Open Questions (Deferred):**
+
+| # | Question | Options |
+|---|----------|--------|
+| Q5 | Remote staging transport? | Chosen: **Git remote** (first implementation). Multiple transports should be available long-term via `AbstractStagingTransport` interface. Multi-staging area reconciliation noted for later (after mobile). |
+| Q6 | What happens when evicted device tries to write? | Fail + notify / Queue locally / Seamless retry |
+| Q7 | Device identity — how to identify a device? | New concept (per-device ID on first use) / Derived from ledger identity / Simple (hostname + nonce) |
+| D3 | **Offline sync reconciliation** (identified but not discussed) | If a device commits to ledger while offline, and another device commits on network → ledgers diverge. Needs design. |
+
+**Staging obfuscation (decided):** Fixed-size padded blob, git remote sees only opaque constant-size data. **4 tiered classes** by default (64K / 128K / 256K / 512K), user-configurable. Random filler bytes pad actual data to the next class ceiling before encryption. Padding is backward-compatible — old unpadded blobs are detected and handled. Cross-class transitions leak one bit of information (threshold crossed), but once in a class, daily size is constant.
+
+**Blocks:** P2 (Portable Export), P3 (Remote Sync), P5 (Mobile POC), P6 (Wearable POC)
+
+---
+
 ### D1 — Git Versioning of Config Directory ✅
 - **Done:** User git-initted `~/.config/personal_history_poc/` with initial commit of staging.json, ledger.json, index.json
 - **Template:** `/tmp/test_user_history/` recreated from config dir for safe experimentation
@@ -154,11 +209,12 @@ Genesis (sealed + signed, identity fallback embedded)
 | ✅ Done | **U1 — Stale Crypto Context** | Fixed normalization, display guards, --till, removal deletion, repair script. User verified live. | All fixes committed (363 tests pass) |
 | ✅ Done | **D1 — Git Versioning of Config** | Git-initted, snapshots before/after each run | Done |
 | ✅ Done | **P1 — Format Spec (PHPSPEC.md)** | Standalone spec document (block structure, encryption, chain validation, content hash, blind index, staging, versioning). See [PHPSPEC.md](PHPSPEC.md). Includes `format_version` field, migration script `scripts/migrate_format_version.py`, and chain splitting mechanics in §9.4.5. | Done |
-| 🥇 Highest | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting mechanics documented in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | P1 (done) |
-| 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | None — all blockers resolved |
+| 🛑 Immediate | **D2 — Multi-Device Session & Staging Architecture** | Design exploration from P2 discussion. Shared encrypted staging, single active session cookie, device identity, equality correlation. **Next issue to resolve.** See `DESIGN_MULTI_DEVICE_SESSION.md` and detailed notes below. | Blocks P2, P3, P5, P6 |
+| 🥇 Highest | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting mechanics documented in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | D2 must be resolved first |
+| 🥇 High | **P3 — Remote Sync (git-based)** | Push/pull encrypted ledger via git | D2 must be resolved first |
 | 🥇 High | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
-| 🥈 Medium | **P5 — Mobile POC** | Minimal Swift/Kotlin ledger reader/writer | P1, P2 |
-| 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | P1, P2 |
+| 🥈 Medium | **P5 — Mobile POC** | Minimal Swift/Kotlin ledger reader/writer | D2, P1, P2 |
+| 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | D2, P1, P2 |
 | 🥈 Medium | **P7 — Web Viewer** | Static HTML page that renders exported segments | P2 |
 | 🥈 Medium | **P11 — Day-Boundary Span** | Activities crossing midnight: display marker, filter inclusion, or split-at-sync | None |
 
@@ -175,10 +231,24 @@ See `CHANGELOG.md` for full history.
 
 ---
 
+### Key Docs
+| File | Purpose |
+|------|---------|
+| `ARCHITECTURAL_DECISIONS.md` | Formal ADR record — every architectural decision with context, rationale, and consequences (15 decisions so far, ADR-001 through ADR-015). |
+| `DESIGN_MULTI_DEVICE_SESSION.md` | D2 design exploration — session cookie model, sequence numbers, staging obfuscation, open questions. |
+| `PHPSPEC.md` | Format specification — block types, encryption, chain validation, content hash, blind index, staging. |
+| `ROADMAP.md` | Feature roadmap with completed/planned/future items. |
+| `BACKLOG.md` | Task-level tracking with priorities. |
+
+---
+
 ## Triage Log
 
 *Entries added by `/triage` template. Each entry: date — one-line summary (files touched).*
 
 - 2026-04-30 — Fixed `oneoff` duration from 2 minutes to 1 second by changing `-120000` to `-1000` in `main.py` line 215 (`main.py`)
 - Marked `main.py` as HOT in MAP.md
-- 2026-04-30 — Extensible content_hash: changed from hardcoded 9-field dict to all-keys iterator that auto-covers future fields. Updated `_compute_content_hash()` in `core/ledger.py`, rewrite `PHPSPEC.md` §5.5/§6/§9.3, full rewrite of `scripts/migrate_format_version.py` with v0.3.0→v0.4.0 path. **Resolved — committed as `36f4cec`.** (`core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py`) - 2026-05-04 — P0 marked resolved, handoff updated. User may revisit design questions later.
+- 2026-04-30 — Extensible content_hash: changed from hardcoded 9-field dict to all-keys iterator that auto-covers future fields. Updated `_compute_content_hash()` in `core/ledger.py`, rewrite `PHPSPEC.md` §5.5/§6/§9.3, full rewrite of `scripts/migrate_format_version.py` with v0.3.0→v0.4.0 path. **Resolved — committed as `36f4cec`.** (`core/ledger.py`, `PHPSPEC.md`, `scripts/migrate_format_version.py`)
+- 2026-05-04 — P0 marked resolved, handoff updated. User may revisit design questions later.
+- 2026-05-04 — **D2 Multi-Device Session & Staging Architecture** — Architectural discussion sparked by P2 (Portable Export). Direction B chosen: shared encrypted staging, single active session cookie. Equality correlation problem identified for `device_id`. Created `DESIGN_MULTI_DEVICE_SESSION.md`. **Next issue to resolve — user paused discussion.**
+- 2026-05-04 — **D2 progress:** Q1-Q4 resolved (offline, seq numbers, logout). Q5 partially resolved (git remote as first transport, `AbstractStagingTransport` interface, multi-staging after mobile). Staging obfuscation: 4-tiered fixed-size padding (64K/128K/256K/512K), user-configurable, encrypted blob. Remaining: Q6 (evicted device behavior), Q7 (device identity), D3 (offline sync reconciliation).
