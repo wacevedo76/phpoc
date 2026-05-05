@@ -271,7 +271,42 @@ The identity secret is stored in two places for redundancy:
 
 **Lookup order:** Implementations should try `identity.json` first (fast path), then fall back to the genesis block's `identity_secret_enc_fallback`.
 
-### 2.8 Recovery Flow
+### 2.8 Device Identity
+
+Multi-device setups require per-entry device attribution. A **plug-in device identity provider** generates opaque, deterministic device identifiers from the Master Key. The interface is:
+
+```python
+class DeviceIdentityProvider(ABC):
+    @abstractmethod
+    def get_device_id(self, mk: bytes) -> str: ...
+    @abstractmethod
+    def get_device_secret(self, mk: bytes) -> bytes: ...
+```
+
+| Method | Returns | Purpose |
+|--------|---------|---------|
+| `get_device_id` | Opaque string | Stored in each entry's `device_id_enc` field. Obfuscated — reveals nothing about the device to an attacker. |
+| `get_device_secret` | 32 bytes | Used as the HMAC key for `device_proof` attribution (see §4.5). Not stored in the ledger — only the authorized user can recompute it. |
+
+**Default implementation:** Both values are derived from the Master Key via HMAC:
+
+```python
+import hmac, hashlib
+
+def get_device_id(mk: bytes) -> str:
+    return hmac.new(mk, b"device:id", hashlib.sha256).hexdigest()
+
+def get_device_secret(mk: bytes) -> bytes:
+    return hmac.new(mk, b"device:secret", hashlib.sha256).digest()
+```
+
+This means a device has no identity until the user authenticates on it. The same device (same MK) always produces the same device ID — allowing the user to correlate entries across syncs without storing device metadata.
+
+**Pluggable:** Users who want stronger device identity (TPM-backed, biometric, hardware-specific) can provide an alternative implementation. The format itself only requires a stable, opaque identifier per device.
+
+> **Privacy note:** `device_id_enc` in the ledger entry is encrypted with AES-CTR using a random nonce per operation (§3.2). Two entries from the same device produce different ciphertexts. An attacker cannot correlate entries by device without the Master Key.
+
+### 2.9 Recovery Flow
 
 To recover a ledger when the passphrase is lost (but the Seed is known):
 
@@ -706,6 +741,36 @@ An individual activity record stored inside a Day block's `entries` array. Each 
 | `media` | array | ✅ | No | Array of media references (strings). Currently a stub — reserved for future use. |
 | `content_hash` | string (hex) | ⚠️ | No | SHA-256 of canonical plaintext representation — see §6 |
 | `comment` | string | ❌ | No | Free-text comment. Optional, may be absent. |
+| `device_id_enc` | string | ✅ | ✅ | Opaque device identifier (AES-CTR encrypted). Reveals nothing to an attacker. |
+| `transitions_enc` | string | ❌ | ✅ | Encrypted action trail — present when a task was paused/unpaused/ended by a different device than the one that started it (see below). Optional. |
+| `device_proof` | string (hex) | ❌ | No | HMAC-SHA256 device attribution proof. `HMAC(device_secret, "entry:" + entry_index)`. Only the authorized user can recompute and attribute. Optional. |
+
+#### Transition Object Format (inside `transitions_enc`)
+
+When a task is paused, unpaused, or ended by a different device than the one that started it, each action is recorded as a transition. The entire array is encrypted as a single block:
+
+```json
+[
+  {
+    "action": "pause",
+    "ts_enc": "<hex ciphertext>",
+    "device_id_enc": "<hex ciphertext>"
+  },
+  {
+    "action": "end",
+    "ts_enc": "<hex ciphertext>",
+    "device_id_enc": "<hex ciphertext>"
+  }
+]
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | ✅ | One of `"pause"`, `"resume"`, `"end"` |
+| `ts_enc` | string | ✅ | Encrypted epoch milliseconds of the action |
+| `device_id_enc` | string | ✅ | Encrypted device identifier of the device that performed the action |
+
+> **Purpose:** The transitions trail enables auditability — the user can later determine which device paused a running task or ended it. Both `ts_enc` and `device_id_enc` use randomized per-entry encryption (different nonce each time), so they leak nothing to an attacker.
 
 #### Pause Object Format (inside `pauses_enc`)
 
@@ -1205,6 +1270,83 @@ During sync, staging entries are:
 
 > The staging format is **not** part of the PHPOC protocol specification. Implementations may use any internal buffer for unsynced entries. The `plain:` convention and JSON array format described here are specific to the reference CLI and provided for interoperability.
 
+### 8.5 Multi-Device Remote Staging
+
+In a multi-device setup, staging is **shared across devices** via a remote transport. The remote blob is the authoritative source; local staging is a cache.
+
+#### Timeline Model
+
+Staging entries are timestamped and additive. Since real-world tasks don't start or end at the same millisecond on two devices, there are no write conflicts. No session cookie, no mutual exclusion, no eviction.
+
+**Workflow:**
+
+```
+check device_id → re-auth if mismatch → modify local → push to remote → pull remote → local == remote
+```
+
+1. Device A auths → derives device ID from MK → compares with remote blob's `device_id_enc`. Mismatch? Re-auth. Match? Proceed.
+2. Device A appends entry to local staging → serializes → encrypts obfuscation blob → pushes via transport → pulls back → local and remote are identical.
+3. Device B auths → device ID mismatch → re-auth → pulls remote blob → merges entries from all devices (sorted by timestamp) → appends new entry → pushes.
+
+#### Remote Blob Structure
+
+The shared staging blob is a single encrypted file stored on the remote:
+
+```json
+{
+  "device_id_enc": "<hex: encrypted device identifier>",
+  "staging": [ ...entries... ],
+  "version": 1
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `device_id_enc` | string (hex) | Encrypted opaque device ID of the last device that touched staging. Local device checks this on every interaction; re-auth if mismatch. |
+| `staging` | array | Array of staging entries (same format as §8.1) from all devices, merged by timestamp. |
+| `version` | integer | Schema version for forward compatibility. Currently `1`. |
+
+#### Transport Interface
+
+```python
+class AbstractStagingTransport(ABC):
+    @abstractmethod
+    def pull(self, remote_path: str) -> bytes: ...
+    @abstractmethod
+    def push(self, remote_path: str, data: bytes) -> None: ...
+```
+
+Minimal two-method interface. Git is the first implementation with the blob stored at `staging/blobs/` in the remote repo. Additional transports (HTTP, local network) can be implemented behind the same interface.
+
+#### Blob Obfuscation
+
+The serialized staging blob is obfuscated before being pushed to the remote:
+
+```
+Serialized JSON → pad to next class ceiling (random fill) → encrypt → push to remote
+```
+
+Fixed-size tiers keep the blob size constant for a given usage level, preventing traffic analysis:
+
+| Class | Max Plaintext |
+|-------|---------------|
+| 64K | Very light usage |
+| 128K | Light usage |
+| 256K | Moderate usage |
+| 512K | Heavy usage (lengthy comments) |
+
+Random filler bytes pad actual data to the next class ceiling before encryption. Cross-class transitions (e.g., 64K→128K) leak one bit of information (a threshold was crossed), but once in a class the daily size is stable.
+
+#### Offline Behavior
+
+- Device writes entries to **local cache** when offline.
+- On reconnect: push queued entries → pull remote blob → merge (appended by timestamp, no conflict).
+- On `sync` (staging → ledger): entries for days already committed by another device are silently discarded with a warning.
+
+#### Device Attribution in Staging
+
+Staging entries carry the same `device_id_enc` and `transitions_enc` fields as ledger entries (see §4.5). These are populated at staging time (using `plain:` prefix for unencrypted staging) and encrypted into real ciphertext at sync time.
+
 ---
 
 ## 9. Implementation Considerations
@@ -1460,6 +1602,8 @@ Inserted because the first sync happened in a different month from genesis creat
         "endTime_enc": "<hex: ciphertext of '1714515600000'>",
         "pauses_enc": "<hex: ciphertext of '[]'>",
         "metadata_enc": "<hex: ciphertext of '{"mood":"calm"}'>",
+        "device_id_enc": "<hex: ciphertext of opaque device ID>",
+        "device_proof": "<hex: HMAC for device attribution>",
         "tags": ["mindfulness", "morning"],
         "media": [],
         "content_hash": "f1e2d3c4...",
@@ -1480,6 +1624,8 @@ Inserted because the first sync happened in a different month from genesis creat
           "{\"pause_index\":2,\"pause_start\":1714521000000,\"pause_stop\":1714521300000}" +
         "]'>",
         "metadata_enc": "<hex: ciphertext of '{"project":"feature-X"}'>",
+        "device_id_enc": "<hex: ciphertext of opaque device ID>",
+        "device_proof": "<hex: HMAC for device attribution>",
         "tags": ["coding", "work"],
         "media": [],
         "content_hash": "g3h4i5j6...",
@@ -1502,6 +1648,8 @@ Inserted because the first sync happened in a different month from genesis creat
 - `metadata_enc` contains the encrypted JSON metadata object.
 - The second entry has two pauses: a 5-minute water break and an uncommented 5-minute break.
 - The second entry has `comment: null` — showing that optional fields may be explicitly null.
+- Both entries include `device_id_enc` (encrypted device identifier) and `device_proof` (HMAC attribution key) — default fields in multi-device setups. In single-device mode these fields may be absent.
+- Transitions (`transitions_enc`) are omitted here since both entries were created and ended on the same device. See §4.5 for transition format.
 
 ---
 
