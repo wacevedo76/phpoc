@@ -1,7 +1,7 @@
 # Multi-Device Session & Staging Architecture — Design Notes
 
 > Captured 2026-05-04 during an architectural discussion about Portable Export's downstream implications.
-> Updated throughout discussion as decisions were made. Paused at Q5.
+> Updated 2026-05-05 — Q5 resolved (timeline model, transport interface, device identity).
 
 ---
 
@@ -13,118 +13,67 @@ Portable Export enables cross-device sharing (laptop ↔ phone ↔ wearable). Bu
 |--------------|--------------|
 | Staging is local plaintext (`~/.config/.../staging.json`) | Staging must be **shared** across devices |
 | No auth needed for `add` (convenience) | Shared staging is an **attack vector** — plaintext is unacceptable |
-| One session cache (`/dev/shm`) | Sessions must be **per-device with mutual exclusion** |
+| One session cache (`/dev/shm`) | Multiple devices need access without stepping on each other |
 
 ---
 
-## Design Direction
+## Design Direction — Timeline Model
 
-**Direction B** — Shared encrypted staging, single active session across devices.
+**Staging is a timestamped, additive log.** Every entry carries millisecond-precision timestamps and a device attribution. Since real-world tasks don't start/end at the same millisecond on two devices, there are no write conflicts. No session cookie, no mutual exclusion, no eviction.
+
+**The remote blob is the authoritative source.** Local staging is a cache. Every interaction with staging follows:
+
+```
+check device_id → re-auth if mismatch → modify local → push to remote → pull remote → local == remote
+```
+
+This means offline devices can queue changes locally and push them on reconnect. On pull, the remote blob's entries (from any device) merge into the local cache by timestamp — deterministic and conflict-free.
 
 ---
 
 ## Resolved Decisions
 
-### Session Cookie Model
+### Remote Staging Blob (Q5)
+**Resolution:** Comprehensive (2026-05-05)
 
-```
-Shared staging (encrypted):
-  session_cookie: {
-    "device_id": "<unique device identifier>",
-    "seq": 0,                        # monotonically increasing
-    "issued_at": "<ISO 8601>",
-    "expires_at": "<issued_at + user_configured_timeout>"
-  }
-```
-
-| Rule | Behavior |
-|------|----------|
-| Auth on device A | Writes cookie with new seq to remote staging → A is active. Pulls remote staging → local cache. |
-| Auth on device B | Overwrites cookie with incremented seq → A's next write attempt is rejected (stale seq). |
-| Timeout expires | Cookie is stale → re-auth required on next operation. |
-| Explicit `logout` | Only clears the cookie on remote staging. Remote staging data is unchanged (already reflects latest writes). |
-| Sync (staging → ledger) | Always requires fresh passphrase. Session cache (`/dev/shm`) is bypassed — user must enter passphrase. Warns: "Paused activities will be lost." |
-| Offline `view`/`list` | Warns: "Network Unavailable — Local staging only." Displays ledger + local cached staging. |
-
-### Sequence Number for Write Authorization
-
-**Resolution:** Cookie carries a monotonically-increasing sequence number. Every write to remote staging includes the seq. Remote staging rejects writes where the seq doesn't match the current cookie.
-
-```
-Step 0: Laptop auths → cookie = {device: "laptop", seq: 5}
-Step 1: Laptop reads cookie (seq=5), writes "end Working" with seq=5       → ACCEPTED
-Step 2: Phone auths → cookie overwritten to {device: "phone", seq: 6}
-Step 3: Laptop (still cached seq=5) writes "end Running" with seq=5        → REJECTED (current is seq=6)
-```
-
-**Why this resolves both latency (Q2) and race (Q3):**
-- No heartbeat needed. Each operation checks cookie seq — fast, one round-trip.
-- The 1-2ms TOCTOU window is eliminated. A stale seq is rejected.
-- AI-agent-proof: an AI operating at sub-millisecond speeds cannot race against another device's writes.
-- On disconnect: local writes queue up. On reconnect, any seq mismatch ends the session and forces re-auth.
-
-### Offline Behavior (Q1)
-
-**Resolution:** Lenient, with a lock/unlock day distinction.
-
-- **Unlocked day** (not yet synced to ledger): Local cache entries reconcile on reconnection. No data loss.
-- **Locked day** (already synced to ledger by another device): Offline-written entries for that day are discarded. CLI prints: *"Warning: N entries for YYYY-MM-DD discarded — day already committed to ledger."*
-- Days can span multiple staging sessions. The mechanism handles overlapping staging across multiple days.
-- The blind index (`index.json`) is never involved — only contains committed (ledger) entries. No stale cleanup needed.
-
-### Cookie Check Frequency (Q2) & Race Window (Q3)
-
-**Resolution:** Both resolved by sequence numbers (see above). Per-operation cookie check + seq verification. No heartbeat. No time-window caching that would create a detection gap.
-
-### Auth, Logout, and Sync Rules
-
-| Operation | Cookie Check | Remote Staging Interaction | Notes |
-|-----------|-------------|---------------------------|-------|
-| Auth | Write cookie + seq | Pull remote staging → local cache | Establishes session |
-| add / end / pause / unpause | Read & verify seq | Push change to remote staging | Seq must match |
-| view / list all | Read cookie + pull | Fetch current remote staging | Offline: local only with warning |
-| logout | Clear cookie | No staging push | Remote data already current |
-| sync | Requires fresh passphrase | Read remote staging → commit to ledger | Ignores session cache, warns about paused |
-
-### Device ID and Equality Correlation
-
-**Resolution:**
-- `device_id` is a **default field in every entry** — never optional. Removes the present/absent signal.
-- Uses randomized encryption (AES-CTR with unique nonce each time) — same device produces different ciphertext on different entries.
-- For attribution by the authorized user: **keyed-HMAC device proof** per entry:
-
-```
-device_proof = HMAC(device_secret, "entry:" + entry_index)
-```
-
-| Property | How it's achieved |
-|----------|-------------------|
-| Uniform per device | Same `device_secret` for all entries from the same device |
-| Unique per entry | Different `entry_index` → different HMAC output |
-| Opaque to attacker | Random-looking unique value per entry — no two entries correlate |
-| Attributable by authorized user | Try each known device's secret → recompute HMAC → match on success |
-
-### Running Task Edge Case
-
-**Resolution via use case:** Laptop tracks "Working" (running) + "Coffee" (ended). User leaves, picks up phone, auths → cookie overwritten → pulls fresh staging → sees "Working" (running) on phone → can end it or add new entries. This is the validated flow.
-
----
-
-## Open Questions (Deferred)
-
-### Q5. Remote Staging Transport
-
-**Decision:** Git remote as the first implementation. All options should be available long-term via an `AbstractStagingTransport` interface (same pattern as `AbstractLedgerStore` in the current codebase).
-
+**Transport interface:**
 ```python
 class AbstractStagingTransport(ABC):
-    def read(self) -> dict: ...
-    def write(self, data: dict) -> None: ...
-    def claim_session(self, cookie: dict) -> bool: ...
-    def verify_session(self, device_id: str, seq: int) -> bool: ...
+    @abstractmethod
+    def pull(self, remote_path: str) -> bytes: ...
+    @abstractmethod
+    def push(self, remote_path: str, data: bytes) -> None: ...
 ```
 
-**Multi-staging reconciliation** (user has multiple failover staging areas) is noted but deferred until after mobile POC (P5) is implemented. Not a roadblock — `MultiStagingTransport` wraps the same `AbstractStagingTransport` interface, no existing code changes needed.
+Minimal surface — easy to extend later. Git is the first implementation. Multiple transports available via the same interface.
+
+**Blob location on remote:** `staging/blobs/` (clean namespace, room for future aux files).
+
+**Blob structure:**
+```
+{
+  "device_id_enc": "<encrypted opaque device identifier>",
+  "staging": { ... entries ... },
+  "version": 1
+}
+```
+
+- `device_id_enc` — identifies the last device that touched staging. Local device checks this on every interaction; re-auth if mismatch.
+- `staging` — the current staging entries (entries from all devices, merged by timestamp).
+
+**Blob obfuscation:**
+Serialized JSON → pad to next class ceiling (random fill) → encrypt. Fixed-size tiers: 64K / 128K / 256K / 512K (user-configurable). Backward-compatible with unpadded blobs.
+
+**Workflow (nominal case):**
+1. User runs `add start` on device A
+2. Device ID check: local device_id_enc matches remote → OK
+3. Entry appended to local cache → pushed to remote → pulled back → identical
+4. Device B starts a new task: device_id_enc mismatch → re-auth → remote blob pulled → local cache updated with all devices' entries → entry appended → pushed
+
+**Offline behavior:**
+- Device writes to local cache when offline
+- On reconnect: push local entries (appended by timestamp, no conflict)
+- If day already committed to ledger: offline entries for that day are discarded with warning
 
 ### Staging Obfuscation
 
@@ -149,57 +98,96 @@ Random filler bytes pad the actual data up to the class ceiling. The encrypted b
 
 **Cross-class transition:** When staging grows beyond the current class, the blob size changes (e.g., 64K→128K). This leaks one bit: a threshold was crossed. Acceptable — once in a new class, daily size is stable again.
 
-**Backward compatibility:** Padding detection checks if decrypted plaintext ends with valid padding. If it doesn't look padded, it's treated as an old unpadded blob."
+**Backward compatibility:** Padding detection checks if decrypted plaintext ends with valid padding. If it doesn't look padded, it's treated as an old unpadded blob.
 
-### Q6. Evicted Device — What Happens to Local Changes?
+### Device Identity
 
-When Device A's session is invalidated (evicted) and tries to write:
+**Interface:**
+```python
+class DeviceIdentityProvider(ABC):
+    @abstractmethod
+    def get_device_id(self, mk: bytes) -> str: ...
+    @abstractmethod
+    def get_device_secret(self, mk: bytes) -> bytes: ...
+```
 
-| Option | Behavior |
-|--------|----------|
-| Fail + notify | Write rejected, CLI prints "Session invalidated — re-auth required" |
-| Queue locally | Write stored in local cache, reconciled on next auth |
-| Seamless retry | Auto-re-auth and retry (transparent to user) |
+`get_device_id()` returns a deterministic, obfuscated device identifier (reveals nothing about the device to an attacker). `get_device_secret()` returns the key used for HMAC attribution proofs.
 
-### Q7. Device Identity
+**Default implementation:** Both derived from the master key — e.g., `HMAC(mk, "device:id")` and `HMAC(mk, "device:secret")`. This means a device doesn't have an identity until the user authenticates on it. Pluggable — paranoid users can swap in a different provider (biometric, TPM-backed, etc.).
 
-How to identify a device:
+### Device Attribution in Entries
 
-| Option | Description |
-|--------|-------------|
-| New concept | Generated on first use per device (e.g., `/etc/machine-id` analog), stored locally |
-| Tied to ledger identity | Derived from identity key (e.g., `HMAC(identity_secret, "device:laptop")`) — only an authenticated session can derive it |
-| Simple | Hostname + random nonce generated on first `init` per device |
-
----
-
-## Open Problem (Identified, Not Yet Discussed)
-
-### D3 — Offline Sync & Network Reconciliation
-
-Identified during Q1 discussion: If a device commits to the ledger while offline (no network), and another device has also committed on the same network — the two ledgers diverge. Next time they connect, reconciliation is needed.
-
-This affects the `sync` command flow and needs its own design discussion.
-
----
-
-## What This Means for the Entry Schema
-
-If this direction is adopted, the entry schema gains two new fields:
+Every entry carries:
+- `device_id_enc` — Obfuscated device identifier (AES-CTR with unique nonce per entry → same device produces different ciphertext on each entry)
+- `transitions_enc` — Optional action trail for multi-device pauses/unpauses/ends:
 
 ```json
 {
   "title": "...",
   "startTime_enc": "...",
-  "device_id": "<encrypted device identifier>",
-  "device_proof": "<HMAC proof for attribution>",
+  "endTime_enc": "...",
+  "device_id_enc": "<entry creator>",
+  "content_hash": "...",
+  "transitions_enc": [
+    {"action": "pause", "ts_enc": "...", "device_id_enc": "..."},
+    {"action": "resume", "ts_enc": "...", "device_id_enc": "..."},
+    {"action": "end", "ts_enc": "...", "device_id_enc": "..."}
+  ]
+}
+```
+
+`transitions_enc` is encrypted as a single block. Only decryptable by the authorized user. Useful for investigation — "who paused my running task?" — but invisible to an attacker.
+
+### Offline Sync and Reconciliation (D3)
+
+**Resolution:** No reconciliation needed. The timeline model means entries from different devices are additive and non-conflicting. On reconnect:
+1. Push queued local entries to remote blob (appended by timestamp)
+2. Pull remote blob → merge into local cache
+3. On `sync` (staging → ledger): entries committed to locked days are quietly dropped
+
+### Evicted Device Behavior (Q6)
+
+**Resolution:** No eviction exists in the timeline model. Multiple devices can append entries concurrently. The only check is device_id match on the remote blob (to trigger re-auth if the cached MK is stale), not for exclusion.
+
+### Device Identity Mechanism (Q7)
+
+**Resolution:** `DeviceIdentityProvider` interface with a master-key-derived default. Pluggable for alternate strategies.
+
+---
+
+## Open Questions (Still Deferred)
+
+### Q6. Evicted Device — What Happens to Local Changes?
+
+> **Resolved by timeline model** — see above. No eviction exists.
+
+### Q7. Device Identity
+
+> **Resolved** — `DeviceIdentityProvider` interface with master-key-derived default.
+
+### D3 — Offline Sync & Network Reconciliation
+
+> **Resolved by timeline model** — see above. Entries are additive, no reconciliation needed.
+
+---
+
+## What This Means for the Entry Schema
+
+The entry schema gains three new fields:
+
+```json
+{
+  "title": "...",
+  "startTime_enc": "...",
+  "device_id_enc": "<encrypted device identifier>",
+  "transitions_enc": "<encrypted action trail>",
   "content_hash": "..."
 }
 ```
 
-- `device_id` — Encrypted with the standard scheme (random nonce each time). Reveals nothing to an attacker.
-- `device_proof` — Keyed HMAC for device attribution by the authorized user. Also opaque to attackers.
-- Both are default fields — present in every entry, from every device, always.
+- `device_id_enc` — Always present. Unique ciphertext per entry (random nonce each time). Opaque to attackers.
+- `transitions_enc` — Present when a task has been paused/unpaused/ended by a different device than the one that started it. Single encrypted block.
+- Both are default fields — present from the moment multi-device staging is introduced.
 
 ---
 
@@ -207,7 +195,7 @@ If this direction is adopted, the entry schema gains two new fields:
 
 | Item | Impact |
 |------|--------|
-| P2 — Portable Export | The segment format must carry device attribution metadata |
-| P3 — Remote Sync (git-based) | Shared staging + session cookie over git needs design |
-| P5 — Mobile POC | Phone must implement session check + device proof before writing |
-| P6 — Wearable POC | Watch may be read-only (blind index), sidestepping session complexity |
+| P2 — Portable Export | Segment format must carry device attribution metadata + transitions |
+| P3 — Remote Sync (git-based) | Depends on `AbstractStagingTransport` + staging blob format |
+| P5 — Mobile POC | Phone must implement `DeviceIdentityProvider` before writing to staging |
+| P6 — Wearable POC | Watch may be read-only (blind index), sidestepping complexity |
