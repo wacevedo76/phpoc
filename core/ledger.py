@@ -20,7 +20,7 @@ class LedgerDomain:
         for p in pauses:
             if p.get("pause_stop") is not None:
                 total_pause_ms += p["pause_stop"] - p["pause_start"]
-        return (end_epoch - start_epoch) - total_pause_ms
+        return max(0, (end_epoch - start_epoch) - total_pause_ms)
 
     def _decrypt_pauses(self, data):
         """Decrypt pauses_enc from entry data. Returns list of pause dicts.
@@ -279,6 +279,136 @@ class LedgerDomain:
             pending.append(preview)
 
         return pending
+
+    def modify_staged_entry(self, entry_index, end_epoch=None, pauses=None):
+        """Modify a completed staged entry's end time and/or pauses.
+
+        Args:
+            entry_index: Index in the staging array.
+            end_epoch: New end epoch ms, or None to keep current.
+            pauses: New pauses list, or None to keep current.
+
+        Returns dict with 'title' and 'duration' for confirmation display.
+        Raises ValueError if entry not found or still active.
+        """
+        staging = self.store.read_staging()
+        if entry_index < 0 or entry_index >= len(staging):
+            raise ValueError(f"No staged entry at index {entry_index}.")
+
+        entry = staging[entry_index]
+        data = entry["data"]
+
+        if data.get("is_active", False):
+            raise ValueError(f"Cannot modify active task '{data['title']}'. End it first.")
+
+        # Decrypt current start epoch
+        start_val = data["startTime_enc"]
+        if start_val.startswith("plain:"):
+            start_epoch = int(start_val[6:])
+        else:
+            start_epoch = int(self.crypto.decrypt(start_val))
+
+        # Apply end_epoch override
+        if end_epoch is not None:
+            data["endTime_enc"] = self.crypto.encrypt(str(end_epoch))
+
+        # Decrypt current pauses (for duration recompute)
+        current_pauses = self._reconcile_plain_pauses(data)
+
+        # Apply pauses override (full replacement)
+        if pauses is not None:
+            data["pauses_enc"] = self.crypto.encrypt(json.dumps(pauses))
+            resolved_pauses = pauses
+        else:
+            resolved_pauses = current_pauses
+
+        # Recompute duration
+        resolved_end = end_epoch if end_epoch is not None else self._decrypt_staging_timestamp(data, "endTime_enc")
+        if resolved_end is not None:
+            data["duration"] = self._compute_duration(start_epoch, resolved_end, resolved_pauses)
+
+        # Recalculate hash
+        entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+        self.store.write_staging(staging)
+        return {"title": data["title"], "duration": data.get("duration", 0)}
+
+    def remove_staged_entry(self, entry_index):
+        """Remove a staged entry by index. Returns the removed entry's title."""
+        staging = self.store.read_staging()
+        if entry_index < 0 or entry_index >= len(staging):
+            raise ValueError(f"No staged entry at index {entry_index}.")
+
+        entry = staging.pop(entry_index)
+        self.store.write_staging(staging)
+        return entry["data"]["title"]
+
+    def get_staged_entries_preview(self):
+        """Return all completed staged entries with decrypted values, grouped by date.
+
+        Returns list of dicts: {date, entries: [{title, start, end, duration, tags, comment, pauses, ...}]}
+        Similar to get_pending_sync but with full pause detail for review display.
+        """
+        staging = self.store.read_staging()
+        preview = []
+        for idx, entry in enumerate(staging):
+            data = entry["data"]
+            if data.get("is_active", False):
+                continue
+            if data.get("is_paused", False):
+                continue
+
+            # Decrypt timestamps
+            start_val = data["startTime_enc"]
+            if start_val.startswith("plain:"):
+                start_epoch = int(start_val[6:])
+            else:
+                start_epoch = int(self.crypto.decrypt(start_val))
+
+            end_val = data["endTime_enc"]
+            if end_val:
+                if end_val.startswith("plain:"):
+                    end_epoch = int(end_val[6:])
+                else:
+                    end_epoch = int(self.crypto.decrypt(end_val))
+            else:
+                end_epoch = None
+
+            # Decrypt pauses
+            pauses_enc = data.get("pauses_enc")
+            if pauses_enc:
+                if pauses_enc.startswith("plain:"):
+                    pauses = json.loads(pauses_enc[6:])
+                else:
+                    pauses = json.loads(self.crypto.decrypt(pauses_enc))
+            else:
+                pauses = []
+
+            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+
+            preview.append({
+                "entry_index": idx,
+                "date": date_str,
+                "title": data["title"],
+                "start_epoch": start_epoch,
+                "end_epoch": end_epoch,
+                "duration": data.get("duration", 0),
+                "tags": data.get("tags", []),
+                "comment": data.get("comment"),
+                "pauses": pauses,
+                "is_paused": data.get("is_paused", False),
+                "is_active": data.get("is_active", False),
+            })
+        return preview
+
+    def _decrypt_staging_timestamp(self, data, field):
+        """Decrypt a timestamp field from staging entry, handling plain: prefix."""
+        val = data.get(field)
+        if val is None:
+            return None
+        if val.startswith("plain:"):
+            return int(val[6:])
+        return int(self.crypto.decrypt(val))
 
     @staticmethod
     def _compute_content_hash(data: dict, decrypt_fn) -> str:

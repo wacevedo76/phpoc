@@ -10,7 +10,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 |---|---|---|---|
 | `main.py` | 333 | HOT | CLI entry — argparse dispatch to all commands |
 | `cli/interface.py` | 426 | COLD | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` |
-| `core/ledger.py` | 855 | COLD | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` |
+| `core/ledger.py` | 855 | HOT | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` |
+> Changed 2026-05-09: `_compute_duration` clamped to `max(0, ...)` to prevent negative durations from pauses extending past end time.
 | `core/sync_confirmation.py` | 509 | COLD | Strategy pattern: `AutoSyncStrategy`, `InteractiveCLIStrategy` (3-stage: overview→edit→sync) |
 | `core/factory.py` | 69 | COLD | `LedgerFactory.initialize()` — creates genesis + identity |
 | `security/crypto.py` | 204 | COLD | Pure AES-CTR + HMAC-SHA256. `CryptoManager`, `NoAuthCryptoManager` |

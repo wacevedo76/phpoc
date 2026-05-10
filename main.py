@@ -93,6 +93,18 @@ def main():
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
     _add_date_args(list_staged_p)
 
+    # Modify command
+    modify_p = subparsers.add_parser("modify", help="Modify a staged entry's end time and pauses")
+    modify_p.add_argument("index", type=int, nargs="?", help="Staging index to modify (optional, will list if omitted)")
+
+    # Remove command
+    remove_p = subparsers.add_parser("remove", help="Remove a staged entry from staging")
+    remove_p.add_argument("index", type=int, nargs="?", help="Staging index to remove (optional, will list if omitted)")
+    remove_p.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+
+    # Review command
+    review_p = subparsers.add_parser("review", help="Preview staged entries as they'd appear after sync")
+
     # Revert command
     revert_p = subparsers.add_parser("revert", help="Undo the last N synced day blocks")
     revert_p.add_argument("count", type=int, nargs="?",
@@ -211,7 +223,7 @@ def main():
     
     # List of commands that REQUIRE a valid passphrase
     # (Reading the ledger, verifying history, or performing a sync)
-    require_auth = ["sync", "verify", "rep", "list", "view", "tags"]
+    require_auth = ["sync", "verify", "rep", "list", "view", "tags", "modify", "review"]
     
     crypto = None
     if args.command in require_auth:
@@ -289,6 +301,12 @@ def main():
             to_date=args.to_date,
         )
         cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
+    elif args.command == "modify":
+        _handle_modify(ledger, args.index)
+    elif args.command == "remove":
+        _handle_remove(ledger, args.index, args.yes)
+    elif args.command == "review":
+        _handle_review(ledger, cli)
     elif args.command == "revert":
         if args.list:
             print("\n=== Ledger Summary ===")
@@ -322,6 +340,531 @@ def main():
                 print("Chain intact and verified.")
             else:
                 print("WARN: Chain verification failed.")
+
+
+def _parse_time_input(value_str, date_str, start_epoch, end_epoch):
+    """Parse a time input to epoch ms.
+
+    Supported formats:
+      HH:MM or HH:MM:SS  -> clock time on date_str
+      +N[m|h|s]           -> offset from start_epoch
+      -N[m|h|s]           -> offset from end_epoch (clamped at start_epoch)
+      N[h][m][s]          -> absolute duration from start_epoch
+      <epoch ms>          -> raw epoch ms
+
+    Returns (epoch_ms, display_str) or (None, error_msg).
+    """
+    from datetime import timezone, datetime
+    import re
+
+    value_str = value_str.strip()
+
+    # Offset from start: +N[m|h|s]
+    if value_str.startswith("+"):
+        try:
+            offset_str = value_str.lstrip("+").strip()
+            if offset_str.endswith("m"):
+                offset_ms = int(offset_str[:-1]) * 60000
+            elif offset_str.endswith("h"):
+                offset_ms = int(offset_str[:-1]) * 3600000
+            elif offset_str.endswith("s"):
+                offset_ms = int(offset_str[:-1]) * 1000
+            else:
+                offset_ms = int(offset_str) * 60000
+            result = start_epoch + offset_ms
+            return result, time.strftime("%H:%M:%S", time.localtime(result/1000))
+        except ValueError:
+            return None, "Invalid offset format."
+
+    # Offset from end: -N[m|h|s]
+    if value_str.startswith("-"):
+        if end_epoch is None:
+            return None, "No end time to offset from."
+        try:
+            offset_str = value_str.lstrip("-").strip()
+            if offset_str.endswith("m"):
+                offset_ms = int(offset_str[:-1]) * 60000
+            elif offset_str.endswith("h"):
+                offset_ms = int(offset_str[:-1]) * 3600000
+            elif offset_str.endswith("s"):
+                offset_ms = int(offset_str[:-1]) * 1000
+            else:
+                offset_ms = int(offset_str) * 60000
+            result = end_epoch - offset_ms
+            if result < start_epoch:
+                result = start_epoch
+            return result, time.strftime("%H:%M:%S", time.localtime(result/1000))
+        except ValueError:
+            return None, "Invalid offset format."
+
+    # Duration from start: N[h][m][s]
+    if re.search(r"\d+(?:h|m|s)", value_str):
+        try:
+            h = m = s = 0
+            h_match = re.search(r"(\d+)h", value_str)
+            m_match = re.search(r"(\d+)m", value_str)
+            s_match = re.search(r"(\d+)s", value_str)
+            if h_match: h = int(h_match.group(1))
+            if m_match: m = int(m_match.group(1))
+            if s_match: s = int(s_match.group(1))
+            duration_ms = (h * 3600 + m * 60 + s) * 1000
+            result = start_epoch + duration_ms
+            return result, time.strftime("%H:%M:%S", time.localtime(result/1000))
+        except ValueError:
+            return None, "Invalid duration format."
+
+    # Clock time: HH:MM or HH:MM:SS
+    parts = value_str.split(":")
+    if len(parts) in (2, 3):
+        try:
+            date_parts = date_str.split("-")
+            h, m = int(parts[0]), int(parts[1])
+            s = int(parts[2]) if len(parts) == 3 else 0
+            # Use naive datetime (local time) to match time.localtime() display
+            dt = datetime(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
+                          h, m, s)
+            result = int(dt.timestamp() * 1000)
+            return result, time.strftime("%H:%M:%S", time.localtime(result/1000))
+        except (ValueError, IndexError):
+            pass
+
+    # Raw epoch ms
+    try:
+        result = int(value_str)
+        return result, time.strftime("%H:%M:%S", time.localtime(result/1000))
+    except ValueError:
+        return None, "Unrecognized time format. Use HH:MM, +N[m|h|s], -N[m|h|s], N[h][m][s], or epoch ms."
+
+
+def _handle_modify(ledger, index):
+    """Modify a staged entry's end time, pauses, comment, tags, and media."""
+    staging = ledger.store.read_staging()
+    completed = [(i, e) for i, e in enumerate(staging)
+                  if not e["data"].get("is_active", False)
+                  and not e["data"].get("is_paused", False)]
+
+    if not completed:
+        print("No completed staged entries to modify.")
+        return
+
+    # Show entries
+    print("\n=== Staged Entries ===")
+    for idx, entry in completed:
+        data = entry["data"]
+        start_val = data["startTime_enc"]
+        if start_val.startswith("plain:"):
+            start_epoch = int(start_val[6:])
+        else:
+            start_epoch = int(ledger.crypto.decrypt(start_val))
+        end_val = data["endTime_enc"]
+        if end_val:
+            if end_val.startswith("plain:"):
+                end_epoch = int(end_val[6:])
+            else:
+                end_epoch = int(ledger.crypto.decrypt(end_val))
+        else:
+            end_epoch = None
+
+        start_str = time.strftime("%H:%M", time.localtime(start_epoch/1000))
+        end_str = time.strftime("%H:%M", time.localtime(end_epoch/1000)) if end_epoch else "??"
+        print(f"  #{idx}: [{start_str}-{end_str}] {data['title']} ({data.get('duration', 0)//60000}m)")
+
+    # Prompt for selection
+    if index is None:
+        try:
+            index = int(input("\nEnter entry index to modify: "))
+        except ValueError:
+            print("Invalid index.")
+            return
+
+    if index < 0 or index >= len(staging):
+        print(f"No staged entry at index {index}.")
+        return
+    entry = staging[index]
+    data = entry["data"]
+    if data.get("is_active", False):
+        print(f"Cannot modify active task '{data['title']}'. End it first.")
+        return
+
+    print(f"\nModifying: {data['title']}")
+
+    # Decrypt current values
+    start_val = data["startTime_enc"]
+    if start_val.startswith("plain:"):
+        start_epoch = int(start_val[6:])
+    else:
+        start_epoch = int(ledger.crypto.decrypt(start_val))
+    end_val = data["endTime_enc"]
+    if end_val:
+        if end_val.startswith("plain:"):
+            current_end = int(end_val[6:])
+        else:
+            current_end = int(ledger.crypto.decrypt(end_val))
+    else:
+        current_end = None
+
+    pauses_enc = data.get("pauses_enc")
+    if pauses_enc:
+        if pauses_enc.startswith("plain:"):
+            current_pauses = json.loads(pauses_enc[6:])
+        else:
+            current_pauses = json.loads(ledger.crypto.decrypt(pauses_enc))
+    else:
+        current_pauses = []
+
+    date_str = time.strftime("%Y-%m-%d", time.localtime(start_epoch/1000))
+
+    # Show current state
+    start_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_epoch/1000))
+    print(f"  Date:  {date_str}")
+    print(f"  Start: {start_str}")
+    if current_end:
+        end_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_end/1000))
+        print(f"  End:   {end_str}")
+    print(f"  Duration: {data.get('duration', 0)//60000}m")
+    if current_pauses:
+        print(f"  Pauses:")
+        for p in current_pauses:
+            ps = time.strftime("%H:%M:%S", time.localtime(p["pause_start"]/1000))
+            if p.get("pause_stop"):
+                pst = time.strftime("%H:%M:%S", time.localtime(p["pause_stop"]/1000))
+                pdur = (p["pause_stop"] - p["pause_start"]) // 60000
+                print(f"    #{p['pause_index']}: {ps} -> {pst} ({pdur}m)")
+            else:
+                print(f"    #{p['pause_index']}: {ps} -> ongoing")
+
+    changes_made = {"end_epoch": None, "pauses": None}
+    pause_modified = False
+
+    # ======== EDIT END TIME ========
+    end_input = input("\nNew end time (blank=keep, HH:MM, HH:MM:SS, +N[m|h|s], N[h][m][s], or epoch ms): ").strip()
+    if end_input:
+        new_end, _ = _parse_time_input(end_input, date_str, start_epoch, current_end) or (None, None)
+        if new_end is not None:
+            current_end = new_end
+            changes_made["end_epoch"] = new_end
+            end_str = time.strftime("%H:%M:%S", time.localtime(current_end/1000))
+            print(f"  End set to {end_str}")
+        else:
+            print("  Invalid format, keeping original.")
+
+    # ======== EDIT COMMENT ========
+    current_comment = data.get("comment")
+    if current_comment:
+        comment_input = input(f'  Comment ("{current_comment}", edit, or blank to clear): ').strip()
+    else:
+        comment_input = input("  Comment (optional, or blank to keep): ").strip()
+
+    if comment_input:
+        data["comment"] = comment_input
+        print(f"  Comment set to: {comment_input}")
+    elif current_comment and comment_input == "":
+        data["comment"] = None
+        print("  Comment cleared.")
+
+    # ======== EDIT TAGS ========
+    current_tags = list(data.get("tags", []))
+    print(f"\n--- Tags (current: {', '.join(current_tags) if current_tags else 'none'}) ---")
+    tags_modified = False
+    while True:
+        tag_action = input("  [A]dd tag, [R]emove tag, [D]one: ").strip().upper()
+        if tag_action == "A":
+            t = input("  Tag to add: ").strip().lower()
+            if t:
+                if t not in current_tags:
+                    current_tags.append(t)
+                    current_tags.sort()
+                    print(f"  Added @{t}")
+                    tags_modified = True
+                else:
+                    print(f"  @{t} already present.")
+        elif tag_action == "R":
+            if not current_tags:
+                print("  No tags to remove.")
+            else:
+                print(f"  Tags: {', '.join(f'@{t}' for t in current_tags)}")
+                t = input("  Tag to remove: ").strip().lower()
+                if t in current_tags:
+                    current_tags.remove(t)
+                    print(f"  Removed @{t}")
+                    tags_modified = True
+                else:
+                    print(f"  @{t} not found.")
+        elif tag_action == "D":
+            break
+        else:
+            print("  Invalid choice.")
+    if tags_modified:
+        data["tags"] = current_tags
+
+    # ======== MEDIA STUB ========
+    current_media = list(data.get("media", []))
+    if current_media:
+        print(f"\n  Current media: {json.dumps(current_media)}")
+    add_media = input("  Add media? (filename,hash or blank to skip): ").strip()
+    if add_media:
+        parts = add_media.split(",")
+        if len(parts) == 2:
+            fname, fhash = parts[0].strip(), parts[1].strip()
+            current_media.append({"filename": fname, "hash": fhash})
+            data["media"] = current_media
+            print(f"  Added media: {fname}")
+        else:
+            print("  Expected format: filename,hash")
+
+    # ======== EDIT PAUSES ========
+    print("\n--- Pause Editor ---")
+    print("  Options:")
+    print("    [A]dd pause      [E]dit pause")
+    print("    [R]emove pause   [C]lear all pauses")
+    print("    [K]eep current")
+
+    new_pauses = [dict(p) for p in current_pauses]
+
+    while True:
+        pause_action = input("  Choice (A/E/R/C/K): ").strip().upper()
+        if pause_action == "A":
+            try:
+                p_start_input = input("  Pause start (HH:MM, +N[m|h|s], N[h][m][s]): ").strip()
+                if not p_start_input:
+                    print("  Cancelled.")
+                    continue
+                pause_start, _ = _parse_time_input(p_start_input, date_str, start_epoch, current_end) or (None, None)
+                if pause_start is None:
+                    print("  Invalid format.")
+                    continue
+
+                p_stop_input = input("  Pause stop (HH:MM, +N[m|h|s], N[h][m][s], or blank for ongoing): ").strip()
+                pause_stop = None
+                if p_stop_input:
+                    pause_stop, _ = _parse_time_input(p_stop_input, date_str, start_epoch, current_end) or (None, None)
+                    if pause_stop is None:
+                        print("  Invalid format.")
+                        continue
+                    # Clamp stop at activity end time
+                    if current_end is not None and pause_stop > current_end:
+                        pause_stop = current_end
+                        print(f"  Pause stop clamped to activity end ({time.strftime('%H:%M:%S', time.localtime(current_end/1000))})")
+
+                next_idx = max([p.get("pause_index", 0) for p in new_pauses], default=0) + 1
+                new_pauses.append({
+                    "pause_index": next_idx,
+                    "pause_start": pause_start,
+                    "pause_stop": pause_stop,
+                })
+                print(f"  Added pause #{next_idx}.")
+                pause_modified = True
+            except (ValueError, IndexError, TypeError):
+                print("  Invalid time format, no pause added.")
+
+        elif pause_action == "E":
+            if not new_pauses:
+                print("  No pauses to edit.")
+                continue
+            try:
+                e_idx = int(input(f"  Pause index to edit (1-{len(new_pauses)}): "))
+                found = [p for p in new_pauses if p["pause_index"] == e_idx]
+                if not found:
+                    print(f"  No pause with index {e_idx}.")
+                    continue
+                p = found[0]
+                ps_str = time.strftime("%H:%M:%S", time.localtime(p["pause_start"]/1000))
+                print(f"  Editing pause #{e_idx}: currently start={ps_str}")
+
+                new_start_input = input("  New start (blank to keep, HH:MM, +N[m|h|s]): ").strip()
+                if new_start_input:
+                    new_start, _ = _parse_time_input(new_start_input, date_str, start_epoch, current_end) or (None, None)
+                    if new_start is not None:
+                        p["pause_start"] = new_start
+                        print(f"  Start set to {time.strftime('%H:%M:%S', time.localtime(new_start/1000))}")
+                        pause_modified = True
+                    else:
+                        print("  Invalid format, keeping original.")
+
+                pst_str = time.strftime("%H:%M:%S", time.localtime(p["pause_stop"]/1000)) if p.get("pause_stop") else "ongoing"
+                print(f"  Currently stop={pst_str}")
+                new_stop_input = input("  New stop (blank to keep, HH:MM, +N[m|h|s], -N[m|h|s], or 'none' for ongoing): ").strip()
+                if new_stop_input:
+                    if new_stop_input.lower() == "none":
+                        p["pause_stop"] = None
+                        print("  Stop cleared (ongoing).")
+                        pause_modified = True
+                    else:
+                        new_stop, _ = _parse_time_input(new_stop_input, date_str, start_epoch, current_end) or (None, None)
+                        if new_stop is not None:
+                            # Clamp at activity end
+                            if current_end is not None and new_stop > current_end:
+                                new_stop = current_end
+                                print(f"  Pause stop clamped to activity end ({time.strftime('%H:%M:%S', time.localtime(current_end/1000))})")
+                            p["pause_stop"] = new_stop
+                            print(f"  Stop set to {time.strftime('%H:%M:%S', time.localtime(new_stop/1000))}")
+                            pause_modified = True
+                        else:
+                            print("  Invalid format, keeping original.")
+            except ValueError:
+                print("  Invalid index.")
+
+        elif pause_action == "R":
+            if not new_pauses:
+                print("  No pauses to remove.")
+                continue
+            try:
+                r_idx = int(input(f"  Pause index to remove (1-{len(new_pauses)}): "))
+                removed = [p for p in new_pauses if p["pause_index"] == r_idx]
+                if removed:
+                    new_pauses = [p for p in new_pauses if p["pause_index"] != r_idx]
+                    for i, p in enumerate(new_pauses):
+                        p["pause_index"] = i + 1
+                    print(f"  Removed pause #{r_idx}.")
+                    pause_modified = True
+                else:
+                    print(f"  No pause with index {r_idx}.")
+            except ValueError:
+                print("  Invalid index.")
+
+        elif pause_action == "C":
+            new_pauses = []
+            pause_modified = True
+            print("  All pauses cleared.")
+
+        elif pause_action == "K":
+            break
+
+        else:
+            print("  Invalid choice.")
+            continue
+        break
+
+    # Recompute hash if any data changed
+    if any([changes_made["end_epoch"], pause_modified, comment_input or (current_comment and comment_input == ""),
+            tags_modified, add_media]):
+        entry["hash"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+    # Apply end_epoch and pauses via domain method (handles duration recompute)
+    if changes_made["end_epoch"] or pause_modified:
+        try:
+            result = ledger.modify_staged_entry(
+                index,
+                end_epoch=changes_made["end_epoch"],
+                pauses=new_pauses if pause_modified else None,
+            )
+            print(f"\nDone: {result['title']} (duration: {result['duration']//60000}m)")
+        except ValueError as e:
+            print(f"Error: {e}")
+    else:
+        # Only non-timing fields changed, just write staging
+        if any([comment_input or (current_comment and comment_input == ""), tags_modified, add_media]):
+            ledger.store.write_staging(staging)
+            print(f"\nDone: {data.get('title', '?')}")
+def _handle_remove(ledger, index, auto_yes):
+    """Remove a staged entry."""
+    staging = ledger.store.read_staging()
+
+    if not staging:
+        print("No entries in staging.")
+        return
+
+    # Show entries
+    print("\n=== Staged Entries ===")
+    for idx, entry in enumerate(staging):
+        data = entry["data"]
+        _print_staging_line(entry, idx)
+
+    # Prompt for selection
+    if index is None:
+        try:
+            index = int(input("\nEnter entry index to remove: "))
+        except ValueError:
+            print("Invalid index.")
+            return
+
+    if index < 0 or index >= len(staging):
+        print(f"No staged entry at index {index}.")
+        return
+
+    title = staging[index]["data"]["title"]
+    if not auto_yes:
+        confirm = input(f"Remove '{title}' from staging? (y/N): ").strip().lower()
+        if confirm != "y":
+            print("Cancelled.")
+            return
+
+    try:
+        removed = ledger.remove_staged_entry(index)
+        print(f"✓ Removed: {removed}")
+    except ValueError as e:
+        print(f"Error: {e}")
+
+
+def _handle_review(ledger, cli):
+    """Preview staged entries as they'd appear after sync."""
+    preview = ledger.get_staged_entries_preview()
+
+    if not preview:
+        print("No completed staged entries to review.")
+        return
+
+    # Group by date
+    by_date = {}
+    for p in preview:
+        by_date.setdefault(p["date"], []).append(p)
+
+    print("\n=== Staging Preview (as would appear after sync) ===")
+    total_duration = 0
+    total_entries = len(preview)
+
+    for date_str in sorted(by_date):
+        entries = by_date[date_str]
+        day_duration = sum(e["duration"] for e in entries)
+        total_duration += day_duration
+
+        print(f"\n── {date_str} ── ({len(entries)} entries, {day_duration//60000}m total)")
+
+        for e in entries:
+            start_str = time.strftime("%H:%M", time.localtime(e["start_epoch"]/1000))
+            end_str = time.strftime("%H:%M", time.localtime(e["end_epoch"]/1000)) if e["end_epoch"] else "??"
+            dur_str = f"{e['duration']//60000}m" if e['duration'] >= 0 else f"({e['duration']//60000}m)"
+            tag_str = f" [{', '.join(e['tags'])}]" if e["tags"] else ""
+            comment_str = f" — {e['comment']}" if e.get("comment") else ""
+
+            # Show pause info if any
+            pause_str = ""
+            if e["pauses"]:
+                total_pause_ms = sum(
+                    (p.get("pause_stop", 0) or 0) - p["pause_start"]
+                    for p in e["pauses"] if p.get("pause_stop")
+                )
+                if total_pause_ms > 0:
+                    pause_str = f" (paused {total_pause_ms//60000}m)"
+
+            print(f"  [{start_str}-{end_str}] {e['title']}{tag_str} ({dur_str}){pause_str}{comment_str}")
+
+    print(f"\n── Summary: {total_entries} entries, {total_duration//60000}m total over {len(by_date)} day(s) ──")
+
+
+def _print_staging_line(entry, idx):
+    """Print one line for a staged entry in a list (handle plain: prefix)."""
+    data = entry["data"]
+    start_val = data["startTime_enc"]
+    if start_val.startswith("plain:"):
+        start_epoch = int(start_val[6:])
+    else:
+        import sys
+        print(f"  #{idx}: {data['title']} (encrypted — use auth to view)")
+        return
+
+    end_val = data.get("endTime_enc")
+    if end_val and end_val.startswith("plain:"):
+        end_epoch = int(end_val[6:])
+    else:
+        end_epoch = None
+
+    start_str = time.strftime("%H:%M", time.localtime(start_epoch/1000))
+    end_str = time.strftime("%H:%M", time.localtime(end_epoch/1000)) if end_epoch else "??"
+    active_str = " [active]" if data.get("is_active") else ""
+    paused_str = " [paused]" if data.get("is_paused") else ""
+
+    print(f"  #{idx}: [{start_str}-{end_str}] {data['title']} ({data.get('duration', 0)//60000}m){active_str}{paused_str}")
 
 
 def _list_tags(ledger, cli):
