@@ -1,0 +1,1603 @@
+# Architectural Migration Strategy — Plan, Obstacles & Mitigations
+
+> **Date:** 2026-05-10
+> **Status:** Planning (no code changes)
+> **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
+>
+> All prior architectural decisions are documented in:
+> - [`ARCHITECTURAL_DECISIONS.md`](./ARCHITECTURAL_DECISIONS.md)
+> - [`DESIGN_MULTI_DEVICE_SESSION.md`](./DESIGN_MULTI_DEVICE_SESSION.md)
+> - [`PHPSPEC.md`](./PHPSPEC.md)
+> - [`DESIGN_GOALS.md`](./DESIGN_GOALS.md)
+
+---
+
+## Table of Contents
+
+1. [Current Architecture (As-Is)](#1-current-architecture-as-is)
+2. [Target Architecture (To-Be)](#2-target-architecture-to-be)
+3. [Migration Items (Planned Changes)](#3-migration-items-planned-changes)
+   - [Item 1: Staging Service — Local/Remote Split](#item-1-staging-service--localremote-split)
+   - [Item 2: Ledger Engine — Local/Remote + IndexManager](#item-2-ledger-engine--localremote--indexmanager)
+   - [Item 3: Sync Orchestrator — New Layer](#item-3-sync-orchestrator--new-layer)
+   - [Item 4: Eliminate `plain:` Prefix Leakage](#item-4-eliminate-plain-prefix-leakage)
+   - [Item 5: Abstract View Interface](#item-5-abstract-view-interface)
+   - [Item 6: Blind Index Management (IndexManager)](#item-6-blind-index-management-indexmanager)
+   - [Item 7: Split Storage Interfaces](#item-7-split-storage-interfaces)
+   - [Item 8: Configurable Summary Policy](#item-8-configurable-summary-policy)
+4. [Dependency Graph & Ordering](#4-dependency-graph--ordering)
+5. [Obstacles & Mitigations Summary](#5-obstacles--mitigations-summary)
+6. [Testing Strategy](#6-testing-strategy)
+7. [Backward Compatibility](#7-backward-compatibility)
+
+---
+
+## 1. Current Architecture (As-Is)
+
+### High-Level Structure
+
+```
+main.py
+  └── argparse dispatch → handler functions (_handle_modify, _handle_remove, etc.)
+  └── CLI-specific logic: _parse_time_input, _print_staging_line, _list_tags
+  └── Authentication: PassphraseAuthenticator, CryptoManager / NoAuthCryptoManager
+
+core/
+  ├── ledger.py         ← MIXED: staging CRUD + ledger chain + print() calls
+  ├── sync_confirmation.py ← SyncStrategy interface + InteractiveCLIStrategy (CLI in core/)
+  └── factory.py        ← LedgerFactory.initialize()
+
+cli/
+  └── interface.py      ← CLIInterface (thin wrapper, some direct storage access)
+
+storage/
+  ├── interface.py      ← Single AbstractLedgerStore for everything
+  └── file_store.py     ← Monolithic LedgerStore (staging, ledger, index, identity)
+
+security/
+  ├── crypto.py         ← CryptoManager, NoAuthCryptoManager (plain: prefix awareness)
+  ├── auth.py           ← PassphraseAuthenticator
+  └── recovery.py       ← RecoveryManager
+```
+
+### Pain Points
+
+| Pain Point | Location | Severity |
+|-----------|----------|----------|
+| Staging CRUD + Ledger Chain in one class | `core/ledger.py` (800+ lines) | 🔴 High |
+| `print()` calls in domain layer | `core/ledger.py` | 🔴 High |
+| `plain:` prefix checked everywhere | `core/ledger.py` (7+ methods) | 🔴 High |
+| InteractiveStrategy with `print()`/`input()` in `core/` | `core/sync_confirmation.py` | 🔴 High |
+| CLI handler functions in `main.py` instead of `cli/` | `main.py` (300+ lines of handlers) | 🟡 Medium |
+| Single storage interface for 4 concerns | `storage/interface.py` | 🟡 Medium |
+| Summary cadence hardcoded | `core/ledger.py` (within sync methods) | 🟢 Low |
+| View assumes CLI exclusively | `cli/interface.py`, `main.py` | 🟢 Low |
+
+---
+
+## 2. Target Architecture (To-Be)
+
+### Layered Structure
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                       View Layer                           │
+│                                                           │
+│  interfaces/view.py         ← AbstractViewInterface       │
+│                                                           │
+│  cli/                       ← CLIView + CLIStrategy       │
+│    ├── cli_view.py          ← CLIView(view interface impl)│
+│    ├── cli_parsers.py       ← _parse_time_input & friends │
+│    └── strategies.py        ← InteractiveCLIStrategy      │
+│                                                           │
+│  tui/     (future)                                        │
+│  web/     (future)                                        │
+│  wearable/ (future)                                       │
+└──────────────────────────┬────────────────────────────────┘
+                           │ calls (via ViewInterface)
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│                    Sync Orchestrator                       │
+│                                                           │
+│  core/sync/                                               │
+│    ├── orchestrator.py     ← SyncOrchestrator             │
+│    ├── decision.py         ← SyncStrategy (abstract)      │
+│    └── transport.py        ← AbstractStagingTransport     │
+│                                                           │
+│  Responsibilities:                                        │
+│    - Device identity check before any operation            │
+│    - Pull remote staging blob, merge with local            │
+│    - Present entries via View → get SyncDecision           │
+│    - Commit to LedgerEngine                                │
+│    - Remove synced entries from StagingService             │
+│    - Push remote staging blob after commit                 │
+│    - Push new ledger blocks to remote                     │
+│    - Handle offline queue (entries accumulate locally)     │
+└──────────────────────────┬────────────────────────────────┘
+                           │ calls
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│                     Domain Layer                           │
+│                                                           │
+│  domain/                                                  │
+│    ├── staging/                                           │
+│    │   ├── service.py       ← StagingService (public API) │
+│    │   ├── local_cache.py   ← LocalStagingCache           │
+│    │   ├── remote_sync.py   ← RemoteStagingSync           │
+│    │   └── merge_engine.py  ← MergeEngine                 │
+│    │                                                      │
+│    └── ledger/                                            │
+│        ├── engine.py        ← LedgerEngine (public API)   │
+│        ├── chain.py         ← LedgerChain                 │
+│        ├── remote_sync.py   ← LedgerRemoteSync            │
+│        ├── chain_splitter.py← ChainSplitter               │
+│        ├── index_manager.py ← IndexManager                │
+│        └── summary_policy.py← SummaryPolicy (strategy)    │
+│                                                           │
+│  Properties:                                              │
+│    - No print() calls anywhere                             │
+│    - No plain: prefix exposure to callers                  │
+│    - Returns decoupled DTOs / value objects                │
+│    - All notifications via ViewInterface callbacks         │
+│    - All errors via exceptions or result types             │
+└──────────────────────────┬────────────────────────────────┘
+                           │ uses
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│                Storage Abstraction                         │
+│                                                           │
+│  storage/                                                 │
+│    ├── staging_store.py   ← AbstractStagingStore          │
+│    ├── ledger_store.py    ← AbstractLedgerStore           │
+│    ├── index_store.py     ← AbstractIndexStore            │
+│    ├── identity_store.py  ← AbstractIdentityStore         │
+│    └── implementations/                                   │
+│        ├── file_staging.py ← FileStagingStore             │
+│        ├── file_ledger.py  ← FileLedgerStore              │
+│        ├── file_index.py   ← FileIndexStore               │
+│        └── file_identity.py← FileIdentityStore            │
+│                                                           │
+│  Properties:                                              │
+│    - Each interface has single responsibility              │
+│    - StagingStore supports local + remote (via transport)  │
+│    - LedgerStore supports incremental reads (by offset)    │
+│    - IndexStore is simple KV, rebuildable from chain       │
+│    - IdentityStore is read-once-per-session                │
+└──────────────────────────┬────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│                 Transport Layer (NEW)                      │
+│                                                           │
+│  transport/                                               │
+│    ├── interface.py       ← AbstractStagingTransport      │
+│    │                         pull(path) → bytes           │
+│    │                         push(path, data) → None      │
+│    ├── git_transport.py   ← GitTransport                  │
+│    ├── blob_obfuscator.py ← BlobObfuscator                │
+│    │                         (fixed-size padded encrypt)  │
+│    └── http_transport.py  (future)                        │
+│                                                           │
+│  Properties:                                              │
+│    - Minimal 2-method interface for transport              │
+│    - Blob obfuscation is transport-agnostic                │
+│    - Ledger transport reuses same interface pattern        │
+│      but with offset/range support (future)               │
+└──────────────────────────┬────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│              Middleware / Security                         │
+│                                                           │
+│  security/                                                │
+│    ├── crypto.py           ← CryptoManager (AES-CTR+HMAC) │
+│    ├── auth.py             ← PassphraseAuthenticator      │
+│    ├── recovery.py         ← RecoveryManager              │
+│    └── identity.py         ← DeviceIdentityProvider        │
+│                                get_device_id(mk) → str     │
+│                                get_device_secret(mk) → bytes│
+│                                                           │
+│  Properties:                                              │
+│    - NoAuthCryptoManager removed (plain: handled by       │
+│      StagingService internally)                           │
+│    - DeviceIdentityProvider is a new pluggable interface  │
+│    - All security injectable via dependency injection      │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Migration Items (Planned Changes)
+
+### Item 1: Staging Service — Local/Remote Split
+
+**Problem:** The current `core/ledger.py` mixes staging CRUD (`capture_habit`, `end_habit`, `pause_habit`, `unpause_habit`, `modify_staged_entry`, `remove_staged_entry`) with ledger chain operations (`sync_day`, `verify`, `revert_entries`). Staging has two modes (local `plain:` vs remote encrypted blob) that need different handling.
+
+**Target:**
+
+```
+domain/staging/service.py     ← StagingService (public API)
+domain/staging/local_cache.py ← LocalStagingCache
+domain/staging/remote_sync.py ← RemoteStagingSync
+domain/staging/merge_engine.py← MergeEngine
+```
+
+**StagingService Public API:**
+
+```python
+class StagingService:
+    def __init__(self, crypto, staging_store, transport=None, device_id_provider=None):
+        self._local = LocalStagingCache(crypto, staging_store)
+        self._remote = RemoteStagingSync(crypto, transport, device_id_provider) if transport else None
+        self._merge = MergeEngine()
+
+    # --- Entry CRUD ---
+    def capture(self, title, start_epoch, stop_epoch=None, metadata=None,
+                is_active=False, tags=None, comment=None, media=None) -> str:
+        """Add entry to local staging. If remote available, push after."""
+        # Returns entry hash prefix
+        pass
+
+    def end(self, title_or_id, end_epoch, comment=None):
+        """End an active task."""
+        pass
+
+    def end_at(self, title_or_id, end_epoch, comment=None):
+        """End at a specific past timestamp."""
+        pass
+
+    def pause(self, title_or_id, pause_epoch, comment=None):
+        """Pause a running task."""
+        pass
+
+    def unpause(self, title_or_id, unpause_epoch, comment=None):
+        """Unpause a paused task."""
+        pass
+
+    def modify(self, entry_index, end_epoch=None, pauses=None):
+        """Modify a completed entry's end time and/or pauses."""
+        pass
+
+    def remove(self, entry_index):
+        """Remove a staged entry by index."""
+        pass
+
+    # --- Queries (returns decrypted DTOs, no plain: prefix) ---
+    def get_entries(self) -> List[StagingEntryDTO]:
+        """All staged entries with decrypted fields."""
+        pass
+
+    def get_completed(self) -> List[StagingEntryDTO]:
+        """Only completed entries (non-active, non-paused)."""
+        pass
+
+    def get_active(self) -> List[StagingEntryDTO]:
+        """Only active (running) entries."""
+        pass
+
+    def get_pending_sync(self) -> List[StagingEntryDTO]:
+        """Entries ready to sync (completed, not synced)."""
+        # Merges get_completed() - already_synced_set
+        pass
+
+    # --- Remote Sync ---
+    def sync_with_remote(self) -> SyncResult:
+        """Full remote sync:
+        1. Check device identity (re-auth if mismatch)
+        2. Pull remote blob
+        3. Merge remote entries into local by timestamp
+        4. Return result (merged_count, conflicts)
+        """
+        pass
+
+    def push_to_remote(self):
+        """Serialize local staging, obfuscate, push via transport."""
+        pass
+
+    def is_remote_available(self) -> bool:
+        """Check if remote transport is configured and reachable."""
+        pass
+
+    def get_offline_queue(self) -> List[StagingEntryDTO]:
+        """Entries added while offline that haven't been pushed."""
+        pass
+```
+
+**LocalStagingCache:**
+
+```python
+class LocalStagingCache:
+    """Manages local staging.json with plain: prefix convention.
+
+    This is the ONLY class that knows about plain:. No other component
+    should see startswith("plain:") checks.
+    """
+
+    def __init__(self, crypto, staging_store):
+        self._crypto = crypto
+        self._store = staging_store
+
+    def read_entries(self) -> List[dict]:
+        """Read raw staging, decrypt fields, return value objects."""
+        pass
+
+    def write_entries(self, entries: List[dict]):
+        """Encrypt fields back to plain: format, write to store."""
+        pass
+
+    def append(self, entry: dict):
+        """Append single entry (encrypt fields to plain: first)."""
+        pass
+
+    def update(self, index: int, fields: dict):
+        """Update specific fields on an entry."""
+        pass
+
+    def delete(self, index: int):
+        """Remove entry at index."""
+        pass
+
+    def _to_plain(self, field_value: str) -> str:
+        """Internal: store as plain: prefix (no real encryption)."""
+        pass
+
+    def _from_plain(self, field_value: str) -> str:
+        """Internal: strip plain: prefix (no real decryption)."""
+        pass
+```
+
+**RemoteStagingSync:**
+
+```python
+class RemoteStagingSync:
+    """Handles device identity, transport, and blob obfuscation for remote staging."""
+
+    def __init__(self, crypto, transport, device_id_provider):
+        self._crypto = crypto
+        self._transport = transport
+        self._device_id = device_id_provider
+
+    def check_device(self) -> bool:
+        """Compare local device_id with remote blob's device_id_enc.
+        Returns True if match, False if re-auth needed."""
+        pass
+
+    def pull(self) -> List[dict]:
+        """Pull remote blob, deobfuscate, decrypt, return entries."""
+        pass
+
+    def push(self, entries: List[dict], device_id: str):
+        """Encrypt entries, obfuscate blob, push via transport."""
+        pass
+
+    def get_remote_device_id(self) -> Optional[str]:
+        """Decrypt device_id_enc from remote blob."""
+        pass
+```
+
+**MergeEngine:**
+
+```python
+class MergeEngine:
+    """Merge entries from multiple sources by timestamp.
+
+    Since real-world tasks don't start at the same millisecond
+    on two devices, entries are additive and non-conflicting.
+    """
+
+    def merge(self, local_entries: List[dict], remote_entries: List[dict]) -> List[dict]:
+        """Merge remote entries into local cache.
+        Entries are deduplicated by (title, start_epoch).
+        Remote wins on ties (more recent source).
+        Returns merged list sorted by start_epoch.
+        """
+        pass
+```
+
+---
+
+### Item 2: Ledger Engine — Local/Remote + IndexManager
+
+**Problem:** The current `sync_day()`, `sync_day_with_selection()`, `verify()`, and `revert_entries()` methods in `core/ledger.py` handle chain operations, index updates, and summary insertion all in one flow. There's no separation between local chain operations and remote sync.
+
+**Target:**
+
+```
+domain/ledger/engine.py         ← LedgerEngine (public API)
+domain/ledger/chain.py          ← LedgerChain (local operations)
+domain/ledger/remote_sync.py    ← LedgerRemoteSync (incremental push/pull)
+domain/ledger/chain_splitter.py ← ChainSplitter (archive/export)
+domain/ledger/index_manager.py  ← IndexManager (blind index)
+domain/ledger/summary_policy.py ← SummaryPolicy (abstract + implementations)
+```
+
+**LedgerEngine Public API:**
+
+```python
+class LedgerEngine:
+    def __init__(self, crypto, ledger_store, index_store, identity_store,
+                 summary_policy=None):
+        self._chain = LedgerChain(crypto, ledger_store)
+        self._index = IndexManager(index_store)
+        self._identity = identity_store
+        self._summary = summary_policy or YearMonthSummaryPolicy()
+
+    def commit(self, entries: List[StagingEntryDTO]) -> str:
+        """Commit entries to the ledger chain.
+
+        1. Group entries by date
+        2. For each date: check summary policy → insert summary block if needed
+        3. Build day block with entries (encrypt fields, compute hashes)
+        4. Append to chain (update prev_hash, seal, sign)
+        5. Update blind index
+
+        Returns day_hash prefix of the last committed block.
+        """
+        pass
+
+    def verify(self, full_check=True) -> VerificationResult:
+        """Verify chain integrity.
+        - prev_hash linkage
+        - Block seals (HMAC)
+        - Identity signatures (if available)
+        - Entry hashes
+        - Content hashes (optional deep check)
+        """
+        pass
+
+    def revert(self, count: int) -> RevertResult:
+        """Revert last N day blocks.
+        Returns entries to restore to staging (as StagingEntryDTOs).
+        Updates blind index (subtract reverted durations).
+        """
+        pass
+
+    def query_index(self, from_date=None, to_date=None) -> Dict[str, int]:
+        """Query blind index for reputation data.
+        Title → total ms over the date range."""
+        pass
+
+    def sync_with_remote(self) -> SyncResult:
+        """Pull new blocks from remote, append to local chain.
+        Push local-only blocks to remote.
+        """
+        pass
+
+    def get_block_count(self) -> int:
+        """Number of blocks in the ledger chain."""
+        pass
+
+    def get_day_blocks(self) -> List[DayBlockInfo]:
+        """Summary info about day blocks (for revert --list display)."""
+        pass
+```
+
+**LedgerChain:**
+
+```python
+class LedgerChain:
+    """Local chain operations. Knows nothing about transports, views, or staging."""
+
+    def __init__(self, crypto, ledger_store):
+        self._crypto = crypto
+        self._store = ledger_store
+
+    def read_all(self) -> List[dict]:
+        """Read full chain."""
+        pass
+
+    def append(self, block: dict):
+        """Append block, compute seal and signature."""
+        pass
+
+    def append_blocks(self, blocks: List[dict]):
+        """Append multiple blocks (from remote sync)."""
+        pass
+
+    def truncate(self, keep_count: int) -> List[dict]:
+        """Truncate chain to keep_count blocks. Returns removed blocks."""
+        pass
+
+    def get_last_block(self) -> dict:
+        pass
+
+    def get_block(self, index: int) -> dict:
+        pass
+
+    def compute_seal(self, block: dict) -> str:
+        """HMAC-SHA256 over block content (excluding seal + signature)."""
+        pass
+
+    def compute_signature(self, block_hash: str, identity_secret: bytes) -> str:
+        """Identity HMAC over block hash."""
+        pass
+
+    def verify_block(self, block: dict, prev_hash: str) -> bool:
+        """Verify a single block's seal, signature, prev_hash linkage."""
+        pass
+```
+
+**LedgerRemoteSync:**
+
+```python
+class LedgerRemoteSync:
+    """Incremental sync of ledger blocks across devices.
+
+    Unlike staging (which pushes/pulls the entire blob),
+    ledger sync is incremental — only new blocks are transferred.
+    """
+
+    def __init__(self, crypto, chain, transport, device_id_provider):
+        pass
+
+    def pull_new_blocks(self, last_known_index: int) -> List[dict]:
+        """Pull blocks after last_known_index from remote.
+        Returns blocks that need to be appended to local chain."""
+        pass
+
+    def push_new_blocks(self, local_count: int, remote_count: int) -> int:
+        """Push local blocks that the remote doesn't have yet.
+        Returns number of blocks pushed."""
+        pass
+
+    def get_remote_block_count(self) -> int:
+        """Query remote for total block count."""
+        pass
+```
+
+**IndexManager:**
+
+See Item 6 for full detail.
+
+---
+
+### Item 3: Sync Orchestrator — New Layer
+
+**Problem:** Currently sync orchestration is split across `core/ledger.py` (`sync_with_strategy`, `sync_day_with_selection`), `core/sync_confirmation.py` (strategy dispatch), and `main.py` (CLI entry). There's no single point that coordinates: staging read → device check → remote pull → view confirmation → ledger commit → staging cleanup → remote push.
+
+**Target:**
+
+```
+core/sync/
+  ├── orchestrator.py    ← SyncOrchestrator
+  ├── decision.py        ← SyncDecision + SyncStrategy (abstract)
+  └── transport.py       ← AbstractStagingTransport
+```
+
+**SyncOrchestrator:**
+
+```python
+class SyncOrchestrator:
+    """Coordinates the full sync lifecycle across all layers.
+
+    Flow:
+    1. Check device identity (re-auth if remote device_id mismatch)
+    2. If remote available: pull remote staging → merge into local
+    3. Get pending entries from StagingService
+    4. Present entries via ViewInterface → get SyncDecision
+    5. Apply overrides to entries
+    6. Commit to LedgerEngine
+    7. Remove synced entries from StagingService
+    8. If remote available: push updated staging blob
+    9. If remote available: push new ledger blocks
+    """
+
+    def __init__(self, staging_service, ledger_engine, view, transport=None):
+        self._staging = staging_service
+        self._ledger = ledger_engine
+        self._view = view
+        self._transport = transport
+
+    def sync(self, till_date=None):
+        """Execute a full sync operation.
+
+        Args:
+            till_date: Optional date filter (YYYY-MM-DD).
+
+        Returns:
+            SyncResult with count of synced entries, or None on cancel.
+        """
+        # Step 1: Device identity check (if remote configured)
+        if self._transport:
+            if not self._staging.sync_with_remote():
+                self._view.warn("Remote staging unavailable — syncing local only.")
+
+        # Step 2: Get pending entries
+        pending = self._staging.get_pending_sync()
+        if till_date:
+            pending = [p for p in pending if p.date <= till_date]
+
+        if not pending:
+            self._view.notify("Nothing to sync.")
+            return None
+
+        # Step 3: Present to user (or auto-confirm)
+        strategy = SyncStrategyFactory.for_view(self._view)
+        decision = strategy.decide(pending)
+
+        if decision.cancelled:
+            self._view.notify("Sync cancelled.")
+            return None
+
+        # Step 4: Apply overrides
+        # (handled inside StagingService before commit)
+
+        # Step 5: Commit to ledger
+        result = self._ledger.commit(decision.selected_entries)
+
+        # Step 6: Remove synced entries from staging
+        self._staging.remove_synced(decision.selected_indices)
+
+        # Step 7: Handle removal-only decisions
+        if decision.removal_indices:
+            for idx in sorted(decision.removal_indices, reverse=True):
+                self._staging.remove(idx)
+
+        # Step 8: Push to remote (if available)
+        if self._transport:
+            self._staging.push_to_remote()
+            self._ledger.sync_with_remote()
+
+        self._view.notify(f"Synced {len(decision.selected_entries)} entr{'y' if len(decision.selected_entries) == 1 else 'ies'}.")
+        return result
+```
+
+**SyncDecision (refined from current):**
+
+```python
+@dataclass
+class SyncDecision:
+    """Result of sync confirmation strategy.
+
+    Attributes:
+        selected_indices: Indices of entries to sync.
+        removal_indices: Indices of entries to remove from staging.
+        overrides: Per-entry overrides {index: {field: value}}.
+        cancelled: True if user cancelled the entire operation.
+    """
+    selected_indices: List[int] = field(default_factory=list)
+    removal_indices: Set[int] = field(default_factory=set)
+    overrides: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    cancelled: bool = False
+
+    @property
+    def has_selection(self) -> bool:
+        return bool(self.selected_indices) and not self.cancelled
+
+    @property
+    def has_removals(self) -> bool:
+        return bool(self.removal_indices) and not self.cancelled
+```
+
+**SyncStrategy (abstract — stays in core/sync/):**
+
+```python
+class SyncStrategy(ABC):
+    """Abstract sync confirmation strategy.
+
+    A strategy receives pending entries (as DTOs) and returns a SyncDecision.
+    The ViewInterface is available for displaying entries and getting user input.
+    """
+
+    def decide(self, pending: List[StagingEntryDTO], view: ViewInterface) -> SyncDecision:
+        raise NotImplementedError
+```
+
+---
+
+### Item 4: Eliminate `plain:` Prefix Leakage
+
+**Problem:** The `plain:` prefix convention is checked in 7+ methods across `core/ledger.py`, plus in `cli/interface.py` (which decrypts fields directly). Every new method that reads staging must remember to handle `startswith("plain:")`. In multi-device mode, remote entries won't have `plain:` — they'll be real ciphertext from another device's encrypt, making the format detection even more complex.
+
+**Target:** The `plain:` prefix is **entirely internal** to `LocalStagingCache`. No other component ever sees it.
+
+**What changes:**
+
+| File | Current | Target |
+|------|---------|--------|
+| `security/crypto.py` | `NoAuthCryptoManager` (strips `plain:` prefix) | **Removed** — staging handles its own format |
+| `core/ledger.py` | 7+ methods with `startswith("plain:")` | All moved to `domain/staging/local_cache.py` |
+| `cli/interface.py` | `_print_entry()` decrypts fields directly | Calls `StagingService.get_entries()` → gets DTOs |
+| `core/ledger.py` `_reconcile_plain_pauses()` | Checks for `plain:` and re-encrypts | Moved to `LocalStagingCache._to_plain()` |
+| `core/ledger.py` `_normalize_staging_entry()` | Converts hex→plain: before sync | Moved to `LocalStagingCache._from_plain()` |
+
+**StagingEntryDTO (the public face of staging):**
+
+```python
+@dataclass
+class StagingEntryDTO:
+    """Decrypted staging entry — no encryption concerns visible to callers."""
+    entry_index: int
+    title: str
+    start_epoch: int
+    end_epoch: Optional[int]
+    duration: int
+    is_active: bool
+    is_paused: bool
+    pauses: List[PauseDTO]
+    tags: List[str]
+    comment: Optional[str]
+    media: List[dict]
+    metadata: dict
+    date: str  # YYYY-MM-DD derived from start_epoch
+    source: str = "local"  # "local" or "remote"
+
+@dataclass
+class PauseDTO:
+    pause_index: int
+    pause_start: int
+    pause_stop: Optional[int]
+    comment: Optional[str]
+```
+
+**Flow for a capture operation:**
+
+```
+User: phpoc add oneoff "Guitar" --tag music
+  → CLIInterface.add_oneoff("Guitar", ..., tags=["music"])
+    → StagingService.capture("Guitar", now-1000, now, is_active=False, tags=["music"])
+      → LocalStagingCache.append({
+          "title": "Guitar",
+          "startTime_enc": "plain:1714000000000",    ← internal
+          "endTime_enc": "plain:1714001000000",      ← internal
+          "pauses_enc": "plain:[]",                   ← internal
+          ...
+        })
+      → if remote available:
+          RemoteStagingSync.push(local_entries)
+    ← returns hash prefix
+  ← prints "✓ One-off habit captured: Guitar [@music]"
+```
+
+The CLI never sees `plain:`. The DTO returned by `get_entries()` has `start_epoch: 1714000000000` as an integer.
+
+---
+
+### Item 5: Abstract View Interface
+
+**Problem:** Currently all view logic assumes CLI. `InteractiveCLIStrategy` (with `print()` and `input()`) lives in `core/sync_confirmation.py` — a core module dependent on terminal I/O. Adding TUI, web, or headless support would require reimplementing display logic for each.
+
+**Target:**
+
+```
+domain/interfaces/view.py    ← ViewInterface (abstract)
+cli/
+  ├── cli_view.py            ← CLIView (implements ViewInterface)
+  ├── cli_parsers.py         ← Time input parsing (CLI-specific)
+  └── strategies.py          ← InteractiveCLIStrategy (moved from core/sync_confirmation.py)
+```
+
+**ViewInterface:**
+
+```python
+class ViewInterface(ABC):
+    """Abstract view for all user interaction.
+
+    Every method has a no-op default so views only override what they need.
+    """
+
+    # --- Display ---
+    def render_entry_line(self, entry: StagingEntryDTO, overrides: dict = None,
+                          excluded: set = None) -> str:
+        """Format one entry as a single display line."""
+        return ""
+
+    def render_entry_list(self, entries: List[StagingEntryDTO]) -> str:
+        """Format a list of entries for display."""
+        return "\n".join(self.render_entry_line(e) for e in entries)
+
+    def render_overview(self, pending: List[StagingEntryDTO],
+                        overrides: dict, excluded: set):
+        """Display overview of pending sync entries. Override for rich display."""
+        pass
+
+    def render_edit_menu(self, pending: List[StagingEntryDTO],
+                         overrides: dict, excluded: set):
+        """Display edit menu with original + proposed changes."""
+        pass
+
+    def render_review(self, entries: List[StagingEntryDTO]):
+        """Display review of entries as they'd appear after sync."""
+        pass
+
+    def render_error(self, message: str):
+        """Display an error message."""
+        pass
+
+    def render_success(self, message: str):
+        """Display a success/confirmation message."""
+        pass
+
+    def render_warning(self, message: str):
+        """Display a warning message."""
+        pass
+
+    # --- Input ---
+    def prompt_choice(self, prompt: str, options: List[str],
+                      help_items: dict = None) -> str:
+        """Prompt user to choose from options. Returns the chosen key."""
+        return ""
+
+    def prompt_text(self, prompt: str, default: str = "") -> str:
+        """Prompt for free-text input."""
+        return default
+
+    def prompt_time(self, prompt: str, date_str: str,
+                    start_epoch: int, end_epoch: int = None) -> Optional[int]:
+        """Prompt for time input. Returns epoch ms or None."""
+        return None
+
+    def prompt_yes_no(self, prompt: str, default: bool = False) -> bool:
+        """Prompt for yes/no confirmation."""
+        return default
+
+    def prompt_int(self, prompt: str, min_val: int = None,
+                   max_val: int = None) -> Optional[int]:
+        """Prompt for integer input. Returns int or None on cancel."""
+        return None
+
+    def prompt_tag_action(self, current_tags: List[str]) -> TagEditResult:
+        """Interactive tag editor. Returns (tags, modified)."""
+        return TagEditResult(tags=current_tags, modified=False)
+```
+
+**CLIView:**
+
+```python
+class CLIView(ViewInterface):
+    """Concrete view implementation for terminal/CLI."""
+
+    def __init__(self):
+        pass
+
+    def render_entry_line(self, entry, overrides=None, excluded=None):
+        """Format:  #idx: [HH:MM-HH:MM] Title (@tags) (Nm) comment"""
+        # Moved from current _print_staging_line and _format_entry_line
+        pass
+
+    def render_edit_menu(self, pending, overrides, excluded):
+        """Show original + proposed side by side."""
+        # Moved from current InteractiveCLIStrategy._stage2_edit_menu
+        pass
+
+    def prompt_choice(self, prompt, options, help_items=None):
+        """Single-character input with validation."""
+        # Moved from current InteractiveCLIStrategy._prompt_choice
+        pass
+
+    def prompt_time(self, prompt, date_str, start_epoch, end_epoch=None):
+        """Parse HH:MM, +offset, duration, or epoch ms."""
+        # Moved from current _parse_time_input in main.py
+        # Delegates to cli_parsers.parse_time_input()
+        pass
+
+    # ... remaining methods follow same pattern
+```
+
+**InteractiveCLIStrategy (moved to `cli/strategies.py`):**
+
+```python
+class InteractiveCLIStrategy(SyncStrategy):
+    """Three-stage interactive sync confirmation using ViewInterface.
+
+    Stage 1 (Overview): Show all pending entries.
+    Stage 2 (Edit Menu): Show original + proposed changes.
+    Stage 3 (Edit Single): Modify end time, comment, media.
+
+    All I/O goes through the ViewInterface — compatible with any view.
+    """
+
+    def decide(self, pending: List[StagingEntryDTO], view: ViewInterface) -> SyncDecision:
+        # Uses view.render_overview(), view.prompt_choice(), etc.
+        # No direct print() or input() calls.
+        pass
+```
+
+**AutoSyncStrategy (stays lightweight, no view needed):**
+
+```python
+class AutoSyncStrategy(SyncStrategy):
+    """Sync everything without confirmation. For --yes / headless."""
+
+    def decide(self, pending: List[StagingEntryDTO], view: ViewInterface = None) -> SyncDecision:
+        if not pending:
+            return SyncDecision(cancelled=True)
+        return SyncDecision(
+            selected_indices=[p.entry_index for p in pending]
+        )
+```
+
+**What moves where:**
+
+| Current Location | New Location | Reason |
+|-----------------|-------------|--------|
+| `core/sync_confirmation.py` (InteractiveCLIStrategy) | `cli/strategies.py` | CLI-specific implementation |
+| `core/sync_confirmation.py` (SyncStrategy interface) | `core/sync/decision.py` | Abstract interface stays in core |
+| `main.py` `_print_staging_line()` | `cli/cli_view.py` `render_entry_line()` | Belongs in view layer |
+| `main.py` `_parse_time_input()` | `cli/cli_parsers.py` | CLI-specific input parsing |
+| `main.py` `_handle_modify()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `main.py` `_handle_remove()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `main.py` `_handle_review()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `core/ledger.py` `print()` calls | Replaced with `view.notify()/warn()` | Domain should never print |
+
+---
+
+### Item 6: Blind Index Management (IndexManager)
+
+**Problem:** The blind index (`index.json`) is currently a simple key-value store updated ad-hoc during `sync_day()` and `revert_entries()` in `core/ledger.py`. It's queried directly by `CLIInterface.show_rep()` which calls `self.ledger.store.read_index()` — bypassing any domain abstraction and coupling the view to storage internals.
+
+**Target:**
+
+```
+domain/ledger/index_manager.py  ← IndexManager
+```
+
+**IndexManager API:**
+
+```python
+class IndexManager:
+    """Manages the blind index — a plaintext aggregate of duration per date per title.
+
+    The blind index is a derived cache, not canonical data. It can be fully
+    rebuilt from the ledger chain if lost or corrupted.
+
+    It stores: {date_str: {title: total_ms}}
+    This leaks: activity titles + daily totals (no exact timestamps).
+    This is acceptable — it's what the user sees in the CLI anyway.
+    """
+
+    def __init__(self, index_store: AbstractIndexStore):
+        self._store = index_store
+
+    def update(self, date: str, title: str, duration_delta: int):
+        """Add or subtract duration for a title on a given date.
+
+        Positive delta = sync (entry committed).
+        Negative delta = revert (entry restored to staging).
+        """
+        index = self._store.read_index()
+        if date not in index:
+            index[date] = {}
+        current = index[date].get(title, 0)
+        new_value = current + duration_delta
+        if new_value <= 0:
+            index[date].pop(title, None)
+            if not index[date]:
+                index.pop(date, None)
+        else:
+            index[date][title] = new_value
+        self._store.write_index(index)
+
+    def query(self, from_date: Optional[str] = None,
+              to_date: Optional[str] = None) -> Dict[str, int]:
+        """Query duration totals over a date range.
+
+        Returns dict mapping title → total milliseconds.
+        Both dates are inclusive (YYYY-MM-DD format).
+        """
+        index = self._store.read_index()
+        result = {}
+        for date_str, activities in index.items():
+            if from_date and date_str < from_date:
+                continue
+            if to_date and date_str > to_date:
+                continue
+            for title, duration in activities.items():
+                result[title] = result.get(title, 0) + duration
+        return result
+
+    def rebuild_from_chain(self, ledger: List[dict], decrypt_fn) -> Dict[str, Any]:
+        """Rebuild the entire index from the ledger chain.
+
+        Iterates all day blocks, decrypts startTime_enc to determine date,
+        and accumulates duration per title per date.
+
+        Returns the rebuilt index (also persists it).
+        """
+        import time
+        index = {}
+        for block in ledger:
+            if block.get("type", "day") != "day":
+                continue
+            for entry in block.get("entries", []):
+                data = entry["data"]
+                start_val = data["startTime_enc"]
+                start_epoch = int(decrypt_fn(start_val))
+                date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+                title = data["title"]
+                duration = data.get("duration", 0)
+                if date_str not in index:
+                    index[date_str] = {}
+                index[date_str][title] = index[date_str].get(title, 0) + duration
+        self._store.write_index(index)
+        return index
+
+    def get_all(self) -> Dict[str, Any]:
+        """Get full index (for debugging or direct access)."""
+        return self._store.read_index()
+
+    def clear(self):
+        """Reset index to empty."""
+        self._store.write_index({})
+```
+
+**Integration with LedgerEngine:**
+
+```python
+class LedgerEngine:
+    def commit(self, entries: List[StagingEntryDTO]) -> str:
+        # ... group by date, build day blocks ...
+        for date_str, day_entries in grouped.items():
+            # Insert summary blocks if needed
+            # Append day block to chain
+            # Update index
+            for entry in day_entries:
+                self._index.update(date_str, entry.title, entry.duration)
+        # ...
+
+    def revert(self, count: int) -> RevertResult:
+        removed_blocks = self._chain.truncate(count)
+        restored = []
+        for block in removed_blocks:
+            if block.get("type", "day") != "day":
+                continue
+            for entry in block.get("entries", []):
+                data = entry["data"]
+                # Subtract from index
+                start_epoch = int(self._crypto.decrypt(data["startTime_enc"]))
+                date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+                self._index.update(date_str, data["title"], -data.get("duration", 0))
+                # Build DTO for staging restoration
+                restored.append(self._entry_to_dto(entry, data))
+        return RevertResult(entries=restored, count=len(removed_blocks))
+```
+
+**What this unblocks:**
+- View layer queries `ledger_engine.query_index(from, to)` instead of `store.read_index()`
+- Index can be encrypted in the future without changing the view
+- Index corruption can be fixed by `ledger_engine.rebuild_index()` without exposing storage
+- The `storage.interface` no longer needs `read_index()/write_index()` exposed to arbitrary callers
+
+---
+
+### Item 7: Split Storage Interfaces
+
+**Problem:** `storage/interface.py` defines a single `AbstractLedgerStore` with methods for staging, ledger, index, and identity. A monolithic `LedgerStore` in `file_store.py` implements all four. This prevents different backends for different concerns and forces all callers to depend on the full interface even if they only need one piece.
+
+**Target:**
+
+```
+storage/
+  ├── staging_store.py    ← AbstractStagingStore
+  ├── ledger_store.py     ← AbstractLedgerStore
+  ├── index_store.py      ← AbstractIndexStore
+  ├── identity_store.py   ← AbstractIdentityStore
+  └── implementations/
+      ├── file_staging.py ← FileStagingStore
+      ├── file_ledger.py  ← FileLedgerStore
+      ├── file_index.py   ← FileIndexStore
+      └── file_identity.py← FileIdentityStore
+```
+
+**AbstractStagingStore:**
+
+```python
+class AbstractStagingStore(ABC):
+    """Storage for mutable staging entries.
+
+    Local implementation: JSON file on disk.
+    Remote implementation (future): via transport + local cache.
+    """
+
+    @abstractmethod
+    def read_entries(self) -> List[Dict[str, Any]]:
+        """Read all staged entries."""
+        pass
+
+    @abstractmethod
+    def write_entries(self, data: List[Dict[str, Any]]):
+        """Overwrite all staged entries."""
+        pass
+
+    @abstractmethod
+    def append_entry(self, entry: Dict[str, Any]):
+        """Append a single entry."""
+        pass
+
+    @abstractmethod
+    def remove_entries(self, indices: List[int]):
+        """Remove entries by index (sorted descending to avoid shift issues)."""
+        pass
+
+    @abstractmethod
+    def update_entry(self, index: int, fields: Dict[str, Any]):
+        """Update specific fields on an entry."""
+        pass
+```
+
+**AbstractLedgerStore:**
+
+```python
+class AbstractLedgerStore(ABC):
+    """Storage for the append-only ledger chain.
+
+    The chain is a JSON array of blocks. Only the tail is mutable (for revert).
+    Supports partial reads for incremental remote sync.
+    """
+
+    @abstractmethod
+    def read_blocks(self, start: int = 0, end: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Read a range of blocks. end is exclusive.
+
+        For full chain: read_blocks()
+        For last N blocks: read_blocks(start=-N)
+        For incremental: read_blocks(start=last_known_count)
+        """
+        pass
+
+    @abstractmethod
+    def append_blocks(self, blocks: List[Dict[str, Any]]):
+        """Append blocks to the end of the chain."""
+        pass
+
+    @abstractmethod
+    def truncate(self, keep_count: int) -> List[Dict[str, Any]]:
+        """Truncate chain to keep_count blocks. Returns removed blocks."""
+        pass
+
+    @abstractmethod
+    def get_block_count(self) -> int:
+        """Total number of blocks in the chain."""
+        pass
+
+    @abstractmethod
+    def get_last_block(self) -> Optional[Dict[str, Any]]:
+        """Get the most recent block."""
+        pass
+```
+
+**AbstractIndexStore:**
+
+```python
+class AbstractIndexStore(ABC):
+    """Storage for the blind index — a simple key-value cache."""
+
+    @abstractmethod
+    def read_index(self) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def write_index(self, data: Dict[str, Any]):
+        pass
+```
+
+**AbstractIdentityStore:**
+
+```python
+class AbstractIdentityStore(ABC):
+    """Storage for identity secret (optional cache — genesis has fallback)."""
+
+    @abstractmethod
+    def read_identity(self) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def write_identity(self, data: Dict[str, Any]):
+        pass
+```
+
+**File Implementations:**
+
+Each file implementation follows the same pattern as current `LedgerStore` but handles only its own file:
+
+```python
+class FileStagingStore(AbstractStagingStore):
+    def __init__(self, path: Path):
+        self.path = path
+        self._ensure_path()
+        if not path.exists():
+            self.write_entries([])
+
+    def read_entries(self) -> List[Dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        return json.loads(self.path.read_text())
+
+    def write_entries(self, data: List[Dict[str, Any]]):
+        self.path.write_text(json.dumps(data, indent=2))
+
+    def append_entry(self, entry):
+        entries = self.read_entries()
+        entries.append(entry)
+        self.write_entries(entries)
+
+    def remove_entries(self, indices):
+        entries = self.read_entries()
+        for idx in sorted(indices, reverse=True):
+            if 0 <= idx < len(entries):
+                entries.pop(idx)
+        self.write_entries(entries)
+
+    def update_entry(self, index, fields):
+        entries = self.read_entries()
+        if 0 <= index < len(entries):
+            entries[index].update(fields)
+            self.write_entries(entries)
+
+    def _ensure_path(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+```
+
+**Dependency injection:**
+
+```python
+# Current (monolithic):
+store = LedgerStore(staging_path, ledger_path, index_path)
+ledger = LedgerDomain(crypto, store)
+
+# Target (separate stores):
+staging_store = FileStagingStore(staging_path)
+ledger_store = FileLedgerStore(ledger_path)
+index_store = FileIndexStore(index_path)
+identity_store = FileIdentityStore(identity_path)
+
+staging = StagingService(crypto, staging_store)
+ledger = LedgerEngine(crypto, ledger_store, index_store, identity_store)
+```
+
+---
+
+### Item 8: Configurable Summary Policy
+
+**Problem:** Year and month summary insertion logic is hardcoded inside `sync_day()` and `sync_day_with_selection()` in `core/ledger.py`. If someone wants weekly summaries, quarterly summaries, or no summaries at all, they must modify the ledger engine.
+
+**Target:**
+
+```
+domain/ledger/summary_policy.py  ← SummaryPolicy (abstract + implementations)
+```
+
+**SummaryPolicy Interface:**
+
+```python
+class SummaryPolicy(ABC):
+    """Determines when summary blocks (year, month, week, etc.) are inserted
+    into the chain during a commit operation.
+
+    The policy examines the previous block and the date of the next day block
+    being committed, and inserts any necessary summary blocks into the ledger.
+    """
+
+    @abstractmethod
+    def check_and_insert(self, prev_block: Dict[str, Any],
+                         next_date: str,
+                         ledger: List[Dict[str, Any]],
+                         crypto: CryptoManager,
+                         identity_secret: Optional[bytes]) -> Dict[str, Any]:
+        """Inspect the previous block and the upcoming commit date.
+
+        If a summary block is needed (e.g., crossing a year boundary),
+        insert it into the ledger list.
+
+        Args:
+            prev_block: The current last block in the ledger.
+            next_date: The date (YYYY-MM-DD) of the day block about to be committed.
+            ledger: The ledger list (mutated in place if summaries are inserted).
+            crypto: For sealing and signing the summary block.
+            identity_secret: For signing (optional).
+
+        Returns:
+            The new predecessor block (either original prev_block or the last
+            inserted summary block).
+        """
+        pass
+```
+
+**Built-in Implementations:**
+
+```python
+class YearMonthSummaryPolicy(SummaryPolicy):
+    """Current behavior: year and month boundary summaries.
+
+    Insert sequence:
+      Year summary when curr_date.year > prev_date.year
+      Month summary when curr_date.month > prev_date.month
+    """
+    def check_and_insert(self, prev_block, next_date, ledger, crypto, identity_secret):
+        import time
+        prev_date = time.strptime(prev_block.get("date", "1970-01-01"), "%Y-%m-%d")
+        curr_date = time.strptime(next_date, "%Y-%m-%d")
+
+        # Year transition
+        if curr_date.tm_year > prev_date.tm_year and prev_block.get("type") != "year_summary":
+            summary = self._build_year_summary(prev_block, prev_date.tm_year, next_date, crypto, identity_secret)
+            ledger.append(summary)
+            prev_block = ledger[-1]
+            prev_date = time.strptime(next_date, "%Y-%m-%d")
+
+        # Month transition
+        if curr_date.tm_mon > prev_date.tm_mon and prev_block.get("type") != "month_summary":
+            summary = self._build_month_summary(prev_block, prev_date, next_date, crypto, identity_secret)
+            ledger.append(summary)
+            prev_block = ledger[-1]
+
+        return prev_block
+
+    def _build_year_summary(self, prev_block, year, next_date, crypto, identity_secret):
+        year_hash_key = prev_block.get("day_hash") or prev_block.get("month_hash") or prev_block.get("year_hash")
+        summary = {
+            "type": "year_summary",
+            "year": year,
+            "prev_hash": year_hash_key,
+            "date": next_date,
+        }
+        summary["year_hash"] = crypto.seal(json.dumps(summary, sort_keys=True))
+        if identity_secret:
+            summary["signature"] = crypto.sign(summary["year_hash"], identity_secret)
+        return summary
+
+    def _build_month_summary(self, prev_block, prev_date, next_date, crypto, identity_secret):
+        month_hash_key = prev_block.get("day_hash") or prev_block.get("month_hash") or prev_block.get("year_hash")
+        summary = {
+            "type": "month_summary",
+            "month": f"{prev_date.tm_year}-{prev_date.tm_mon:02d}",
+            "prev_hash": month_hash_key,
+            "date": next_date,
+        }
+        summary["month_hash"] = crypto.seal(json.dumps(summary, sort_keys=True))
+        if identity_secret:
+            summary["signature"] = crypto.sign(summary["month_hash"], identity_secret)
+        return summary
+
+
+class YearOnlySummaryPolicy(SummaryPolicy):
+    """Only year summaries, no month summaries."""
+    def check_and_insert(self, prev_block, next_date, ledger, crypto, identity_secret):
+        import time
+        prev_date = time.strptime(prev_block.get("date", "1970-01-01"), "%Y-%m-%d")
+        curr_date = time.strptime(next_date, "%Y-%m-%d")
+
+        if curr_date.tm_year > prev_date.tm_year and prev_block.get("type") != "year_summary":
+            summary = self._build_year_summary(prev_block, prev_date.tm_year, next_date, crypto, identity_secret)
+            ledger.append(summary)
+            prev_block = ledger[-1]
+
+        return prev_block
+
+
+class WeeklySummaryPolicy(SummaryPolicy):
+    """Insert ISO week summaries instead of months."""
+    def check_and_insert(self, prev_block, next_date, ledger, crypto, identity_secret):
+        import datetime
+        prev_dt = datetime.datetime.strptime(prev_block.get("date", "1970-01-01"), "%Y-%m-%d")
+        curr_dt = datetime.datetime.strptime(next_date, "%Y-%m-%d")
+
+        prev_iso_year, prev_iso_week, _ = prev_dt.isocalendar()
+        curr_iso_year, curr_iso_week, _ = curr_dt.isocalendar()
+
+        # Insert week summaries for each week boundary crossed
+        while (curr_iso_year, curr_iso_week) > (prev_iso_year, prev_iso_week):
+            summary = {
+                "type": "week_summary",
+                "week": f"{prev_iso_year}-W{prev_iso_week:02d}",
+                "prev_hash": prev_block.get("day_hash") or prev_block.get("week_hash") or prev_block.get("year_hash"),
+                "date": next_date,
+            }
+            summary["week_hash"] = crypto.seal(json.dumps(summary, sort_keys=True))
+            if identity_secret:
+                summary["signature"] = crypto.sign(summary["week_hash"], identity_secret)
+            ledger.append(summary)
+            prev_block = ledger[-1]
+            # Advance to next week
+            prev_dt += datetime.timedelta(days=7)
+            prev_iso_year, prev_iso_week, _ = prev_dt.isocalendar()
+
+        return prev_block
+
+
+class NoSummaryPolicy(SummaryPolicy):
+    """Never insert summaries. Flat chain of day blocks only."""
+    def check_and_insert(self, prev_block, next_date, ledger, crypto, identity_secret):
+        return prev_block
+```
+
+**Integration with LedgerEngine:**
+
+```python
+class LedgerEngine:
+    def __init__(self, crypto, ledger_store, index_store, identity_store,
+                 summary_policy: Optional[SummaryPolicy] = None):
+        self._crypto = crypto
+        self._chain = LedgerChain(crypto, ledger_store)
+        self._index = IndexManager(index_store)
+        self._identity = identity_store
+        self._summary = summary_policy or YearMonthSummaryPolicy()  # default preserves current behavior
+
+    def commit(self, entries: List[StagingEntryDTO]) -> str:
+        ledger = self._chain.read_all()
+        identity_secret = self._get_identity_secret()
+
+        grouped = self._group_by_date(entries)
+
+        for date_str in sorted(grouped.keys()):
+            prev_block = ledger[-1]
+
+            # Let summary policy insert any needed summary blocks
+            prev_block = self._summary.check_and_insert(
+                prev_block, date_str, ledger, self._crypto, identity_secret
+            )
+
+            # Build and append day block
+            day_block = self._build_day_block(prev_block, date_str, grouped[date_str],
+                                               identity_secret)
+            ledger.append(day_block)
+
+            # Update index
+            for entry in grouped[date_str]:
+                self._index.update(date_str, entry.title, entry.duration)
+
+        self._chain.write_all(ledger)
+        return ledger[-1].get("day_hash", "")[:10]
+```
+
+---
+
+## 4. Dependency Graph & Ordering
+
+Not all items can be done in parallel. Some depend on others:
+
+```
+Item 7: Split Storage Interfaces
+  │
+  ├──▶ Item 4: Eliminate plain: prefix (needs StagingStore)
+  │       │
+  │       └──▶ Item 1: Staging Service Local/Remote (needs Item 4 + Item 7)
+  │               │
+  │               └──▶ Item 3: Sync Orchestrator (needs Item 1 + Item 2)
+  │
+  └──▶ Item 2: Ledger Engine + IndexManager (needs LedgerStore + IndexStore)
+  │       │
+  │       └──▶ Item 6: IndexManager (sub-item of Item 2)
+  │       │
+  │       └──▶ Item 8: Summary Policy (integrated into Item 2)
+  │
+  └──▶ Item 5: Abstract View Interface (independent, but needs Item 1 for DTO types)
+          │
+          └──▶ Item 3: Sync Orchestrator (needs ViewInterface)
+```
+
+### Recommended Phase Order
+
+| Phase | Items | Duration Estimate | Risk Level |
+|-------|-------|-------------------|------------|
+| **Phase 1** | Item 7 (Split Storage) + Item 5 (View Interface) | Weeks 1–2 | 🟢 Low — purely structural refactors, no logic changes |
+| **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, careful with existing tests |
+| **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
+| **Phase 4** | Item 3 (Sync Orchestrator) | Week 7 | 🟢 Low — wires existing components together |
+| **Phase 5** | Item 6 (IndexManager deep integration) | Week 7 (sub-task of Phase 3) | 🟢 Low — already done in Phase 3 |
+| **Phase 6** | Item 8 (SummaryPolicy) | Week 7 (sub-task of Phase 3) | 🟢 Low — already done in Phase 3 |
+
+### Phase 1 Detail (Split Storage + View Interface)
+
+**Goal:** Establish the new file structure and interfaces without changing any logic.
+
+Steps:
+1. Create `storage/staging_store.py`, `storage/ledger_store.py`, `storage/index_store.py`, `storage/identity_store.py` with abstract interfaces (mirroring current `AbstractLedgerStore` methods split across them).
+2. Create `storage/implementations/` with the 4 file-based implementations.
+3. Keep the old `storage/interface.py` and `storage/file_store.py` working (backward compat).
+4. Create `interfaces/view.py` with `ViewInterface` abstract class.
+5. Create `cli/cli_view.py` implementing `ViewInterface` (moving `print`/`input` logic from `main.py`).
+6. Create `cli/strategies.py` (move `InteractiveCLIStrategy` from `core/sync_confirmation.py`).
+7. Write new tests — old tests should still pass unchanged.
+
+### Phase 2 Detail (plain: + Staging Service)
+
+**Goal:** Extract all staging logic from `core/ledger.py` into `domain/staging/`.
+
+Steps:
+1. Create `domain/staging/local_cache.py` — move `plain:` encoding/decoding here.
+2. Create `domain/staging/service.py` — move `capture_habit`, `end_habit`, `pause_habit`, `unpause_habit`, `modify_staged_entry`, `remove_staged_entry` here.
+3. Create `domain/staging/merge_engine.py` — timestamp-based merge logic.
+4. Create `domain/staging/remote_sync.py` — device identity + transport wrapper.
+5. The old `core/ledger.py` methods become thin wrappers that delegate to `StagingService` (temporary backward compat).
+
+### Phase 3 Detail (Ledger Engine)
+
+**Goal:** Extract all ledger chain logic from `core/ledger.py` into `domain/ledger/`.
+
+Steps:
+1. Create `domain/ledger/chain.py` — move chain operations (seal, sign, append, verify).
+2. Create `domain/ledger/index_manager.py` — move index update/query.
+3. Create `domain/ledger/summary_policy.py` — extract summary insertion logic.
+4. Create `domain/ledger/engine.py` — high-level commit/verify/revert methods.
+5. The old `core/ledger.py` methods become thin wrappers (temporary backward compat).
+
+### Phase 4 Detail (Sync Orchestrator)
+
+**Goal:** Create the coordinator that ties all layers together.
+
+Steps:
+1. Create `core/sync/orchestrator.py` — implement the sync flow from the [SyncOrchestrator](#syncorchestrator) section above.
+2. Create `core/sync/decision.py` — move `SyncDecision` and `SyncStrategy` interface here.
+3. Update `main.py` to call `SyncOrchestrator.sync()` instead of `ledger.sync_with_strategy()`.
+4. Remove old `core/sync_confirmation.py`.
+
+---
+
+## 5. Obstacles & Mitigations Summary
+
+| # | Obstacle | Risk | Mitigation |
+|---|----------|------|------------|
+| O1 | Current tests test `core/ledger.py` directly — refactoring will break them | 🟡 Medium | Keep old class as a thin wrapper that delegates to new classes. Tests pass without changes. Remove wrapper once all callers migrate. |
+| O2 | `NoAuthCryptoManager` is used in many places — removing it affects `add/start/end/pause/unpause` commands | 🟡 Medium | `StagingService` will handle `plain:` internally. The `add`/`start`/`end` commands in `main.py` just need to call `StagingService.capture()` instead of `ledger.capture_habit()`. The `NoAuthCryptoManager` class can be deprecated but kept until all callers migrate. |
+| O3 | `main.py` has 300+ lines of handler functions that read/write staging directly | 🟡 Medium | Move handlers to `cli/cli_view.py` Phase 1. Then have them call `StagingService` Phase 2. Incremental — each handler is a self-contained migration. |
+| O4 | `plain:` prefix convention requires testing for every staging operation | 🟢 Low | `LocalStagingCache` is the single point of truth. Unit test its `_to_plain()` and `_from_plain()` methods. Integration tests verify that `get_entries()` never returns `plain:`-prefixed values. |
+| O5 | Remote transport (git) not yet implemented — can't fully test RemoteStagingSync | 🟢 Low | `RemoteStagingSync` can be tested with an in-memory mock transport. The `AbstractStagingTransport` interface is minimal (pull/push). Git implementation can be added later. |
+| O6 | DeviceIdentityProvider is new code with no existing equivalent | 🟢 Low | Default implementation derives from Master Key via HMAC — same primitives already in use. Test with known MK and compare outputs. |
+| O7 | Sync Orchestrator changes the sync flow — existing sync tests need updating | 🟡 Medium | Write new tests for `SyncOrchestrator` with mock `StagingService`, `LedgerEngine`, and `ViewInterface`. Old integration tests (staging → sync → verify) continue testing the same data path end-to-end. |
+| O8 | Chain format must remain identical — refactoring must not change seals/signatures | 🔴 High | Block generation logic (seal, sign, hash computation) is extracted into `LedgerChain` without changing the algorithm. Verify by running `verify()` on an existing ledger before and after the refactor — hash chain must be identical. |
+| O9 | File paths and config directory convention must be preserved | 🟢 Low | Each file store implementation takes a `Path` parameter — same paths as current config. The `LedgerFactory.initialize()` needs updating to create the new store instances. |
+
+---
+
+## 6. Testing Strategy
+
+The migration introduces new files and classes but should not change existing behavior. The testing strategy is:
+
+### Unit Tests (new files)
+
+| Component | Test Focus |
+|-----------|------------|
+| `LocalStagingCache` | `plain:` encode/decode, CRUD operations, edge cases (empty staging, corrupt entries) |
+| `RemoteStagingSync` | Device ID check, pull/push round-trip, blob obfuscation |
+| `MergeEngine` | Timestamp merge, deduplication, remote-wins on ties |
+| `StagingService` | All CRUD methods return correct DTOs, no `plain:` leakage |
+| `LedgerChain` | Seal computation, signature, append, truncate, verify_block |
+| `IndexManager` | Update (positive/negative), query (date range), rebuild_from_chain |
+| `SummaryPolicy` | Each policy produces correct summary block sequence |
+| `SyncOrchestrator` | Full flow with mocks — device check, pull, decide, commit, push |
+| `CLIView` | Format strings, prompt parsing, edge cases (empty input, invalid choice) |
+| Each file store | Read/write/append/remove with temp files, edge cases (missing file, corrupt JSON) |
+
+### Integration Tests (update existing)
+
+The existing test suite (`tests/test_modular.py`, `tests/test_pause.py`, etc.) exercises staging CRUD + sync + verify end-to-end. These should continue to pass with minimal changes:
+
+1. Replace `LedgerDomain(crypto, store)` with the new `StagingService` + `LedgerEngine` + `SyncOrchestrator`
+2. Verify that sync produces identical chain format (same seals, same hashes)
+3. Verify that `verify()` still returns `True` for the same data
+
+### Regression Tests
+
+| Scenario | Ensures |
+|----------|---------|
+| Init → add → sync → verify | Chain format unchanged |
+| Init → add → pause → unpause → end → sync → verify | Pause/unpause duration computation unchanged |
+| Init → add → sync → revert → verify → add → sync | Revert behavior unchanged |
+| Init → add (with tags) → sync → list | Tag storage unchanged |
+| Init → add → sync → verify (with index check) | Index update unchanged |
+| Multi-date sync (crosses month/year) | Summary insertion identical |
+
+---
+
+## 7. Backward Compatibility
+
+### Data Format
+
+The chain format (block types, seal algorithm, encryption scheme) is **unchanged** by this migration. The refactoring is purely structural — code moves between files, algorithms stay the same.
+
+### Configuration
+
+Config directory remains `~/.config/personal_history_poc/`. File paths remain:
+- `staging.json`
+- `ledger.json`
+- `index.json`
+- `identity.json`
+
+### CLI Interface
+
+The CLI commands (`add`, `start`, `end`, `pause`, `unpause`, `sync`, `verify`, `list`, `rep`, `modify`, `remove`, `review`, `revert`) remain identical. No user-facing changes.
+
+### API Compatibility
+
+The old `LedgerDomain` class in `core/ledger.py` will be kept as a thin wrapper during the migration phase, delegating to the new `StagingService` and `LedgerEngine`. This allows each caller to migrate independently
