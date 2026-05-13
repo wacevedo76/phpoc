@@ -56,6 +56,7 @@ class TestRandomUUIDDeviceIdentityProvider(unittest.TestCase):
             self.skipTest("DeviceIdentityProvider not yet implemented")
         self.master_key = b"test-master-key-32-bytes-long!!"
         self.config_manager = MagicMock()
+        self.config_manager.read.return_value = {}
         self.provider = RandomUUIDDeviceIdentityProvider(self.config_manager)
 
     def test_get_identity_returns_device_identity(self):

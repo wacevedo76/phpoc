@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
 > **Date:** 2026-05-10 (updated 2026-05-13)
-> **Status:** Phase 1 ✅ + Phase 1b ✅ — 17 files, 130 tests, no regressions. Next: Phase 2 (Staging Service + Device ID).
+> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ — 22 files, 242 tests, no regressions. Next: Phase 3 (Ledger Engine).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -1931,7 +1931,7 @@ Item 7: Split Storage Interfaces
 |-------|-------|-------------------|------------|
 | **Phase 1** ✅ | Item 7 (Split Storage) + Item 11 (Config) | Weeks 1–2 | 🟢 Low — structural refactors + new config store |
 | **Phase 1b** ✅ | Item 5 (View Interface) | Part of Phase 1 | 🟢 Low — move logic to ViewInterface + CLIView |
-| **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
+| **Phase 2** ✅ | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
 | **Phase 4** | Item 10 (Staging Interaction Flow) | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
 | **Phase 5** | Item 3 (Sync Orchestrator) | Week 8 | 🟢 Low — wires existing components together |
@@ -1983,16 +1983,36 @@ Tests:
 - InteractiveCLIStrategy delegates ALL I/O to ViewInterface — it contains zero `print()` or `input()` calls
 - SyncDecision is a plain class (not dataclass) to avoid coupling strategies.py to Python stdlib
 
-### Phase 2 Detail (plain: + Staging Service)
+### Phase 2 Detail (plain: + Staging Service — ✅ Complete)
+
+See commit [`f5fa377`](https://github.com/.../commit/f5fa377).
 
 **Goal:** Extract all staging logic from `core/ledger.py` into `domain/staging/`.
 
-Steps:
-1. Create `domain/staging/local_cache.py` — move `plain:` encoding/decoding here.
-2. Create `domain/staging/service.py` — move `capture_habit`, `end_habit`, `pause_habit`, `unpause_habit`, `modify_staged_entry`, `remove_staged_entry` here.
-3. Create `domain/staging/merge_engine.py` — timestamp-based merge logic.
-4. Create `domain/staging/remote_sync.py` — device identity + transport wrapper.
-5. The old `core/ledger.py` methods become thin wrappers that delegate to `StagingService` (temporary backward compat).
+**Completed files (5 new files, 112 tests):**
+
+Domain files:
+- `domain/staging/local_cache.py`  ← LocalStagingCache (sole owner of `plain:` prefix)
+- `domain/staging/service.py`      ← StagingService (public API facade)
+- `domain/staging/merge_engine.py` ← MergeEngine (timestamp-based dedup)
+- `domain/staging/remote_sync.py`  ← RemoteStagingSync + SyncCheckResult
+
+Security:
+- `security/device_identity.py`    ← DeviceIdentity + AbstractDeviceIdentityProvider
+                                       + RandomUUIDDeviceIdentityProvider
+
+**Key design points:**
+- `LocalStagingCache` is the ONLY class that knows about `plain:` — no other component
+  sees `startswith("plain:")` checks
+- `StagingService` exposes all CRUD methods with zero `plain:` leakage
+- `StagingService` has zero `print()` calls — fully view-agnostic
+- `MergeEngine` is a pure function: no I/O, no side effects
+- `RandomUUIDDeviceIdentityProvider` uses UUID4 (persisted in config) +
+  HMAC-SHA256 proof — cross-stack portable (uuid4, hmac, sha256)
+- `RemoteStagingSync.check_remote_available()` is timeout-aware (500ms default)
+- All 112 tests use mocks: no filesystem IO, no external dependencies
+- Old `core/ledger.py` methods untouched (backward compat — will become
+  thin wrappers in Phase 5)
 
 ### Phase 3 Detail (Ledger Engine)
 
