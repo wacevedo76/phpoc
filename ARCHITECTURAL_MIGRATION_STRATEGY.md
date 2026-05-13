@@ -25,6 +25,9 @@
    - [Item 6: Blind Index Management (IndexManager)](#item-6-blind-index-management-indexmanager)
    - [Item 7: Split Storage Interfaces](#item-7-split-storage-interfaces)
    - [Item 8: Configurable Summary Policy](#item-8-configurable-summary-policy)
+   - [Item 9: Device Identity Provider](#item-9-device-identity-provider)
+   - [Item 10: Staging Interaction Flow — Every-Command Sync with Offline Tolerance](#item-10-staging-interaction-flow--every-command-sync-with-offline-tolerance)
+   - [Item 11: Config File Format](#item-11-config-file-format)
 4. [Dependency Graph & Ordering](#4-dependency-graph--ordering)
 5. [Obstacles & Mitigations Summary](#5-obstacles--mitigations-summary)
 6. [Testing Strategy](#6-testing-strategy)
@@ -176,7 +179,8 @@ security/
 │    ├── git_transport.py   ← GitTransport                  │
 │    ├── blob_obfuscator.py ← BlobObfuscator                │
 │    │                         (fixed-size padded encrypt)  │
-│    └── http_transport.py  (future)                        │
+│    ├── http_transport.py  (future)                        │
+│    └── check.py           ← remote_available(timeout=0.5) │
 │                                                           │
 │  Properties:                                              │
 │    - Minimal 2-method interface for transport              │
@@ -193,14 +197,18 @@ security/
 │    ├── crypto.py           ← CryptoManager (AES-CTR+HMAC) │
 │    ├── auth.py             ← PassphraseAuthenticator      │
 │    ├── recovery.py         ← RecoveryManager              │
-│    └── identity.py         ← DeviceIdentityProvider        │
-│                                get_device_id(mk) → str     │
-│                                get_device_secret(mk) → bytes│
+│    ├── device_identity.py  ← AbstractDeviceIdentityProvider│
+│    │                         RandomUUIDDeviceIdentityProv │
+│    └── config_manager.py  ← ConfigManager                 │
+│                              (read/write ~/.config/.../   │
+│                               config.json, user-editable) │
 │                                                           │
 │  Properties:                                              │
 │    - NoAuthCryptoManager removed (plain: handled by       │
 │      StagingService internally)                           │
-│    - DeviceIdentityProvider is a new pluggable interface  │
+│    - AbstractDeviceIdentityProvider is pluggable           │
+│    - RandomUUIDDeviceIdentityProv generates UUID on init  │
+│    - ConfigManager owns remote paths, auth cache timeout  │
 │    - All security injectable via dependency injection      │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -281,17 +289,26 @@ class StagingService:
         pass
 
     # --- Remote Sync ---
-    def sync_with_remote(self) -> SyncResult:
-        """Full remote sync:
-        1. Check device identity (re-auth if mismatch)
-        2. Pull remote blob
-        3. Merge remote entries into local by timestamp
-        4. Return result (merged_count, conflicts)
+    def check_and_sync(self, timeout_ms: int = 500) -> SyncCheckResult:
+        """Event-driven remote check. Called on every staging command.
+
+        1. Check if remote is reachable (within timeout_ms)
+        2. If unreachable: return OFFLINE (local op only, queue for later)
+        3. If reachable: check device_id match vs remote blob
+        4. If device_id mismatch: re-auth if cached auth expired
+        5. Pull remote blob -> merge with local by timestamp
+        6. Return READY (proceed with local op, then push)
+
+        Returns SyncCheckResult enum: READY, OFFLINE, REAUTH_NEEDED
         """
         pass
 
     def push_to_remote(self):
         """Serialize local staging, obfuscate, push via transport."""
+        pass
+
+    def push_queued(self):
+        """Push locally queued entries (from offline period)."""
         pass
 
     def is_remote_available(self) -> bool:
@@ -300,6 +317,12 @@ class StagingService:
 
     def get_offline_queue(self) -> List[StagingEntryDTO]:
         """Entries added while offline that haven't been pushed."""
+        pass
+
+    def close(self):
+        """Flush any queued entries, release resources."""
+        pass
+
         pass
 ```
 
@@ -463,6 +486,10 @@ class LedgerEngine:
         """
         pass
 
+
+    def rebuild_index(self):
+        """Rebuild blind index from the full chain (fix corruption)."""
+        pass
     def get_block_count(self) -> int:
         """Number of blocks in the ledger chain."""
         pass
@@ -721,6 +748,16 @@ class StagingEntryDTO:
     metadata: dict
     date: str  # YYYY-MM-DD derived from start_epoch
     source: str = "local"  # "local" or "remote"
+
+from enum import Enum
+
+
+class SyncCheckResult(Enum):
+    """Result of event-driven remote check before a staging command."""
+    READY = "ready"           # Remote synced, proceed with local operation
+    OFFLINE = "offline"       # Remote unreachable, local operation only
+    REAUTH_NEEDED = "reauth"  # Device mismatch, passphrase required
+
 
 @dataclass
 class PauseDTO:
@@ -1240,8 +1277,14 @@ staging_store = FileStagingStore(staging_path)
 ledger_store = FileLedgerStore(ledger_path)
 index_store = FileIndexStore(index_path)
 identity_store = FileIdentityStore(identity_path)
+config_store = FileConfigStore(config_path)
 
-staging = StagingService(crypto, staging_store)
+# Device identity: random UUID, stored in config
+config = ConfigManager(config_store)
+device_identity = RandomUUIDDeviceIdentityProvider(config)
+
+
+staging = StagingService(crypto, staging_store, device_identity)
 ledger = LedgerEngine(crypto, ledger_store, index_store, identity_store)
 ```
 
@@ -1442,6 +1485,409 @@ class LedgerEngine:
 
 ---
 
+
+
+### Item 9: Device Identity Provider
+
+**Problem:** Multiple devices using the same master key passphrase produce the same device identity (derived purely from MK). The system cannot distinguish Device A from Device B, so the device_id mismatch check never triggers — meaning devices silently overwrite each other's entries.
+
+**Target:**
+
+```
+security/device_identity.py
+```
+
+**AbstractDeviceIdentityProvider Interface:**
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional
+import uuid
+import hmac
+import hashlib
+
+
+@dataclass
+class DeviceIdentity:
+    """An opaque device identity with a verifiable proof.
+
+    The device_id is a stable identifier (unique per physical device).
+    The device_proof is a cryptographic assertion that proves the holder
+    knows the master key associated with this device_id.
+    """
+    device_id: str          # Stable, unique per device, never changes
+    device_proof: str       # HMAC(mk, "phpoc:device:" + device_id)
+    device_label: str       # Human-readable name (e.g. "MacBook Air")
+
+
+class AbstractDeviceIdentityProvider(ABC):
+    """Pluggable strategy for generating and resolving device identities.
+
+    Implementations control HOW a device gets its identity:
+      - Random UUID (recommended for simple use)
+      - Hardware-bound (TPM, secure enclave)
+      - OS-provided (/etc/machine-id)
+      - User-chosen label + salt
+      - Hybrid (UUID + HMAC proof)
+    """
+
+    @abstractmethod
+    def get_device_identity(self, master_key: bytes) -> DeviceIdentity:
+        """Return this device's stable identity.
+
+        Called once per session (or once per cached auth window).
+        The implementation decides whether to generate, read from config,
+        or derive from hardware.
+        """
+        pass
+
+    @abstractmethod
+    def verify_device_proof(self, device_id: str, device_proof: str,
+                             master_key: bytes) -> bool:
+        """Verify that a device_proof matches a given device_id and master_key.
+
+        This is the cross-device check: when device B encounters a blob
+        last touched by device A, it verifies A's proof independently.
+        """
+        pass
+
+    @abstractmethod
+    def check_remote_identity(self, remote_device_id: str,
+                               remote_device_proof: str,
+                               local_identity: DeviceIdentity,
+                               master_key: bytes) -> bool:
+        """Check if the remote blob's last device matches this device.
+
+        Returns True if remote was last touched by THIS device
+        (no re-auth needed). Returns False if different device
+        (pull + merge required before modifying).
+        """
+        pass
+```
+
+**RandomUUIDDeviceIdentityProvider (default implementation):**
+
+```python
+class RandomUUIDDeviceIdentityProvider(AbstractDeviceIdentityProvider):
+    """Device identity via random UUID, stored in config.
+
+    Translates to any stack:
+      - Python: uuid4()
+      - JavaScript: crypto.randomUUID()
+      - Rust: Uuid::new_v4()
+      - Go: uuid.New()
+      - Swift: UUID()
+      - Kotlin: UUID.randomUUID()
+    """
+
+    def __init__(self, config_manager):
+        self._config = config_manager
+        self._cached_identity: Optional[DeviceIdentity] = None
+
+    def get_device_identity(self, master_key: bytes) -> DeviceIdentity:
+        if self._cached_identity is not None:
+            return self._cached_identity
+
+        # Read or generate device_id from config
+        config = self._config.read()
+        if "device_id" not in config:
+            config["device_id"] = str(uuid.uuid4())
+            config["device_label"] = socket.gethostname() or "unknown"
+            self._config.write(config)
+
+        device_id = config["device_id"]
+        device_label = config.get("device_label", device_id[:8])
+
+        # Proof = HMAC(mk, "phpoc:device:" + device_id)
+        proof = hmac.new(
+            master_key,
+            f"phpoc:device:{device_id}".encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        identity = DeviceIdentity(
+            device_id=device_id,
+            device_proof=proof,
+            device_label=device_label
+        )
+        self._cached_identity = identity
+        return identity
+
+    def verify_device_proof(self, device_id: str, device_proof: str,
+                             master_key: bytes) -> bool:
+        expected = hmac.new(
+            master_key,
+            f"phpoc:device:{device_id}".encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected, device_proof)
+
+    def check_remote_identity(self, remote_device_id: str,
+                               remote_device_proof: str,
+                               local_identity: DeviceIdentity,
+                               master_key: bytes) -> bool:
+        # First verify the remote's proof is valid (proves they know MK)
+        if not self.verify_device_proof(remote_device_id, remote_device_proof, master_key):
+            return False  # Remote blob was touched by someone without this MK
+        # Then check if it's the same physical device
+        return remote_device_id == local_identity.device_id
+```
+
+**Interface rationale (for cross-stack portability):**
+
+| Method | Standard library equivalent per language |
+|--------|----------------------------------------|
+| `uuid4()` | Python: `uuid.uuid4()`, JS: `crypto.randomUUID()`, Rust: `Uuid::new_v4()`, Go: `uuid.New()` |
+| `HMAC-SHA256` | Python: `hmac.new()`, JS: `crypto.createHmac()`, Rust: `hmac::Hmac::<Sha256>`, Go: `hmac.New(sha256.New)` |
+| `hmac.compare_digest()` | Python: `hmac.compare_digest()`, JS: `crypto.timingSafeEqual()`, Rust: `hmac::Hmac::verify_slice()` |
+
+**What this enables:**
+- Two devices with the same master key get different UUIDs → remote blob detects mismatch → triggers pull + merge
+- Device proof prevents forgery: an attacker with the UUID can't impersonate the device without the master key
+- Pluggable interface allows hardware-backed identity (TPM, Secure Enclave) without changing any other code
+
+---
+
+### Item 10: Staging Interaction Flow — Every-Command Sync with Offline Tolerance
+
+**Problem:** The original design delays remote sync until an explicit `phpoc sync` command. This means entries added on Device B are invisible to Device A until A explicitly syncs. If A forgets to sync before switching to B, B sees stale staging.
+
+**Target:** Every staging command (add, end, pause, unpause, modify, remove) acts as an event that triggers remote check-and-sync automatically. Remote is a mirror of local staging at all times (when network is available).
+
+**Flow:**
+
+```
+Every staging command:
+
+  ┌─ StagingService.capture() / end() / pause() / etc.
+  │
+  ├─► check_and_sync(timeout_ms=500)
+  │     │
+  │     ├─► remote available within 500ms?
+  │     │     ├── Yes ──► check device_id match
+  │     │     │              ├── Match ──► pull → merge
+  │     │     │              └── No ──► cached auth valid?
+  │     │     │                    ├── Yes (30m window) ──► pull → merge
+  │     │     │                    └── No ──► re-auth → pull → merge
+  │     │     └── No ──► OFFLINE (local op only)
+  │     │
+  │     ▼ Returns SyncCheckResult
+  │
+  ├─► Perform local op (CRUD on LocalStagingCache)
+  │
+  └─► If READY: push_to_remote()
+      If OFFLINE: queue for later push
+```
+
+**Key design points:**
+
+| Aspect | Decision | Rationale |
+|--------|----------|-----------|
+| Timeout | 500ms, configurable | CLI must feel responsive. If remote is slow, treat as offline. |
+| Offline behavior | Local op only, queue for push | Never block the user. Entries accumulate in local cache. |
+| Reconnection | Next command after network returns triggers check | No background service needed. Event-driven. |
+| Merge semantics | Deduplicated by (title, start_epoch), sorted by start time | Timeline model: no two entries collide at millisecond precision. |
+| Auth cache | 30 minutes, configurable in config file | User types passphrase once per session, not on every command. |
+
+**SyncCheckResult enum:**
+
+```python
+class SyncCheckResult(Enum):
+    READY = "ready"           # Remote synced, proceed with local op then push
+    OFFLINE = "offline"       # Remote unreachable, local op only
+    REAUTH_NEEDED = "reauth"  # Device mismatch and auth expired
+```
+
+**MergeEngine behavior:**
+
+```python
+class MergeEngine:
+    def merge(self, local: List[dict], remote: List[dict]) -> List[dict]:
+        """Merge remote entries into local cache.
+
+        Entries are deduplicated by (title, start_epoch).
+        Remote wins on ties (more recent source).
+        Returns merged list sorted by start_epoch.
+        """
+        seen = {}
+        for e in local:
+            key = (e["title"], e["start_epoch"])
+            seen[key] = e
+        for e in remote:
+            key = (e["title"], e["start_epoch"])
+            seen[key] = e  # remote overwrites local on tie (remote is newer)
+        return sorted(seen.values(), key=lambda e: e["start_epoch"])
+```
+
+**What this means for the user:**
+- Switch from laptop to phone: first command on phone detects device_id mismatch, pulls remote, merges, adds your entry, pushes. All entries visible on both devices.
+- Offline on a plane: add entries locally. Land, open phone, first command triggers sync. Everything pushes and merges.
+- Slow cafe WiFi (3000ms latency): first command times out at 500ms, treats as offline. Second command (same session) also offline. Eventually connection improves, sync happens.
+
+---
+
+### Item 11: Config File Format
+
+**Problem:** Currently paths, keys, and settings are hardcoded or passed as CLI arguments. There is no single user-editable configuration file where the user can set remote staging location, remote ledger location, auth cache timeout, or device identity.
+
+**Target:**
+
+```
+~/.config/personal_history_poc/
+  ├── config.json            ← User-editable configuration (NEW)
+  ├── staging.json           ← Local staging cache (existing)
+  ├── ledger.json            ← Ledger chain (existing)
+  ├── index.json             ← Blind index (existing)
+  └── identity.json          ← Identity storage (existing)
+```
+
+**ConfigManager API:**
+
+```python
+class ConfigManager:
+    """Read/write config.json with defaults.
+
+    The config file is user-editable JSON. If a field is missing,
+    the default value is used. No validation — malformed files
+    produce a clear error message.
+    """
+
+    DEFAULTS = {
+        "remote": {
+            "staging_path": None,       # e.g. "~/phpoc-sync/staging/blobs"
+            "ledger_path": None,        # e.g. "~/phpoc-sync/ledger"
+            "transport": "git",         # "git" | "http" (future)
+            "git_remote_url": None,     # e.g. "https://github.com/user/phpoc-sync.git"
+        },
+        "auth": {
+            "cache_timeout_minutes": 30,   # How long re-auth is cached
+            "passphrase_required": True,   # Allow NoAuth mode? (future)
+        },
+        "device": {
+            "device_id": None,          # Generated on first init (Item 9)
+            "device_label": None,       # Human-readable name
+        },
+        "timeouts": {
+            "remote_check_ms": 500,     # Max wait for remote check (Item 10)
+            "push_timeout_ms": 5000,    # Max wait for push operation
+        },
+        "staging": {
+            "blob_size_tier": "64K",    # "64K" | "128K" | "256K" | "512K"
+        },
+    }
+
+    def __init__(self, config_store):
+        self._store = config_store
+        self._config = None
+
+    def read(self) -> dict:
+        """Read config, merging with defaults."""
+        if self._config is not None:
+            return self._config
+        raw = self._store.read_config() or {}
+        self._config = self._deep_merge(self.DEFAULTS, raw)
+        return self._config
+
+    def write(self, config: dict):
+        """Write config (preserving comments/structure)."""
+        self._config = config
+        self._store.write_config(config)
+
+    def get(self, key_path: str, default=None):
+        """Access nested config with dot notation.
+
+        config.get("remote.staging_path")
+        config.get("auth.cache_timeout_minutes", 30)
+        """
+        keys = key_path.split(".")
+        value = self.read()
+        for k in keys:
+            if not isinstance(value, dict):
+                return default
+            value = value.get(k)
+            if value is None:
+                return default
+        return value
+
+    @staticmethod
+    def _deep_merge(defaults: dict, overrides: dict) -> dict:
+        """Merge overrides into defaults (preserving all keys)."""
+        result = {}
+        for key, default_val in defaults.items():
+            if key in overrides:
+                if isinstance(default_val, dict) and isinstance(overrides[key], dict):
+                    result[key] = ConfigManager._deep_merge(default_val, overrides[key])
+                else:
+                    result[key] = overrides[key]
+            else:
+                result[key] = default_val
+        for key in overrides:
+            if key not in result:
+                result[key] = overrides[key]
+        return result
+```
+
+**Example config.json (user-editable):**
+
+```json
+{
+    "remote": {
+        "staging_path": "staging/blobs",
+        "ledger_path": "ledger",
+        "transport": "git",
+        "git_remote_url": "https://github.com/alice/phpoc-history.git"
+    },
+    "auth": {
+        "cache_timeout_minutes": 30
+    },
+    "timeouts": {
+        "remote_check_ms": 500,
+        "push_timeout_ms": 5000
+    }
+}
+```
+
+**AbstractConfigStore (parallel to other storage stores):**
+
+```python
+class AbstractConfigStore(ABC):
+    @abstractmethod
+    def read_config(self) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def write_config(self, data: Dict[str, Any]):
+        pass
+```
+
+**FileConfigStore:**
+
+```python
+class FileConfigStore(AbstractConfigStore):
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.write_config(ConfigManager.DEFAULTS)
+
+    def read_config(self) -> Optional[Dict[str, Any]]:
+        if not self.path.exists():
+            return None
+        return json.loads(self.path.read_text())
+
+    def write_config(self, data: Dict[str, Any]):
+        self.path.write_text(json.dumps(data, indent=2))
+```
+
+**What this unblocks:**
+- User edits `config.json` to point to a git remote → PHPOC uses it on next command
+- User increases `cache_timeout_minutes` → fewer passphrase prompts
+- `device_id` is generated here on first init (Item 9)
+- All layers read from one config object instead of hardcoded paths
+
+---
+
 ## 4. Dependency Graph & Ordering
 
 Not all items can be done in parallel. Some depend on others:
@@ -1453,29 +1899,38 @@ Item 7: Split Storage Interfaces
   │       │
   │       └──▶ Item 1: Staging Service Local/Remote (needs Item 4 + Item 7)
   │               │
+  │               └──▶ Item 10: Staging Interaction Flow (integrated into Item 1)
   │               └──▶ Item 3: Sync Orchestrator (needs Item 1 + Item 2)
   │
-  └──▶ Item 2: Ledger Engine + IndexManager (needs LedgerStore + IndexStore)
+  ├──▶ Item 2: Ledger Engine + IndexManager (needs LedgerStore + IndexStore)
   │       │
   │       └──▶ Item 6: IndexManager (sub-item of Item 2)
   │       │
   │       └──▶ Item 8: Summary Policy (integrated into Item 2)
   │
-  └──▶ Item 5: Abstract View Interface (independent, but needs Item 1 for DTO types)
+  ├──▶ Item 5: Abstract View Interface (independent, but needs Item 1 for DTO types)
+  │       │
+  │       └──▶ Item 3: Sync Orchestrator (needs ViewInterface)
+  │
+  ├──▶ Item 9: Device Identity Provider (needs ConfigStore from Item 7)
+  │
+  └──▶ Item 11: Config File Format (needs ConfigStore from Item 7)
           │
-          └──▶ Item 3: Sync Orchestrator (needs ViewInterface)
+          └──▶ Item 9: Device Identity (needs ConfigManager from Item 11)
+          └──▶ Item 10: Staging Flow (reads timeout config from Item 11)
 ```
 
 ### Recommended Phase Order
 
 | Phase | Items | Duration Estimate | Risk Level |
 |-------|-------|-------------------|------------|
-| **Phase 1** | Item 7 (Split Storage) + Item 5 (View Interface) | Weeks 1–2 | 🟢 Low — purely structural refactors, no logic changes |
-| **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, careful with existing tests |
+| **Phase 1** | Item 7 (Split Storage) + Item 5 (View Interface) + Item 11 (Config) | Weeks 1–2 | 🟢 Low — structural refactors + new config store |
+| **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
-| **Phase 4** | Item 3 (Sync Orchestrator) | Week 7 | 🟢 Low — wires existing components together |
-| **Phase 5** | Item 6 (IndexManager deep integration) | Week 7 (sub-task of Phase 3) | 🟢 Low — already done in Phase 3 |
-| **Phase 6** | Item 8 (SummaryPolicy) | Week 7 (sub-task of Phase 3) | 🟢 Low — already done in Phase 3 |
+| **Phase 4** | Item 10 (Staging Interaction Flow) | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
+| **Phase 5** | Item 3 (Sync Orchestrator) | Week 8 | 🟢 Low — wires existing components together |
+| **Phase 6** | Item 6 (IndexManager deep integration) | Sub-task of Phase 3 | 🟢 Low — already done |
+| **Phase 7** | Item 8 (SummaryPolicy) | Sub-task of Phase 3 | 🟢 Low — already done |
 
 ### Phase 1 Detail (Split Storage + View Interface)
 
@@ -1537,6 +1992,9 @@ Steps:
 | O7 | Sync Orchestrator changes the sync flow — existing sync tests need updating | 🟡 Medium | Write new tests for `SyncOrchestrator` with mock `StagingService`, `LedgerEngine`, and `ViewInterface`. Old integration tests (staging → sync → verify) continue testing the same data path end-to-end. |
 | O8 | Chain format must remain identical — refactoring must not change seals/signatures | 🔴 High | Block generation logic (seal, sign, hash computation) is extracted into `LedgerChain` without changing the algorithm. Verify by running `verify()` on an existing ledger before and after the refactor — hash chain must be identical. |
 | O9 | File paths and config directory convention must be preserved | 🟢 Low | Each file store implementation takes a `Path` parameter — same paths as current config. The `LedgerFactory.initialize()` needs updating to create the new store instances. |
+| O10 | Every staging command touches remote — performance concern for quick-fire operations (e.g., rapid `add` calls) | 🟡 Medium | 500ms timeout treats slow connections as offline. Operation is local-only, push is async. For rapid-fire CLI use (e.g., `add` then `start`), the second command likely reuses the already-pulled local cache without a full re-pull. |
+| O11 | Device UUID collision across devices is astronomically unlikely (2^122) but not impossible | 🟢 Low | UUID4 has 122 random bits. Collision probability is negligible. If it happens (theoretical), the HMAC proof would still verify, but the device_id check would not trigger a merge. User would see stale data and file a bug — the fix is deleting the stale device's config. |
+| O12 | Config file is user-editable — user can corrupt it, set invalid paths, or delete device_id | 🟢 Low | ConfigManager validates nothing. Missing fields fall back to defaults. Corrupt JSON raises a clear exception with the file path. Deleted device_id is regenerated (new UUID — device gets "new" identity, which is fine; it just triggers a full pull+merge on next remote check). |
 
 ---
 
@@ -1558,6 +2016,10 @@ The migration introduces new files and classes but should not change existing be
 | `SyncOrchestrator` | Full flow with mocks — device check, pull, decide, commit, push |
 | `CLIView` | Format strings, prompt parsing, edge cases (empty input, invalid choice) |
 | Each file store | Read/write/append/remove with temp files, edge cases (missing file, corrupt JSON) |
+| `DeviceIdentityProvider` | UUID generation, HMAC proof, cross-device verification, re-auth flow |
+| `ConfigManager` | Read/write, defaults merge, dot-notation get, corrupt JSON handling |
+| `StagingService.check_and_sync()` | 500ms timeout, offline fallback, merge correctness, push queued |
+| `MergeEngine` | Dedup by (title, start_epoch), remote-wins on ties, large merge sorting |
 
 ### Integration Tests (update existing)
 
