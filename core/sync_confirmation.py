@@ -1,62 +1,22 @@
-"""Sync confirmation strategies for phpoc.
+"""Sync confirmation strategies for phpoc — OLD MONOLITHIC VERSION (DEPRECATED).
 
-Each strategy implements the SyncStrategy interface, which takes pending entries
-and returns a SyncDecision describing what to sync and how to override entries.
-This allows different frontends (CLI, TUI, web, headless) to provide their own
-confirmation UX without touching the domain layer.
+SyncDecision and SyncStrategy are now defined in core/sync/decision.py.
+The CLI-specific strategies live in cli/strategies.py.
+
+This file keeps the OLD monolithic InteractiveCLIStrategy with its original
+helper method names (_stage1_overview, _stage2_edit_menu, _stage3_edit_single,
+_parse_end_time, _prompt_choice, _show_help, _format_entry_line, etc.)
+for backward compatibility with existing tests.
+
+New code should use the ViewInterface-based InteractiveCLIStrategy from
+cli/strategies.py directly.
 """
 
 import json
 import time
 from typing import List, Dict, Any, Set
-from dataclasses import dataclass, field
 
-
-@dataclass
-class SyncDecision:
-    """The result of a sync confirmation strategy.
-
-    Attributes:
-        selected_indices: List of entry_index values (from get_pending_sync()) to sync.
-        overrides: Optional dict mapping entry_index -> {
-            "end_epoch": int,      // optional override
-            "comment": str,        // optional override
-            "media": list,         // optional override
-        }
-        cancelled: If True, the user cancelled the entire sync operation.
-    """
-    selected_indices: List[int] = field(default_factory=list)
-    removal_indices: Set[int] = field(default_factory=set)
-    overrides: Dict[int, Dict[str, Any]] = field(default_factory=dict)
-    cancelled: bool = False
-
-    @property
-    def has_selection(self) -> bool:
-        return bool(self.selected_indices) and not self.cancelled
-
-    @property
-    def has_removals(self) -> bool:
-        return bool(self.removal_indices) and not self.cancelled
-
-
-class SyncStrategy:
-    """Abstract base for sync confirmation strategies.
-
-    A strategy receives the pending entries and returns a SyncDecision.
-    """
-
-    def decide(self, pending: List[Dict[str, Any]]) -> SyncDecision:
-        """Examine pending entries and return what to sync.
-
-        Args:
-            pending: List of preview dicts from LedgerDomain.get_pending_sync().
-                     Each has: entry_index, title, start_epoch, end_epoch,
-                     duration, tags, date, comment, media.
-
-        Returns:
-            A SyncDecision describing which entries to sync and any overrides.
-        """
-        raise NotImplementedError
+from core.sync.decision import SyncDecision, SyncStrategy  # noqa: F401
 
 
 class AutoSyncStrategy(SyncStrategy):

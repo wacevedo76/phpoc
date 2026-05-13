@@ -12,6 +12,7 @@ Key invariants:
 """
 
 import json
+import time
 import threading
 from typing import Optional, List, Dict, Any
 
@@ -32,6 +33,8 @@ class StagingService:
         _merge: MergeEngine instance.
     """
 
+    AUTH_CACHE_DURATION = 1800  # 30 minutes in seconds
+
     def __init__(
         self,
         crypto: AbstractCryptoManager,
@@ -43,6 +46,7 @@ class StagingService:
         self._local = LocalStagingCache(crypto, staging_store)
         self._merge = MergeEngine()
         self._remote: Optional[RemoteStagingSync] = None
+        self._last_auth_time: float = 0.0
 
         if transport is not None and device_id_provider is not None:
             self._remote = RemoteStagingSync(crypto, transport, device_id_provider)
@@ -65,11 +69,14 @@ class StagingService:
     ) -> str:
         """Add entry to local staging.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Returns entry hash prefix (10 characters).
 
         Raises:
             ValueError: If collision detected (same start_epoch).
         """
+        self.check_and_sync(timeout_ms=500)
         return self._local.append(
             title,
             start_epoch,
@@ -84,9 +91,12 @@ class StagingService:
     def end(self, title: str, end_epoch: int, comment: Optional[str] = None):
         """End an active task by title.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Raises:
             ValueError: If no active task found with that title.
         """
+        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -143,9 +153,12 @@ class StagingService:
     ):
         """Pause a running task.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Raises:
             ValueError: If not found, not active, or already paused.
         """
+        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -169,9 +182,12 @@ class StagingService:
     ):
         """Unpause a paused task.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Raises:
             ValueError: If not found, not active, or not paused.
         """
+        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -196,6 +212,8 @@ class StagingService:
     ):
         """Modify a completed entry's end time and/or pauses.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Args:
             entry_index: Index in the staging array.
             end_epoch: New end epoch ms, or None to keep current.
@@ -204,6 +222,7 @@ class StagingService:
         Raises:
             ValueError: If entry not found, out of range, or still active.
         """
+        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
 
         if entry_index < 0 or entry_index >= len(entries):
@@ -240,9 +259,12 @@ class StagingService:
     def remove(self, entry_index: int):
         """Remove a staged entry by index.
 
+        Automatically calls check_and_sync() before the local operation.
+
         Raises:
             ValueError: If entry_index is out of range.
         """
+        self.check_and_sync(timeout_ms=500)
         try:
             self._local.delete(entry_index)
         except IndexError as e:
@@ -291,6 +313,47 @@ class StagingService:
         self._local.remove_multiple(indices)
 
     # ------------------------------------------------------------------
+    # Remote entry conversion
+    # ------------------------------------------------------------------
+
+    def _raw_to_dtos(self, raw_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert raw entries (from remote blob) to DTOs for merge compatibility.
+
+        Remote blob entries have format: {hash, data (with encrypted fields),
+        start_epoch}. DTOs have: {title, start_epoch, end_epoch, ...}.
+        This method does the conversion by writing raw entries into a temp
+        staging store and reading them back through LocalStagingCache.
+
+        Args:
+            raw_entries: List of raw staging entries.
+
+        Returns:
+            List of decrypted DTOs.
+        """
+        if not raw_entries:
+            return []
+
+        # Use an in-memory store that conforms to AbstractStagingStore
+        class _ConversionStore:
+            def __init__(self):
+                self._data = []
+            def read_entries(self): return list(self._data)
+            def write_entries(self, entries): self._data[:] = list(entries)
+            def append_entry(self, entry): self._data.append(entry)
+            def remove_entries(self, indices):
+                for i in sorted(indices, reverse=True):
+                    if 0 <= i < len(self._data):
+                        self._data.pop(i)
+            def update_entry(self, index, fields):
+                if 0 <= index < len(self._data):
+                    self._data[index].update(fields)
+
+        temp_store = _ConversionStore()
+        temp_store.write_entries(raw_entries)
+        temp_cache = LocalStagingCache(self._crypto, temp_store)
+        return temp_cache.read_entries()
+
+    # ------------------------------------------------------------------
     # Remote Sync
     # ------------------------------------------------------------------
 
@@ -300,8 +363,13 @@ class StagingService:
         """Event-driven remote check. Called before every staging operation.
 
         1. If no remote configured: returns READY.
-        2. If remote reachable: pull → merge local.
+        2. If remote reachable: check device match -> auth cache -> pull+merge.
         3. If remote unreachable (within timeout_ms): return OFFLINE.
+
+        Auth cache: after successful device check, caches the auth for
+        30 minutes (AUTH_CACHE_DURATION). If device_id mismatches but
+        auth is still cached, proceeds with READY. Only returns
+        REAUTH_NEEDED when device mismatches AND auth cache is expired.
 
         Returns:
             SyncCheckResult.READY, OFFLINE, or REAUTH_NEEDED.
@@ -313,17 +381,33 @@ class StagingService:
         if not self._remote.check_remote_available(timeout_ms):
             return SyncCheckResult.OFFLINE
 
-        # Check device match
-        if not self._remote.check_device():
-            return SyncCheckResult.REAUTH_NEEDED
+        # Check device match with auth cache
+        device_match = self._remote.check_device()
+        if not device_match:
+            # Device mismatch — check auth cache
+            if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
+                # Auth cache still valid — proceed without re-auth
+                pass  # Will still pull+merge below
+            else:
+                # Auth expired — need re-auth
+                return SyncCheckResult.REAUTH_NEEDED
+
+        # Update auth timestamp on successful device check
+        self._last_auth_time = time.time()
 
         # Pull and merge
         try:
             remote_blob = self._remote.pull()
             if remote_blob and "entries" in remote_blob:
                 local_entries = self._local.read_entries()
-                remote_entries = remote_blob["entries"]
-                merged = self._merge.merge(local_entries, remote_entries)
+
+                # Convert remote raw entries to DTOs before merging.
+                # Remote blob entries are in raw format (hash, data, start_epoch),
+                # while local entries are DTOs. We decode raw → DTO via
+                # the same method LocalStagingCache uses.
+                remote_dtos = self._raw_to_dtos(remote_blob["entries"])
+
+                merged = self._merge.merge(local_entries, remote_dtos)
                 # Rebuild raw from merged DTOs
                 self._local.write_entries(merged)
         except Exception:
@@ -344,8 +428,7 @@ class StagingService:
         # Get device identity for the blob header
         identity = None
         try:
-            from security.device_identity import RandomUUIDDeviceIdentityProvider
-            if isinstance(self._remote._device_id_provider, RandomUUIDDeviceIdentityProvider):
+            if self._remote is not None:
                 identity = self._remote._device_id_provider.get_device_identity(master_key)
         except Exception:
             pass

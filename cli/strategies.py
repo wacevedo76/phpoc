@@ -3,61 +3,17 @@
 Extracted from core/sync_confirmation.py to move CLI-specific
 interactive patterns out of the core domain layer.
 
+SyncDecision and SyncStrategy are now defined in core/sync/decision.py.
+This file imports them from there and adds the CLI-specific strategies
+(AutoSyncStrategy, InteractiveCLIStrategy).
+
 InteractiveCLIStrategy uses ViewInterface for all I/O.
 AutoSyncStrategy needs no view and stays lightweight.
 """
 
 from typing import List, Dict, Any, Set
 from domain.interfaces.view import ViewInterface
-
-
-class SyncDecision:
-    """The result of a sync confirmation strategy.
-
-    Attributes:
-        selected_indices: List of entry_index values to sync.
-        overrides: Optional dict mapping entry_index -> {end_epoch, comment, media}
-        removal_indices: Set of entry_index values to remove from staging.
-        cancelled: If True, the entire sync operation was cancelled.
-    """
-    def __init__(self, selected_indices: List[int] = None,
-                 overrides: Dict[int, Dict[str, Any]] = None,
-                 removal_indices: Set[int] = None,
-                 cancelled: bool = False):
-        self.selected_indices = selected_indices or []
-        self.overrides = overrides or {}
-        self.removal_indices = removal_indices or set()
-        self.cancelled = cancelled
-
-    @property
-    def has_selection(self) -> bool:
-        return bool(self.selected_indices) and not self.cancelled
-
-    @property
-    def has_removals(self) -> bool:
-        return bool(self.removal_indices) and not self.cancelled
-
-
-class SyncStrategy:
-    """Abstract base for sync confirmation strategies.
-
-    A strategy receives the pending entries and returns a SyncDecision.
-    """
-
-    def decide(self, pending: List[Dict[str, Any]],
-               view: ViewInterface = None) -> SyncDecision:
-        """Examine pending entries and return what to sync.
-
-        Args:
-            pending: List of preview dicts from LedgerDomain.get_pending_sync().
-                     Each has: entry_index, title, start_epoch, end_epoch,
-                     duration, tags, date, comment, media.
-            view: Optional ViewInterface for displaying/interacting.
-
-        Returns:
-            A SyncDecision describing which entries to sync and any overrides.
-        """
-        raise NotImplementedError
+from core.sync.decision import SyncDecision, SyncStrategy
 
 
 class AutoSyncStrategy(SyncStrategy):

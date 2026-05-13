@@ -321,10 +321,10 @@ class TestSyncDecision(unittest.TestCase):
 class TestSyncStrategy(unittest.TestCase):
     """Test the abstract base class."""
 
-    def test_decide_raises_not_implemented(self):
-        strategy = SyncStrategy()
-        with self.assertRaises(NotImplementedError):
-            strategy.decide([])
+    def test_decide_is_abstract(self):
+        """SyncStrategy cannot be instantiated directly (abstract base)."""
+        with self.assertRaises(TypeError):
+            SyncStrategy()
 
 
 class TestAutoSyncStrategy(unittest.TestCase):

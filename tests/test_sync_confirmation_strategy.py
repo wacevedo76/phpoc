@@ -102,9 +102,9 @@ class TestSyncStrategy(unittest.TestCase):
     """Abstract base raises NotImplementedError."""
 
     def test_decide_not_implemented(self):
-        s = SyncStrategy()
-        with self.assertRaises(NotImplementedError):
-            s.decide([])
+        """SyncStrategy cannot be instantiated directly (abstract base)."""
+        with self.assertRaises(TypeError):
+            SyncStrategy()
 
 
 # ══════════════════════════════════════════════════════════════════════
