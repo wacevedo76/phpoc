@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
-> **Date:** 2026-05-13 (Phase 2 complete)
-> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ — 22 files, 242 tests, no regressions. Next: Phase 3 (Ledger Engine).
+> **Date:** 2026-05-13 (Phase 3 test-first complete)
+> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ + Phase 3 test-first ✅ — 23 files, 342 tests, no regressions. Next: Phase 3 Implementation (Ledger Engine).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -1933,6 +1933,7 @@ Item 7: Split Storage Interfaces
 | **Phase 1b** ✅ | Item 5 (View Interface) | Part of Phase 1 | 🟢 Low — move logic to ViewInterface + CLIView |
 | **Phase 2** ✅ | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
+| **Phase 3** test-first ✅ | 100 tests written (`tests/test_phase3_ledger_engine.py`) | Weeks 3–4 | 🟢 Low — tests skip gracefully, no regressions
 | **Phase 4** | Item 10 (Staging Interaction Flow) | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
 | **Phase 5** | Item 3 (Sync Orchestrator) | Week 8 | 🟢 Low — wires existing components together |
 | **Phase 6** | Item 6 (IndexManager deep integration) | Sub-task of Phase 3 | 🟢 Low — already done |
@@ -2014,7 +2015,11 @@ Security:
 - Old `core/ledger.py` methods untouched (backward compat — will become
   thin wrappers in Phase 5)
 
-### Phase 3 Detail (Ledger Engine)
+### Phase 3 Detail (Ledger Engine — Test-First Complete ✅)
+
+**Goal:** Extract all ledger chain logic from `core/ledger.py` into `domain/ledger/`.
+
+**Status:** Test-first complete. 100 tests in `tests/test_phase3_ledger_engine.py` (1394 lines, 25 classes) define the full contract. See commit `a077879`. All tests skip gracefully until implementation.
 
 **Goal:** Extract all ledger chain logic from `core/ledger.py` into `domain/ledger/`.
 
@@ -2027,8 +2032,8 @@ domain/ledger/
   └── engine.py          ← LedgerEngine (public API facade)
 ```
 
-**Approach:** Test-first. Write `tests/test_phase3_ledger_engine.py` before implementing,
-covering all methods extracted from `core/ledger.py`.
+**Approach:** Test-first ✅ — `tests/test_phase3_ledger_engine.py` (100 tests) written before
+any implementation. See [Test Listing](#phase-3-test-first--100-tests) below.
 
 **LedgerChain (`domain/ledger/chain.py`):**
 Move chain operations currently in `core/ledger.py`:
@@ -2150,6 +2155,30 @@ The migration introduces new files and classes but should not change existing be
 | `RandomUUIDDeviceIdentityProvider` | `security/device_identity.py` | UUID4 format, HMAC proof, caching, config persistence, verify/check identity variants | ✅ 22 tests |
 | `AbstractDeviceIdentityProvider` | `security/device_identity.py` | Cannot instantiate abstract | ✅ 1 test |
 | **Total** | `tests/test_phase2_staging_service.py` + `tests/test_phase2_device_identity.py` | | **✅ 112 tests** |
+
+### Unit Tests (Phase 3 — Test-First ✅ — 100 tests, all skipped until implementation)
+
+| Component | Test Focus | Status |
+|-----------|------------|--------|
+| `LedgerChain` init | Genesis, empty store, block access (positive/negative/OOB) | ⏳ 5 tests skipped |
+| `LedgerChain` seal/sign | compute_seal, verify (valid/tampered), compute_signature (with/without id), verify (valid/wrong key) | ⏳ 7 tests skipped |
+| `LedgerChain` append/build | Append single/batch, linkage verification, build_day_block (seal, signature, entry hash, encrypted entries) | ⏳ 7 tests skipped |
+| `LedgerChain` verify | Empty chain, genesis only, valid chain, tampered (entry/prev_hash/seal/signature), summary blocks, single block | ⏳ 10 tests skipped |
+| `LedgerChain` truncate | Zero, last block, two blocks, preserve genesis, return removed | ⏳ 5 tests skipped |
+| `LedgerChain` edge cases | Zero count, none last block, read_all copy | ⏳ 3 tests skipped |
+| `IndexManager` init | Empty, existing | ⏳ 2 tests skipped |
+| `IndexManager` update | Add, accumulate, negative (subtract/zero/below), multiple dates | ⏳ 7 tests skipped |
+| `IndexManager` query | Full range, single day, subset, empty, invalid | ⏳ 5 tests skipped |
+| `IndexManager` clear/rebuild | Clear empties, clears store | ⏳ 2 tests skipped |
+| `YearMonthSummaryPolicy` | Same month, month/year boundary, both, no duplicate | ⏳ 8 tests skipped |
+| `YearOnlySummaryPolicy` | Same year, new year, month boundary ignored | ⏳ 4 tests skipped |
+| `NoSummaryPolicy` | Never inserts | ⏳ 1 test skipped |
+| `LedgerEngine` commit | Single entry, encrypted fields, content_hash, multi-entry, multi-day, index update, day_hash prefix, identity sig, empty | ⏳ 10 tests skipped |
+| `LedgerEngine` commit + summary | Month/year boundary, no-summary policy, year-only policy | ⏳ 4 tests skipped |
+| `LedgerEngine` revert | Last block, restore to staging, index update, two blocks, too many, zero, preserve kept | ⏳ 8 tests skipped |
+| `LedgerEngine` verify | Empty chain, genesis, valid, tamper detection, full_check | ⏳ 5 tests skipped |
+| `LedgerEngine` edge cases | Empty count, verify empty, identity sig, get_day_blocks, get_last_block | ⏳ 7 tests skipped |
+| **Total** | `tests/test_phase3_ledger_engine.py` | **⏳ 100 tests (skipped)** |
 
 ### Unit Tests (planned for future phases)
 
