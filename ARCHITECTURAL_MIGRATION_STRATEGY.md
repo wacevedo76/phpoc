@@ -32,6 +32,7 @@
 5. [Obstacles & Mitigations Summary](#5-obstacles--mitigations-summary)
 6. [Testing Strategy](#6-testing-strategy)
 7. [Backward Compatibility](#7-backward-compatibility)
+8. [Cross-Stack Portability Assessment](#8-cross-stack-portability-assessment)
 
 ---
 
@@ -2103,4 +2104,118 @@ The CLI commands (`add`, `start`, `end`, `pause`, `unpause`, `sync`, `verify`, `
 
 ### API Compatibility
 
-The old `LedgerDomain` class in `core/ledger.py` will be kept as a thin wrapper during the migration phase, delegating to the new `StagingService` and `LedgerEngine`. This allows each caller to migrate independently
+The old `LedgerDomain` class in `core/ledger.py` will be kept as a thin wrapper during the migration phase, delegating to the new `StagingService` and `LedgerEngine`. This allows each caller to migrate independently.
+
+---
+
+## 8. Cross-Stack Portability Assessment
+
+> **Question:** How translatable is PHPOC as a whole (architecture, implementation, strategy) to other application stacks?
+> **Answer:** Highly portable. Every layer uses standardized primitives available in all modern languages.
+
+### Layer-by-Layer Analysis
+
+#### 8.1 Cryptographic Layer
+
+| Primitive | Python | Rust | Go | TypeScript/Node | Swift | Kotlin |
+|-----------|--------|------|-----|-----------------|-------|--------|
+| AES-256-CTR | Custom pure-Python (zero-dep) | `aes::Aes256Ctr` crate | `crypto/aes` + CTR mode | `crypto.createCipheriv('aes-256-ctr')` | `kCCEncrypt(kCCAlgorithmAES)` | `Cipher.getInstance("AES/CTR/NoPadding")` |
+| PBKDF2-SHA256 | `hashlib.pbkdf2_hmac` | `pbkdf2` crate | `x/crypto/pbkdf2` | `crypto.pbkdf2Sync` | `CommonCrypto.CCKeyDerivationPBKDF` | `SecretKeyFactory("PBKDF2WithHmacSHA256")` |
+| HMAC-SHA256 | `hmac` stdlib | `hmac` crate | `crypto/hmac` | `crypto.createHmac('sha256')` | `CCHmac(kCCHmacAlgSHA256)` | `Mac.getInstance("HmacSHA256")` |
+| SHA-256 | `hashlib.sha256` | `sha2` crate | `crypto/sha256` | `crypto.createHash('sha256')` | `CC_SHA256` | `MessageDigest.getInstance("SHA-256")` |
+
+**Verdict:** 🟢 Excellent. The custom pure-Python AES is a reference-implementation choice (zero external dependencies). Production ports would use platform-native AES — faster and audited. The only requirement is matching the exact algorithm composition (salt → sub-key derivation → nonce + counter → AES-CTR → encrypt-then-MAC), which is documented in `PHPSPEC.md`. The `plain:` prefix is an internal detail being eliminated (Item 4).
+
+#### 8.2 Storage Layer
+
+Every language can:
+- Read/write JSON files to disk (the 5 file stores are JSON wrappers)
+- Define abstract interfaces (trait/interface/protocol)
+- Handle errors (Result/Option/Try)
+
+**Verdict:** 🟢 Excellent. JSON + file I/O + interfaces. Trivial in any stack.
+
+#### 8.3 Transport Layer
+
+The transport interface has 2 methods:
+- `pull(path) -> bytes`
+- `push(path, data) -> None`
+
+Git implementations use subprocess (available everywhere). HTTP implementations use the language's HTTP client. Blob obfuscation is pad-then-encrypt using the same crypto primitives.
+
+**Verdict:** 🟢 Excellent.
+
+#### 8.4 Domain Logic — Staging
+
+| Component | Primitives Used |
+|-----------|----------------|
+| `LocalStagingCache` | List/array CRUD, string operations |
+| `MergeEngine` | Dict/hash-map dedup by tuple key, array sort |
+| `RemoteStagingSync` | Crypto + transport interface calls |
+| `StagingService` | Facade pattern — delegates to sub-components |
+
+**Verdict:** 🟢 Excellent. No math, no concurrency, no platform-specific APIs.
+
+#### 8.5 Domain Logic — Ledger
+
+| Component | Primitives Used |
+|-----------|----------------|
+| `LedgerChain` | HMAC seal, SHA-256 prev_hash, array append/truncate |
+| `IndexManager` | Nested dict arithmetic |
+| `SummaryPolicy` | Date parsing + comparison + conditional block insertion |
+| `ChainSplitter` | Array iteration, type field filtering |
+
+The chain verification algorithm is deterministic by spec (`PHPSPEC.md`), not by Python. Any implementation following the spec produces identical verification results.
+
+**Verdict:** 🟢 Excellent.
+
+#### 8.6 View Layer
+
+`ViewInterface` is an abstract contract:
+- `render_entry_list()` → formatted output
+- `prompt_choice()` → user input
+- `notify()` / `warn()` → display
+
+CLI: print/input equivalents. TUI: framework per language. Web: JSON serialization.
+
+**Verdict:** 🟢 Excellent.
+
+#### 8.7 Sync Orchestrator
+
+Pure orchestration — calls other interfaces in sequence. No math, no crypto, no I/O. Trivial in any language.
+
+**Verdict:** 🟢 Excellent.
+
+#### 8.8 Device Identity
+
+`AbstractDeviceIdentityProvider` has 3 methods, all using:
+- UUID generation (`uuid4()` / `crypto.randomUUID()` / `Uuid::new_v4()`)
+- HMAC-SHA256 (`hmac(mk, "phpoc:device:" + device_id)`)
+
+**Verdict:** 🟢 Excellent.
+
+#### 8.9 Config Manager
+
+JSON read/write with recursive defaults merging. Trivial in every language.
+
+**Verdict:** 🟢 Excellent.
+
+### Overall Assessment
+
+| Layer | Risk | Rationale |
+|-------|------|-----------|
+| Cryptography | 🟢 Low | Standardized algorithms. Pure-Python AES is a deployment detail, not a protocol requirement. |
+| Storage | 🟢 Low | JSON files + abstract interfaces. Every language has this. |
+| Transport | 🟢 Low | `pull(path)/push(data)` — 2 methods. Git via subprocess or HTTP client. |
+| Staging Domain | 🟢 Low | Dict + sort + string ops. No complex math. |
+| Ledger Domain | 🟢 Low | HMAC + SHA-256 + date comparisons. All standardized. |
+| View Layer | 🟢 Low | Abstract I/O interface. CLI = print/input, Web = JSON. |
+| Sync Orchestrator | 🟢 Low | Procedural orchestration, no math. |
+| Device Identity | 🟢 Low | UUID + HMAC. Standard library in all languages. |
+| Config Manager | 🟢 Low | JSON read/write + deep merge. |
+
+**Overall: 🟢 Highly portable to any stack (Rust, Go, TypeScript, Swift, Kotlin).**
+
+The only cross-stack requirement is matching the ledger format specification (`PHPSPEC.md`). As long as the new implementation follows the same block format, seal algorithm, and encryption scheme, it is fully compatible with ledgers produced by the Python reference implementation.
+
+To validate this claim: write a Rust or TypeScript implementation that reads a `ledger.json` produced by the Python CLI and successfully verifies the chain. That is approximately one day of work and would fully validate the design.
