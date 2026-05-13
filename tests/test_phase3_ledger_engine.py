@@ -22,6 +22,7 @@ import hmac
 import tempfile
 import shutil
 import os
+import datetime
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
@@ -32,22 +33,25 @@ from pathlib import Path
 class _MockCrypto:
     """Mimics CryptoManager behavior for seal/sign/encrypt/decrypt.
     
-    Designed to produce DETERMINISTIC output for given inputs, so tests
-    can verify exact chain format. Uses HMAC-SHA256 for seal and sign
-    (matching real CryptoManager), and a simple xor-based encrypt for
-    round-trip testing (not real AES, but sufficient for chain format tests).
+    Uses HMAC-SHA256 for seal (deterministic, verifiable) and sign
+    (matching real CryptoManager), and a reversible hex encoding for
+    encrypt/decrypt so commit(encrypt) → revert(decrypt) round-trips.
     """
     
     def __init__(self, mk=b"\x01" * 32):
         self.mk = mk
     
     def encrypt(self, text: str) -> str:
-        """Return deterministic hex: HMAC(mk, text) as a fake 'encrypted' blob."""
-        return hashlib.sha256(f"enc:{text}:{self.mk.hex()}".encode()).hexdigest()
+        """Return a reversible hex-encoded 'ciphertext'."""
+        return "enc:" + text.encode().hex()
     
     def decrypt(self, hex_data: str) -> str:
-        """Inverse of our mock encrypt — extract via known format."""
-        raise NotImplementedError("_MockCrypto.decrypt not implemented for direct calls")
+        """Reverse encrypt encoding. Also handles plain: prefix."""
+        if hex_data.startswith("enc:"):
+            return bytes.fromhex(hex_data[4:]).decode()
+        if hex_data.startswith("plain:"):
+            return hex_data[6:]
+        raise ValueError(f"Unknown encrypted format: {hex_data[:20]}...")
     
     def seal(self, data_str: str) -> str:
         """HMAC-SHA256 seal using integrity sub-key (matches real implementation)."""
@@ -109,6 +113,7 @@ def _genesis_block(seed="test-seed", user="testuser", email="test@example.com"):
             "email": email,
             "version": 1,
         },
+        "date": "2023-11-01",
         "day_hash": hashlib.sha256(b"genesis").hexdigest(),
     }
 
@@ -353,13 +358,13 @@ class TestLedgerChainAppendAndBuild(unittest.TestCase):
         entries = [
             {"title": "Coding", "start_epoch": 1700000000000, "duration": 3600000},
         ]
-        block = self.chain.build_day_block(entries, "2026-01-01", date_str="2026-01-01")
+        expected_prev = self.genesis.get("day_hash")
+        block = self.chain.build_day_block(entries, expected_prev, date_str="2026-01-01")
         self.assertEqual(block["type"], "day")
         self.assertEqual(block["date"], "2026-01-01")
         self.assertEqual(len(block["entries"]), 1)
         self.assertIn("day_hash", block)
         # prev_hash should point to genesis
-        expected_prev = self.genesis.get("day_hash")
         self.assertEqual(block["prev_hash"], expected_prev)
         # day_hash should verify
         check_data = {k: v for k, v in block.items() if k not in ["day_hash", "signature"]}
@@ -403,7 +408,8 @@ class TestLedgerChainAppendAndBuild(unittest.TestCase):
             },
             "start_epoch": 1700000000000,
         }
-        block = self.chain.build_day_block([entry], "2026-01-01", date_str="2026-01-01")
+        prev_hash = self.genesis.get("day_hash")
+        block = self.chain.build_day_block([entry], prev_hash, date_str="2026-01-01")
         self.chain.append(block)
         self.assertEqual(self.chain.get_block_count(), 2)
         self.assertTrue(self.chain.verify_block(1))  # index 1 = the day block
@@ -509,8 +515,13 @@ class TestLedgerChainVerify(unittest.TestCase):
         # Build a chain with month/year boundaries
         blocks = [
             self._make_day_block("2025-12-30", [{"title": "Dec Task", "start_epoch": 1700000000000, "duration": 1000}]),
-            self._make_day_block("2025-12-31", [{"title": "NYE", "start_epoch": 1700000000000, "duration": 1000}]),
         ]
+        # Second day block links to first
+        dec31 = self._make_day_block("2025-12-31", [{"title": "NYE", "start_epoch": 1700000000000, "duration": 1000}])
+        dec31["prev_hash"] = blocks[-1]["day_hash"]
+        dec31["day_hash"] = self.crypto.seal(json.dumps({k: v for k, v in dec31.items() if k not in ["day_hash", "signature"]}, sort_keys=True))
+        dec31["signature"] = self.crypto.sign(dec31["day_hash"], self.identity_secret)
+        blocks.append(dec31)
         # Add year summary
         year_summary = {
             "type": "year_summary", "year": 2025,
@@ -986,7 +997,7 @@ class TestLedgerEngineCommit(unittest.TestCase):
     def test_commit_encrypts_fields(self):
         skip_unless_phase_3()
         entries = [
-            {"title": "Coding", "start_epoch": 1700000000000, "duration": 3600000},
+            {"title": "Coding", "start_epoch": 1673780400000, "duration": 3600000},
         ]
         self.engine.commit(entries)
         day_block = self.engine.get_day_blocks()[-1]
@@ -1009,8 +1020,8 @@ class TestLedgerEngineCommit(unittest.TestCase):
     def test_commit_multiple_entries_same_day(self):
         skip_unless_phase_3()
         entries = [
-            {"title": "Coding", "start_epoch": 1700000000000, "duration": 3600000},
-            {"title": "Reading", "start_epoch": 1700010000000, "duration": 1800000},
+            {"title": "Coding", "start_epoch": 1699952400000, "duration": 3600000},
+            {"title": "Reading", "start_epoch": 1699959600000, "duration": 1800000},
         ]
         self.engine.commit(entries)
         day_blocks = self.engine.get_day_blocks()
@@ -1032,13 +1043,13 @@ class TestLedgerEngineCommit(unittest.TestCase):
     def test_commit_updates_index(self):
         skip_unless_phase_3()
         entries = [
-            {"title": "Coding", "start_epoch": 1700000000000, "duration": 3600000},
-            {"title": "Coding", "start_epoch": 1700010000000, "duration": 1800000},
+            {"title": "Coding", "start_epoch": 1699952400000, "duration": 3600000},
+            {"title": "Coding", "start_epoch": 1699959600000, "duration": 1800000},
         ]
         self.engine.commit(entries)
         index_data = self.store.read_index()
-        # 1700000000000 ms = 2026-01-15
-        date_str = time.strftime("%Y-%m-%d", time.gmtime(1700000000000 // 1000))
+        # 1699952400000 ms = 2023-11-14
+        date_str = time.strftime("%Y-%m-%d", time.gmtime(1699952400000 // 1000))
         self.assertIn(date_str, index_data)
         self.assertEqual(index_data[date_str]["Coding"], 5400000)
 
@@ -1085,11 +1096,12 @@ class TestLedgerEngineCommitSummary(unittest.TestCase):
 
     def test_commit_crossing_month_boundary(self):
         skip_unless_phase_3()
-        # 2026-01-31 23:00 UTC ms = 1738393200000
-        # 2026-02-01 01:00 UTC ms = 1738396800000
+        # 2023-11-30 23:00 UTC to 2023-12-01 01:00 UTC
+        dt_nov = datetime.datetime(2023, 11, 30, 23, 0, 0)
+        dt_dec = datetime.datetime(2023, 12, 1, 1, 0, 0)
         entries = [
-            {"title": "Jan Task", "start_epoch": 1738393200000, "duration": 3600000},
-            {"title": "Feb Task", "start_epoch": 1738396800000, "duration": 1800000},
+            {"title": "Nov Task", "start_epoch": int(dt_nov.timestamp()) * 1000, "duration": 3600000},
+            {"title": "Dec Task", "start_epoch": int(dt_dec.timestamp()) * 1000, "duration": 1800000},
         ]
         self.engine.commit(entries)
         ledger = self.store.read_ledger()
@@ -1100,8 +1112,8 @@ class TestLedgerEngineCommitSummary(unittest.TestCase):
     def test_commit_crossing_year_boundary(self):
         skip_unless_phase_3()
         entries = [
-            {"title": "Dec Task", "start_epoch": 1735689600000, "duration": 3600000},  # 2025-12-31
-            {"title": "Jan Task", "start_epoch": 1735776000000, "duration": 1800000},  # 2026-01-01
+            {"title": "Dec Task", "start_epoch": 1767171600000, "duration": 3600000},  # 2025-12-31
+            {"title": "Jan Task", "start_epoch": 1767258000000, "duration": 1800000},  # 2026-01-01
         ]
         self.engine.commit(entries)
         ledger = self.store.read_ledger()
@@ -1120,8 +1132,8 @@ class TestLedgerEngineCommitSummary(unittest.TestCase):
             summary_policy=policy,
         )
         entries = [
-            {"title": "Dec Task", "start_epoch": 1735689600000, "duration": 3600000},
-            {"title": "Jan Task", "start_epoch": 1735776000000, "duration": 1800000},
+            {"title": "Dec Task", "start_epoch": 1767171600000, "duration": 3600000},  # 2025-12-31
+            {"title": "Jan Task", "start_epoch": 1767258000000, "duration": 1800000},  # 2026-01-01
         ]
         engine.commit(entries)
         ledger = self.store.read_ledger()
@@ -1140,8 +1152,8 @@ class TestLedgerEngineCommitSummary(unittest.TestCase):
             summary_policy=policy,
         )
         entries = [
-            {"title": "Jan Task", "start_epoch": 1738393200000, "duration": 3600000},
-            {"title": "Feb Task", "start_epoch": 1738396800000, "duration": 1800000},
+            {"title": "Jan Task", "start_epoch": 1767171600000, "duration": 3600000},  # 2025-12-31
+            {"title": "Feb Task", "start_epoch": 1767258000000, "duration": 1800000},  # 2026-01-01
         ]
         engine.commit(entries)
         ledger = self.store.read_ledger()
@@ -1377,7 +1389,7 @@ class TestChainFormatEquivalence(unittest.TestCase):
             "data": {"title": "Test", "start_epoch": 1700000000000, "duration": 1000},
             "hash": "dummy",
         }
-        block = chain.build_day_block([entry], "2026-01-15", date_str="2026-01-15")
+        block = chain.build_day_block([entry], genesis["day_hash"], date_str="2026-01-15")
 
         self.assertEqual(block["type"], "day")
         self.assertEqual(block["date"], "2026-01-15")
