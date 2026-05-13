@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
-> **Date:** 2026-05-10
-> **Status:** Planning (no code changes)
+> **Date:** 2026-05-10 (updated 2026-05-13)
+> **Status:** Phase 1 ✅ — 12 files, 68 tests, no regressions. Next: Phase 1b (View Interface) or Phase 2 (Staging Service + Device ID).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -150,15 +150,17 @@ security/
 │                Storage Abstraction                         │
 │                                                           │
 │  storage/                                                 │
-│    ├── staging_store.py   ← AbstractStagingStore          │
-│    ├── ledger_store.py    ← AbstractLedgerStore           │
-│    ├── index_store.py     ← AbstractIndexStore            │
-│    ├── identity_store.py  ← AbstractIdentityStore         │
-│    └── implementations/                                   │
-│        ├── file_staging.py ← FileStagingStore             │
-│        ├── file_ledger.py  ← FileLedgerStore              │
-│        ├── file_index.py   ← FileIndexStore               │
-│        └── file_identity.py← FileIdentityStore            │
+│    ├── staging_store.py   ← AbstractStagingStore   ✅     │
+│    ├── ledger_store.py    ← AbstractLedgerStore    ✅     │
+│    ├── index_store.py     ← AbstractIndexStore     ✅     │
+│    ├── identity_store.py  ← AbstractIdentityStore  ✅     │
+│    ├── config_store.py    ← AbstractConfigStore    ✅     │
+│    └── implementations/                           ✅     │
+│        ├── file_staging.py ← FileStagingStore     ✅     │
+│        ├── file_ledger.py  ← FileLedgerStore      ✅     │
+│        ├── file_index.py   ← FileIndexStore       ✅     │
+│        ├── file_identity.py← FileIdentityStore    ✅     │
+│        └── file_config.py  ← FileConfigStore      ✅     │
 │                                                           │
 │  Properties:                                              │
 │    - Each interface has single responsibility              │
@@ -166,6 +168,7 @@ security/
 │    - LedgerStore supports incremental reads (by offset)    │
 │    - IndexStore is simple KV, rebuildable from chain       │
 │    - IdentityStore is read-once-per-session                │
+│    - ConfigStore is user-editable JSON with defaults       │
 └──────────────────────────┬────────────────────────────────┘
                            │
                            ▼
@@ -199,7 +202,8 @@ security/
 │    ├── recovery.py         ← RecoveryManager              │
 │    ├── device_identity.py  ← AbstractDeviceIdentityProvider│
 │    │                         RandomUUIDDeviceIdentityProv │
-│    └── config_manager.py  ← ConfigManager                 │
+│    ├── config_manager.py  ← ConfigManager        ✅      │
+│    │                         (security/config_manager.py) │
 │                              (read/write ~/.config/.../   │
 │                               config.json, user-editable) │
 │                                                           │
@@ -1924,7 +1928,8 @@ Item 7: Split Storage Interfaces
 
 | Phase | Items | Duration Estimate | Risk Level |
 |-------|-------|-------------------|------------|
-| **Phase 1** | Item 7 (Split Storage) + Item 5 (View Interface) + Item 11 (Config) | Weeks 1–2 | 🟢 Low — structural refactors + new config store |
+| **Phase 1** ✅ | Item 7 (Split Storage) + Item 11 (Config) | Weeks 1–2 | 🟢 Low — structural refactors + new config store |
+| **Phase 1b** (next) | Item 5 (View Interface) | Part of Phase 1 | 🟢 Low — move logic to ViewInterface + CLIView |
 | **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
 | **Phase 4** | Item 10 (Staging Interaction Flow) | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
@@ -1932,18 +1937,41 @@ Item 7: Split Storage Interfaces
 | **Phase 6** | Item 6 (IndexManager deep integration) | Sub-task of Phase 3 | 🟢 Low — already done |
 | **Phase 7** | Item 8 (SummaryPolicy) | Sub-task of Phase 3 | 🟢 Low — already done |
 
-### Phase 1 Detail (Split Storage + View Interface)
+### Phase 1 Detail (Split Storage + Config — ✅ Complete)
 
 **Goal:** Establish the new file structure and interfaces without changing any logic.
 
-Steps:
-1. Create `storage/staging_store.py`, `storage/ledger_store.py`, `storage/index_store.py`, `storage/identity_store.py` with abstract interfaces (mirroring current `AbstractLedgerStore` methods split across them).
-2. Create `storage/implementations/` with the 4 file-based implementations.
-3. Keep the old `storage/interface.py` and `storage/file_store.py` working (backward compat).
-4. Create `interfaces/view.py` with `ViewInterface` abstract class.
-5. Create `cli/cli_view.py` implementing `ViewInterface` (moving `print`/`input` logic from `main.py`).
-6. Create `cli/strategies.py` (move `InteractiveCLIStrategy` from `core/sync_confirmation.py`).
-7. Write new tests — old tests should still pass unchanged.
+Commit: [`6b80b60`](https://github.com/.../commit/6b80b60)
+
+**Completed files (12 new files, 68 tests, all passing):**
+
+Abstract interfaces (storage/):
+- `storage/staging_store.py`    ← AbstractStagingStore (5 methods)
+- `storage/ledger_store.py`     ← AbstractLedgerStore (5 methods)
+- `storage/index_store.py`      ← AbstractIndexStore (2 methods)
+- `storage/identity_store.py`   ← AbstractIdentityStore (2 methods)
+- `storage/config_store.py`     ← AbstractConfigStore (2 methods)
+
+File implementations (storage/implementations/):
+- `storage/implementations/file_staging.py`  ← FileStagingStore
+- `storage/implementations/file_ledger.py`   ← FileLedgerStore
+- `storage/implementations/file_index.py`    ← FileIndexStore
+- `storage/implementations/file_identity.py` ← FileIdentityStore
+- `storage/implementations/file_config.py`   ← FileConfigStore
+
+Config manager:
+- `security/config_manager.py`  ← ConfigManager
+
+Tests:
+- `tests/test_phase1_storage_interfaces.py`  ← 68 tests
+
+**Key decisions during implementation:**
+- FileConfigStore handles empty/corrupt files gracefully (returns None for ConfigManager defaults)
+- FileLedgerStore supports negative index slicing (start=-2 = last 2 blocks)
+- truncate() returns removed blocks for inspection
+- ConfigManager._deep_merge preserves extra keys from overrides
+- Each store is fully independent — isolated file paths, no shared state
+- Old `storage/interface.py` and `storage/file_store.py` untouched (backward compat)
 
 ### Phase 2 Detail (plain: + Staging Service)
 
@@ -2002,7 +2030,22 @@ Steps:
 
 The migration introduces new files and classes but should not change existing behavior. The testing strategy is:
 
-### Unit Tests (new files)
+### Unit Tests (Phase 1 ✅ — 68 tests, all passing)
+
+| Component | File | Test Focus | Status |
+|-----------|------|------------|--------|
+| `FileStagingStore` | `storage/implementations/file_staging.py` | Read/write/append/remove/update, empty file, disk persistence | ✅ 12 tests |
+| `FileLedgerStore` | `storage/implementations/file_ledger.py` | Partial reads (start/end/negative), truncate, get_block_count, get_last_block, empty chain | ✅ 13 tests |
+| `FileIndexStore` | `storage/implementations/file_index.py` | Read/write/overwrite, missing file, disk persistence | ✅ 4 tests |
+| `FileIdentityStore` | `storage/implementations/file_identity.py` | Read (exists/missing), write/overwrite, disk persistence | ✅ 5 tests |
+| `FileConfigStore` | `storage/implementations/file_config.py` | Read (exists/missing/empty), write/roundtrip, disk persistence | ✅ 4 tests |
+| `ConfigManager` | `security/config_manager.py` | Defaults merge, dot-notation get, write, deep_merge, cache, edge cases | ✅ 11 tests |
+| Abstract contracts | — | Verify each abstract class cannot be instantiated | ✅ 5 tests |
+| Multi-store isolation | — | Verify 5 stores don't interfere with each other, all files created independently | ✅ 5 tests |
+| Edge cases | — | Corrupt JSON, empty files, remove/truncate on empty stores | ✅ 5 tests |
+| **Total** | `tests/test_phase1_storage_interfaces.py` | | **✅ 68 tests** |
+
+### Unit Tests (planned for future phases)
 
 | Component | Test Focus |
 |-----------|------------|
@@ -2015,9 +2058,7 @@ The migration introduces new files and classes but should not change existing be
 | `SummaryPolicy` | Each policy produces correct summary block sequence |
 | `SyncOrchestrator` | Full flow with mocks — device check, pull, decide, commit, push |
 | `CLIView` | Format strings, prompt parsing, edge cases (empty input, invalid choice) |
-| Each file store | Read/write/append/remove with temp files, edge cases (missing file, corrupt JSON) |
 | `DeviceIdentityProvider` | UUID generation, HMAC proof, cross-device verification, re-auth flow |
-| `ConfigManager` | Read/write, defaults merge, dot-notation get, corrupt JSON handling |
 | `StagingService.check_and_sync()` | 500ms timeout, offline fallback, merge correctness, push queued |
 | `MergeEngine` | Dedup by (title, start_epoch), remote-wins on ties, large merge sorting |
 
