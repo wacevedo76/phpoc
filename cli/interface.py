@@ -367,18 +367,18 @@ class CLIInterface:
         if year:
             _narrow(f"{year}-01-01", f"{year}-12-31")
 
-        # 2. Partial bounds (from_date, to_date)
+        # 2. Partial bounds (from_date, to_date) — override previous bounds
+        #    These are explicit user overrides. days/week/month/year set
+        #    auto-inferred bounds; --from/--to take priority.
         if from_date is not None:
             lo, _ = _parse_date_input(from_date, hint_year=hint_year)
             if lo is not None:
-                if from_str is None or lo > from_str:
-                    from_str = lo
+                from_str = lo
 
         if to_date is not None:
             _, hi = _parse_date_input(to_date, hint_year=hint_year)
             if hi is not None:
-                if to_str is None or hi < to_str:
-                    to_str = hi
+                to_str = hi
 
         # 3. Conflict detection
         if from_str is not None and to_str is not None and from_str > to_str:
