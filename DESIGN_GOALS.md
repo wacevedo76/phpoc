@@ -132,3 +132,14 @@ None.
 | R2 | Identity Fallback | 🔴 High | ✅ Resolved | Remote Sync, Export, Identity recovery |
 | R3 | KDF Strength | 🟡 Medium | ✅ Resolved | Remote Sync |
 | R4 | Content Proof | 🟡 Medium | ✅ Resolved | Reconciliation |
+
+## Migration Progress
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 — Split Storage + Config | ✅ | 5 storage interfaces + implementations, ConfigManager |
+| Phase 1b — View Interface | ✅ | ViewInterface + CLIView + strategies (0 `print()` in core) |
+| Phase 2 — Staging Service + Device ID | ✅ | `domain/staging/` + `security/device_identity.py` (112 tests) |
+| Phase 3 — Ledger Engine | ✅ | `domain/ledger/` — chain, index, summaries, engine (100 tests) |
+| Phase 4 — Staging Interaction Flow | ⏳ | Next — every-command sync with offline tolerance |
+| Phase 5 — Sync Orchestrator | ⏳ | Wiring StagingService + LedgerEngine + ViewInterface |

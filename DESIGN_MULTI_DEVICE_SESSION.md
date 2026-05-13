@@ -1,10 +1,10 @@
 # Multi-Device Session & Staging Architecture — Design Notes
 
 > Captured 2026-05-04 during an architectural discussion about Portable Export's downstream implications.
-> Updated 2026-05-13 — Phase 2 implementation complete (StagingService + DeviceIdentityProvider + MergeEngine).
+> Updated 2026-05-13 — Phase 2 (StagingService + DeviceIdentityProvider + MergeEngine) + Phase 3 (LedgerEngine) complete.
 >
-> **Status:** Most design decisions are now implemented in `domain/staging/` and `security/device_identity.py`.
-> See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) §Phase 2 for the current state.
+> **Status:** Phase 2 and Phase 3 implementation complete. `domain/staging/`, `security/device_identity.py`,
+> and `domain/ledger/` are all implemented. See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full status.
 > The sections below describe the *target* design — some fields (device_id_enc, transitions_enc, blob obfuscation)
 > are planned for Phases 4–5, not yet implemented.
 

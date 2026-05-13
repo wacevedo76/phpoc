@@ -8,8 +8,10 @@
 > See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `Phpoc-Architectual_Migration` (8 commits past main)
-- **Tests:** 610 total, 1 pre-existing failure (test_date_filters), no regressions
+- **Branch:** `Phpoc-Architectual_Migration` (17 commits past main)
+- **Tests:** 710 total, 1 pre-existing failure (test_date_filters), no regressions
+- **Phase 3 completion:** `domain/ledger/` — 5 files, 1,198 lines, 100 tests (chain, engine, index, summaries)
+- **New files (all phases):** 27 files, 442 tests
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** Clean — all changes committed
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
@@ -182,8 +184,11 @@ All open questions resolved in favor of the **Timeline Model**:
 | ✅ Done | **P1 — Format Spec (PHPSPEC.md)** | Standalone spec document (block structure, encryption, chain validation, content hash, blind index, staging, versioning). See [PHPSPEC.md](PHPSPEC.md). Includes `format_version` field, migration script `scripts/migrate_format_version.py`, and chain splitting mechanics in §9.4.5. | Done |
 | ✅ Done | **U2 — Recovery Chain Integrity** | `main.py recover` now re-chains all subsequent blocks. 5 tests in `tests/test_recovery_verify.py`. | Done |
 | ✅ Done | **D2 — Multi-Device Session & Staging** | Timeline model, DeviceIdentityProvider, AbstractStagingTransport, staging blob format. All Q5/Q6/Q7/D3 resolved. | Done — blocks P2/P3/P5/P6 removed |
-| 🥇 Highest | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | None |
-| 🥇 High | **P3 — Remote Sync (git-based)** | Implement `AbstractStagingTransport` + `GitStagingTransport`. Blob format in [PHPSPEC §8.5](PHPSPEC.md#85-multi-device-remote-staging). | None |
+| ✅ Done | **P9 — Migration: Phase 3 (Ledger Engine)** | 5 files in `domain/ledger/` — chain, engine, index, summaries. 100 tests. See commit `d972588`. | Phase 2 stores + interfaces |
+| 🥇 Highest | **Phase 4 — Staging Interaction Flow** | Wire every-command sync with 500ms timeout and offline tolerance into the staging interaction flow. | Phase 2 + Phase 3 complete |
+| 🥇 Highest | **Phase 5 — Sync Orchestrator** | Create `core/sync/orchestrator.py` — coordinator tying StagingService, LedgerEngine, and ViewInterface. | Phase 4 completed |
+| 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | Phase 5 (Sync Orchestrator can provide block I/O) |
+| 🥇 High | **P3 — Remote Sync (git-based)** | Implement `AbstractStagingTransport` + `GitStagingTransport`. Blob format in [PHPSPEC §8.5](PHPSPEC.md#85-multi-device-remote-staging). | Phase 2 alone provides infrastructure; needs Phase 5 integration |
 | 🥇 High | **P7 — Web Viewer (Phone POC)** | Lowest-barrier phone access: static HTML/JS page or PWA that reads ledger + staging blob. | P3 (transport) |
 | 🥇 High | **P5 — Mobile POC (Swift/Kotlin)** | Minimal phone app for reading/adding entries. | P3 (transport) |
 | 🥈 Medium | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
