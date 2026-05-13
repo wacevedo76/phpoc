@@ -113,7 +113,7 @@ All 16 tests pass. Manual tamper test confirms `content_hash` mismatch is detect
 | **Plausible deniability mode** | 🔮 Low | None |
 | **Multi-device staging sync** | 🔜 Medium | Phase 2 ✅ — `StagingService` + `MergeEngine` + `DeviceIdentityProvider` |
 | **Ledger Engine refactor** | 🔜 Medium | Phase 3 ✅ — 5 files in `domain/ledger/` (chain, engine, index, summaries) |
-| **Sync Orchestrator** | 🔮 Low | Phase 5 (planned) — coordinates StagingService + LedgerEngine + ViewInterface |
+| **Sync Orchestrator** | 🔮 Low | Phase 4 ✅ — `core/sync/` package: orchestrator, decision, transport |
 
 ### Quick Wins (No New Dependencies, Minimal Code) — ✅ All Done
 
@@ -123,4 +123,4 @@ All 16 tests pass. Manual tamper test confirms `content_hash` mismatch is detect
 4. ~~**R4 (content proof):**~~ ✅ Done — plaintext content hash
 5. ~~**Multi-device staging:**~~ ✅ Done — Phase 2: `domain/staging/` + `security/device_identity.py`
 
-All four roadmap blockers are resolved. All roadmap items are now **unblocked**. Architectural migration is through Phase 3 (27 files, 442 tests, 0 regressions).
+All four roadmap blockers are resolved. All roadmap items are now **unblocked**. Architectural migration is through Phase 4 (31 files, 779 tests, 0 regressions).

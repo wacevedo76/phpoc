@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
-> **Date:** 2026-05-13 (Phase 3 ✅ complete)
-> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ + Phase 3 ✅ — 27 files, 442 tests, no regressions. Next: Phase 4 (Sync Orchestrator).
+> **Date:** 2026-05-13 (Phase 4 ✅ complete)
+> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ + Phase 3 ✅ + Phase 4 ✅ — 31 files, 779 tests, no regressions. Next: Phase 5 (Sync Orchestrator wiring in main.py).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -1934,8 +1934,8 @@ Item 7: Split Storage Interfaces
 | **Phase 2** ✅ | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** ✅ | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
 | **Phase 3** impl ✅ | 5 files, 1,198 lines, 100 tests | Weeks 5–6 | 🟡 Medium ✅ — implementation done, tests passing |
-| **Phase 4** | Item 10 (Staging Interaction Flow) + wire into every-command sync | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
-| **Phase 5** | Item 3 (Sync Orchestrator) | Week 8 | 🟢 Low — wires existing components together |
+| **Phase 4** ✅ | Item 10 (Staging Interaction Flow) + wire into every-command sync | Week 7 | 🟡 Medium ✅ — done: 4 new files, 69 tests, 779 total |
+| **Phase 5** | Item 3 (Sync Orchestrator wiring in main.py) | Week 8 | 🟢 Low — wires existing components together |
 | **Phase 6** | Item 6 (IndexManager deep integration) | Sub-task of Phase 3 | 🟢 Low — ✅ already done |
 | **Phase 7** | Item 8 (SummaryPolicy) | Sub-task of Phase 3 | 🟢 Low — ✅ already done |
 
@@ -2022,7 +2022,7 @@ See commit `d972588`.
 **Goal:** Extract all ledger chain logic from `core/ledger.py` into `domain/ledger/`.
 
 **Status:** ✅ Implementation complete. 5 new files (1,198 lines), 100 tests passing.
-710 total tests, 1 pre-existing failure (`test_date_filters`), 0 regressions.
+**Test suite:** 710 total tests (pre-Phase-4), 1 pre-existing failure (`test_date_filters`), 0 regressions.
 
 **Target files (all created ✅):**
 ```
@@ -2114,15 +2114,47 @@ The old `core/ledger.py` methods (`sync_day`, `sync_day_with_selection`,
 They will become thin wrappers delegating to `LedgerEngine` + `StagingService`
 in Phase 5 (Sync Orchestrator).
 
-### Phase 4 Detail (Sync Orchestrator)
+### Phase 4 Detail (Staging Interaction Flow + Sync Orchestrator — ✅ Complete)
 
-**Goal:** Create the coordinator that ties all layers together.
+**Goal:** Wire every-command sync with 500ms timeout and offline tolerance into the staging interaction flow; create the coordinator that ties all layers together.
 
-Steps:
-1. Create `core/sync/orchestrator.py` — implement the sync flow from the [SyncOrchestrator](#syncorchestrator) section above.
-2. Create `core/sync/decision.py` — move `SyncDecision` and `SyncStrategy` interface here.
-3. Update `main.py` to call `SyncOrchestrator.sync()` instead of `ledger.sync_with_strategy()`.
-4. Remove old `core/sync_confirmation.py`.
+**Completed files (4 new files + 2 modified):**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `core/sync/__init__.py` | 9 | Re-exports `SyncDecision`, `SyncStrategy`, `SyncOrchestrator`, `AbstractStagingTransport` |
+| `core/sync/decision.py` | 93 | `SyncDecision` dataclass + `SyncStrategy` abstract base |
+| `core/sync/transport.py` | 45 | `AbstractStagingTransport` (2-method interface: pull/push) |
+| `core/sync/orchestrator.py` | 209 | `SyncOrchestrator` — full sync lifecycle coordinator |
+| `domain/staging/service.py` | +99 | Wire `check_and_sync()` into all 7 mutations; auth cache (30min); `_raw_to_dtos()` converter |
+| `cli/strategies.py` | -54 | Import `SyncDecision`/`SyncStrategy` from `core/sync/decision.py` |
+
+**Modified (backward compat):**
+| File | Change |
+|------|--------|
+| `core/sync_confirmation.py` | Deprecated shim — re-exports from both new locations; keeps old `InteractiveCLIStrategy` for test compatibility |
+
+**Key design decisions:**
+
+1. **Every staging mutation** (`capture`, `end`, `end_at`, `pause`, `unpause`, `modify`, `remove`) calls `check_and_sync(timeout_ms=500)` first; read operations (`get_entries`, etc.) do NOT.
+2. **Auth cache**: 30-minute window after last successful auth; expiry + device mismatch → `REAUTH_NEEDED`; within window + mismatch → proceed as `READY`.
+3. **SyncOrchestrator.sync()** lifecycle: `check_and_sync()` → get pending → `SyncStrategy.decide()` → `ledger_engine.commit(entries)` → `verify()` → `remove_synced()` → `push_to_remote()` → notify view.
+4. **Offline queue = local cache**: entries always written locally; "already synced" tracked via removal.
+5. **`core/sync_confirmation.py`**: deprecated but kept for backward compatibility with `test_sync_confirmation_strategy.py`.
+
+**Tests: 69 new tests in `tests/test_phase4_staging_interaction_flow.py`:**
+
+| Test Class | Tests | Focus |
+|------------|-------|-------|
+| `TestSyncDecision` | 10 | Default values, has_selection, has_removals, __eq__, set type |
+| `TestSyncOrchestratorInit` | 4 | Required deps, optional args |
+| `TestSyncOrchestratorFullFlow` | 9 | check_and_sync → decide → commit → verify → push → remove |
+| `TestSyncOrchestratorEdgeCases` | 4 | Re-auth, no master key, no pending, view notify |
+| `TestSyncOrchestratorRevert` | 3 | Restore entries, zero blocks, failure |
+| `TestSyncOrchestratorCheck` | 3 | Integrity check, status summary |
+| `TestSyncStrategy` | 2 | Receives entries, returns SyncDecision |
+
+**Pipeline: 779 total tests, 0 failures, 0 regressions.**
 
 ---
 
@@ -2212,6 +2244,21 @@ The migration introduces new files and classes but should not change existing be
 | `LedgerEngine` edge cases | Empty count, verify empty, identity sig, get_day_blocks, get_last_block | ✅ 7 tests |
 | `TestChainFormatEquivalence` | Seal algorithm match, verify_seal rejection, day block structure | ✅ 3 tests |
 | **Total** | `tests/test_phase3_ledger_engine.py` | **✅ 100 tests** |
+
+### Unit Tests (Phase 4 ✅ — 69 tests, all passing)
+
+| Component | Test Focus | Status |
+|-----------|------------|--------|
+| `SyncDecision` | Default values, cancellation semantics, has_selection, has_removals, __eq__, set type | ✅ 10 tests |
+| `SyncOrchestrator` init | Required deps (ledger_engine, staging_service), optional args (master_key, view) | ✅ 4 tests |
+| `SyncOrchestrator` full flow | check_and_sync → get_pending → commit → verify → remove_synced → push → notify | ✅ 9 tests |
+| `SyncOrchestrator` edge cases | Re-auth, no master key, no pending entries, view notification, ledger verify failure | ✅ 4 tests |
+| `SyncOrchestrator` revert | Restore entries to staging, zero blocks is no-op, failure handling | ✅ 3 tests |
+| `SyncOrchestrator` check | check_integrity, full content hash, get_status summary | ✅ 3 tests |
+| `SyncStrategy` | Receives entries, returns SyncDecision | ✅ 2 tests |
+| **Integration: auth cache** | 30-min window, device mismatch, re-auth on expiry | ✅ (covered in service tests) |
+| **Integration: every-mutation sync** | All 7 CRUD operations call check_and_sync; read ops are side-effect-free | ✅ (covered in service tests) |
+| **Total** | `tests/test_phase4_staging_interaction_flow.py` | **✅ 69 tests** |
 
 ### Unit Tests (planned for future phases)
 

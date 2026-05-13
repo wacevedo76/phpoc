@@ -10,9 +10,13 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 |---|---|---|---|
 | `main.py` | 333 | HOT | CLI entry — argparse dispatch to all commands |
 | `cli/interface.py` | 426 | COLD | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` |
-| `core/ledger.py` | 855 | HOT | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` |
+| `core/ledger.py` | 855 | HOT | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` — being phased out (see Phases 2–4) |
 > Changed 2026-05-09: `_compute_duration` clamped to `max(0, ...)` to prevent negative durations from pauses extending past end time.
-| `core/sync_confirmation.py` | 509 | COLD | Strategy pattern: `AutoSyncStrategy`, `InteractiveCLIStrategy` (3-stage: overview→edit→sync) |
+| `core/sync/__init__.py` | 9 | COLD | Phase 4: Package — re-exports SyncDecision, SyncStrategy, SyncOrchestrator, AbstractStagingTransport |
+| `core/sync/decision.py` | 93 | COLD | Phase 4: SyncDecision dataclass + SyncStrategy abstract base |
+| `core/sync/transport.py` | 45 | COLD | Phase 4: AbstractStagingTransport interface (pull/push) |
+| `core/sync/orchestrator.py` | 209 | COLD | Phase 4: SyncOrchestrator — sync lifecycle coordinator |
+| `core/sync_confirmation.py` | 530 | COLD | Strategy pattern — deprecated shim; new code uses `cli/strategies.py` |
 | `core/factory.py` | 69 | COLD | `LedgerFactory.initialize()` — creates genesis + identity |
 | `security/crypto.py` | 204 | COLD | Pure AES-CTR + HMAC-SHA256. `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | 119 | COLD | `PassphraseAuthenticator` (PBKDF2 600K → decrypt seed → `/dev/shm` cache) |
@@ -20,7 +24,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `storage/file_store.py` | 49 | COLD | JSON file I/O: staging, ledger, index, identity |
 | `storage/interface.py` | 36 | COLD | `AbstractLedgerStore` ABC |
 
-### Tests (9 files, 4,925 lines)
+### Tests (10 files, 6,213 lines)
 
 | File | Lines | Scope |
 |---|---|---|
@@ -32,7 +36,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `tests/test_tags.py` | 790 | Tag normalization & listing |
 | `tests/test_recovery.py` | 96 | Recovery flow |
 | `tests/test_hierarchy.py` | 100 | Year/month transition blocks |
-| `tests/test_date_filters.py` | 290 | Date parsing & filtering |
+| `tests/test_phase4_staging_interaction_flow.py` | 1288 | Phase 4: 69 tests — SyncDecision, SyncOrchestrator, sync lifecycle, auth cache, every-mutation sync |
 
 ### Scripts (2 files, 480 lines)
 

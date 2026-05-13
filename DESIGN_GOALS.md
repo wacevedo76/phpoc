@@ -141,5 +141,5 @@ None.
 | Phase 1b — View Interface | ✅ | ViewInterface + CLIView + strategies (0 `print()` in core) |
 | Phase 2 — Staging Service + Device ID | ✅ | `domain/staging/` + `security/device_identity.py` (112 tests) |
 | Phase 3 — Ledger Engine | ✅ | `domain/ledger/` — chain, index, summaries, engine (100 tests) |
-| Phase 4 — Staging Interaction Flow | ⏳ | Next — every-command sync with offline tolerance |
-| Phase 5 — Sync Orchestrator | ⏳ | Wiring StagingService + LedgerEngine + ViewInterface |
+| Phase 4 — Staging Interaction Flow + Sync Orchestrator | ✅ | `core/sync/` package: decision, transport, orchestrator + wired mutations (69 tests) |
+| Phase 5 — Sync Orchestrator wiring in main.py | ⏳ | Replace `ledger.sync_with_strategy()` with `SyncOrchestrator.sync()`, remove `core/sync_confirmation.py` |
