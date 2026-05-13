@@ -1,6 +1,6 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
-> **Date:** 2026-05-10 (updated 2026-05-13)
+> **Date:** 2026-05-13 (Phase 2 complete)
 > **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ — 22 files, 242 tests, no regressions. Next: Phase 3 (Ledger Engine).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
@@ -2018,12 +2018,64 @@ Security:
 
 **Goal:** Extract all ledger chain logic from `core/ledger.py` into `domain/ledger/`.
 
-Steps:
-1. Create `domain/ledger/chain.py` — move chain operations (seal, sign, append, verify).
-2. Create `domain/ledger/index_manager.py` — move index update/query.
-3. Create `domain/ledger/summary_policy.py` — extract summary insertion logic.
-4. Create `domain/ledger/engine.py` — high-level commit/verify/revert methods.
-5. The old `core/ledger.py` methods become thin wrappers (temporary backward compat).
+**Target files:**
+```
+domain/ledger/
+  ├── chain.py           ← LedgerChain (local chain operations)
+  ├── index_manager.py   ← IndexManager (blind index)
+  ├── summary_policy.py  ← SummaryPolicy (abstract + implementations)
+  └── engine.py          ← LedgerEngine (public API facade)
+```
+
+**Approach:** Test-first. Write `tests/test_phase3_ledger_engine.py` before implementing,
+covering all methods extracted from `core/ledger.py`.
+
+**LedgerChain (`domain/ledger/chain.py`):**
+Move chain operations currently in `core/ledger.py`:
+- `compute_seal()` / `verify_seal()` — HMAC seal over block content
+- `compute_signature()` / `verify_signature()` — HMAC signature using identity secret
+- `read_all()` — full chain read
+- `get_block(index)` / `get_last_block()` — single block access
+- `append(block)` — append single block
+- `append_blocks(blocks)` — batch append (for remote sync)
+- `truncate(keep_count)` — removes last N blocks, returns removed
+- `verify_block(block, prev_hash)` — validate linkage, seal, signature
+- `checksum_chain()` — verify entire chain integrity
+- `verify_all_entry_hashes()` — verify every entry hash in every day block
+- `verify_all_content_hashes()` — deep verify content hashes
+
+**IndexManager (`domain/ledger/index_manager.py`):**
+Move index operations currently in `core/ledger.py`:
+- `update(date, title, duration_delta)` — add/subtract duration
+- `query(from_date, to_date)` — aggregate durations over range
+- `rebuild_from_chain(ledger, decrypt_fn)` — full rebuild
+- `get_all()` / `clear()` — raw access
+
+**SummaryPolicy (`domain/ledger/summary_policy.py`):**
+Extract summary insertion logic from `sync_day()` / `sync_day_with_selection()`:
+- `SummaryPolicy` abstract base class
+- `YearMonthSummaryPolicy` (current behavior — year + month summaries)
+- `YearOnlySummaryPolicy`, `WeeklySummaryPolicy`, `NoSummaryPolicy`
+
+**LedgerEngine (`domain/ledger/engine.py`):**
+High-level API:
+- `commit(entries)` — group by date, run summary policy, build day blocks, append to chain, update index
+- `verify(full_check)` — verify chain integrity + optional content hash deep check
+- `revert(count)` — truncate N day blocks, restore entries to staging, subtract from index
+- `query_index(from_date, to_date)` — delegate to IndexManager
+- `rebuild_index()` — rebuild from chain
+- `get_block_count()` / `get_day_blocks()` — chain introspection
+
+**Critical constraint:** Chain format must remain IDENTICAL. Block generation logic
+(seal, sign, hash computation) is extracted without changing the algorithm.
+Verify by running `verify()` on an existing ledger before and after —
+hash chain must produce identical results.
+
+**Backward compatibility:**
+The old `core/ledger.py` methods (`sync_day`, `sync_day_with_selection`,
+`sync_with_strategy`, `verify`, `revert_entries`, etc.) become thin wrappers
+that delegate to `LedgerEngine` + `StagingService`, ensuring all existing
+callers (tests, main.py, CLI) continue working without changes.
 
 ### Phase 4 Detail (Sync Orchestrator)
 
@@ -2075,22 +2127,40 @@ The migration introduces new files and classes but should not change existing be
 | Edge cases | — | Corrupt JSON, empty files, remove/truncate on empty stores | ✅ 5 tests |
 | **Total** | `tests/test_phase1_storage_interfaces.py` | | **✅ 68 tests** |
 
+### Unit Tests (Phase 1b ✅ — 62 tests, all passing)
+
+| Component | File | Test Focus | Status |
+|-----------|------|------------|--------|
+| `ViewInterface` | `domain/interfaces/view.py` | All 20 methods, no-op defaults, string return types | ✅ 5 tests |
+| `CLIView` | `cli/cli_view.py` | Entry formatting, tag rendering, interactive workflows, prompt parsing, edge cases | ✅ 44 tests |
+| `InteractiveCLIStrategy` | `cli/strategies.py` | Three-stage flow, edit menu, sync confirmation, empty state | ✅ 8 tests |
+| `AutoSyncStrategy` | `cli/strategies.py` | Selects all, empty pending returns cancelled | ✅ 3 tests |
+| `SyncDecision` | `cli/strategies.py` | Properties, cancellation, empty state | ✅ 2 tests |
+| **Total** | `tests/test_phase1b_view_interface.py` | | **✅ 62 tests** |
+
+### Unit Tests (Phase 2 ✅ — 112 tests, all passing)
+
+| Component | File | Test Focus | Status |
+|-----------|------|------------|--------|
+| `LocalStagingCache` | `domain/staging/local_cache.py` | `plain:` encode/decode, CRUD operations, tag normalization, duration/pause computation, edge cases (corrupt entries) | ✅ 38 tests |
+| `MergeEngine` | `domain/staging/merge_engine.py` | Timestamp dedup, remote-wins on ties, sorting, empty sources, large merge | ✅ 12 tests |
+| `RemoteStagingSync` | `domain/staging/remote_sync.py` | Device ID check, pull/push round-trip, overwrite semantics | ✅ 9 tests |
+| `StagingService` | `domain/staging/service.py` | All CRUD methods, no `plain:` leakage, pause/unpause, modify, remove, queries, check_and_sync timeout | ✅ 53 tests |
+| `SyncCheckResult` | `domain/staging/remote_sync.py` | Enum values, issubclass | ✅ 4 tests |
+| `RandomUUIDDeviceIdentityProvider` | `security/device_identity.py` | UUID4 format, HMAC proof, caching, config persistence, verify/check identity variants | ✅ 22 tests |
+| `AbstractDeviceIdentityProvider` | `security/device_identity.py` | Cannot instantiate abstract | ✅ 1 test |
+| **Total** | `tests/test_phase2_staging_service.py` + `tests/test_phase2_device_identity.py` | | **✅ 112 tests** |
+
 ### Unit Tests (planned for future phases)
 
 | Component | Test Focus |
 |-----------|------------|
-| `LocalStagingCache` | `plain:` encode/decode, CRUD operations, edge cases (empty staging, corrupt entries) |
-| `RemoteStagingSync` | Device ID check, pull/push round-trip, blob obfuscation |
-| `MergeEngine` | Timestamp merge, deduplication, remote-wins on ties |
-| `StagingService` | All CRUD methods return correct DTOs, no `plain:` leakage |
 | `LedgerChain` | Seal computation, signature, append, truncate, verify_block |
 | `IndexManager` | Update (positive/negative), query (date range), rebuild_from_chain |
 | `SummaryPolicy` | Each policy produces correct summary block sequence |
 | `SyncOrchestrator` | Full flow with mocks — device check, pull, decide, commit, push |
-| `CLIView` | Format strings, prompt parsing, edge cases (empty input, invalid choice) |
-| `DeviceIdentityProvider` | UUID generation, HMAC proof, cross-device verification, re-auth flow |
-| `StagingService.check_and_sync()` | 500ms timeout, offline fallback, merge correctness, push queued |
-| `MergeEngine` | Dedup by (title, start_epoch), remote-wins on ties, large merge sorting |
+| `LedgerRemoteSync` | Incremental push/pull, block count queries |
+| `ChainSplitter` | Archive, export by date range |
 
 ### Integration Tests (update existing)
 

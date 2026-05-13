@@ -4,11 +4,12 @@
 > **Key insight:** Cross-device staging is an attack vector that must be encrypted. Direction B was chosen: shared encrypted staging with a single active session cookie per device.
 > **Design document:** `DESIGN_MULTI_DEVICE_SESSION.md` (saved 2026-05-04)
 > **Also discussed:** Equality correlation problem for `device_id` field. Proposed solution: default field in every entry, randomized encryption, keyed-HMAC proof for attribution.
-> **Status:** 🟡 In progress — user paused discussion, will resume later.
+> **Status:** ✅ Implemented in Phase 2 — `security/device_identity.py`, `domain/staging/` complete.
+> See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `main`
-- **Tests:** All passing (modular, pause, tags, sync_confirmation, hierarchy, recovery, date_filters)
+- **Branch:** `Phpoc-Architectual_Migration` (8 commits past main)
+- **Tests:** 610 total, 1 pre-existing failure (test_date_filters), no regressions
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** Clean — all changes committed
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)

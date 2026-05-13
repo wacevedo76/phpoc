@@ -111,6 +111,8 @@ All 16 tests pass. Manual tamper test confirms `content_hash` mismatch is detect
 | **Shareable Export** (`phpoc export --public`) | 🔮 Low | ~~R1~~ ✅ |
 | **Single-file export** | 🔮 Low | ~~R2~~ ✅ — identity embedded in genesis |
 | **Plausible deniability mode** | 🔮 Low | None |
+| **Multi-device staging sync** | 🔜 Medium | Phase 2 ✅ — `StagingService` + `MergeEngine` + `DeviceIdentityProvider` |
+| **Ledger Engine refactor** | 🔜 Medium | Next — Phase 3 (extract from `core/ledger.py`) |
 
 ### Quick Wins (No New Dependencies, Minimal Code) — ✅ All Done
 
@@ -118,5 +120,6 @@ All 16 tests pass. Manual tamper test confirms `content_hash` mismatch is detect
 2. ~~**R3 (PBKDF2 600K):**~~ ✅ Done — iterations bumped
 3. ~~**R2 (identity fallback):**~~ ✅ Done — genesis fallback
 4. ~~**R4 (content proof):**~~ ✅ Done — plaintext content hash
+5. ~~**Multi-device staging:**~~ ✅ Done — Phase 2: `domain/staging/` + `security/device_identity.py`
 
-All four roadmap blockers are resolved. All roadmap items are now **unblocked**.
+All four roadmap blockers are resolved. All roadmap items are now **unblocked**. Architectural migration is through Phase 2 (22 new files, 242 tests).

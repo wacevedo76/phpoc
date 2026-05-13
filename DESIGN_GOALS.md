@@ -96,8 +96,10 @@ PHPOC exists as a **reference implementation** (CLI tool in pure Python, zero ex
 ## 4. User Experience & Accessibility (Reference Implementation)
 
 - **Lazy Authentication (RAM Caching):** Session-memory caching allows for "once-per-day" authentication, keeping daily tracking frictionless.
-- **Modular Interfaces:** The core is a "Headless Engine" usable by CLI, Web (e.g., Django), or Mobile interfaces.
-- **Storage Independence:** The storage layer is abstracted (`AbstractLedgerStore`) to support local JSON, SQL databases, or remote syncing.
+- **Modular Interfaces:** The core is a "Headless Engine" usable by CLI, Web (e.g., Django), or Mobile interfaces. Staging is served by `StagingService` (decoupled from view layer).
+- **Storage Independence:** The storage layer is abstracted (5 split interfaces: `AbstractStagingStore`, `AbstractLedgerStore`, `AbstractIndexStore`, `AbstractIdentityStore`, `AbstractConfigStore`) to support local JSON, SQL databases, or remote syncing.
+- **Device Identity:** Multi-device support via `AbstractDeviceIdentityProvider` — each device gets a random UUID4 (persisted in config) with HMAC-SHA256 proof derived from the master key.
+- **Staging Merge Engine:** `MergeEngine` deduplicates cross-device entries by `(title, start_epoch)`, remote wins on ties — ensures additive, non-conflicting sync.
 - **General Activity Tracking:** The system is not limited to "habits." Any personal activity (meals, social events, creative work, exercise, learning, family time, etc.) can be tracked using title, tags, duration, comment, and media links. This fulfills the original Personal History vision of a complete life journal.
 - **Rich Date Filtering:** `--date`, `--week`, `--month`, `--year`, `--from`, `--to` with flexible formats and chaining via intersection.
 - **Shareable Proof:** A portable export (planned) provides a verifiable, privacy-controlled snapshot of selected life events.
