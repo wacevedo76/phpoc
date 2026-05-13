@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
 > **Date:** 2026-05-10 (updated 2026-05-13)
-> **Status:** Phase 1 ✅ — 12 files, 68 tests, no regressions. Next: Phase 1b (View Interface) or Phase 2 (Staging Service + Device ID).
+> **Status:** Phase 1 ✅ + Phase 1b ✅ — 17 files, 130 tests, no regressions. Next: Phase 2 (Staging Service + Device ID).
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -1930,7 +1930,7 @@ Item 7: Split Storage Interfaces
 | Phase | Items | Duration Estimate | Risk Level |
 |-------|-------|-------------------|------------|
 | **Phase 1** ✅ | Item 7 (Split Storage) + Item 11 (Config) | Weeks 1–2 | 🟢 Low — structural refactors + new config store |
-| **Phase 1b** (next) | Item 5 (View Interface) | Part of Phase 1 | 🟢 Low — move logic to ViewInterface + CLIView |
+| **Phase 1b** ✅ | Item 5 (View Interface) | Part of Phase 1 | 🟢 Low — move logic to ViewInterface + CLIView |
 | **Phase 2** | Item 4 (Eliminate plain:) + Item 1 (Staging Service) + Item 9 (Device ID) | Weeks 3–4 | 🟡 Medium — extract from core/ledger.py, new identity provider |
 | **Phase 3** | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
 | **Phase 4** | Item 10 (Staging Interaction Flow) | Week 7 | 🟡 Medium — integrates every-command sync into Item 1 |
@@ -1940,39 +1940,48 @@ Item 7: Split Storage Interfaces
 
 ### Phase 1 Detail (Split Storage + Config — ✅ Complete)
 
-**Goal:** Establish the new file structure and interfaces without changing any logic.
+See commit [`6b80b60`](https://github.com/.../commit/6b80b60).
 
-Commit: [`6b80b60`](https://github.com/.../commit/6b80b60)
+**Completed files:**
 
-**Completed files (12 new files, 68 tests, all passing):**
+(see 12-file listing above)
 
-Abstract interfaces (storage/):
-- `storage/staging_store.py`    ← AbstractStagingStore (5 methods)
-- `storage/ledger_store.py`     ← AbstractLedgerStore (5 methods)
-- `storage/index_store.py`      ← AbstractIndexStore (2 methods)
-- `storage/identity_store.py`   ← AbstractIdentityStore (2 methods)
-- `storage/config_store.py`     ← AbstractConfigStore (2 methods)
+### Phase 1b Detail (View Interface — ✅ Complete)
 
-File implementations (storage/implementations/):
-- `storage/implementations/file_staging.py`  ← FileStagingStore
-- `storage/implementations/file_ledger.py`   ← FileLedgerStore
-- `storage/implementations/file_index.py`    ← FileIndexStore
-- `storage/implementations/file_identity.py` ← FileIdentityStore
-- `storage/implementations/file_config.py`   ← FileConfigStore
+See commit [`ab86b8b`](https://github.com/.../commit/ab86b8b).
 
-Config manager:
-- `security/config_manager.py`  ← ConfigManager
+**Completed files (5 new files, 62 tests):**
+
+Abstract interface:
+- `domain/interfaces/view.py`  ← ViewInterface (14 display + 6 input methods, all no-op defaults)
+
+CLI files (extracted from main.py, cli/interface.py, core/sync_confirmation.py):
+- `cli/cli_parsers.py`         ← parse_time_input() (from main.py)
+- `cli/cli_view.py`            ← CLIView(ViewInterface) — 830 lines
+- `cli/strategies.py`          ← InteractiveCLIStrategy + AutoSyncStrategy
+                                   + SyncDecision + SyncStrategy
 
 Tests:
-- `tests/test_phase1_storage_interfaces.py`  ← 68 tests
+- `tests/test_phase1b_view_interface.py`  ← 62 tests
 
-**Key decisions during implementation:**
-- FileConfigStore handles empty/corrupt files gracefully (returns None for ConfigManager defaults)
-- FileLedgerStore supports negative index slicing (start=-2 = last 2 blocks)
-- truncate() returns removed blocks for inspection
-- ConfigManager._deep_merge preserves extra keys from overrides
-- Each store is fully independent — isolated file paths, no shared state
-- Old `storage/interface.py` and `storage/file_store.py` untouched (backward compat)
+**What moved where (all CLI code, 0 domain changes):**
+
+| Source | Target |
+|--------|--------|
+| `main.py` `_parse_time_input()` | `cli/cli_parsers.py` `parse_time_input()` |
+| `main.py` `_handle_modify()` | `cli/cli_view.py` `interactive_modify()` |
+| `main.py` `_handle_remove()` | `cli/cli_view.py` `interactive_remove()` |
+| `main.py` `_handle_review()` | `cli/cli_view.py` `interactive_review()` |
+| `main.py` `_print_staging_line()` | `cli/cli_view.py` `_print_staging_line()` |
+| `main.py` `_list_tags()` | `cli/cli_view.py` `render_tags()` |
+| `cli/interface.py` `CLIInterface` | `cli/cli_view.py` `CLIView` (all methods) |
+| `core/sync_confirmation.py` strategies | `cli/strategies.py` |
+
+**Key design decisions:**
+- ViewInterface uses duck-typed abstract with no-op defaults (not ABC) — views override only what their medium supports
+- CLIView takes a `ledger` argument for decryption; this coupling will be removed in Phase 2 when `plain:` is eliminated
+- InteractiveCLIStrategy delegates ALL I/O to ViewInterface — it contains zero `print()` or `input()` calls
+- SyncDecision is a plain class (not dataclass) to avoid coupling strategies.py to Python stdlib
 
 ### Phase 2 Detail (plain: + Staging Service)
 
