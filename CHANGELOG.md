@@ -2,7 +2,23 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
-## [0.4.1] — f7f41f9
+## [0.4.2] — 3ba470f (Phpoc-Architectual_Migration branch merged to main)
+
+### Architectural Migration Complete
+
+All 7 phases of the architectural migration from monolithic `core/ledger.py` to a layered MVC-like structure are complete and merged.
+
+**Key outcomes:**
+- **Phase 1:** Split storage interfaces (5 abstract stores + 5 file implementations)
+- **Phase 1b:** Abstract `ViewInterface` + `CLIView` + `InteractiveCLIStrategy`
+- **Phase 2:** `StagingService` + `LocalStagingCache` + `MergeEngine` + `RemoteStagingSync` + `DeviceIdentityProvider` — `plain:` prefix fully internalized
+- **Phase 3:** `LedgerEngine` + `LedgerChain` + `IndexManager` + `SummaryPolicy` — chain logic extracted with format equivalence verified
+- **Phase 4:** `SyncOrchestrator` + every-command sync with 500ms timeout / offline tolerance
+- **Phase 5:** `SyncOrchestrator` wired into `main.py` replacing old sync path
+- **Phase 6:** Deep integration — `CLIInterface` migration, backward compat shims, equivalence tests
+- **Phase 7:** XDG config file (`config.json`), `phpoc config {show,get,set,init}` subcommands, `--dir`/`--config` flags, env var overrides
+
+**Metrics:** 941 tests, 0 failures, 0 regressions. 17,000+ lines added (new domain/core/cli layers), 1,300 lines removed (legacy).
 
 ### Fixed
 - **Recovery command breaks chain integrity** — `recover` modified the genesis block

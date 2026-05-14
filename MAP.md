@@ -98,7 +98,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | Run all tests | `PYTHONPATH=. python3 -m unittest discover -s tests` |
 | Run single test file | `PYTHONPATH=. python3 -m unittest tests.test_<name>` |
 | Run single test | `PYTHONPATH=. python3 -m unittest tests.test_<name>.TestClass.test_method` |
-| Test count | 936/936 passing |
+| Test count | 941/941 passing |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands
