@@ -2,7 +2,7 @@ import json
 import time
 import calendar
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from security.crypto import AbstractCryptoManager
 from domain.staging.service import StagingService
@@ -239,15 +239,71 @@ class CLIInterface:
                     staged_by_date[date_str] = []
                 staged_by_date[date_str].append({"source": "staged", "data": entry["data"], "date": date_str})
 
-        # Combine dates from both sources
+        # --- P11 Fix B: Collect spanning entries from previous day ---
+        # For each date in range, peek at the previous day's synced block and
+        # surface entries that span into the target date. Only include if the
+        # entry's original date is OUTSIDE the filter range (dedup guard).
+        peek_entries = {}  # {target_date_str: [entry_dict, ...]}
         all_dates = set(list(synced_by_date.keys()) + list(staged_by_date.keys()))
 
+        def _date_in_range(d):
+            if from_date and d < from_date:
+                return False
+            if to_date and d > to_date:
+                return False
+            return True
+
+        if source in ['synced', 'all'] and (from_date is not None or to_date is not None):
+            # Build a reverse lookup: for each date in range, find its previous day
+            for date_str in sorted(all_dates):
+                if not _date_in_range(date_str):
+                    continue
+                # Compute previous day
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                prev_date = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+                if prev_date not in synced_by_date:
+                    continue
+                # Check each entry in the previous day's block
+                for entry_data in synced_by_date[prev_date]:
+                    entry = entry_data["data"]
+                    start_val = entry.get("startTime_enc")
+                    end_val = entry.get("endTime_enc")
+                    if not end_val:
+                        continue
+                    # Decrypt or plain: prefix
+                    try:
+                        if start_val and start_val.startswith("plain:"):
+                            start_epoch = int(start_val[6:])
+                        else:
+                            start_epoch = int(self._crypto.decrypt(start_val))
+                        if end_val.startswith("plain:"):
+                            stop_epoch = int(end_val[6:])
+                        else:
+                            stop_epoch = int(self._crypto.decrypt(end_val))
+                    except Exception:
+                        continue
+                    # Guard: must have valid end > start
+                    if stop_epoch <= start_epoch:
+                        continue
+                    # Check if it spans into the target date
+                    start_date = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+                    end_date = time.strftime("%Y-%m-%d", time.gmtime(stop_epoch // 1000))
+                    if end_date != start_date and end_date == date_str:
+                        # Dedup: only include if original date is OUTSIDE the filter range
+                        if not _date_in_range(start_date):
+                            if date_str not in peek_entries:
+                                peek_entries[date_str] = []
+                            peek_entries[date_str].append(entry_data)
+
+        # Combine dates from both sources, including any dates that only have peeked entries
+        all_dates = set(list(synced_by_date.keys()) + list(staged_by_date.keys()) + list(peek_entries.keys()))
+
         for date_str in sorted(all_dates):
-            if (from_date and date_str < from_date) or (to_date and date_str > to_date):
+            if not _date_in_range(date_str):
                 continue
 
             # Skip if source filtering doesn't include this date's data
-            if source == 'synced' and date_str not in synced_by_date:
+            if source == 'synced' and date_str not in synced_by_date and date_str not in peek_entries:
                 continue
             if source == 'staged' and date_str not in staged_by_date:
                 continue
@@ -255,10 +311,16 @@ class CLIInterface:
             # Print date header
             print(f"\nDate: {date_str}")
 
-            # Process synced entries for this date
-            if source in ['synced', 'all'] and date_str in synced_by_date:
-                for entry_data in synced_by_date[date_str]:
-                    self._print_entry(entry_data)
+            # Process synced entries for this date (including peeked entries)
+            if source in ['synced', 'all']:
+                # Own entries first
+                if date_str in synced_by_date:
+                    for entry_data in synced_by_date[date_str]:
+                        self._print_entry(entry_data)
+                # Then peeked spanning entries from previous day
+                if date_str in peek_entries:
+                    for entry_data in peek_entries[date_str]:
+                        self._print_entry(entry_data)
 
             # Process staged entries for this date
             if source in ['staged', 'all'] and date_str in staged_by_date:
@@ -428,9 +490,6 @@ class CLIInterface:
         else:
             stop_epoch = None
 
-        start_str = time.strftime("%H:%M", time.localtime(start_epoch/1000))
-        stop_str = time.strftime("%H:%M", time.localtime(stop_epoch/1000)) if stop_epoch else "??"
-
         meta_enc = data.get("metadata_enc")
         if meta_enc:
             if meta_enc.startswith("plain:"):
@@ -440,7 +499,21 @@ class CLIInterface:
         else:
             meta = {}
 
+        start_str = time.strftime("%H:%M", time.localtime(start_epoch/1000))
+        stop_str = time.strftime("%H:%M", time.localtime(stop_epoch/1000)) if stop_epoch else "??"
+
+        # --- P11 Fix A: Spanning marker ---
+        # Detect entries that cross midnight: if the UTC end date differs from
+        # the UTC start date (and the entry has a valid end time after start),
+        # append a visual indicator.
+        marker = ""
+        if stop_epoch is not None and stop_epoch > start_epoch:
+            start_date = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+            end_date = time.strftime("%Y-%m-%d", time.gmtime(stop_epoch // 1000))
+            if end_date != start_date:
+                marker = " \u23ed"  # ⏭ skip-to-next-track symbol
+
         # Add source indicator
         source_indicator = " (Staged)" if entry_data["source"] == "staged" else ""
-        print(f"  [{start_str} - {stop_str}] {data['title']}{source_indicator} ({data['duration'] // 60000}m)")
+        print(f"  [{start_str} - {stop_str}] {data['title']}{marker}{source_indicator} ({data['duration'] // 60000}m)")
         if meta: print(f"    Metadata: {meta}")

@@ -91,9 +91,28 @@ def parse_time_input(value_str: str, date_str: str,
             date_parts = date_str.split("-")
             h, m = int(parts[0]), int(parts[1])
             s = int(parts[2]) if len(parts) == 3 else 0
+
+            # --- P11: Hour wrapping (h >= 24) ---
+            # Wrap hours beyond 23 into extra days.
+            extra_days = h // 24
+            h = h % 24
+
             dt = datetime(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
                           h, m, s)
             result = int(dt.timestamp() * 1000)
+
+            # Roll forward by extra days from hour wrapping
+            if extra_days:
+                result += extra_days * 86400000
+
+            # --- P11: 00:00 auto-advance ---
+            # If the parsed time is before start_epoch AND hour == 0 (it's midnight),
+            # advance to the next day. This handles the case where the user types
+            # "00:00" meaning "midnight tonight" which is technically tomorrow for
+            # late-night entries.
+            if h == 0 and m == 0 and s == 0 and result < start_epoch:
+                result += 86400000
+
             return result, time.strftime("%H:%M:%S", time.localtime(result / 1000))
         except (ValueError, IndexError):
             pass
