@@ -2,6 +2,32 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
+## [0.5.0] — 47ea8fd (P11-Day-Boundary-Span branch)
+
+### Added
+- **P11 — Day-Boundary Spanning Activities (Fix A + Fix B):**
+  - **Fix A — Display marker:** `_print_entry` appends `⏭` (U+23ED) to entries
+    whose UTC end date differs from their UTC start date. Guarded by
+    `stop_epoch > start_epoch` (invalid data not flagged) and `stop_epoch is not
+    None` (no end time = no marker).
+  - **Fix B — Date filter peek:** `list_habits` with date filters now peeks at the
+    previous day's synced block and surfaces entries that span into the target
+    date. Dedup: only includes if the entry's original date is outside the filter
+    range, preventing double-appearance when the full range is in view.
+  - **`parse_time_input` hour wrapping:** Hours ≥ 24 (e.g. `24:00`, `25:00`,
+    `48:00`) wrap by `h // 24` days, enabling intuitive entry of next-day times.
+  - **`parse_time_input` midnight auto-advance:** `00:00` that would parse before
+    the entry's start time (late-night scenario) auto-advances to the next day.
+- **32 new tests** in `TestSpanningMarkerSafety` + `TestTimeParsingEdgeCases`
+  covering: midnight auto-advance, hour wrapping, no-end-time safety,
+  end-before-start guard, filter dedup, multiple spanning entries, full output
+  rendering.
+
+**Metrics:** 972 tests, 0 failures. 2 files changed: `cli/cli_parsers.py` (+19),
+`cli/interface.py` (+85).
+
+**ADR:** ADR-020 adopted — display-layer fix only. Fix C (split at sync) rejected.
+
 ## [0.4.2] — 3ba470f (Phpoc-Architectual_Migration branch merged to main)
 
 ### Architectural Migration Complete

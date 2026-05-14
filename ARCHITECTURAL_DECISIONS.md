@@ -715,7 +715,7 @@ phpoc config set storage.data_dir /mnt/work-ledger
 ## ADR-020: Day-Boundary Spanning Activities — Display Marker + Filter Inclusion (Fix A+B)
 
 **Date:** 2026-05-14
-**Status:** ✅ Adopted (tests written, implementation pending)
+**Status:** ✅ Implemented and merged
 
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
@@ -752,4 +752,5 @@ Adopt **Fix A + Fix B** — a combined display-layer solution with no data model
 ### Consequences
 - **Positive:** Clear visual cue for spanning entries. Date filters find activities that belong to the filtered day. Zero data model changes. 32 new tests (972 total). No regression.
 - **Negative:** The `⏭` marker is display-only — tools reading raw JSON won't see it (they compute dates independently). Fix B adds a decrypt-and-compare step per previous-day entry during filtered listing.
-- **Implementation scope:** `cli/interface.py:_print_entry()` (marker), `cli/interface.py:list_habits()` (peek logic). No engine/chain/staging changes.
+- **Implementation scope:** `cli/interface.py:_print_entry()` (marker), `cli/interface.py:list_habits()` (peek logic), `cli/cli_parsers.py:parse_time_input()` (hour wrapping + auto-advance). No engine/chain/staging changes.
+- **All 972 tests pass.** 2 files changed, 104 lines added.

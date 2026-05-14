@@ -8,9 +8,9 @@
 > See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `P11-Day-Boundary-Span` (new, off main)
-- **Tests:** 972 total, 4 expected failures (pending parse_time_input implementation), no regressions
-- **P11 progress:** 32 new tests in `TestSpanningMarkerSafety` + `TestTimeParsingEdgeCases` covering Fix A+B (display marker + filter peek), midnight auto-advance, hour wrapping, dedup, edge cases
+- **Branch:** `P11-Day-Boundary-Span` (ahead of main by 2 commits)
+- **Tests:** 972 total, all passing, no regressions
+- **P11 status:** ✅ Fully implemented. Fix A (display marker `⏭`) + Fix B (date filter peek with dedup) + `parse_time_input` hour wrapping & auto-advance. 2 files changed, 104 lines added. See ADR-020.
 - **Phase 3 completion:** `domain/ledger/` — 5 files, 1,198 lines, 100 tests (chain, engine, index, summaries)
 - **New files (all phases):** 31 files, 779 tests (existing) + change
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
@@ -74,7 +74,12 @@ All branches merged and deleted.
 
 **Tests added to:** `tests/test_phase1b_view_interface.py`
 **Branch:** `P11-Day-Boundary-Span`
-**Total tests:** 972 (4 expected failures pending code implementation)
+**Total tests:** 972 (all passing)
+
+**Implementation committed as `47ea8fd`:**
+- `cli/cli_parsers.py` — hour wrapping (h≥24 → h//24 days) + 00:00 auto-advance when result < start_epoch
+- `cli/interface.py` — Fix A: `⏭` marker in `_print_entry` (guarded by `stop_epoch > start_epoch` and `stop_epoch is not None`). Fix B: `list_habits` peek at previous day's block with dedup (only include if original date outside filter range).
+- **All 972 tests pass, 0 failures.**
 
 ---
 
@@ -219,7 +224,7 @@ All open questions resolved in favor of the **Timeline Model**:
 | 🥇 High | **P5 — Mobile POC (Swift/Kotlin)** | Minimal phone app for reading/adding entries. | P3 (transport) |
 | 🥈 Medium | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
 | 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | P3 (transport) |
-| ✅ Done | **P11 — Day-Boundary Span** | Activities crossing midnight: Fix A (display marker `⏭`) + Fix B (filter peek + dedup). 32 tests, zero data model changes. View-layer only. See ADR-020. Branch: `P11-Day-Boundary-Span`. | Tests written (972 total), code pending |
+| ✅ Done | **P11 — Day-Boundary Span** | Fix A (`⏭` display marker) + Fix B (date filter peek + dedup). Hour wrapping & auto-advance in `parse_time_input`. 104 lines added across 2 files. 972 tests pass. See ADR-020. | Committed `47ea8fd` on branch `P11-Day-Boundary-Span` — ready to merge |
 
 ## Architecture Notes
 - **Protocol, not just a tool:** PHPOC is now explicitly positioned as an open data format. The CLI is the reference implementation.
@@ -261,4 +266,5 @@ See `CHANGELOG.md` for full history.
 - 2026-05-04 — **D2 progress:** Q1-Q4 resolved (offline, seq numbers, logout). Q5 partially resolved (git remote as first transport, `AbstractStagingTransport` interface, multi-staging after mobile). Staging obfuscation: 4-tiered fixed-size padding (64K/128K/256K/512K), user-configurable, encrypted blob. Remaining: Q6 (evicted device behavior), Q7 (device identity), D3 (offline sync reconciliation).
 - 2026-05-09 — Fixed negative duration bug: `_compute_duration` in `core/ledger.py` returns `max(0, ...)` to clamp pauses extending past end time. Caused by end-time override during interactive sync without trimming pauses. (`core/ledger.py`)
 - 2026-05-09 — Added three staging tools: `modify` (edit end time & pauses of staged entry), `remove` (delete staged entry by index), `review` (preview staged entries post-sync). On branch `tools-modify-remove-review`. (`main.py`, `core/ledger.py`)
-- 2026-05-14 — **P11 — Day-Boundary Span:** Designed and tested Fix A (display marker `⏭`) + Fix B (date filter peek with dedup). Fix C (split at sync) rejected — data model should not change for display. 32 tests written across Issues 1–8 covering: midnight auto-advance, hour wrapping (`24:00`/`25:00`), no-end-time safety, end-before-start guard, filter dedup, multiple spanning entries, and full output rendering. ADR-020 adopted. Branch: `P11-Day-Boundary-Span`. 972 total tests (4 expected failures pending implementation). (`tests/test_phase1b_view_interface.py`, `ARCHITECTURAL_DECISIONS.md`, `SESSION_HANDOFF.md`)
+- 2026-05-14 — **P11 — Day-Boundary Span (implementation):** Fix A (`⏭` marker in `_print_entry`) + Fix B (date filter peek with dedup in `list_habits`) + `parse_time_input` hour wrapping & auto-advance. All 972 tests pass. 2 files changed, 104 lines added. Committed `47ea8fd`. (`cli/cli_parsers.py`, `cli/interface.py`)
+- 2026-05-14 — **P11 — Day-Boundary Span (design + tests):** Designed Fix A+B approach, rejected Fix C. ADR-020 adopted. 32 tests written across Issues 1–8. Committed `d298702`. (`tests/test_phase1b_view_interface.py`, `ARCHITECTURAL_DECISIONS.md`, `SESSION_HANDOFF.md`, `BACKLOG.md`, `ROADMAP.md`)

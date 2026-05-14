@@ -97,7 +97,7 @@ None.
 | List with source filtering (`all/synced/staged`) | ✅ | — | |
 | Reputation with date range (`--from`/`--to`) | ✅ | — | Blind index filtered queries |
 | Rich date filtering (`--date`, `--week`, `--month`, `--year`) | ✅ | — | Flexible formats, chaining via intersection |
-| **Day-boundary spanning (display marker + filter peek)** | 🟡 | Medium | Fix A+B (ADR-020). 32 tests written, impl pending. Branch `P11-Day-Boundary-Span` |
+| **Day-boundary spanning (display marker + filter peek)** | ✅ | Medium | Fix A+B implemented. ADR-020. Commit `47ea8fd` on branch `P11-Day-Boundary-Span` |
 | **Tab-completion / auto-suggest** | 🔮 | Low | Shell completions for titles |
 | **Export to CSV/JSON (decrypted)** | 🔮 | Low | For interoperability |
 

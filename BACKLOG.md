@@ -250,7 +250,7 @@ Link content hashes (SHA-256 of video/audio/photos) to specific activities.
 **Priority:** Medium (resolved)
 **Roadmap ref:** [§4 — UX](ROADMAP.md#4-user-experience--accessibility-reference-implementation)
 **ADR:** [ADR-020](ARCHITECTURAL_DECISIONS.md#adr-020-day-boundary-spanning-activities--display-marker--filter-inclusion-fix-ab)
-**Status:** Tests written (32), implementation pending on branch `P11-Day-Boundary-Span`
+**Status:** ✅ Fully implemented. 2 files changed, 104 lines added. Commit `47ea8fd` on branch `P11-Day-Boundary-Span`.
 
 ### Decision
 **Fix A + Fix B** adopted. Fix C (split at sync) rejected.
