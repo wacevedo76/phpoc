@@ -715,13 +715,13 @@ class TestIndexManagerUpdate(unittest.TestCase):
         skip_unless_phase_3()
         self.index.update("2026-01-01", "Coding", 3600000)
         self.index.update("2026-01-01", "Coding", -3600000)
-        self.assertEqual(self.index.get_all(), {"2026-01-01": {}})
+        self.assertEqual(self.index.get_all(), {})
     
     def test_update_negative_below_zero_removes_entry(self):
         skip_unless_phase_3()
         self.index.update("2026-01-01", "Coding", 3600000)
         self.index.update("2026-01-01", "Coding", -5000000)  # more than exists
-        self.assertEqual(self.index.get_all(), {"2026-01-01": {}})
+        self.assertEqual(self.index.get_all(), {})
     
     def test_update_multiple_dates(self):
         skip_unless_phase_3()

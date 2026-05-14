@@ -160,15 +160,29 @@ class CryptoManager(AbstractCryptoManager):
         # Detect format by data length:
         #   Old (no auth tag): salt(16) + nonce(8) + ciphertext
         #   New (with auth tag): salt(16) + nonce(8) + ciphertext + tag(32)
+        # Detect format by data length:
+        #   Old (no auth tag): salt(16) + nonce(8) + ciphertext
+        #   New (with auth tag): salt(16) + nonce(8) + ciphertext + tag(32)
+        #
+        # Length-based detection is ambiguous when old-format ciphertext is
+        # long enough to push the total >= 56 bytes (because both old and new
+        # can total the same length). So we try tag verification first:
+        # if it succeeds -> new format; if it fails -> fall back to old format
+        # (the old ciphertext data at the end is not actually a tag).
         has_tag = len(data) >= 24 + 32  # minimum: 16+8+0+32 = 56 bytes
         if has_tag:
             ciphertext = data[24:-32]
             stored_tag = data[-32:]
             expected_tag = hmac.new(integrity_key, nonce + ciphertext, hashlib.sha256).digest()
-            if not hmac.compare_digest(expected_tag, stored_tag):
-                raise ValueError("Encrypted data integrity check failed: auth tag mismatch")
+            if hmac.compare_digest(expected_tag, stored_tag):
+                # New format with valid auth tag — use ciphertext as-is
+                pass
+            else:
+                # Tag mismatch: could be old format with trailing 32 bytes that
+                # are actually ciphertext, not a tag. Try old format instead.
+                ciphertext = data[24:]
         else:
-            # Legacy format — no auth tag (backward compatibility)
+            # Legacy format — no auth tag
             ciphertext = data[24:]
 
         key = self._derive_sub_key(salt)

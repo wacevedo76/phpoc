@@ -545,7 +545,15 @@ class TestHabitIdResolution(unittest.TestCase):
         self.test_dir = Path(tempfile.mkdtemp(dir=base_dir))
         self.ledger, self.crypto, self.store, self.sf, self.lf, self.ixf = \
             _setup_ledger(self.test_dir)
-        self.cli = CLIInterface(self.ledger)
+        from domain.staging.service import StagingService
+        from storage.implementations.file_staging import FileStagingStore
+        from domain.ledger.engine import LedgerEngine
+        staging_store = FileStagingStore(Path(self.sf))
+        self.staging_service = StagingService(crypto=self.crypto, staging_store=staging_store)
+        self.ledger_engine = LedgerEngine(
+            crypto=self.crypto, store=self.store, index_store=self.store,
+            staging_store=staging_store)
+        self.cli = CLIInterface(self.staging_service, self.ledger_engine, self.crypto)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)
@@ -650,14 +658,21 @@ class TestHabitIdResolution(unittest.TestCase):
 # -----------------------------------------------------------------------
 
 class TestHabitIdView(unittest.TestCase):
-    """view_active() exposes habit IDs for display."""
 
     def setUp(self):
         base_dir = "/dev/shm" if os.path.exists("/dev/shm") else None
         self.test_dir = Path(tempfile.mkdtemp(dir=base_dir))
         self.ledger, self.crypto, self.store, self.sf, self.lf, self.ixf = \
             _setup_ledger(self.test_dir)
-        self.cli = CLIInterface(self.ledger)
+        from domain.staging.service import StagingService
+        from storage.implementations.file_staging import FileStagingStore
+        from domain.ledger.engine import LedgerEngine
+        staging_store = FileStagingStore(Path(self.sf))
+        self.staging_service = StagingService(crypto=self.crypto, staging_store=staging_store)
+        self.ledger_engine = LedgerEngine(
+            crypto=self.crypto, store=self.store, index_store=self.store,
+            staging_store=staging_store)
+        self.cli = CLIInterface(self.staging_service, self.ledger_engine, self.crypto)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)
@@ -723,7 +738,15 @@ class TestHabitIdCLI(unittest.TestCase):
         self.test_dir = Path(tempfile.mkdtemp(dir=base_dir))
         self.ledger, self.crypto, self.store, self.sf, self.lf, self.ixf = \
             _setup_ledger(self.test_dir)
-        self.cli = CLIInterface(self.ledger)
+        from domain.staging.service import StagingService
+        from storage.implementations.file_staging import FileStagingStore
+        from domain.ledger.engine import LedgerEngine
+        staging_store = FileStagingStore(Path(self.sf))
+        self.staging_service = StagingService(crypto=self.crypto, staging_store=staging_store)
+        self.ledger_engine = LedgerEngine(
+            crypto=self.crypto, store=self.store, index_store=self.store,
+            staging_store=staging_store)
+        self.cli = CLIInterface(self.staging_service, self.ledger_engine, self.crypto)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)

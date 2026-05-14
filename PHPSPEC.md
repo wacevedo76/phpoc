@@ -74,7 +74,27 @@ Each block's `prev_hash` field references the hash of the immediately preceding 
 
 ### 1.3 File Layout
 
-A PHPOC ledger consists of the following files, all stored in a config directory (default: `~/.config/personal_history_poc/`):
+A PHPOC ledger consists of the following files:
+
+**Everything lives under a single data directory — resolved via priority chain:**
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 (highest) | `--dir` CLI flag | `phpoc --dir /path verify` — per-invocation |
+| 2 | `$PHPOC_DATA_DIR` env var | Per-session override |
+| 3 | `storage.data_dir` in config | Persistent — set via `phpoc config set storage.data_dir <path>` |
+| 4 | `$XDG_DATA_HOME/phpoc/` | Default: `~/.local/share/phpoc/` |
+| 5 (lowest) | `~/.config/personal_history_poc/` | Legacy — auto-detected if new path doesn't exist |
+
+**Config file path — resolved independently:**
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 (highest) | `--config` CLI flag | Per-invocation |
+| 2 | `$PHPOC_CONFIG` env var | Per-session |
+| 3 | `$XDG_CONFIG_HOME/phpoc/config.json` | Default: `~/.config/phpoc/config.json` |
+
+**Data files (in the resolved data directory):**
 
 | File | Purpose | Canonical? |
 |------|---------|------------|

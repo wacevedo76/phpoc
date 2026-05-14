@@ -328,19 +328,7 @@ class LedgerEngine:
                     # Remove from index
                     title = data["title"]
                     duration = data.get("duration", 0)
-                    entries_list = self.index.get_all()
-                    if date_str in entries_list and title in entries_list[date_str]:
-                        self.index.update(date_str, title, -duration)
-                        # Clean up empty date keys
-                        current = self.index.get_all()
-                        if date_str in current and not current[date_str]:
-                            # Force-clean: the IndexManager keeps empty dates,
-                            # but revert should fully remove them
-                            current.pop(date_str)
-                            self.index.clear()
-                            for dt, dt_data in current.items():
-                                for t, d in dt_data.items():
-                                    self.index.update(dt, t, d)
+                    self.index.update(date_str, title, -duration)
 
         # Write updated staging using duck-type adaptation
         if hasattr(self.staging_store, 'write_entries'):
@@ -393,9 +381,11 @@ class LedgerEngine:
 
     # ── Internal helpers ─────────────────────────────────
 
-    @staticmethod
-    def _compute_content_hash(data: dict) -> str:
+    def _compute_content_hash(self, data: dict) -> str:
         """Compute a content hash from all entry data fields.
+
+        Decrypts _enc fields using the crypto manager, so the content
+        hash is independent of encryption (survives re-keying).
 
         Matches the algorithm in core/ledger.py._compute_content_hash.
         """
@@ -404,7 +394,10 @@ class LedgerEngine:
             if key == "content_hash":
                 continue
             if key.endswith("_enc") and value is not None and value != "":
-                content[key] = value
+                try:
+                    content[key] = self.crypto.decrypt(value)
+                except Exception:
+                    content[key] = value
             elif isinstance(value, list):
                 content[key] = sorted(value)
             else:

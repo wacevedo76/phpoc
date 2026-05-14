@@ -4,22 +4,74 @@ import time
 import json
 import hashlib
 import base64
+import os
 from pathlib import Path
 from security.crypto import CryptoManager, NoAuthCryptoManager
 from security.auth import PassphraseAuthenticator, RecoveryAuthenticator
 from security.recovery import RecoveryManager
+from security.config_manager import ConfigManager
+from storage.implementations.file_config import FileConfigStore, _resolve_config_path, _resolve_data_dir
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 from core.factory import LedgerFactory
 from cli.interface import CLIInterface
+from domain.staging.service import StagingService
+from domain.ledger.engine import LedgerEngine
+from core.sync import SyncOrchestrator
+from storage.implementations.file_staging import FileStagingStore
 
-CONFIG_DIR = Path.home() / ".config" / "personal_history_poc"
+# Config file resolution
+CONFIG_PATH = _resolve_config_path()
+CONFIG_STORE = FileConfigStore(CONFIG_PATH)
+CONFIG = ConfigManager(CONFIG_STORE)
+
+# Data directory resolution (separate from config directory per XDG spec)
+# Priority: --dir CLI flag > PHPOC_DATA_DIR env > config storage.data_dir > XDG default > legacy
+CONFIG_DIR = _resolve_data_dir(config_manager=CONFIG)
+
+# Migrate from old directory if it exists and new one doesn't
+_LEGACY_DIR = Path.home() / ".config" / "personal_history_poc"
+if _LEGACY_DIR.exists() and not CONFIG_DIR.exists():
+    # Use legacy directory as-is (user might move later)
+    CONFIG_DIR = _LEGACY_DIR
+
 LEDGER_PATH = CONFIG_DIR / "ledger.json"
 INDEX_PATH = CONFIG_DIR / "index.json"
+STAGING_PATH = CONFIG_DIR / "staging.json"
+IDENTITY_PATH = CONFIG_DIR / "identity.json"
+
+def _resolve_data_paths(data_dir: Path):
+    """Resolve all data file paths from a data directory.
+
+    Returns (ledger_path, index_path, staging_path, identity_path).
+    This helper is used when --dir overrides the module-level CONFIG_DIR.
+    """
+    return (
+        data_dir / "ledger.json",
+        data_dir / "index.json",
+        data_dir / "staging.json",
+        data_dir / "identity.json",
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="PHPOC Ledger")
+    parser.add_argument("--config", type=str, help="Path to config file (default: XDG ~/.config/phpoc/config.json)")
+    parser.add_argument("--dir", type=str, dest="data_dir",
+                        help="Data directory for ledger.json, identity.json, etc. "
+                             "(default: XDG ~/.local/share/phpoc/)")
     subparsers = parser.add_subparsers(dest="command")
+
+    # Config command
+    config_p = subparsers.add_parser("config", help="View or modify configuration")
+    config_sub = config_p.add_subparsers(dest="config_action")
+    config_show = config_sub.add_parser("show", help="Show all config values")
+    config_get = config_sub.add_parser("get", help="Get a config value by dot path")
+    config_get.add_argument("key", help="Config key path (e.g. auth.cache_timeout_minutes)")
+    config_set = config_sub.add_parser("set", help="Set a config value")
+    config_set.add_argument("key", help="Config key path (e.g. auth.cache_timeout_minutes)")
+    config_set.add_argument("value", help="New value (JSON-parseable, or plain string)")
+    config_init = config_sub.add_parser("init", help="Generate a commented config template at the config path")
 
     # Add command
     add_parser = subparsers.add_parser("add", help="Add a new habit")
@@ -118,6 +170,27 @@ def main():
         parser.print_help()
         exit(1)
 
+    # Handle --config flag override (before data dir resolution)
+    if args.config:
+        from storage.implementations.file_config import FileConfigStore
+        global CONFIG, CONFIG_STORE, CONFIG_PATH
+        CONFIG_PATH = Path(args.config)
+        CONFIG_STORE = FileConfigStore(CONFIG_PATH)
+        CONFIG = ConfigManager(CONFIG_STORE)
+
+    # Handle --dir flag override (update paths before any command uses them)
+    overridden_data_dir = Path(args.data_dir) if args.data_dir else None
+    if overridden_data_dir is not None:
+        global CONFIG_DIR, LEDGER_PATH, INDEX_PATH, STAGING_PATH, IDENTITY_PATH
+        CONFIG_DIR = _resolve_data_dir(overridden_dir=overridden_data_dir,
+                                        config_manager=CONFIG)
+        LEDGER_PATH, INDEX_PATH, STAGING_PATH, IDENTITY_PATH = _resolve_data_paths(CONFIG_DIR)
+
+    # Handle 'config' subcommand before auth (no auth needed)
+    if args.command == "config":
+        _handle_config_command(args, CONFIG)
+        return
+
     auth = PassphraseAuthenticator(LEDGER_PATH)
     
     if args.command == "init":
@@ -134,6 +207,9 @@ def main():
         # PDK for initialization
         pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 600000, 32)
         
+        # Initialize config file with defaults if not yet created
+        CONFIG.write(CONFIG.read())
+
         seed = LedgerFactory.initialize(LEDGER_PATH, pdk, username, email)
         if seed:
             print(f"Ledger initialized.")
@@ -242,7 +318,24 @@ def main():
 
     store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
     ledger = LedgerDomain(crypto, store)
-    cli = CLIInterface(ledger)
+
+    # New layered components
+    staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+    staging_service = StagingService(crypto=crypto, staging_store=staging_store)
+    ledger_engine = LedgerEngine(
+        crypto=crypto,
+        store=store,
+        index_store=store,
+        staging_store=staging_store,
+        identity_secret=None,
+    )
+    cli = CLIInterface(staging_service, ledger_engine, crypto)
+    sync_orchestrator = SyncOrchestrator(
+        staging_service=staging_service,
+        ledger_engine=ledger_engine,
+        view_interface=cli._view if hasattr(cli, '_view') else None,
+        master_key=auth.get_key() if hasattr(auth, 'get_key') else None,
+    )
     
     if args.command == "add":
         if args.subcommand == "oneoff":
@@ -272,10 +365,8 @@ def main():
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
-        from core.sync_confirmation import AutoSyncStrategy, InteractiveCLIStrategy
-        strategy = AutoSyncStrategy() if getattr(args, 'yes', False) else InteractiveCLIStrategy()
         till_date = _resolve_till_date(args.till) if args.till else None
-        ledger.sync_with_strategy(strategy, till_date=till_date)
+        sync_orchestrator.sync(till_date=till_date)
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
@@ -340,6 +431,153 @@ def main():
                 print("Chain intact and verified.")
             else:
                 print("WARN: Chain verification failed.")
+
+
+def _handle_config_command(args, config):
+    """Handle the 'config' subcommand (show, get, set)."""
+    if args.config_action == "show":
+        import json as _json
+        print(_json.dumps(config.read(), indent=2))
+    elif args.config_action == "get":
+        val = config.get(args.key)
+        if val is None:
+            print(f"Config key '{args.key}' not found.")
+        else:
+            import json as _json
+            if isinstance(val, (dict, list)):
+                print(_json.dumps(val, indent=2))
+            else:
+                print(val)
+    elif args.config_action == "set":
+        try:
+            parsed = json.loads(args.value)
+        except (json.JSONDecodeError, ValueError):
+            parsed = args.value
+        keys = args.key.split(".")
+        if len(keys) == 1:
+            config.write({keys[0]: parsed})
+        else:
+            nested = {}
+            current = nested
+            for k in keys[:-1]:
+                current[k] = {}
+                current = current[k]
+            current[keys[-1]] = parsed
+            config.write(nested)
+        print(f"Set config.{args.key} = {args.value}")
+    elif args.config_action == "init":
+        _config_generate_template(config)
+    else:
+        print("Usage: phpoc config <show|get|set|init>")
+        print("  phpoc config show              — show all config values")
+        print("  phpoc config get <key>          — get a config value (dot path)")
+        print("  phpoc config set <key> <value>  — set a config value (JSON or string)")
+        print("  phpoc config init               — generate a commented config template")
+
+
+def _config_generate_template(config):
+    """Generate a fully-commented config template at the config file path.
+
+    The format puts each key-value pair on a commented line:
+      // "key": "value"
+
+    To activate a setting, the user removes the leading "// ".
+    Lines without "// " are live JSON that the parser reads.
+    The template body produces valid JSON after removing // lines.
+    """
+    import json as _json
+    from security.config_manager import ConfigManager
+
+    defaults = ConfigManager.DEFAULTS
+
+    lines = [
+        "//",
+        "// PHPOC Configuration File",
+        "// ========================",
+        "//",
+        "// This file was auto-generated. All settings shown below are the defaults.",
+        "// To change a setting, uncomment the line (remove the leading '//') and edit the value.",
+        "// Lines starting with // are ignored by the parser.",
+        "// Values use standard JSON syntax.",
+        "//",
+        "// To reset your config: delete this file and run `phpoc config init` again.",
+        "//",
+        "{",
+    ]
+
+    sections = [
+        ("storage", "File paths for ledger data and metadata"),
+        ("remote", "Remote sync settings (git transport)"),
+        ("auth", "Authentication / passphrase settings"),
+        ("device", "Device identity for multi-device use"),
+        ("timeouts", "Timeout values for sync operations"),
+        ("staging", "Staging blob size limits"),
+    ]
+
+    first_section = True
+    for section_key, section_desc in sections:
+        if section_key not in defaults:
+            continue
+        section = defaults[section_key]
+
+        if first_section:
+            first_section = False
+        else:
+            lines.append(",")
+        lines.append("")
+        lines.append(f'  // {section_desc}')
+
+        keys = list(section.keys())
+        lines.append(f'  "{section_key}": {{')
+
+        for i, key in enumerate(keys):
+            value = section[key]
+            full_key = f"{section_key}.{key}"
+            json_val = _json.dumps(value) if value is not None else "null"
+            comment = _get_config_comment(full_key)
+
+            if comment:
+                lines.append(f'    // {comment}')
+
+            is_last = (i == len(keys) - 1)
+            comma = "" if is_last else ","
+            lines.append(f'    // "{key}": {json_val}{comma}')
+
+        lines.append(f'  }}')
+
+    lines.append("}")
+    template = "\n".join(lines)
+
+    config_path = config._store.path
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(template)
+    print(f"Config template written to {config_path}")
+    print("Edit the file, uncomment the settings you want to change, and save.")
+
+
+def _get_config_comment(full_key: str) -> str:
+    """Return a human-readable comment for a config key."""
+    comments = {
+        "storage.config_dir": "Config file directory (not usually needed to change)",
+        "storage.data_dir": "Where ledger.json, staging.json, index.json etc. live",
+        "storage.ledger": "Filename for the ledger chain",
+        "storage.staging": "Filename for staging entries",
+        "storage.index": "Filename for the blind index cache",
+        "storage.identity": "Filename for device identity key",
+        "storage.config": "Filename for this config file (self-reference)",
+        "remote.staging_path": "Remote path for staging (e.g. SSH-style path)",
+        "remote.ledger_path": "Remote path for the ledger",
+        "remote.transport": "Transport: 'git' (default), 'rsync', etc.",
+        "remote.git_remote_url": "Git remote URL for push/pull (e.g. git@example.com:user/phpoc.git)",
+        "auth.cache_timeout_minutes": "How long to cache the passphrase before re-prompting",
+        "auth.passphrase_required": "Set false to allow no-auth mode for add/start/end",
+        "device.device_id": "Unique device identifier (auto-generated on init)",
+        "device.device_label": "Human-readable device label (e.g. 'my laptop')",
+        "timeouts.remote_check_ms": "How often to check for remote changes (milliseconds)",
+        "timeouts.push_timeout_ms": "Timeout for push operations (milliseconds)",
+        "staging.blob_size_tier": "Staging blob size limit: '64K', '256K', '1M', etc.",
+    }
+    return comments.get(full_key, "")
 
 
 def _parse_time_input(value_str, date_str, start_epoch, end_epoch):

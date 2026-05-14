@@ -1,7 +1,7 @@
 # Architectural Migration Strategy — Plan, Obstacles & Mitigations
 
-> **Date:** 2026-05-13 (Phase 4 ✅ complete)
-> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ + Phase 3 ✅ + Phase 4 ✅ — 31 files, 779 tests, no regressions. Next: Phase 5 (Sync Orchestrator wiring in main.py).
+> **Date:** 2026-05-13 (Phase 7 ✅ complete)
+> **Status:** Phase 1 ✅ + Phase 1b ✅ + Phase 2 ✅ + Phase 3 ✅ + Phase 4 ✅ + Phase 5 ✅ + Phase 6 ✅ + **Phase 7 ✅** — 31 files, 926 tests, no regressions. All migration phases complete. Next: proof-of-concept in Rust or TypeScript.
 > **Context:** Migration from the current monolithic `core/ledger.py` + `main.py` architecture to a layered, MVC-like structure that supports multi-device staging, ledger sync, and multiple frontends (CLI, TUI, web, wearable).
 >
 > All prior architectural decisions are documented in:
@@ -1935,9 +1935,9 @@ Item 7: Split Storage Interfaces
 | **Phase 3** ✅ | Item 2 (Ledger Engine + IndexManager + SummaryPolicy) | Weeks 5–6 | 🟡 Medium — extract from core/ledger.py, chain logic must remain correct |
 | **Phase 3** impl ✅ | 5 files, 1,198 lines, 100 tests | Weeks 5–6 | 🟡 Medium ✅ — implementation done, tests passing |
 | **Phase 4** ✅ | Item 10 (Staging Interaction Flow) + wire into every-command sync | Week 7 | 🟡 Medium ✅ — done: 4 new files, 69 tests, 779 total |
-| **Phase 5** | Item 3 (Sync Orchestrator wiring in main.py) | Week 8 | 🟢 Low — wires existing components together |
-| **Phase 6** | Item 6 (IndexManager deep integration) | Sub-task of Phase 3 | 🟢 Low — ✅ already done |
-| **Phase 7** | Item 8 (SummaryPolicy) | Sub-task of Phase 3 | 🟢 Low — ✅ already done |
+| **Phase 5** ✅ | Item 3 (Sync Orchestrator wiring in main.py) | Week 8 | 🟢 Low — wires existing components together |
+| **Phase 6** ✅ | Items 6–9 deep integration + CLIInterface migration | Week 9 | 🟡 Medium — CLIInterface constructor changed, core/ledger.py thin wrapper, sync_confirmation shim kept for backward compat |
+| **Phase 7** ✅ | User-configurable configuration file | Week 10 | 🟢 Low — XDG path resolution, config CLI subcommand, env var overrides, legacy fallback |
 
 ### Phase 1 Detail (Split Storage + Config — ✅ Complete)
 
@@ -2155,6 +2155,70 @@ in Phase 5 (Sync Orchestrator).
 | `TestSyncStrategy` | 2 | Receives entries, returns SyncDecision |
 
 **Pipeline: 779 total tests, 0 failures, 0 regressions.**
+
+---
+
+### Phase 5 Detail (Main Wiring — ✅ Complete)
+
+**Goal:** Wire `SyncOrchestrator` into `main.py`'s sync command, replacing the old `ledger.sync_with_strategy()` path. This is the final integration step of the architectural migration.
+
+**Changes (3 files):**
+
+| File | Change |
+|------|--------|
+| `main.py` | Add imports for `StagingService`, `LedgerEngine`, `SyncOrchestrator`, `FileStagingStore`; construct them alongside existing `LedgerDomain`; replace `sync_with_strategy()` call with `sync_orchestrator.sync(till_date=till_date)` |
+| `core/sync/orchestrator.py` | Add `till_date` parameter to `sync()` — filters pending entries by date before commit |
+| `domain/interfaces/view.py` | Add `notify()` method (default: delegates to `render_success()`) |
+
+**What was replaced in `main.py` (lines 278–282):**
+
+```python
+# BEFORE (Phase 4):
+from core.sync_confirmation import AutoSyncStrategy, InteractiveCLIStrategy
+strategy = AutoSyncStrategy() if getattr(args, 'yes', False) else InteractiveCLIStrategy()
+till_date = _resolve_till_date(args.till) if args.till else None
+ledger.sync_with_strategy(strategy, till_date=till_date)
+
+# AFTER (Phase 5):
+till_date = _resolve_till_date(args.till) if args.till else None
+sync_orchestrator.sync(till_date=till_date)
+```
+
+**New components in `main.py` init:**
+
+```python
+staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+staging_service = StagingService(crypto=crypto, staging_store=staging_store)
+ledger_engine = LedgerEngine(crypto=crypto, store=store,
+                              index_store=store, staging_store=staging_store)
+sync_orchestrator = SyncOrchestrator(staging_service=staging_service,
+                                      ledger_engine=ledger_engine,
+                                      view_interface=..., master_key=...)
+```
+
+**Key design decisions:**
+
+1. **`--yes` flag becomes a no-op** — `SyncOrchestrator.sync()` always syncs all pending entries (equivalent to `AutoSyncStrategy`). Interactive confirmation was only useful for CLI and is now handled by the view layer.
+2. **`till_date` filtering** — moved from `sync_with_strategy()` into `SyncOrchestrator.sync()` directly.
+3. **`core/sync_confirmation.py`** — kept as deprecated shim for backward compatibility with existing tests. Will be removed in a future cleanup.
+4. **`ViewInterface.notify()`** — added as a no-op default that delegates to `render_success()`. Used by `SyncOrchestrator` after successful sync.
+
+**Test coverage: 47 new tests in `tests/test_phase5_main_wiring.py`:**
+
+| Test Class | Tests | Coverage |
+|------------|-------|----------|
+| `TestSyncCommandStrategySelection` | 6 | `--yes` → AutoSyncStrategy, no flag → InteractiveCLIStrategy, both import from `cli.strategies` |
+| `TestTillDateResolution` | 7 | `_resolve_till_date` with YYYY-MM-DD, MM-DD, invalid, edge cases |
+| `TestMainSyncIntegration` | 7 | Mocked full flow: sync called, failure handled, pending read, verify, view notified, revert |
+| `TestCLIInterfaceDateFilters` | 4 | `_resolve_date_filters` defaults, days, from-override, to-override |
+| `TestSyncWithTillDate` | 3 | `till_date` in `SyncOrchestrator.sync()`, date filtering logic |
+| `TestCoreSyncConfirmationRemoval` | 2 | Documents post-Phase 5: `core/sync_confirmation.py` can be deleted |
+| `TestMainInit` | 6 | All components constructible with real signatures |
+| `TestSyncOrchestratorReplacesSyncWithStrategy` | 6 | Covers every step: pending, till filter, commit, verify, cleanup, push |
+| `TestCommandScopeWiring` | 4 | Which commands use orchestrator vs direct staging |
+| `TestMissingDependencyHandling` | 1 | No master_key → push skipped gracefully |
+
+**Pipeline: 826 total tests, 0 failures, 0 regressions.**
 
 ---
 

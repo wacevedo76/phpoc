@@ -36,6 +36,15 @@ class IndexManager:
         """Write in-memory cache back to store."""
         self.store.write_index(dict(self._cache))
 
+    def reload(self):
+        """Reload cache from the underlying store.
+
+        Call this when an external component may have written to the
+        store directly (e.g., legacy code paths).
+        """
+        self._cache = {}
+        self._load()
+
     def get_all(self) -> Dict[str, Any]:
         """Return a copy of the full index."""
         return dict(self._cache)
@@ -62,9 +71,11 @@ class IndexManager:
         new = old + duration_delta
 
         if new <= 0:
-            # Remove the title entry (keep date key even if empty)
+            # Remove the title entry; if date is now empty, remove the date too
             if title in self._cache[date]:
                 del self._cache[date][title]
+            if not self._cache[date]:
+                del self._cache[date]
         else:
             self._cache[date][title] = new
 

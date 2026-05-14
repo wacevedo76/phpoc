@@ -420,7 +420,7 @@ class TestSyncConfirmed(unittest.TestCase):
     def test_sync_with_strategy_only_removals_no_selection(self):
         """Edge case: all entries marked for removal, none to sync.
         Should delete all from staging without creating any ledger block."""
-        from core.sync_confirmation import SyncStrategy, SyncDecision
+        from core.sync.decision import SyncStrategy, SyncDecision
 
         base = int(time.time() * 1000) - 86400000
 
@@ -458,7 +458,7 @@ class TestSyncConfirmed(unittest.TestCase):
         """Regression: sync_with_strategy() must not delete staging early when
         both removals and selections exist. Early deletion shifts indices and causes
         selected_indices to pick wrong entries."""
-        from core.sync_confirmation import SyncStrategy, SyncDecision
+        from core.sync.decision import SyncStrategy, SyncDecision
 
         base = int(time.time() * 1000) - 86400000
 

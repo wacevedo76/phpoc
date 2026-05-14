@@ -320,6 +320,8 @@ class LedgerChain:
                 else "month_hash"
                 if current.get("type") == "month_summary"
                 else "year_hash"
+                if current.get("type") == "year_summary"
+                else "day_hash"  # genesis or unknown — use day_hash
             )
             check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature")}
             if not self.crypto.verify_seal(
@@ -349,9 +351,9 @@ class LedgerChain:
                     # 5. Content hash verification
                     if "content_hash" in data:
                         try:
-                            if not self._verify_content_hash(data):
+                            if not self._verify_content_hash(data, decrypt_fn=self.crypto.decrypt):
                                 return False
-                        except Exception:
+                        except Exception as e:
                             return False
 
         return True
@@ -387,6 +389,8 @@ class LedgerChain:
             else "month_hash"
             if current.get("type") == "month_summary"
             else "year_hash"
+            if current.get("type") == "year_summary"
+            else "day_hash"  # genesis or unknown — use day_hash
         )
         check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature")}
         if not self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), current[hash_key]):
@@ -412,27 +416,34 @@ class LedgerChain:
     # ── Internal helpers ─────────────────────────────────
 
     @staticmethod
-    def _verify_content_hash(data: dict) -> bool:
+    def _verify_content_hash(data: dict, decrypt_fn=None) -> bool:
         """Verify the content_hash of an entry's data dict.
 
         Uses the extensible algorithm from core/ledger.py:
-        - Fields ending in ``_enc`` are left as-is (caller is expected
-          to have decrypted them before computing; in verify context
-          the encrypted values are compared)
+        - Fields ending in ``_enc`` are decrypted via *decrypt_fn*
         - List fields are sorted for deterministic output
         - ``content_hash`` itself is excluded
         - sort_keys=True normalizes key ordering
 
-        For verify(), the data still contains encrypted _enc values,
-        so the content_hash check is a comparison between two
-        invocations of the same algorithm — not a plaintext check.
+        Args:
+            data: The entry's data dict (raw from ledger, with encrypted fields).
+            decrypt_fn: Callable that decrypts a single encrypted field value.
+                       Required for proper verification. If None, uses
+                       encrypted values directly (less accurate, but matches
+                       old pre-v0.4 behavior).
         """
         content = {}
         for key, value in data.items():
             if key == "content_hash":
                 continue
             if key.endswith("_enc") and value is not None and value != "":
-                content[key] = value
+                if decrypt_fn is not None:
+                    try:
+                        content[key] = decrypt_fn(value)
+                    except Exception:
+                        content[key] = value
+                else:
+                    content[key] = value
             elif isinstance(value, list):
                 content[key] = sorted(value)
             else:
@@ -442,14 +453,23 @@ class LedgerChain:
         ).hexdigest()
         # Fallback to legacy v0.3.0 algorithm if extensible doesn't match
         if computed != data["content_hash"]:
-            # Legacy algorithm: hardcoded 9 fields
+            # Legacy algorithm: hardcoded 9 fields, each decrypted
+            # (same as original v0.3.0 _compute_content_hash in core/ledger.py)
             plain = dict(data)
             legacy = {
                 "title": plain.get("title", ""),
-                "startTime": plain.get("startTime_enc", ""),
-                "endTime": plain.get("endTime_enc", ""),
-                "metadata": plain.get("metadata_enc", ""),
-                "pauses": plain.get("pauses_enc", ""),
+                "startTime": decrypt_fn(plain.get("startTime_enc", ""))
+                    if (decrypt_fn is not None and plain.get("startTime_enc"))
+                    else plain.get("startTime_enc", ""),
+                "endTime": decrypt_fn(plain.get("endTime_enc", ""))
+                    if (decrypt_fn is not None and plain.get("endTime_enc"))
+                    else plain.get("endTime_enc", ""),
+                "metadata": decrypt_fn(plain.get("metadata_enc", ""))
+                    if (decrypt_fn is not None and plain.get("metadata_enc"))
+                    else plain.get("metadata_enc", "{}"),
+                "pauses": decrypt_fn(plain.get("pauses_enc", ""))
+                    if (decrypt_fn is not None and plain.get("pauses_enc"))
+                    else plain.get("pauses_enc", "[]"),
                 "tags": sorted(plain.get("tags", [])),
                 "comment": plain.get("comment", ""),
                 "media": sorted(plain.get("media", [])),

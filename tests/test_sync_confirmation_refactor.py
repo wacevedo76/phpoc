@@ -423,7 +423,8 @@ class RefactoredInteractiveCLIStrategy:
 
 
 # Need SyncDecision from existing module
-from core.sync_confirmation import SyncDecision, AutoSyncStrategy
+from core.sync.decision import SyncDecision
+from cli.strategies import AutoSyncStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════

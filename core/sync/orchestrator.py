@@ -54,15 +54,20 @@ class SyncOrchestrator:
     # Main sync flow
     # ------------------------------------------------------------------
 
-    def sync(self) -> bool:
+    def sync(self, till_date: Optional[str] = None) -> bool:
         """Run the full sync pipeline.
 
         1. check_and_sync() — pull remote, merge local
         2. Get pending (completed) entries from staging
-        3. Commit to ledger
-        4. Verify chain integrity
-        5. If verify OK: remove synced from staging, push to remote
-        6. If verify fails: revert the commit
+        3. If till_date set: filter pending to entries with date <= till_date
+        4. Commit to ledger
+        5. Verify chain integrity
+        6. If verify OK: remove synced from staging, push to remote
+        7. If verify fails: revert the commit
+
+        Args:
+            till_date: Optional date string (YYYY-MM-DD). Only entries with
+                       date <= till_date will be synced.
 
         Returns:
             True on success, False if verify fails (commit reverted).
@@ -79,7 +84,17 @@ class SyncOrchestrator:
             logger.info("SyncOrchestrator: no pending entries to sync")
             return True
 
-        # Step 3: commit to ledger
+        # Step 3: filter by till_date if provided
+        if till_date is not None:
+            pending = [p for p in pending if p["date"] <= till_date]
+            if not pending:
+                logger.info(
+                    "SyncOrchestrator: no pending entries match till_date=%s",
+                    till_date,
+                )
+                return True
+
+        # Step 4: commit to ledger
         logger.info(
             "SyncOrchestrator: committing %d entries to ledger",
             len(pending),
@@ -90,21 +105,21 @@ class SyncOrchestrator:
             logger.warning("SyncOrchestrator: commit returned None")
             return False
 
-        # Step 4: verify chain integrity
+        # Step 5: verify chain integrity
         if not self._ledger.verify():
             logger.error("SyncOrchestrator: ledger verify failed — reverting")
             self._ledger.revert(1)
             return False
 
-        # Step 5: remove synced entries from staging
+        # Step 6: remove synced entries from staging
         indices_to_remove = [e["entry_index"] for e in pending]
         self._staging.remove_synced(indices_to_remove)
 
-        # Step 6: push to remote if master_key is set
+        # Step 7: push to remote if master_key is set
         if self._master_key is not None:
             self._staging.push_to_remote(self._master_key)
 
-        # Step 7: notify view
+        # Step 8: notify view
         if self._view is not None:
             self._view.notify(
                 f"Synced {len(pending)} entries to ledger"

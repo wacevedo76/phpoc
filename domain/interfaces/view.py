@@ -78,6 +78,18 @@ class ViewInterface:
         """Display a warning message."""
         pass
 
+    # ------------------------------------------------------------------
+    # Notifications
+    # ------------------------------------------------------------------
+
+    def notify(self, message: str):
+        """Display a non-blocking notification message.
+
+        Used by SyncOrchestrator to signal sync completion.
+        Default: uses render_success() which is overridden by each view.
+        """
+        self.render_success(message)
+
     def render_help(self, help_items: dict):
         """Display a help listing from {key: description} dict."""
         pass

@@ -1,10 +1,15 @@
 """Configuration manager — reads/writes user-editable config with defaults.
 
-The config file lives at ~/.config/personal_history_poc/config.json.
+The config file lives at:
+  1. $PHPOC_CONFIG (env var)
+  2. $XDG_CONFIG_HOME/phpoc/config.json
+  3. ~/.config/phpoc/config.json (XDG default)
+
 All fields have defaults. Missing fields are filled from DEFAULTS.
 The file is user-editable — no validation beyond JSON parsing.
 """
 
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 
@@ -19,6 +24,15 @@ class ConfigManager:
     """
 
     DEFAULTS: Dict[str, Any] = {
+        "storage": {
+            "config_dir": str(Path.home() / ".config" / "phpoc"),
+            "data_dir": str(Path.home() / ".local" / "share" / "phpoc"),
+            "ledger": "ledger.json",
+            "staging": "staging.json",
+            "index": "index.json",
+            "identity": "identity.json",
+            "config": "config.json",
+        },
         "remote": {
             "staging_path": None,
             "ledger_path": None,

@@ -3,11 +3,22 @@ import time
 import calendar
 import re
 from datetime import datetime
-from core.ledger import LedgerDomain
+from typing import Optional, List, Dict, Any
+from security.crypto import AbstractCryptoManager
+from domain.staging.service import StagingService
+from domain.ledger.engine import LedgerEngine
+
 
 class CLIInterface:
-    def __init__(self, ledger: LedgerDomain):
-        self.ledger = ledger
+    def __init__(
+        self,
+        staging_service: StagingService,
+        ledger_engine: LedgerEngine,
+        crypto: AbstractCryptoManager,
+    ):
+        self._staging = staging_service
+        self._ledger_engine = ledger_engine
+        self._crypto = crypto
 
     def _resolve_title(self, identifier):
         """Resolve a string identifier to a title.
@@ -15,7 +26,7 @@ class CLIInterface:
         treat it as a 1-based index into the active tasks list.
         Otherwise, return the identifier as-is (title string).
         If an exact title match exists among active tasks, title takes precedence."""
-        staging = self.ledger.store.read_staging()
+        staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
         active_titles = [e["data"]["title"] for e in active]
 
@@ -45,9 +56,18 @@ class CLIInterface:
 
     def _get_active_with_ids(self):
         """Return list of {id, title} dicts for active tasks."""
-        staging = self.ledger.store.read_staging()
+        staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
         return [{"id": i + 1, "title": e["data"]["title"]} for i, e in enumerate(active)]
+
+    @staticmethod
+    def _compute_duration(start_epoch, end_epoch, pauses):
+        """Compute active duration as wall time minus all completed pause intervals."""
+        total_pause_ms = 0
+        for p in pauses:
+            if p.get("pause_stop") is not None:
+                total_pause_ms += p["pause_stop"] - p["pause_start"]
+        return max(0, (end_epoch - start_epoch) - total_pause_ms)
 
     @staticmethod
     def _normalize_tag_args(tag_args):
@@ -67,32 +87,32 @@ class CLIInterface:
         return result if result else None
 
     def add_oneoff(self, title, start, stop, metadata=None, tags=None):
-        self.ledger.capture_habit(title, start, stop, metadata=metadata, is_active=False, tags=tags)
+        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags)
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         print(f"\u2713 One-off habit captured: {title}{tag_str}")
 
     def add_start(self, title, tags=None):
-        self.ledger.capture_habit(title, int(time.time()*1000), is_active=True, tags=tags)
+        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags)
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         print(f"\u2713 Started tracking: {title}{tag_str}")
 
     def add_end(self, title):
         resolved = self._resolve_title(title)
-        self.ledger.end_habit(resolved, int(time.time()*1000))
+        self._staging.end(resolved, int(time.time()*1000))
         print(f"\u2713 Stopped tracking: {resolved}")
 
     def add_pause(self, title):
         resolved = self._resolve_title(title)
-        self.ledger.pause_habit(resolved, int(time.time()*1000))
+        self._staging.pause(resolved, int(time.time()*1000))
         print(f"\u2713 Paused: {resolved}")
 
     def add_unpause(self, title):
         resolved = self._resolve_title(title)
-        self.ledger.unpause_habit(resolved, int(time.time()*1000))
+        self._staging.unpause(resolved, int(time.time()*1000))
         print(f"\u2713 Resumed: {resolved}")
 
     def view_active(self, show_tags=False):
-        staging = self.ledger.store.read_staging()
+        staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
 
         print("\n--- Running Tasks ---")
@@ -112,7 +132,7 @@ class CLIInterface:
             if start_val.startswith("plain:"):
                 start_epoch = int(start_val[6:])
             else:
-                start_epoch = int(self.ledger.crypto.decrypt(start_val))
+                start_epoch = int(self._crypto.decrypt(start_val))
             started = time.strftime("%H:%M:%S", time.localtime(start_epoch/1000))
 
             # Show pause indicator and active duration so far
@@ -123,7 +143,7 @@ class CLIInterface:
                 if pauses_enc.startswith("plain:"):
                     pauses = json.loads(pauses_enc[6:])
                 else:
-                    pauses = json.loads(self.ledger.crypto.decrypt(pauses_enc))
+                    pauses = json.loads(self._crypto.decrypt(pauses_enc))
 
             # Tags display
             tag_str = ""
@@ -136,7 +156,7 @@ class CLIInterface:
                 # Task is paused — show duration up to the pause start
                 if pauses and pauses[-1].get("pause_stop") is None:
                     paused_since = pauses[-1]["pause_start"]
-                    duration_ms = self.ledger._compute_duration(start_epoch, paused_since, pauses)
+                    duration_ms = self._compute_duration(start_epoch, paused_since, pauses)
                     pause_time = time.strftime("%H:%M:%S", time.localtime(paused_since/1000))
                     print(f"#{task_id} [{started}] {data['title']} (\u23f8 paused at {pause_time}, active: {duration_ms // 60000}m){tag_str}")
                 else:
@@ -144,12 +164,12 @@ class CLIInterface:
             else:
                 # Task is actively running — show live duration (excluding past pauses)
                 now = int(time.time() * 1000)
-                duration_ms = self.ledger._compute_duration(start_epoch, now, pauses)
+                duration_ms = self._compute_duration(start_epoch, now, pauses)
                 print(f"#{task_id} [{started}] {data['title']} (active: {duration_ms // 60000}m){tag_str}")
 
     def show_rep(self, days_limit=None, from_date=None, to_date=None):
         # Use Blind Index for speed and privacy
-        index = self.ledger.store.read_index()
+        index = self._ledger_engine._index.get_all()
         rep = {}
 
         from_str = from_date
@@ -179,11 +199,11 @@ class CLIInterface:
 
         synced_data = []
         if source in ['synced', 'all']:
-            synced_data = self.ledger.get_ledger_data() or [] # Ensure it's a list if None
+            synced_data = self._ledger_engine.get_day_blocks() or [] # Ensure it's a list if None
 
         staged_data = []
         if source in ['staged', 'all']:
-            staged_data = self.ledger.store.read_staging()
+            staged_data = self._staging._local._store.read_entries()
             # Mark staged items for clarity or specific handling if needed
             for item in staged_data:
                 item['data']['_is_staged'] = True
@@ -213,7 +233,7 @@ class CLIInterface:
                 if start_val.startswith("plain:"):
                     start_epoch = int(start_val[6:])
                 else:
-                    start_epoch = int(self.ledger.crypto.decrypt(start_val))
+                    start_epoch = int(self._crypto.decrypt(start_val))
                 date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
                 if date_str not in staged_by_date:
                     staged_by_date[date_str] = []
@@ -397,14 +417,14 @@ class CLIInterface:
         if start_val.startswith("plain:"):
             start_epoch = int(start_val[6:])
         else:
-            start_epoch = int(self.ledger.crypto.decrypt(start_val))
+            start_epoch = int(self._crypto.decrypt(start_val))
 
         if data["endTime_enc"]:
             end_val = data["endTime_enc"]
             if end_val.startswith("plain:"):
                 stop_epoch = int(end_val[6:])
             else:
-                stop_epoch = int(self.ledger.crypto.decrypt(end_val))
+                stop_epoch = int(self._crypto.decrypt(end_val))
         else:
             stop_epoch = None
 
@@ -416,7 +436,7 @@ class CLIInterface:
             if meta_enc.startswith("plain:"):
                 meta = json.loads(meta_enc[6:])
             else:
-                meta = json.loads(self.ledger.crypto.decrypt(meta_enc))
+                meta = json.loads(self._crypto.decrypt(meta_enc))
         else:
             meta = {}
 
