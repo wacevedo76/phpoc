@@ -8,10 +8,11 @@
 > See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `Phpoc-Architectual_Migration` (17 commits past main)
-- **Tests:** 710 total, 1 pre-existing failure (test_date_filters), no regressions
+- **Branch:** `P11-Day-Boundary-Span` (new, off main)
+- **Tests:** 972 total, 4 expected failures (pending parse_time_input implementation), no regressions
+- **P11 progress:** 32 new tests in `TestSpanningMarkerSafety` + `TestTimeParsingEdgeCases` covering Fix A+B (display marker + filter peek), midnight auto-advance, hour wrapping, dedup, edge cases
 - **Phase 3 completion:** `domain/ledger/` — 5 files, 1,198 lines, 100 tests (chain, engine, index, summaries)
-- **New files (all phases):** 31 files, 779 tests
+- **New files (all phases):** 31 files, 779 tests (existing) + change
 - **Dependencies:** Pure Python 3.x standard library — zero external deps
 - **Working tree:** Clean — all changes committed
 - **Config dir:** `~/.config/personal_history_poc/` is a git repo (snapshots before/after each test run)
@@ -54,7 +55,30 @@ All branches merged and deleted.
 
 **Branches:** All stale branches deleted; only `main` + `origin/main` remain.
 
-### This Session (Current) — Extensible Content Hash (v0.4.0)
+### This Session (Current) — P11 Day-Boundary Span (Fix A+B)
+
+**Decision:** Fix A (display marker `⏭`) + Fix B (date filter peek with dedup). Fix C (split at sync) rejected — the ledger is immutable truth; splitting corrupts entry counts and content hashes.
+
+**Key design details (see ADR-020 for full context):**
+- Spanning check uses `stop_epoch > start_epoch` guard — end-before-start entries are invalid, not spanning.
+- Fix B peeks **one day back only**. Dedup: peeked entries included only if their original date is outside the filter range.
+- `parse_time_input` updated with auto-advance for `00:00`/`24:00`/`25:00` (hours ≥ 24 wrap by `h // 24` days).
+
+**32 tests written** across Issues 1–8 covering:
+  1. Midnight auto-advance & hour wrapping — 7 tests
+  4. No end time safety — 4 tests
+  5. End-before-start guard — 3 tests
+  6. Filter dedup (peek decision) — 7 tests
+  7. Multiple spanning entries from same day — 6 tests
+  8. Full output rendering with dedup — 5 tests
+
+**Tests added to:** `tests/test_phase1b_view_interface.py`
+**Branch:** `P11-Day-Boundary-Span`
+**Total tests:** 972 (4 expected failures pending code implementation)
+
+---
+
+### Prior Session — Extensible Content Hash (v0.4.0)
 
 **Content hash made extensible:** The `content_hash` algorithm was changed from a hardcoded 9-field canonical dict to an **all-keys iterator** that automatically covers any future fields added to activity data. Key changes:
 
@@ -195,7 +219,7 @@ All open questions resolved in favor of the **Timeline Model**:
 | 🥇 High | **P5 — Mobile POC (Swift/Kotlin)** | Minimal phone app for reading/adding entries. | P3 (transport) |
 | 🥈 Medium | **P4 — CLI kinks & UX polish** | Colored output, table formatting, summaries, error messages | None |
 | 🥈 Medium | **P6 — Wearable POC** | Blind-index writes from watchOS/WearOS | P3 (transport) |
-| 🥈 Medium | **P11 — Day-Boundary Span** | Activities crossing midnight: display marker, filter inclusion, or split-at-sync | None |
+| ✅ Done | **P11 — Day-Boundary Span** | Activities crossing midnight: Fix A (display marker `⏭`) + Fix B (filter peek + dedup). 32 tests, zero data model changes. View-layer only. See ADR-020. Branch: `P11-Day-Boundary-Span`. | Tests written (972 total), code pending |
 
 ## Architecture Notes
 - **Protocol, not just a tool:** PHPOC is now explicitly positioned as an open data format. The CLI is the reference implementation.
@@ -237,3 +261,4 @@ See `CHANGELOG.md` for full history.
 - 2026-05-04 — **D2 progress:** Q1-Q4 resolved (offline, seq numbers, logout). Q5 partially resolved (git remote as first transport, `AbstractStagingTransport` interface, multi-staging after mobile). Staging obfuscation: 4-tiered fixed-size padding (64K/128K/256K/512K), user-configurable, encrypted blob. Remaining: Q6 (evicted device behavior), Q7 (device identity), D3 (offline sync reconciliation).
 - 2026-05-09 — Fixed negative duration bug: `_compute_duration` in `core/ledger.py` returns `max(0, ...)` to clamp pauses extending past end time. Caused by end-time override during interactive sync without trimming pauses. (`core/ledger.py`)
 - 2026-05-09 — Added three staging tools: `modify` (edit end time & pauses of staged entry), `remove` (delete staged entry by index), `review` (preview staged entries post-sync). On branch `tools-modify-remove-review`. (`main.py`, `core/ledger.py`)
+- 2026-05-14 — **P11 — Day-Boundary Span:** Designed and tested Fix A (display marker `⏭`) + Fix B (date filter peek with dedup). Fix C (split at sync) rejected — data model should not change for display. 32 tests written across Issues 1–8 covering: midnight auto-advance, hour wrapping (`24:00`/`25:00`), no-end-time safety, end-before-start guard, filter dedup, multiple spanning entries, and full output rendering. ADR-020 adopted. Branch: `P11-Day-Boundary-Span`. 972 total tests (4 expected failures pending implementation). (`tests/test_phase1b_view_interface.py`, `ARCHITECTURAL_DECISIONS.md`, `SESSION_HANDOFF.md`)

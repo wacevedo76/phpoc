@@ -709,3 +709,47 @@ phpoc config set storage.data_dir /mnt/work-ledger
 ### Consequences
 - **Positive:** Full flexibility from ephemeral (CLI flag) to persistent (config key). No new subcommands. All tests pass (941).
 - **Negative:** Users who change `storage.data_dir` must manually move their ledger files. A future `migrate` subcommand could automate this. `--dir` flag doesn't change the config file path — config and data remain independent per ADR-016.
+
+---
+
+## ADR-020: Day-Boundary Spanning Activities — Display Marker + Filter Inclusion (Fix A+B)
+
+**Date:** 2026-05-14
+**Status:** ✅ Adopted (tests written, implementation pending)
+
+### Context
+Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
+
+1. **Display ambiguity** — `[23:30 - 01:30]` shows a next-day end time with no visual indicator.
+2. **Date filter blind spot** — `list synced --date 2026-04-29` misses the activity even though 2 hours of it happened on the 29th.
+
+Three approaches were considered (see [BACKLOG P11](BACKLOG.md#-p11-day-boundary-spanning-activities)).
+
+### Decision
+Adopt **Fix A + Fix B** — a combined display-layer solution with no data model changes:
+
+**Fix A — Display marker:** `_print_entry` in `cli/interface.py` appends a `⏭` marker to any entry whose end date (UTC) differs from its start date:
+
+```
+[23:30 - 01:30] Late Night Coding (120m) ⏭
+```
+
+**Fix B — Filter inclusion:** When rendering a date-filtered view (e.g., `--date 2026-04-29`), peek at the previous day's day block and surface any entries that span *into* the target date. A dedup guard prevents the entry from appearing twice when its original date is also in the filter range.
+
+**Key design rules:**
+- Spanning check uses `stop_epoch > start_epoch` guard (see Issue 5) — end-before-start entries are invalid, not spanning.
+- Fix B only peeks **one day back** — multi-day-span entries (e.g., Apr 28→30) are not surfaced when filtering for intermediate dates.
+- No end time → no spanning check.
+- Content hash, chain integrity, blind index — unaffected. This is purely a view-layer change.
+
+### Rationale
+- **Fix C (split at sync)** was rejected — the ledger is immutable truth; splitting for display corrupts entry count and content hash integrity.
+- Fix A is zero-risk (display-only, no new decryption paths).
+- Fix B addresses the user-facing blind spot without touching the chain structure.
+- Dedup via `original_date not in filter_range` is simple and doesn't require tracking seen entries.
+- The ledger remains the authoritative data model; view logic is the only thing that changes.
+
+### Consequences
+- **Positive:** Clear visual cue for spanning entries. Date filters find activities that belong to the filtered day. Zero data model changes. 32 new tests (972 total). No regression.
+- **Negative:** The `⏭` marker is display-only — tools reading raw JSON won't see it (they compute dates independently). Fix B adds a decrypt-and-compare step per previous-day entry during filtered listing.
+- **Implementation scope:** `cli/interface.py:_print_entry()` (marker), `cli/interface.py:list_habits()` (peek logic). No engine/chain/staging changes.

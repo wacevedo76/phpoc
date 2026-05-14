@@ -244,39 +244,30 @@ Link content hashes (SHA-256 of video/audio/photos) to specific activities.
 
 ---
 
-## 🟡 P11. Day-Boundary Spanning Activities
+## ✅ P11. Day-Boundary Spanning Activities
 
 **Type:** Edge case / UX polish
-**Priority:** Medium
+**Priority:** Medium (resolved)
 **Roadmap ref:** [§4 — UX](ROADMAP.md#4-user-experience--accessibility-reference-implementation)
-**Blocked by:** Nothing — can start now.
+**ADR:** [ADR-020](ARCHITECTURAL_DECISIONS.md#adr-020-day-boundary-spanning-activities--display-marker--filter-inclusion-fix-ab)
+**Status:** Tests written (32), implementation pending on branch `P11-Day-Boundary-Span`
 
-Activities that cross midnight (e.g., 23:30 → 03:30) are stored under their start date only.
-This creates two issues:
+### Decision
+**Fix A + Fix B** adopted. Fix C (split at sync) rejected.
 
-### 1. Display Ambiguity
-```
-Date: 2026-04-28
-  [23:30 - 03:30] Late Night Coding (240m)
-```
-`03:30` is the next day but there's no visual indicator. User sees "23:30 - 03:30" and may misinterpret.
+- **Fix A — Display marker:** `_print_entry` appends `⏭` to entries whose UTC end date differs from start date.
+- **Fix B — Filter inclusion:** Date-filtered views peek at the previous day's block and surface spanning entries, with dedup guard.
 
-### 2. Date Filter Misses Spanning Entries
-`list synced --date 2026-04-29` would **not** show the activity above,
-even though 4 hours of it happened on the 29th. The filter checks the day-block's date
-("2026-04-28"), not the entry's end time.
+### Rationale
+- The ledger is immutable truth — splitting entries for display corrupts content hashes and inflates entry counts.
+- Fix A is zero-risk (display-only, no new decryption). Fix B addresses the filter blind spot without touching chain structure.
+- 32 tests cover: midnight auto-advance, hour wrapping, no-end-time safety, end-before-start guard, filter dedup, multiple spanning entries, full output rendering.
 
-**Potential fixes (choose one or combine):**
-- **A — Display marker only:** Detect cross-day entries, append `⏭` or `(next day)`
-- **B — Include spanning entries in filters:** When filtering by date range, also peek at
-the previous day and include entries whose end date falls within range
-- **C — Split at sync time:** Split crossing entries into two (one per day), like Toggl/Clockify
-
-**Notes:**
-- Fix A is trivial (`_print_entry` in `cli/interface.py`)
-- Fix B requires decrypting entry timestamps during the filter pass (slightly more work,
-still cheap)
-- Fix C changes the sync data model (most invasive, cleanest result)
+### Key Design Rules
+1. Spanning check guarded by `stop_epoch > start_epoch` (end-before-start is invalid data, not spanning).
+2. Fix B peeks exactly **one day back** — multi-day-span entries are not surfaced for intermediate dates.
+3. No end time = no spanning check.
+4. Dedup: peeked entry included only if its original date is **outside** the filter range.
 
 ---
 
