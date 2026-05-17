@@ -55,23 +55,53 @@ Extract the ledger format into a standalone specification document that anyone c
 **Priority:** High — needed for any cross-device or cross-person sharing
 **Roadmap ref:** [§0 — Protocol Layer](ROADMAP.md#0-protocol-layer--platform-free-personal-data)
 **Blocked by:** P1 (Format Spec)
+**Branch:** `P2-Portable_Export` (clean, no code changes)
 
-A `phpoc export --range` command that produces a standalone, verifiable chain segment file.
+Two sub-commands producing two output formats for different sharing use cases.
+
+### 2a. `phpoc export --range` — Block-Level Segment
+
+Produces a standalone, verifiable chain segment file (`.phpoc`).
 
 **Scope:**
-- `phpoc export --from YYYY-MM-DD --to YYYY-MM-DD` → produces a signed `.phpoc` segment
-- Segment includes all blocks in the range plus the anchor block (where it links to main chain)
-- Recipient can verify the segment against the user's public key without having the full ledger
-- Optional: `--blind-only` exports just the blind index (minimal privacy, still verifiable)
+- `phpoc export --from YYYY-MM-DD --to YYYY-MM-DD` → produces a `.phpoc` segment
+- Segment includes all blocks in the range plus the anchor summary block (chain splitting per [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries))
+- Recipient verifies the segment's internal chain integrity (prev_hash, seals, entry hashes)
+- Verification command: `verify --segment <file>`
 
 **Not in scope:**
-- Re-import of exported segments (that's Reconciliation, separate item)
-- Social sharing protocol (future)
+- Re-import of exported segments (Reconciliation — separate item P9)
 
-**Definition of done:**
-- Export command works, produces valid chain segment
-- Verification of exported segment works with `verify --segment`
-- Tests cover edge cases: empty range, single day, across year boundary, encrypted vs blind-only
+### 2b. `phpoc export --tag <tag>` — Entry-Level Signed Manifest
+
+Produces a signed manifest of entries matching one or more tags (`.phshare` — proposed).
+
+**Scope:**
+- `phpoc export --tag "guitar" [--from YYYY-MM-DD --to YYYY-MM-DD]` → signed manifest file
+- Entries filtered by tag (plaintext in ledger — no decryption needed for filtering)
+- Entries individually included with content hashes intact
+- Manifest signed by user's identity key — recipient verifies authenticity without the full ledger
+- Optional date range for incremental updates (social media doesn't need full re-exports)
+- Encrypted field treatment: TBD (keep encrypted / omit / placeholder marker / auth-gated decryption)
+
+**Verification mechanism:** TBD — needs design session (manifest format, proof structure)
+
+**Not in scope:**
+- Social sharing protocol (future)
+- Cross-device trust verification (future)
+
+### 2c. `--blind-only` (Under Evaluation)
+
+Export of blind index (plaintext duration aggregates per date/title). Under evaluation:
+- Blind index is an unsigned derived cache — trivially forgeable without proof
+- Options: (A) standalone with signed manifest, (B) format modifier on `--tag`, (C) out of scope
+- See SESSION_HANDOFF §P2 Design Session for discussion
+
+**Definition of done (overall):**
+- `--range` export command works, produces valid chain segment — `verify --segment` passes
+- `--tag` export produces signed manifest — recipient can verify authenticity via identity key
+- Tests cover: empty range, single day, across year boundary, tag match/miss, date-filtered incremental
+- All 972+ existing tests continue to pass
 
 ---
 

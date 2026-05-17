@@ -8,7 +8,7 @@
 > See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `P11-Day-Boundary-Span` (ahead of main by 2 commits)
+- **Branch:** `P2-Portable_Export` (branched from main, ahead of main by 1 commit — SESSION_HANDOFF update only)
 - **Tests:** 972 total, all passing, no regressions
 - **P11 status:** ✅ Fully implemented. Fix A (display marker `⏭`) + Fix B (date filter peek with dedup) + `parse_time_input` hour wrapping & auto-advance. 2 files changed, 104 lines added. See ADR-020.
 - **Phase 3 completion:** `domain/ledger/` — 5 files, 1,198 lines, 100 tests (chain, engine, index, summaries)
@@ -218,7 +218,7 @@ All open questions resolved in favor of the **Timeline Model**:
 | ✅ Done | **Phase 5 — Sync Orchestrator wiring** | Update `main.py` to call `SyncOrchestrator.sync()` instead of `ledger.sync_with_strategy()`. 3 files changed: `main.py`, `core/sync/orchestrator.py`, `domain/interfaces/view.py`. 47 tests, 826 total. See commit. | Phase 4 completed |
 | ✅ Done | **Phase 6 — CLIInterface + Thin Wrappers** | Migrated 19 `self.ledger.*` calls to `StagingService`/`LedgerEngine`. `CLIInterface(staging_service, ledger_engine, crypto)`. `core/ledger.py` thin wrapper. `IndexManager` fixes. 902 tests total. | Phase 5 completed |
 | ✅ Done | **Phase 7 — User-configurable configuration file** | XDG path resolution, `ConfigManager` integration into `main.py`, `--config` flag, `config` CLI subcommand (show/get/set), `PHPOC_CONFIG`/`PHPOC_DATA_DIR` env vars, legacy `~/.config/personal_history_poc/` fallback. 926 tests total. | Phase 6 completed |
-| 🥇 High | **P2 — Portable Export** | `phpoc export --range` produces verifiable chain segment. Chain splitting in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). | Phase 5 (Sync Orchestrator can provide block I/O) |
+| 🥇 High | **P2 — Portable Export** | Two sub-commands: `--range` (block-level chain segment) + `--tag` (entry-level signed manifest for social sharing). `--tag` optionally date-filtered (incremental updates). `--blind-only` under evaluation. See SESSION_HANDOFF §P2 Design Session (2026-05-17). | Design phase — see SESSION_HANDOFF §P2 Design Session |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Implement `AbstractStagingTransport` + `GitStagingTransport`. Blob format in [PHPSPEC §8.5](PHPSPEC.md#85-multi-device-remote-staging). | Phase 2 alone provides infrastructure; needs Phase 5 integration |
 | 🥇 High | **P7 — Web Viewer (Phone POC)** | Lowest-barrier phone access: static HTML/JS page or PWA that reads ledger + staging blob. | P3 (transport) |
 | 🥇 High | **P5 — Mobile POC (Swift/Kotlin)** | Minimal phone app for reading/adding entries. | P3 (transport) |
@@ -247,6 +247,44 @@ See `CHANGELOG.md` for full history.
 | `PHPSPEC.md` | Format specification — block types, encryption, chain validation, content hash, blind index, staging. |
 | `ROADMAP.md` | Feature roadmap with completed/planned/future items. |
 | `BACKLOG.md` | Task-level tracking with priorities. |
+
+---
+
+## P2 Design Session (2026-05-17)
+
+**Branch:** `P2-Portable_Export` — clean branch, no code changes yet.
+
+### Converged Understanding
+
+**Two export formats:**
+
+1. **`phpoc export --range`** — Block-level chain segment (`.phpoc`). Contiguous date range anchored at nearest summary block. Uses chain splitting per PHPSPEC §9.4.5. Verification: `verify --segment` checks internal chain integrity.
+
+2. **`phpoc export --tag <tag>`** — Entry-level signed manifest. Exports entries matching one or more tags. Optional date range for incremental updates (social media doesn't need full re-exports). Verification: user's identity key signs a manifest; recipient verifies content hashes without full ledger. Tags are **plaintext** in the ledger, so filtering requires no decryption.
+
+### Open Issues (Unresolved)
+
+1. **Encrypted field treatment in `--tag` exports:**
+   - Default: keep encrypted fields as ciphertext
+   - Option A: omit encrypted fields entirely from output
+   - Option B: show placeholder/marker (`[encrypted]`) instead of ciphertext
+   - Option C: decrypt fields, but **require authentication** before file creation
+
+2. **Verification/authenticity mechanism for shared files:**
+   - `--range` carries existing block signatures — verification via chain integrity
+   - `--tag` needs a new signed wrapper format (manifest signed by identity key)
+   - Exact format of the proof not yet designed
+
+3. **`--blind-only` export:**
+   - Under evaluation. Blind index (plaintext duration aggregates per date/title) is an unsigned derived cache — forging is trivial
+   - Options: (A) standalone feature with its own signed manifest, (B) format modifier on `--tag`, (C) out of scope for P2
+   - Needs a signature/anchoring mechanism to be verifiable for social sharing
+
+4. **General:**
+   - `--tag` should combine with `--from`/`--to` date range (incremental sharing)
+   - File extension convention: `.phpoc` for block segments, proposal for `.phshare` for signed manifests (not yet decided)
+
+### Next Session: Pick up with verification/authenticity design
 
 ---
 

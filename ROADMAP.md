@@ -19,7 +19,7 @@ The top-level goal for PHPOC: establish it as an **open data format** for portab
 |---|---|---|---|
 | **VISION.md** — Protocol pitch written | ✅ | — | Captures the "why" and the social use cases |
 | **Format Specification** (`PHPSPEC.md`) — Document the block structure, encryption scheme, chain validation, content hash algorithm, blind index, and staging area as a standalone spec | ✅ | — | Enables anyone to implement a reader/writer without reverse-engineering Python. Cross-refs: [DESIGN_GOALS §1](DESIGN_GOALS.md#1-cryptographic-integrity--immutability), [BACKLOG P1](BACKLOG.md#p1-format-specification-phpspecmd). Includes `format_version` field in genesis (§4.1), explicit versioning policy (§9.3), and one-time migration script (`scripts/migrate_format_version.py`). |
-| **Portable Export** (`phpoc export --range`) — Produce a standalone, verifiable chain segment file | 🔜 | **Highest** | The primitive needed for cross-device sharing and social use cases. Chain splitting mechanics documented in [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). Cross-refs: [DESIGN_GOALS §2](DESIGN_GOALS.md#2-privacy--anti-forensics), [BACKLOG P2](BACKLOG.md#p2-portable-export) |
+| **Portable Export** — Two sub-commands: `--range` (block-level chain segment via chain splitting) + `--tag` (entry-level signed manifest for social sharing) | 🔜 | **Highest** | `--range` uses chain splitting from [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries). `--tag` shares tag-filtered entries signed by identity key. `--blind-only` under evaluation. See SESSION_HANDOFF §P2 Design Session. Cross-refs: [DESIGN_GOALS §2](DESIGN_GOALS.md#2-privacy--anti-forensics), [BACKLOG P2](BACKLOG.md#p2-portable-export) |
 | **Remote Sync (git-based)** — Push/pull encrypted ledger via git | 🔜 | **High** | Enables laptop ↔ phone sync. ✅ All blockers resolved (R1, R2, R3, R4). Cross-refs: [DESIGN_GOALS §3](DESIGN_GOALS.md#3-scalability--durability), [BACKLOG P3](BACKLOG.md#p3-remote-sync-git-based) |
 | **Laptop reference implementation polish** — CLI kinks, UX improvements, reliability | 🔜 | **High** | The CLI is the first-class reference. Must be solid before downstream porting. Cross-refs: [BACKLOG P4](BACKLOG.md#p4-cli-kinks--ux-polish) |
 | **Mobile POC** (Swift/Kotlin) — Minimal ledger reader/ writer | 🔮 | Medium | Proves the format works cross-platform. Blind index writes (no full decryption) for wearable. |
@@ -130,7 +130,7 @@ None.
 | Priority | Item | Dependencies |
 |---|---|---|
 | ✅ Done | Format Spec (PHPSPEC.md) | — |
-| 🥇 Highest | Portable Export (`export --range`) | Format Spec (done) — chain split mechanics in PHPSPEC §9.4.5 |
+| 🥇 Highest | Portable Export (`--range` + `--tag`) | Format Spec (done) — chain split mechanics in PHPSPEC §9.4.5. `--tag` needs verification format design. |
 | 🥇 High | Remote Sync (git-based) | None — all blockers resolved |
 | 🥇 High | CLI kinks & UX polish | None — can start now |
 | 🥈 Medium | Mobile POC reader/writer | Format Spec, Portable Export |
