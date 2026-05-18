@@ -10,24 +10,43 @@
 
 ## Two-Machine Setup
 
-### Machine 1: Laptop (wacevedo@x13)
+### Machine 1: Laptop x13 (wacevedo@x13)
+- **Hostname:** x13 (same OS as debagent04)
 - Code at `~/code/Testing/phpoc/` (rsynced from debagent04)
 - SSH key set up for GitHub
 - Has ledger initialized with passphrase **"m0r3m0n3y"**
 - Has active staging entries (two "Working on phpoc" tasks)
-- Has remote clone at `~/.config/personal_history_poc/remote/` (legacy path)
+- Has remote clone at `~/.config/personal_history_poc/remote/` (legacy path, XDG data dir `~/.local/share/phpoc/` does not exist yet)
+- Config at `~/.config/phpoc/config.json`
+- **Device ID:** `e0cd83b8-0ce5-493d-af48-350121813f8d`
 
 ### Machine 2: debagent04 (pi@debagent04)
 - Code at `~/phpoc/` (the repo source of truth)
 - SSH key set up for GitHub
 - Config at `~/.config/phpoc/config.json` with `remote.git_remote_url` set
-- Ledger copied from laptop (same passphrase → same master key → blob deobfuscation works)
+- Ledger copied from laptop (same passphrase → same master key → blob deobfuscation works on properly encrypted blobs)
 - `phpoc view` confirmed working — shows both "Working on phpoc" tasks after deobfuscation
+- **Device ID:** `bbb3badc-6365-49ea-b43c-53869ca0195f`
 
-### Remote Repo
-- `git@github.com:wacevedo76/phpoc-staging.git`
-- Contains staging blob at `staging/blobs/current.json`
-- Currently has 3 entries: 2 active "Working on phpoc" + 1 "Test on debagent04" oneoff
+### Remote Repo (`git@github.com:wacevedo76/phpoc-staging.git`)
+
+**Current remote blob history (origin/main):**
+| Commit | Time | Size | Status | Device |
+|--------|------|------|--------|--------|
+| `b75421b` | 14:54:44 | 1779 B | **❌ UNENCRYPTED plain JSON** | debagent04 (`bbb3badc`) |
+| `0127dc6` | 14:54:29 | 31 B | **❌ Plain text** `{"test":"debagent04 push fix"}` | — |
+| `7456c34` | 14:48:39 | 65592 B | ✅ Properly encrypted | debagent04 (`bbb3badc`) |
+| `28005aa` | 14:29:11 | 65592 B | ✅ Properly encrypted | laptop x13 (`e0cd83b8`) |
+| `c3eef75` | 13:47:32 | 65592 B | ✅ Properly encrypted | laptop x13 |
+| `a951f75` | 13:42:33 | 65592 B | ✅ Properly encrypted | laptop x13 |
+| `a5986e3` | 13:37:51 | 65592 B | ✅ Properly encrypted | laptop x13 |
+| `99e0974` | 13:34:59 | 65592 B | ✅ Properly encrypted | Phone (`9847c408`) |
+
+**Known issue:** Commits `0127dc6` and `b75421b` from debagent04 pushed **unencrypted** blobs. The later pushes apparently skipped the obfuscation step. The current remote blob (`b75421b`, 1779 B) is plain JSON with device `bbb3badc` and 3 entries:
+- Working on phpoc (active) ×2
+- Test on debagent04 (oneoff, is_active=False)
+
+**Fix:** Investigate blob obfuscation on debagent04 — needs to be done on that machine.
 
 ## P3 Implementation Status
 
@@ -78,13 +97,12 @@ e2930a0 perf: pull before push in GitStagingTransport
 
 5. **Duplicate task IDs in view**: `id_map` was keyed by title only, so two tasks with the same title showed the same #2. Fixed by enumerating active entries directly with sequential IDs.
 
-## Next Steps (for user after session)
-1. Rsync `~/phpoc/` → laptop `~/code/Testing/phpoc/`
-2. On laptop: `git pull origin P3-Remote_Sync` to get the latest fixes
-3. Test: run `phpoc view` on laptop — should see the "Test on debagent04" oneoff from remote
-4. Test: run `phpoc add oneoff "From laptop"` on laptop — should push to remote
-5. Test: run `phpoc view` on debagent04 — should see laptop's new entry
-6. If cross-device sync works reliably, merge `P3-Remote_Sync` into `main`
+## Next Steps
+1. ✅ Rsync code to laptop (done)
+2. ✅ On laptop: `git pull origin P3-Remote_Sync` (done via session updates)
+3. ❌ **On debagent04: Investigate blob obfuscation bug** — commits `0127dc6` and `b75421b` pushed unencrypted blobs. Check why `RemoteStagingSync._obfuscate()` is being skipped in the push pipeline on debagent04.
+4. 🔜 After fix: test round-trip sync (add on one device → view on other)
+5. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
 
 ## Key Files
 | File | Purpose |
