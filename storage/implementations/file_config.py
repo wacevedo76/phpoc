@@ -95,7 +95,13 @@ class FileConfigStore(AbstractConfigStore):
     def read_config(self) -> Optional[Dict[str, Any]]:
         if not self.path.exists():
             return None
-        text = self.path.read_text().strip()
+        raw = self.path.read_text()
+        # Strip JS-style // comment lines (from template-generated files)
+        lines = [
+            line for line in raw.splitlines()
+            if not line.strip().startswith("//")
+        ]
+        text = "\n".join(lines).strip()
         if not text:
             return None
         return json.loads(text)
