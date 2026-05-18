@@ -18,7 +18,9 @@ from cli.interface import CLIInterface
 from domain.staging.service import StagingService
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
+from core.sync.git_transport import GitStagingTransport
 from storage.implementations.file_staging import FileStagingStore
+from security.device_identity import RandomUUIDDeviceIdentityProvider
 
 # Config file resolution
 CONFIG_PATH = _resolve_config_path()
@@ -319,9 +321,23 @@ def main():
     store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
     ledger = LedgerDomain(crypto, store)
 
+    # Remote transport setup (from config)
+    remote_url = CONFIG.get("remote.git_remote_url")
+    transport = None
+    device_id_provider = None
+    if remote_url:
+        clone_path = str(CONFIG_DIR / "remote")
+        transport = GitStagingTransport(remote_url, clone_path)
+        device_id_provider = RandomUUIDDeviceIdentityProvider(CONFIG)
+
     # New layered components
     staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
-    staging_service = StagingService(crypto=crypto, staging_store=staging_store)
+    staging_service = StagingService(
+        crypto=crypto,
+        staging_store=staging_store,
+        transport=transport,
+        device_id_provider=device_id_provider,
+    )
     ledger_engine = LedgerEngine(
         crypto=crypto,
         store=store,
