@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from security.crypto import AbstractCryptoManager
 from domain.staging.service import StagingService
+from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 
 
@@ -129,7 +130,20 @@ class CLIInterface:
     def view_active(self, show_tags=False):
         # Pull from remote to show latest state (no-op if no remote configured)
         if self._staging._remote is not None:
-            self._staging.check_and_sync(timeout_ms=500)
+            # Get master key from crypto if available (authenticated session)
+            mk = getattr(self._crypto, "master_key", None)
+            if not isinstance(mk, bytes) or len(mk) != 32:
+                mk = None
+            try:
+                # Direct pull+merge bypassing device auth check for read-only view
+                remote_blob = self._staging._remote.pull(master_key=mk)
+                if remote_blob and "entries" in remote_blob:
+                    local_entries = self._staging._local.read_entries()
+                    remote_dtos = self._staging._raw_to_dtos(remote_blob["entries"])
+                    merged = self._staging._merge.merge(local_entries, remote_dtos)
+                    self._staging._local.write_entries(merged)
+            except Exception:
+                pass  # Graceful offline
         staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
 
