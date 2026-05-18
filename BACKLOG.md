@@ -49,59 +49,19 @@ Extract the ledger format into a standalone specification document that anyone c
 
 ---
 
-## 🔴 P2. Portable Export
+## ⏸️ P2. Portable Export (Deferred)
 
 **Type:** Protocol primitive
 **Priority:** High — needed for any cross-device or cross-person sharing
 **Roadmap ref:** [§0 — Protocol Layer](ROADMAP.md#0-protocol-layer--platform-free-personal-data)
-**Blocked by:** P1 (Format Spec)
-**Branch:** `P2-Portable_Export` (clean, no code changes)
+**Status:** Design session complete. Deferred indefinitely. File export unknowns (verification format, encrypted field treatment) need real-world development context to resolve.
 
-Two sub-commands producing two output formats for different sharing use cases.
+Design captured in SESSION_HANDOFF §P2 Design Session (2026-05-17). Includes:
+- `--range` (block-level chain segment)
+- `--tag` (entry-level signed manifest for social sharing)
+- `--blind-only` (under evaluation)
 
-### 2a. `phpoc export --range` — Block-Level Segment
-
-Produces a standalone, verifiable chain segment file (`.phpoc`).
-
-**Scope:**
-- `phpoc export --from YYYY-MM-DD --to YYYY-MM-DD` → produces a `.phpoc` segment
-- Segment includes all blocks in the range plus the anchor summary block (chain splitting per [PHPSPEC §9.4.5](PHPSPEC.md#945-chain-splitting-at-summary-boundaries))
-- Recipient verifies the segment's internal chain integrity (prev_hash, seals, entry hashes)
-- Verification command: `verify --segment <file>`
-
-**Not in scope:**
-- Re-import of exported segments (Reconciliation — separate item P9)
-
-### 2b. `phpoc export --tag <tag>` — Entry-Level Signed Manifest
-
-Produces a signed manifest of entries matching one or more tags (`.phshare` — proposed).
-
-**Scope:**
-- `phpoc export --tag "guitar" [--from YYYY-MM-DD --to YYYY-MM-DD]` → signed manifest file
-- Entries filtered by tag (plaintext in ledger — no decryption needed for filtering)
-- Entries individually included with content hashes intact
-- Manifest signed by user's identity key — recipient verifies authenticity without the full ledger
-- Optional date range for incremental updates (social media doesn't need full re-exports)
-- Encrypted field treatment: TBD (keep encrypted / omit / placeholder marker / auth-gated decryption)
-
-**Verification mechanism:** TBD — needs design session (manifest format, proof structure)
-
-**Not in scope:**
-- Social sharing protocol (future)
-- Cross-device trust verification (future)
-
-### 2c. `--blind-only` (Under Evaluation)
-
-Export of blind index (plaintext duration aggregates per date/title). Under evaluation:
-- Blind index is an unsigned derived cache — trivially forgeable without proof
-- Options: (A) standalone with signed manifest, (B) format modifier on `--tag`, (C) out of scope
-- See SESSION_HANDOFF §P2 Design Session for discussion
-
-**Definition of done (overall):**
-- `--range` export command works, produces valid chain segment — `verify --segment` passes
-- `--tag` export produces signed manifest — recipient can verify authenticity via identity key
-- Tests cover: empty range, single day, across year boundary, tag match/miss, date-filtered incremental
-- All 972+ existing tests continue to pass
+Branch `P2-Portable_Export` merged to main and deleted.
 
 ---
 
@@ -111,23 +71,34 @@ Export of blind index (plaintext duration aggregates per date/title). Under eval
 **Priority:** High — enables laptop ↔ phone workflow
 **Roadmap ref:** [§0 — Protocol Layer](ROADMAP.md#0-protocol-layer--platform-free-personal-data)
 **Blocked by:** Nothing — all roadmap blockers (R1, R2, R3, R4) resolved.
+**Branch:** `P3-Remote_Sync`
 
-Push/pull encrypted ledger blocks to/from a git remote.
+First concrete implementation of `AbstractStagingTransport` using git CLI.
 
-**Design sketch:**
-- Encrypt ledger JSON before commit (or commit as-is since it's already encrypted)
-- Push to private git repo (GitHub, GitLab, self-hosted)
-- `phpoc sync --remote` pushes, `phpoc sync --pull` pulls
-- On pull, verify chain integrity of incoming blocks before merging
+**Scope:**
+- `GitStagingTransport` — shells out to `git` CLI for pull/push of staging blob
+- Remote staging blob only (not ledger chain) — authoritative source for shared staging
+- Sync flow: push local staging → pull remote staging → merge (remote wins) → local mirrors remote
+- CLI integration: `phpoc init --git-create` (auto-create repo with random name), `phpoc config remote.git_remote_url <url>`, `phpoc config remote.transport git`
+- Repo naming: user-provided URL via config, or auto-generated random alphanumeric string with `--git-create`
+- `--git-set` flag for specifying existing repo URL
+- Config file as source of truth for remote URL and transport type
+- Blob obfuscation: fixed-size tier padding (64K/128K/256K/512K) + encrypt before push per PHPSPEC §8.5
 
 **Not in scope:**
-- Conflict resolution across devices (future CRDT-based sync)
-- Public sharing (future)
+- Ledger chain sync to remote (staging blob only)
+- Conflict resolution beyond timestamp-based merge (timeline model — additive)
+- Public sharing
+- GitHub/GitLab API integration for repo creation
 
 **Definition of done:**
-- `phpoc sync --remote <url>` pushes ledger to remote
-- `phpoc sync --pull` fetches and merges without breaking chain integrity
-- Pulled blocks from another device pass `verify`
+- `GitStagingTransport` passes existing `AbstractStagingTransport` interface tests
+- `phpoc init --git-create` creates a bare git repo, pushes initial staging blob
+- `phpoc config remote.git_remote_url <url>` wires transport into sync pipeline
+- Sync flow works end-to-end: push → pull → merge → local == remote
+- Blob obfuscation implemented (pad to nearest tier → encrypt → push)
+- Offline tolerance: entries queue locally when remote unavailable, drain on reconnect
+- All 972+ existing tests continue to pass
 
 ---
 

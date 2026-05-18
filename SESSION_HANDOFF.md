@@ -8,8 +8,9 @@
 > See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full migration status.
 
 ## Current State
-- **Branch:** `P2-Portable_Export` (branched from main, ahead of main by 1 commit — SESSION_HANDOFF update only)
+- **Branch:** `P3-Remote_Sync` (branched from main, ahead of main by 1 commit — P2 merge docs)
 - **Tests:** 972 total, all passing, no regressions
+- **P2 status:** Design session complete. Deferred due to unknowable variables in file export design. Merged doc updates to main. Branch deleted.
 - **P11 status:** ✅ Fully implemented. Fix A (display marker `⏭`) + Fix B (date filter peek with dedup) + `parse_time_input` hour wrapping & auto-advance. 2 files changed, 104 lines added. See ADR-020.
 - **Phase 3 completion:** `domain/ledger/` — 5 files, 1,198 lines, 100 tests (chain, engine, index, summaries)
 - **New files (all phases):** 31 files, 779 tests (existing) + change
@@ -218,7 +219,8 @@ All open questions resolved in favor of the **Timeline Model**:
 | ✅ Done | **Phase 5 — Sync Orchestrator wiring** | Update `main.py` to call `SyncOrchestrator.sync()` instead of `ledger.sync_with_strategy()`. 3 files changed: `main.py`, `core/sync/orchestrator.py`, `domain/interfaces/view.py`. 47 tests, 826 total. See commit. | Phase 4 completed |
 | ✅ Done | **Phase 6 — CLIInterface + Thin Wrappers** | Migrated 19 `self.ledger.*` calls to `StagingService`/`LedgerEngine`. `CLIInterface(staging_service, ledger_engine, crypto)`. `core/ledger.py` thin wrapper. `IndexManager` fixes. 902 tests total. | Phase 5 completed |
 | ✅ Done | **Phase 7 — User-configurable configuration file** | XDG path resolution, `ConfigManager` integration into `main.py`, `--config` flag, `config` CLI subcommand (show/get/set), `PHPOC_CONFIG`/`PHPOC_DATA_DIR` env vars, legacy `~/.config/personal_history_poc/` fallback. 926 tests total. | Phase 6 completed |
-| 🥇 High | **P2 — Portable Export** | Two sub-commands: `--range` (block-level chain segment) + `--tag` (entry-level signed manifest for social sharing). `--tag` optionally date-filtered (incremental updates). `--blind-only` under evaluation. See SESSION_HANDOFF §P2 Design Session (2026-05-17). | Design phase — see SESSION_HANDOFF §P2 Design Session |
+| 🥇 High | **P2 — Portable Export** | Two sub-commands: `--range` (block-level chain segment) + `--tag` (entry-level signed manifest). Deferred — file export unknowns need real-world dev context. | Deferred. See SESSION_HANDOFF §P2 Design Session |
+| 🥇 High | **P3 — Remote Sync (git-based)** | Implement `GitStagingTransport`, CLI integration (`init --git-create`, `config`), blob obfuscation. Shell-out to `git` CLI. Staging blob only. | Design phase — see SESSION_HANDOFF §P3 Design Session |
 | 🥇 High | **P3 — Remote Sync (git-based)** | Implement `AbstractStagingTransport` + `GitStagingTransport`. Blob format in [PHPSPEC §8.5](PHPSPEC.md#85-multi-device-remote-staging). | Phase 2 alone provides infrastructure; needs Phase 5 integration |
 | 🥇 High | **P7 — Web Viewer (Phone POC)** | Lowest-barrier phone access: static HTML/JS page or PWA that reads ledger + staging blob. | P3 (transport) |
 | 🥇 High | **P5 — Mobile POC (Swift/Kotlin)** | Minimal phone app for reading/adding entries. | P3 (transport) |
@@ -285,6 +287,66 @@ See `CHANGELOG.md` for full history.
    - File extension convention: `.phpoc` for block segments, proposal for `.phshare` for signed manifests (not yet decided)
 
 ### Next Session: Pick up with verification/authenticity design
+
+---
+
+## P3 Design Session (2026-05-17)
+
+**Branch:** `P3-Remote_Sync` — clean branch, no code changes yet.
+
+### Already Exists (Infrastructure Ready)
+
+| Component | File | Status |
+|---|---|---|
+| `AbstractStagingTransport` | `core/sync/transport.py` | ✅ Interface (pull/push) |
+| `RemoteStagingSync` | `domain/staging/remote_sync.py` | ✅ Device check, blob pull/push, obfuscation |
+| `MergeEngine` | `domain/staging/merge_engine.py` | ✅ Timestamp-based dedup merge |
+| `StagingService.check_and_sync()` | `domain/staging/service.py` | ✅ Pull → merge → write local |
+| `StagingService.push_to_remote()` | `domain/staging/service.py` | ✅ Serialize → push via transport |
+| `SyncOrchestrator` | `core/sync/orchestrator.py` | ✅ Full sync pipeline |
+| Remote blob format | PHPSPEC §8.5 | ✅ Specified with obfuscation tiers |
+| Config keys | `security/config_manager.py` | ✅ `remote.transport`, `remote.git_remote_url` |
+| Device identity | `security/device_identity.py` | ✅ Provider + default impl |
+| Tests | `tests/test_phase4_*` | ✅ Offline queue, merge, push flow |
+
+### What's Missing
+
+1. **`GitStagingTransport`** — Concrete `AbstractStagingTransport` impl that shells out to `git` CLI
+2. **CLI integration** — `phpoc init --git-create`, `phpoc config remote.git_remote_url`, wiring into sync pipeline
+3. **Blob obfuscation** — Fixed-size tier padding + encryption before push (currently writes plaintext JSON)
+4. **First-time setup** — Auto-create bare repo vs user-provided URL
+
+### Resolved Design Decisions
+
+**Q1 — Git operation method:** Shell out to `git` CLI. Zero Python deps. User's existing SSH/git credentials assumed.
+
+**Q2 — Remote staging strategy selection:** Available at `phpoc init` and changeable via `phpoc config`. Config stores active transport type.
+
+**Q3 — Repo naming convention:**
+- User-provided URL: stored in `remote.git_remote_url` config key
+- Auto-created (`--git-create`): random alphanumeric string
+- `--git-set` flag for specific existing repo URL
+- Also configurable by hand in config file
+
+**Q4 — Config file for URL:** ✅ Already has `remote.git_remote_url` in config schema. Config is the source of truth.
+
+**Q5 — What gets synced:** Staging blob only. Remote is authoritative for shared staging. Each device syncs local staging → local ledger independently. Ledger never pushed to remote.
+
+**Q6 — Sync flow:** Push local staging → pull entire remote staging → merge (remote wins on ties) → local mirrors remote.
+
+### Still Open (Next Session)
+
+**Q7 — How `--git-create` works:**
+- Creating a repo on GitHub/GitLab requires API access
+- Creating a bare repo locally just needs `git init --bare`
+- What does `--git-create` actually do?
+
+**Q8 — Blob obfuscation implementation details:**
+- PHPSPEC specifies 4 fixed-size tiers (64K/128K/256K/512K)
+- Random filler bytes + encryption
+- Implement pad/encrypt/unpad/decrypt cycle in `RemoteStagingSync`
+
+### Next Session: Pick up with Q7 (how `--git-create` works) then Q8 (blob obfuscation)
 
 ---
 
