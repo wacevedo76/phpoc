@@ -7,6 +7,7 @@
 - **Config dir:** `~/.config/phpoc/`
 - **Data dir:** `~/.local/share/phpoc/`
 - **Remote clone:** `~/.config/phpoc/remote/` — git clone of `git@github.com:wacevedo76/phpoc-staging.git`
+- **Known bug:** Auto-push from `add` commands can push **unencrypted** blobs when no cached session exists (see Remote Repo section)
 
 ## Two-Machine Setup
 
@@ -42,11 +43,13 @@
 | `a5986e3` | 13:37:51 | 65592 B | ✅ Properly encrypted | laptop x13 |
 | `99e0974` | 13:34:59 | 65592 B | ✅ Properly encrypted | Phone (`9847c408`) |
 
-**Known issue:** Commits `0127dc6` and `b75421b` from debagent04 pushed **unencrypted** blobs. The later pushes apparently skipped the obfuscation step. The current remote blob (`b75421b`, 1779 B) is plain JSON with device `bbb3badc` and 3 entries:
-- Working on phpoc (active) ×2
-- Test on debagent04 (oneoff, is_active=False)
+**Known issue:** Commits `0127dc6` and `b75421b` from debagent04 pushed **unencrypted** blobs (plain JSON on the wire).
 
-**Fix:** Investigate blob obfuscation on debagent04 — needs to be done on that machine.
+**Root cause:** `"add"` is not in `require_auth` (main.py:303). When no cached session exists, `add` commands use `NoAuthCryptoManager` which has no `master_key` attribute. `_push_if_remote()` calls `getattr(self._crypto, "master_key", b"")` → `b""` → `RemoteStagingSync.push()` gets `master_key=b""` → `len(b"") == 32` is `False` → `_obfuscate()` silently skipped → raw JSON pushed to GitHub.
+
+**Fix needed:** Either:
+1. Add `"add"` to `require_auth` (or at least when remote transport is configured), OR
+2. Make `_push_if_remote()` fail loudly (skip push, print warning) when master key is not available
 
 ## P3 Implementation Status
 
@@ -100,7 +103,7 @@ e2930a0 perf: pull before push in GitStagingTransport
 ## Next Steps
 1. ✅ Rsync code to laptop (done)
 2. ✅ On laptop: `git pull origin P3-Remote_Sync` (done via session updates)
-3. ❌ **On debagent04: Investigate blob obfuscation bug** — commits `0127dc6` and `b75421b` pushed unencrypted blobs. Check why `RemoteStagingSync._obfuscate()` is being skipped in the push pipeline on debagent04.
+3. ❌ **Fix: add `"add"` to `require_auth` or make `_push_if_remote()` safe when no key** — root cause identified: `NoAuthCryptoManager` has no `master_key`, so obfuscation is silently skipped during auto-push.
 4. 🔜 After fix: test round-trip sync (add on one device → view on other)
 5. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
 
