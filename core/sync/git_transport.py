@@ -117,24 +117,35 @@ class GitStagingTransport(AbstractStagingTransport):
         # Push with retry on non-fast-forward
         try:
             self._git("push")
-        except RuntimeError:
-            # Push rejected — likely non-fast-forward or empty remote. Pull latest and retry.
-            logger.info("Git push rejected, pulling latest and retrying...")
-            try:
-                self._git("pull", "--rebase")
-            except RuntimeError:
-                # Pull may fail on empty remote — proceed without it
-                pass
-            # Re-write after rebase (our blob may have been overwritten)
-            blob_file.write_bytes(data)
-            self._git("add", str(blob_file.relative_to(self._clone_path)))
-            self._git("commit", "-m", f"Update staging blob [{path}] (retry)")
-            try:
-                self._git("push")
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    f"Git push failed after retry for {self._remote_url}: {exc}"
-                ) from exc
+        except RuntimeError as first_err:
+            err_msg = str(first_err)
+            # Only retry if the failure looks like a non-fast-forward rejection.
+            # Auth errors (permission denied, publickey) should fail immediately.
+            if "rejected" in err_msg or "non-fast-forward" in err_msg:
+                logger.info("Push rejected (non-fast-forward), pulling latest and retrying...")
+                try:
+                    self._git("pull", "--rebase")
+                except RuntimeError:
+                    # Pull may fail if remote has no commits yet — proceed without it
+                    pass
+                # Re-write after rebase (our blob may have been overwritten)
+                blob_file.write_bytes(data)
+                self._git("add", str(blob_file.relative_to(self._clone_path)))
+                try:
+                    self._git("commit", "-m", f"Update staging blob [{path}] (retry)")
+                except RuntimeError:
+                    # commit may fail if content is identical
+                    self._git("commit", "--allow-empty",
+                              "-m", f"Update staging blob [{path}] (retry)")
+                try:
+                    self._git("push")
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        f"Git push failed after retry for {self._remote_url}: {exc}"
+                    ) from exc
+            else:
+                # Auth/network error — re-raise immediately without retry
+                raise
 
     # ------------------------------------------------------------------
     # Internal helpers

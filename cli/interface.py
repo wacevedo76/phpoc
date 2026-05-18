@@ -152,19 +152,21 @@ class CLIInterface:
             print("No active tasks.")
             return
 
-        # Get active list with IDs for display
-        active_with_ids = self._get_active_with_ids()
-        id_map = {a["title"]: a["id"] for a in active_with_ids}
-
-        for entry in active:
+        # Build active entries with IDs directly (avoid title-keyed map — dup titles)
+        active_entries = []
+        for i, entry in enumerate(active, 1):
             data = entry["data"]
-            task_id = id_map.get(data["title"], "?")
-            # Decrypt startTime for viewing
             start_val = data["startTime_enc"]
             if start_val.startswith("plain:"):
                 start_epoch = int(start_val[6:])
             else:
                 start_epoch = int(self._crypto.decrypt(start_val))
+            active_entries.append({"id": i, "entry": entry, "start_epoch": start_epoch})
+
+        for ae in active_entries:
+            data = ae["entry"]["data"]
+            task_id = ae["id"]
+            start_epoch = ae["start_epoch"]
             started = time.strftime("%H:%M:%S", time.localtime(start_epoch/1000))
 
             # Show pause indicator and active duration so far
