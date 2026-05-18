@@ -254,99 +254,37 @@ See `CHANGELOG.md` for full history.
 
 ## P2 Design Session (2026-05-17)
 
-**Branch:** `P2-Portable_Export` — clean branch, no code changes yet.
+**Status:** Deferred. File export unknowns need real-world context. Design captured in git history (branch `P2-Portable_Export`, merged to main, deleted).
 
-### Converged Understanding
-
-**Two export formats:**
-
-1. **`phpoc export --range`** — Block-level chain segment (`.phpoc`). Contiguous date range anchored at nearest summary block. Uses chain splitting per PHPSPEC §9.4.5. Verification: `verify --segment` checks internal chain integrity.
-
-2. **`phpoc export --tag <tag>`** — Entry-level signed manifest. Exports entries matching one or more tags. Optional date range for incremental updates (social media doesn't need full re-exports). Verification: user's identity key signs a manifest; recipient verifies content hashes without full ledger. Tags are **plaintext** in the ledger, so filtering requires no decryption.
-
-### Open Issues (Unresolved)
-
-1. **Encrypted field treatment in `--tag` exports:**
-   - Default: keep encrypted fields as ciphertext
-   - Option A: omit encrypted fields entirely from output
-   - Option B: show placeholder/marker (`[encrypted]`) instead of ciphertext
-   - Option C: decrypt fields, but **require authentication** before file creation
-
-2. **Verification/authenticity mechanism for shared files:**
-   - `--range` carries existing block signatures — verification via chain integrity
-   - `--tag` needs a new signed wrapper format (manifest signed by identity key)
-   - Exact format of the proof not yet designed
-
-3. **`--blind-only` export:**
-   - Under evaluation. Blind index (plaintext duration aggregates per date/title) is an unsigned derived cache — forging is trivial
-   - Options: (A) standalone feature with its own signed manifest, (B) format modifier on `--tag`, (C) out of scope for P2
-   - Needs a signature/anchoring mechanism to be verifiable for social sharing
-
-4. **General:**
-   - `--tag` should combine with `--from`/`--to` date range (incremental sharing)
-   - File extension convention: `.phpoc` for block segments, proposal for `.phshare` for signed manifests (not yet decided)
-
-### Next Session: Pick up with verification/authenticity design
+Two export formats designed (no code): `--range` (block-level chain segment via chain splitting) and `--tag` (entry-level signed manifest for social sharing). Open issues: encrypted field treatment, verification format, `--blind-only` scope.
 
 ---
 
 ## P3 Design Session (2026-05-17)
 
-**Branch:** `P3-Remote_Sync` — clean branch, no code changes yet.
+**Branch:** `P3-Remote_Sync`. All decisions resolved — ready for implementation.
 
-### Already Exists (Infrastructure Ready)
+**What exists (infrastructure ready):** `AbstractStagingTransport` interface, `RemoteStagingSync`, `MergeEngine`, `StagingService.check_and_sync()`/`push_to_remote()`, `SyncOrchestrator`, blob format spec (PHPSPEC §8.5), config keys, device identity provider.
 
-| Component | File | Status |
-|---|---|---|
-| `AbstractStagingTransport` | `core/sync/transport.py` | ✅ Interface (pull/push) |
-| `RemoteStagingSync` | `domain/staging/remote_sync.py` | ✅ Device check, blob pull/push, obfuscation |
-| `MergeEngine` | `domain/staging/merge_engine.py` | ✅ Timestamp-based dedup merge |
-| `StagingService.check_and_sync()` | `domain/staging/service.py` | ✅ Pull → merge → write local |
-| `StagingService.push_to_remote()` | `domain/staging/service.py` | ✅ Serialize → push via transport |
-| `SyncOrchestrator` | `core/sync/orchestrator.py` | ✅ Full sync pipeline |
-| Remote blob format | PHPSPEC §8.5 | ✅ Specified with obfuscation tiers |
-| Config keys | `security/config_manager.py` | ✅ `remote.transport`, `remote.git_remote_url` |
-| Device identity | `security/device_identity.py` | ✅ Provider + default impl |
-| Tests | `tests/test_phase4_*` | ✅ Offline queue, merge, push flow |
+**What's missing (implementation scope):**
+1. `GitStagingTransport` — concrete `AbstractStagingTransport` that shells out to `git` CLI
+2. Blob obfuscation — pad to nearest tier (64K/128K/256K/512K) + encrypt with `HMAC(MK, "blob-obfuscation")` sub-key
+3. CLI wiring — read `remote.git_remote_url` from config, instantiate `GitStagingTransport`, wire into sync pipeline
 
-### What's Missing
+**Design decisions (all resolved):**
+- Git method: shell out to CLI (zero Python deps)
+- Strategy selection: `phpoc init` + `phpoc config remote.transport git`
+- Repo creation: dropped — user creates repo externally, P3 is transport only
+- URL storage: config file (`remote.git_remote_url`)
+- Sync scope: staging blob only (not ledger)
+- Sync flow: always pull+merge on every staging op (~500ms acceptable for CLI)
+- Working copy: persistent clone under data dir (`~/.local/share/phpoc/remote/`), auto-recover on corruption
+- Push conflicts: `GitStagingTransport.push()` retries internally on non-fast-forward rejection
+- Blob key: derived sub-key `HMAC(MK, "blob-obfuscation")`
+- Tier selection: auto-detect from blob size
+- Auth flow: always-pull requires auth when remote configured — acceptable for CLI
 
-1. **`GitStagingTransport`** — Concrete `AbstractStagingTransport` impl that shells out to `git` CLI
-2. **CLI integration** — `phpoc init --git-create`, `phpoc config remote.git_remote_url`, wiring into sync pipeline
-3. **Blob obfuscation** — Fixed-size tier padding + encryption before push (currently writes plaintext JSON)
-4. **First-time setup** — Auto-create bare repo vs user-provided URL
-
-### Resolved Design Decisions
-
-**Q1 — Git operation method:** Shell out to `git` CLI. Zero Python deps. User's existing SSH/git credentials assumed.
-
-**Q2 — Remote staging strategy selection:** Available at `phpoc init` and changeable via `phpoc config`. Config stores active transport type.
-
-**Q3 — Repo naming convention:**
-- User-provided URL: stored in `remote.git_remote_url` config key
-- Auto-created (`--git-create`): random alphanumeric string
-- `--git-set` flag for specific existing repo URL
-- Also configurable by hand in config file
-
-**Q4 — Config file for URL:** ✅ Already has `remote.git_remote_url` in config schema. Config is the source of truth.
-
-**Q5 — What gets synced:** Staging blob only. Remote is authoritative for shared staging. Each device syncs local staging → local ledger independently. Ledger never pushed to remote.
-
-**Q6 — Sync flow:** Push local staging → pull entire remote staging → merge (remote wins on ties) → local mirrors remote.
-
-### Still Open (Next Session)
-
-**Q7 — How `--git-create` works:**
-- Creating a repo on GitHub/GitLab requires API access
-- Creating a bare repo locally just needs `git init --bare`
-- What does `--git-create` actually do?
-
-**Q8 — Blob obfuscation implementation details:**
-- PHPSPEC specifies 4 fixed-size tiers (64K/128K/256K/512K)
-- Random filler bytes + encryption
-- Implement pad/encrypt/unpad/decrypt cycle in `RemoteStagingSync`
-
-### Next Session: Pick up with Q7 (how `--git-create` works) then Q8 (blob obfuscation)
+**Next: Implementation.**
 
 ---
 
