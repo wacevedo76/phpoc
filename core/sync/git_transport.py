@@ -74,18 +74,13 @@ class GitStagingTransport(AbstractStagingTransport):
         self._recover_git_abort_stuck_rebase()
 
         # Pull latest from remote (skip if remote has no refs yet — empty repo)
-        if self._clone_exists():
+        if self._has_remote_refs():
+            self._ensure_on_branch()
             try:
-                remote_refs = self._git("ls-remote", "origin", "--heads")
+                self._git("pull", "--rebase", "--autostash")
             except RuntimeError:
-                remote_refs = ""
-            if remote_refs.strip():
-                self._ensure_on_branch()
-                try:
-                    self._git("pull", "--rebase", "--autostash")
-                except RuntimeError:
-                    # Pull may fail on empty remote or disconnected — proceed without it
-                    pass
+                # Pull may fail on empty remote or disconnected — proceed without it
+                pass
 
         blob_file = self._clone_path / path
         if blob_file.is_file():
@@ -111,10 +106,18 @@ class GitStagingTransport(AbstractStagingTransport):
         blob_file = self._clone_path / path
         blob_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write blob
-        blob_file.write_bytes(data)
+        # Pull latest from remote FIRST to minimize conflicts
+        # (remote may have been updated by another device)
+        self._recover_git_abort_stuck_rebase()
+        if self._has_remote_refs():
+            self._ensure_on_branch()
+            try:
+                self._git("pull", "--rebase", "--autostash")
+            except RuntimeError:
+                pass  # Proceed even if pull fails
 
-        # Stage and commit
+        # Write, stage, commit
+        blob_file.write_bytes(data)
         self._git("add", str(blob_file.relative_to(self._clone_path)))
         self._git("commit", "-m", f"Update staging blob [{path}]")
 
@@ -131,7 +134,6 @@ class GitStagingTransport(AbstractStagingTransport):
                 try:
                     self._git("pull", "--rebase", "--autostash")
                 except RuntimeError:
-                    # Pull may fail if remote has no commits yet — proceed without it
                     pass
                 # Ensure we're on a branch before committing
                 self._ensure_on_branch()
@@ -218,6 +220,19 @@ class GitStagingTransport(AbstractStagingTransport):
     def _clone_exists(self) -> bool:
         """Check if local clone is present and looks like a git repo."""
         return (self._clone_path / ".git").is_dir()
+
+    def _has_remote_refs(self) -> bool:
+        """Check if the remote has any refs (commits to pull).
+
+        Returns False for empty repos or when ls-remote fails.
+        """
+        if not self._clone_exists():
+            return False
+        try:
+            remote_refs = self._git("ls-remote", "origin", "--heads")
+            return bool(remote_refs.strip())
+        except RuntimeError:
+            return False
 
     def _recover_git_abort_stuck_rebase(self):
         """Abort any stuck interactive rebase left by previous operations."""

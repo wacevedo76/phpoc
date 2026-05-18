@@ -204,6 +204,7 @@ class TestGitStagingTransportErrors(unittest.TestCase):
         Path(tmpdir, ".git").mkdir(parents=True, exist_ok=True)
 
         mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),  # git ls-remote (has_remote_refs) — empty stdout = no refs
             MagicMock(returncode=0, stdout="", stderr=""),  # git add
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit
             MagicMock(returncode=1, stderr="! [rejected]"),  # git push fails
@@ -215,7 +216,7 @@ class TestGitStagingTransportErrors(unittest.TestCase):
         ]
 
         transport.push("blob.json", b'{"test": true}')
-        self.assertEqual(mock_run.call_count, 8)
+        self.assertEqual(mock_run.call_count, 9)
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -230,6 +231,7 @@ class TestGitStagingTransportErrors(unittest.TestCase):
         Path(tmpdir, ".git").mkdir(parents=True, exist_ok=True)
 
         mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),  # git ls-remote (has_remote_refs) — empty
             MagicMock(returncode=0, stdout="", stderr=""),  # git add
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit
             MagicMock(returncode=1, stderr="! [rejected]"),  # push fails
