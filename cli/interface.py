@@ -88,13 +88,19 @@ class CLIInterface:
         return result if result else None
 
     def _push_if_remote(self):
-        """Push staging to remote if configured (no-op otherwise)."""
+        """Push staging to remote if configured (no-op otherwise).
+
+        Requires a valid 32-byte master_key for blob obfuscation.
+        If no key is available (unauthenticated session), skips the
+        push and prints a warning — pushing plaintext staging data
+        to a remote repo would leak private information.
+        """
         if self._staging._remote is not None:
             # Derive master_key from crypto if available (authenticated session)
-            # Safely access CryptoManager's master_key attribute
-            mk = getattr(self._crypto, "master_key", b"")
+            mk = getattr(self._crypto, "master_key", None)
             if not isinstance(mk, bytes) or len(mk) != 32:
-                mk = b""
+                print("Warning: cannot push to remote — authenticate first (e.g. 'phpoc view')")
+                return
             self._staging.push_to_remote(master_key=mk)
 
     def add_oneoff(self, title, start, stop, metadata=None, tags=None):

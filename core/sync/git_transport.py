@@ -250,8 +250,12 @@ class GitStagingTransport(AbstractStagingTransport):
     def _ensure_on_branch(self):
         """Ensure HEAD points to a valid branch, not detached HEAD.
 
-        If HEAD is detached (e.g., after a failed rebase), create a new
-        branch pointing to current HEAD and force push to origin/main.
+        If HEAD is detached (e.g., after a failed rebase or pull --rebase),
+        use ``git checkout -B main`` to force-create the main branch at
+        current HEAD and check it out. Unlike ``git branch -f main HEAD``
+        followed by ``git checkout main``, the ``-B`` flag atomically
+        handles the case where main already exists (avoids "cannot force
+        update branch used by worktree" error).
         """
         if not self._clone_exists():
             return
@@ -259,11 +263,10 @@ class GitStagingTransport(AbstractStagingTransport):
             # Check if HEAD is a symbolic ref (on a branch) or detached
             self._git("symbolic-ref", "-q", "HEAD")
         except RuntimeError:
-            # Detached HEAD — create a branch and force to origin/main
+            # Detached HEAD — force-create main branch and check it out
             logger.info("Detached HEAD detected; re-attaching to main...")
             try:
-                self._git("branch", "-f", "main", "HEAD")
-                self._git("checkout", "main")
+                self._git("checkout", "-B", "main")
             except RuntimeError:
                 logger.warning("Failed to re-attach HEAD to main")
 
