@@ -70,6 +70,9 @@ class GitStagingTransport(AbstractStagingTransport):
         self._ensure_clone()
         self._ensure_remote_url()
 
+        # Recover from any stuck rebase before proceeding
+        self._recover_git_abort_stuck_rebase()
+
         # Pull latest from remote (skip if remote has no refs yet — empty repo)
         if self._clone_exists():
             try:
@@ -77,8 +80,9 @@ class GitStagingTransport(AbstractStagingTransport):
             except RuntimeError:
                 remote_refs = ""
             if remote_refs.strip():
+                self._ensure_on_branch()
                 try:
-                    self._git("pull", "--rebase")
+                    self._git("pull", "--rebase", "--autostash")
                 except RuntimeError:
                     # Pull may fail on empty remote or disconnected — proceed without it
                     pass
@@ -123,11 +127,14 @@ class GitStagingTransport(AbstractStagingTransport):
             # Auth errors (permission denied, publickey) should fail immediately.
             if "rejected" in err_msg or "non-fast-forward" in err_msg:
                 logger.info("Push rejected (non-fast-forward), pulling latest and retrying...")
+                self._recover_git_abort_stuck_rebase()
                 try:
-                    self._git("pull", "--rebase")
+                    self._git("pull", "--rebase", "--autostash")
                 except RuntimeError:
                     # Pull may fail if remote has no commits yet — proceed without it
                     pass
+                # Ensure we're on a branch before committing
+                self._ensure_on_branch()
                 # Re-write after rebase (our blob may have been overwritten)
                 blob_file.write_bytes(data)
                 self._git("add", str(blob_file.relative_to(self._clone_path)))
@@ -211,6 +218,40 @@ class GitStagingTransport(AbstractStagingTransport):
     def _clone_exists(self) -> bool:
         """Check if local clone is present and looks like a git repo."""
         return (self._clone_path / ".git").is_dir()
+
+    def _recover_git_abort_stuck_rebase(self):
+        """Abort any stuck interactive rebase left by previous operations."""
+        if not self._clone_exists():
+            return
+        # Check if rebase-merge or rebase-apply directory exists (indicates active rebase)
+        git_dir = self._clone_path / ".git"
+        if (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir():
+            logger.info("Aborting stuck rebase...")
+            try:
+                self._git("rebase", "--abort")
+            except RuntimeError:
+                logger.warning("Failed to abort rebase; may need manual cleanup")
+
+    def _ensure_on_branch(self):
+        """Ensure HEAD points to a valid branch, not detached HEAD.
+
+        If HEAD is detached (e.g., after a failed rebase), create a new
+        branch pointing to current HEAD and force push to origin/main.
+        """
+        if not self._clone_exists():
+            return
+        try:
+            # Check if HEAD is a symbolic ref (on a branch) or detached
+            self._git("symbolic-ref", "-q", "HEAD")
+        except RuntimeError:
+            # Detached HEAD — create a branch and force to origin/main
+            logger.info("Detached HEAD detected; re-attaching to main...")
+            try:
+                self._git("branch", "-f", "main", "HEAD")
+                self._git("checkout", "main")
+            except RuntimeError:
+                logger.warning("Failed to re-attach HEAD to main")
+
 
     def _git(self, *args: str) -> str:
         """Run a git command in the clone directory.

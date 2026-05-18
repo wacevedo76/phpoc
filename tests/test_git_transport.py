@@ -207,14 +207,15 @@ class TestGitStagingTransportErrors(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),  # git add
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit
             MagicMock(returncode=1, stderr="! [rejected]"),  # git push fails
-            MagicMock(returncode=0, stdout="", stderr=""),  # git pull --rebase
+            MagicMock(returncode=0, stdout="", stderr=""),  # git pull --rebase --autostash
+            MagicMock(returncode=0, stdout="", stderr=""),  # git symbolic-ref (ensure_on_branch)
             MagicMock(returncode=0, stdout="", stderr=""),  # git add (retry)
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit (retry)
             MagicMock(returncode=0, stdout="", stderr=""),  # git push (retry)
         ]
 
         transport.push("blob.json", b'{"test": true}')
-        self.assertEqual(mock_run.call_count, 7)
+        self.assertEqual(mock_run.call_count, 8)
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -232,7 +233,8 @@ class TestGitStagingTransportErrors(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),  # git add
             MagicMock(returncode=0, stdout="", stderr=""),  # git commit
             MagicMock(returncode=1, stderr="! [rejected]"),  # push fails
-            MagicMock(returncode=0, stdout="", stderr=""),  # pull --rebase
+            MagicMock(returncode=0, stdout="", stderr=""),  # pull --rebase --autostash
+            MagicMock(returncode=0, stdout="", stderr=""),  # git symbolic-ref (ensure_on_branch)
             MagicMock(returncode=0, stdout="", stderr=""),  # add retry
             MagicMock(returncode=0, stdout="", stderr=""),  # commit retry
             MagicMock(returncode=1, stderr="! [rejected]"),  # push fails again
