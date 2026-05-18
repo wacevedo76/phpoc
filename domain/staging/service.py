@@ -395,9 +395,10 @@ class StagingService:
         # Update auth timestamp on successful device check
         self._last_auth_time = time.time()
 
-        # Pull and merge
+        # Pull and merge (master_key resolved internally by RemoteStagingSync
+        # from self._crypto.master_key if available)
         try:
-            remote_blob = self._remote.pull(master_key=None)  # No auth context here — pull plain first
+            remote_blob = self._remote.pull()
             if remote_blob and "entries" in remote_blob:
                 local_entries = self._local.read_entries()
 

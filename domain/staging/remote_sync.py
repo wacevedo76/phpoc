@@ -231,7 +231,8 @@ class RemoteStagingSync:
 
         Args:
             master_key: 32-byte master key for blob decryption.
-                        If None, tries plaintext JSON only.
+                        If None, falls back to ``self._crypto.master_key``
+                        if available (authenticated session).
 
         Returns:
             Parsed blob dict with ``entries``, ``device_id``, etc.,
@@ -247,9 +248,16 @@ class RemoteStagingSync:
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
 
-        # Try deobfuscation if master_key is available
-        if master_key is not None:
-            plaintext = self._deobfuscate(raw_bytes, master_key)
+        # Resolve effective key: passed key > self._master_key > crypto's key
+        effective_key = master_key
+        if effective_key is None:
+            effective_key = getattr(self._crypto, "master_key", None)
+        if effective_key is None:
+            effective_key = self._master_key
+
+        # Try deobfuscation if we have a key
+        if isinstance(effective_key, bytes) and len(effective_key) == 32:
+            plaintext = self._deobfuscate(raw_bytes, effective_key)
             if plaintext is not None:
                 try:
                     return json.loads(plaintext.decode("utf-8"))
