@@ -134,11 +134,27 @@ class GitStagingTransport(AbstractStagingTransport):
             self._clone_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 self._git("clone", self._remote_url, str(self._clone_path))
-            except RuntimeError:
-                # If clone fails (e.g., empty bare repo), init a local repo
-                self._clone_path.mkdir(parents=True, exist_ok=True)
-                self._git("init")
-                self._git("remote", "add", "origin", self._remote_url)
+            except RuntimeError as exc:
+                err_msg = str(exc)
+                # Check if the remote exists but is empty (no refs yet) by
+                # looking for "remote: warning" + "fatal: couldn't find remote ref"
+                # or similar empty-repo indicators from git ls-remote.
+                is_empty_remote = any(indicator in err_msg for indicator in [
+                    "couldn't find remote ref",
+                    "does not appear to be a git repository",
+                    "Repository not found",
+                    "remote: warning: You appear to have cloned an empty repository",
+                    "fatal: remote error",
+                ])
+                if is_empty_remote:
+                    logger.info("Remote appears empty, initializing local repo")
+                    self._clone_path.mkdir(parents=True, exist_ok=True)
+                    self._git("init")
+                    self._git("remote", "add", "origin", self._remote_url)
+                else:
+                    # Genuine auth/network/ssh error — don't silently create local repo
+                    logger.error("Clone failed: %s", err_msg)
+                    raise
 
     def _clone_exists(self) -> bool:
         """Check if local clone is present and looks like a git repo."""
@@ -158,6 +174,8 @@ class GitStagingTransport(AbstractStagingTransport):
         """
         cmd = ["git"] + list(args)
         logger.debug("Running: %s", " ".join(cmd))
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"  # Never prompt for credentials — fail fast
         try:
             result = subprocess.run(
                 cmd,
@@ -165,6 +183,7 @@ class GitStagingTransport(AbstractStagingTransport):
                 text=True,
                 timeout=60,
                 cwd=str(self._clone_path) if self._clone_exists() else None,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"Git command timed out: {' '.join(cmd)}")
