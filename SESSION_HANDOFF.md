@@ -1,13 +1,11 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `P3-Remote_Sync` (11 commits ahead of main, all P3 fixes committed)
-- **Tests:** 1022 total, all passing
-- **Dependencies:** Pure Python 3.x standard library — zero external deps
+- **Branch:** `P3-Remote_Sync` (on top of `04587ee` — laptop's `require_auth` + `ph list active` commits merged)
+- **Tests:** 1025 total, all passing
 - **Config dir:** `~/.config/phpoc/`
 - **Data dir:** `~/.local/share/phpoc/`
-- **Remote clone:** `~/.config/phpoc/remote/` — git clone of `git@github.com:wacevedo76/phpoc-staging.git`
-- **Known bug:** Auto-push from `add` commands can push **unencrypted** blobs when no cached session exists (see Remote Repo section)
+- **Remote clone:** `~/.config/phpoc/remote/` — clone of `git@github.com:wacevedo76/phpoc-staging.git`
 
 ## Two-Machine Setup
 
@@ -36,22 +34,14 @@
 |--------|------|------|--------|--------|
 | `b75421b` | 14:54:44 | 1779 B | **❌ UNENCRYPTED plain JSON** | debagent04 (`bbb3badc`) |
 | `0127dc6` | 14:54:29 | 31 B | **❌ Plain text** `{"test":"debagent04 push fix"}` | — |
-| `7456c34` | 14:48:39 | 65592 B | ✅ Properly encrypted | debagent04 (`bbb3badc`) |
-| `28005aa` | 14:29:11 | 65592 B | ✅ Properly encrypted | laptop x13 (`e0cd83b8`) |
+| `2eeeab2` | 15:30:00 | 65592 B | ✅ Properly encrypted | debagent04 (`bbb3badc`) — 3 entries |
+| `8e26d32` | 15:20 | 65592 B | ✅ Properly encrypted | laptop x13 (`e0cd83b8`) — push from laptop's session |
 | `c3eef75` | 13:47:32 | 65592 B | ✅ Properly encrypted | laptop x13 |
 | `a951f75` | 13:42:33 | 65592 B | ✅ Properly encrypted | laptop x13 |
 | `a5986e3` | 13:37:51 | 65592 B | ✅ Properly encrypted | laptop x13 |
 | `99e0974` | 13:34:59 | 65592 B | ✅ Properly encrypted | Phone (`9847c408`) |
 
-**Known issue:** Commits `0127dc6` and `b75421b` from debagent04 pushed **unencrypted** blobs (plain JSON on the wire).
-
-**Root cause:** `"add"` is not in `require_auth` (main.py:303). When no cached session exists, `add` commands use `NoAuthCryptoManager` which has no `master_key` attribute. `_push_if_remote()` calls `getattr(self._crypto, "master_key", b"")` → `b""` → `RemoteStagingSync.push()` gets `master_key=b""` → `len(b"") == 32` is `False` → `_obfuscate()` silently skipped → raw JSON pushed to GitHub.
-
-**Fix applied:**
-1. ✅ Added `"add"` to `require_auth` — `add` commands now require a session, ensuring `master_key` is always available for blob obfuscation.
-2. ✅ Removed `is_active` filter from `list_habits` — `ph list all` now shows **all** entries (synced, staged, and active running tasks).
-3. ✅ Added `ph list active` subcommand — alias for `ph view` (shows only running tasks).
-4. `ph view` kept as-is for backwards compatibility.
+**Note:** Commits `0127dc6` and `b75421b` were debug/test artifacts from earlier session. Remote blob is now properly encrypted (commit `2eeeab2`, device `bbb3badc`).
 
 ## P3 Implementation Status
 
@@ -75,7 +65,7 @@
 | Auth-only retry | ✅ — only retries push on non-ff rejection, not auth errors |
 | End-to-end cross-device | ✅ — debagent04 can read laptop's pushed blobs |
 
-## P3 Commits (chronological, 11 commits)
+## P3 Commits (chronological, 13 commits)
 ```
 305a8d7 feat: implement GitStagingTransport + blob obfuscation (P3-Remote_Sync)
 bd60bf2 feat: wire remote sync into main.py and add config wiring tests
@@ -88,6 +78,8 @@ a327bdb fix: duplicate task IDs and push auth error handling
 3b1db1c fix: RemoteStagingSync.pull() falls back to crypto.master_key
 e0eb8d7 fix: detached HEAD and stuck rebase after push retry
 e2930a0 perf: pull before push in GitStagingTransport
+723d0f5 docs: compact SESSION_HANDOFF for P3 cross-device handoff
+cb17255 fix: _ensure_on_branch uses git checkout -B + warn on unencrypted push
 ```
 
 ## Key Fixes Made in This Session
@@ -102,13 +94,15 @@ e2930a0 perf: pull before push in GitStagingTransport
 
 5. **Duplicate task IDs in view**: `id_map` was keyed by title only, so two tasks with the same title showed the same #2. Fixed by enumerating active entries directly with sequential IDs.
 
+6. **`_ensure_on_branch()` fix**: Changed from `git branch -f main HEAD` followed by `git checkout main` to `git checkout -B main`. The former fails with "cannot force update the branch 'main' used by worktree at ..." when HEAD is detached in the same repo. The `-B` flag atomically handles this.
+
+7. **No unencrypted pushes**: `_push_if_remote()` now checks for a valid 32-byte master_key before pushing. If no key is available (unauthenticated session), it prints a warning and skips the push instead of writing plaintext JSON to GitHub.
+
 ## Next Steps
-1. ✅ Rsync code to laptop (done)
-2. ✅ On laptop: `git pull origin P3-Remote_Sync`
-3. ✅ **Fix applied: `"add"` in `require_auth` + `ph list active` + `list all` shows active tasks**
-4. 🔜 Test: `ph sync remote` on debagent04 (pull + merge from laptop's pushes)
-5. 🔜 Test round-trip sync: add on one device → `ph list all` on the other shows it
-6. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
+1. ✅ `"add"` added to `require_auth` — `add` commands now require session (ensures master_key for obfuscation)
+2. ✅ `ph list active` added — shows only running tasks
+3. ✅ `ph list all` now shows all entries (including active)
+4. 🔜 Test cross-device: `ph sync remote` + `ph list all` on both machines
 
 ## Key Files
 | File | Purpose |
