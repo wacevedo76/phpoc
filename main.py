@@ -98,7 +98,7 @@ def main():
     subparsers.add_parser("recover", help="Recover access using seed and set new passphrase")
 
     # View command
-    view_parser = subparsers.add_parser("view", help="View active tasks")
+    view_parser = subparsers.add_parser("view", help="View active tasks (alias: ph list active)")
     view_parser.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
 
     # Tags command
@@ -146,6 +146,10 @@ def main():
     # List only staged activities
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
     _add_date_args(list_staged_p)
+
+    # List only active (running) tasks — same as ph view
+    list_active_p = list_subparsers.add_parser("active", help="List active (running) tasks")
+    list_active_p.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
 
     # Modify command
     modify_p = subparsers.add_parser("modify", help="Modify a staged entry's end time and pauses")
@@ -301,7 +305,7 @@ def main():
     
     # List of commands that REQUIRE a valid passphrase
     # (Reading the ledger, verifying history, or performing a sync)
-    require_auth = ["sync", "verify", "rep", "list", "view", "tags", "modify", "review"]
+    require_auth = ["sync", "verify", "rep", "list", "view", "tags", "modify", "review", "add"]
     
     crypto = None
     if args.command in require_auth:
@@ -398,16 +402,20 @@ def main():
         )
         cli.show_rep(args.days, from_date=from_str, to_date=to_str)
     elif args.command == "list":
-        from_str, to_str = CLIInterface._resolve_date_filters(
-            days=args.days,
-            date=getattr(args, 'date', None),
-            week=getattr(args, 'week', None),
-            month=getattr(args, 'month', None),
-            year=getattr(args, 'year', None),
-            from_date=args.from_date,
-            to_date=args.to_date,
-        )
-        cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
+        if args.source == "active":
+            show_tags = args.tags if hasattr(args, 'tags') else False
+            cli.view_active(show_tags=show_tags)
+        else:
+            from_str, to_str = CLIInterface._resolve_date_filters(
+                days=args.days,
+                date=getattr(args, 'date', None),
+                week=getattr(args, 'week', None),
+                month=getattr(args, 'month', None),
+                year=getattr(args, 'year', None),
+                from_date=args.from_date,
+                to_date=args.to_date,
+            )
+            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
     elif args.command == "modify":
         _handle_modify(ledger, args.index)
     elif args.command == "remove":

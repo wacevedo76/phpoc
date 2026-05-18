@@ -262,16 +262,15 @@ class CLIInterface:
         # Group staged data by date to match ledger format for consistent display
         staged_by_date = {}
         for entry in staged_data:
-            if not entry["data"].get("is_active", False): # Only consider completed staged tasks for listing
-                start_val = entry["data"]["startTime_enc"]
-                if start_val.startswith("plain:"):
-                    start_epoch = int(start_val[6:])
-                else:
-                    start_epoch = int(self._crypto.decrypt(start_val))
-                date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
-                if date_str not in staged_by_date:
-                    staged_by_date[date_str] = []
-                staged_by_date[date_str].append({"source": "staged", "data": entry["data"], "date": date_str})
+            start_val = entry["data"]["startTime_enc"]
+            if start_val.startswith("plain:"):
+                start_epoch = int(start_val[6:])
+            else:
+                start_epoch = int(self._crypto.decrypt(start_val))
+            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+            if date_str not in staged_by_date:
+                staged_by_date[date_str] = []
+            staged_by_date[date_str].append({"source": "staged", "data": entry["data"], "date": date_str})
 
         # --- P11 Fix B: Collect spanning entries from previous day ---
         # For each date in range, peek at the previous day's synced block and

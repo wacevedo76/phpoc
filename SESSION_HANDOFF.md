@@ -47,9 +47,11 @@
 
 **Root cause:** `"add"` is not in `require_auth` (main.py:303). When no cached session exists, `add` commands use `NoAuthCryptoManager` which has no `master_key` attribute. `_push_if_remote()` calls `getattr(self._crypto, "master_key", b"")` → `b""` → `RemoteStagingSync.push()` gets `master_key=b""` → `len(b"") == 32` is `False` → `_obfuscate()` silently skipped → raw JSON pushed to GitHub.
 
-**Fix needed:** Either:
-1. Add `"add"` to `require_auth` (or at least when remote transport is configured), OR
-2. Make `_push_if_remote()` fail loudly (skip push, print warning) when master key is not available
+**Fix applied:**
+1. ✅ Added `"add"` to `require_auth` — `add` commands now require a session, ensuring `master_key` is always available for blob obfuscation.
+2. ✅ Removed `is_active` filter from `list_habits` — `ph list all` now shows **all** entries (synced, staged, and active running tasks).
+3. ✅ Added `ph list active` subcommand — alias for `ph view` (shows only running tasks).
+4. `ph view` kept as-is for backwards compatibility.
 
 ## P3 Implementation Status
 
@@ -102,9 +104,9 @@ e2930a0 perf: pull before push in GitStagingTransport
 
 ## Next Steps
 1. ✅ Rsync code to laptop (done)
-2. ✅ On laptop: `git pull origin P3-Remote_Sync` (done via session updates)
-3. ❌ **Fix: add `"add"` to `require_auth` or make `_push_if_remote()` safe when no key** — root cause identified: `NoAuthCryptoManager` has no `master_key`, so obfuscation is silently skipped during auto-push.
-4. 🔜 After fix: test round-trip sync (add on one device → view on other)
+2. ✅ On laptop: `git pull origin P3-Remote_Sync`
+3. ✅ **Fix applied: `"add"` in `require_auth` + `ph list active` + `list all` shows active tasks**
+4. 🔜 Test round-trip sync: add on one device → `ph list all` on the other shows it
 5. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
 
 ## Key Files
