@@ -245,7 +245,7 @@ class TestGitStagingTransportErrors(unittest.TestCase):
 
     @patch("core.sync.git_transport.subprocess.run")
     def test_git_not_installed(self, mock_run):
-        """FileNotFoundError when git is not installed."""
+        """When git is not installed, pull returns None (graceful offline)."""
         import tempfile
         tmpdir = tempfile.mkdtemp(prefix="phpoc_test_gitless_")
         Path(tmpdir, ".git").mkdir(parents=True, exist_ok=True)
@@ -253,14 +253,15 @@ class TestGitStagingTransportErrors(unittest.TestCase):
         mock_run.side_effect = FileNotFoundError("git not found")
         transport = GitStagingTransport("file:///tmp/fake.git", tmpdir)
 
-        with self.assertRaises(RuntimeError):
-            transport.pull("blob.json")
+        # Graceful degradation: returns None instead of raising
+        result = transport.pull("blob.json")
+        self.assertIsNone(result)
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     @patch("core.sync.git_transport.subprocess.run")
     def test_timeout_raises_error(self, mock_run):
-        """Timeout raises RuntimeError."""
+        """Timeout returns None (graceful offline)."""
         from subprocess import TimeoutExpired
         import tempfile
         tmpdir = tempfile.mkdtemp(prefix="phpoc_test_timeout_")
@@ -269,8 +270,9 @@ class TestGitStagingTransportErrors(unittest.TestCase):
         mock_run.side_effect = TimeoutExpired("git", 60)
         transport = GitStagingTransport("file:///tmp/fake.git", tmpdir)
 
-        with self.assertRaises(RuntimeError):
-            transport.pull("blob.json")
+        # Graceful degradation: returns None instead of raising
+        result = transport.pull("blob.json")
+        self.assertIsNone(result)
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 

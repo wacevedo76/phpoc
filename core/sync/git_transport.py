@@ -68,12 +68,20 @@ class GitStagingTransport(AbstractStagingTransport):
             Blob bytes, or None if the file doesn't exist in the repo.
         """
         self._ensure_clone()
+        self._ensure_remote_url()
 
         # Pull latest from remote (skip if remote has no refs yet — empty repo)
         if self._clone_exists():
-            remote_refs = self._git("ls-remote", "origin", "--heads")
+            try:
+                remote_refs = self._git("ls-remote", "origin", "--heads")
+            except RuntimeError:
+                remote_refs = ""
             if remote_refs.strip():
-                self._git("pull", "--rebase")
+                try:
+                    self._git("pull", "--rebase")
+                except RuntimeError:
+                    # Pull may fail on empty remote or disconnected — proceed without it
+                    pass
 
         blob_file = self._clone_path / path
         if blob_file.is_file():
@@ -93,6 +101,7 @@ class GitStagingTransport(AbstractStagingTransport):
             RuntimeError: If push fails after retry.
         """
         self._ensure_clone()
+        self._ensure_remote_url()
 
         # Ensure parent directory exists
         blob_file = self._clone_path / path
@@ -109,9 +118,13 @@ class GitStagingTransport(AbstractStagingTransport):
         try:
             self._git("push")
         except RuntimeError:
-            # Push rejected — likely non-fast-forward. Pull latest and retry.
+            # Push rejected — likely non-fast-forward or empty remote. Pull latest and retry.
             logger.info("Git push rejected, pulling latest and retrying...")
-            self._git("pull", "--rebase")
+            try:
+                self._git("pull", "--rebase")
+            except RuntimeError:
+                # Pull may fail on empty remote — proceed without it
+                pass
             # Re-write after rebase (our blob may have been overwritten)
             blob_file.write_bytes(data)
             self._git("add", str(blob_file.relative_to(self._clone_path)))
@@ -126,6 +139,34 @@ class GitStagingTransport(AbstractStagingTransport):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _ensure_remote_url(self):
+        """Ensure the clone's origin URL matches self._remote_url.
+
+        If the clone was created with a different URL (e.g. HTTPS from an
+        earlier config), update it to match the current config.
+        Reads the git config file directly to avoid shelling out on every op.
+        """
+        if not self._clone_exists():
+            return
+        git_config = self._clone_path / ".git" / "config"
+        if not git_config.is_file():
+            return
+        try:
+            text = git_config.read_text()
+            for line in text.splitlines():
+                line = line.strip()
+                if line.startswith("url = "):
+                    current_url = line[6:].strip()
+                    if current_url != self._remote_url:
+                        logger.info(
+                            "Updating remote URL from %s to %s",
+                            current_url, self._remote_url
+                        )
+                        self._git("remote", "set-url", "origin", self._remote_url)
+                    return
+        except (OSError, IOError):
+            pass
 
     def _ensure_clone(self):
         """Clone the remote if local working copy doesn't exist yet."""
