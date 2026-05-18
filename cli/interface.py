@@ -86,32 +86,50 @@ class CLIInterface:
         result.sort()
         return result if result else None
 
+    def _push_if_remote(self):
+        """Push staging to remote if configured (no-op otherwise)."""
+        if self._staging._remote is not None:
+            # Derive master_key from crypto if available (authenticated session)
+            # Safely access CryptoManager's master_key attribute
+            mk = getattr(self._crypto, "master_key", b"")
+            if not isinstance(mk, bytes) or len(mk) != 32:
+                mk = b""
+            self._staging.push_to_remote(master_key=mk)
+
     def add_oneoff(self, title, start, stop, metadata=None, tags=None):
         self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags)
+        self._push_if_remote()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         print(f"\u2713 One-off habit captured: {title}{tag_str}")
 
     def add_start(self, title, tags=None):
         self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags)
+        self._push_if_remote()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         print(f"\u2713 Started tracking: {title}{tag_str}")
 
     def add_end(self, title):
         resolved = self._resolve_title(title)
         self._staging.end(resolved, int(time.time()*1000))
+        self._push_if_remote()
         print(f"\u2713 Stopped tracking: {resolved}")
 
     def add_pause(self, title):
         resolved = self._resolve_title(title)
         self._staging.pause(resolved, int(time.time()*1000))
+        self._push_if_remote()
         print(f"\u2713 Paused: {resolved}")
 
     def add_unpause(self, title):
         resolved = self._resolve_title(title)
         self._staging.unpause(resolved, int(time.time()*1000))
+        self._push_if_remote()
         print(f"\u2713 Resumed: {resolved}")
 
     def view_active(self, show_tags=False):
+        # Pull from remote to show latest state (no-op if no remote configured)
+        if self._staging._remote is not None:
+            self._staging.check_and_sync(timeout_ms=500)
         staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
 
