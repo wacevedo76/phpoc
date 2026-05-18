@@ -397,7 +397,7 @@ class StagingService:
 
         # Pull and merge
         try:
-            remote_blob = self._remote.pull()
+            remote_blob = self._remote.pull(master_key=None)  # No auth context here — pull plain first
             if remote_blob and "entries" in remote_blob:
                 local_entries = self._local.read_entries()
 
@@ -434,7 +434,7 @@ class StagingService:
             pass
 
         device_id = identity.device_id if identity else "unknown"
-        self._remote.push(raw, device_id)
+        self._remote.push(raw, device_id, master_key=master_key)
 
     def is_remote_available(self) -> bool:
         """Check if remote transport is configured and reachable."""
