@@ -106,8 +106,9 @@ e2930a0 perf: pull before push in GitStagingTransport
 1. ✅ Rsync code to laptop (done)
 2. ✅ On laptop: `git pull origin P3-Remote_Sync`
 3. ✅ **Fix applied: `"add"` in `require_auth` + `ph list active` + `list all` shows active tasks**
-4. 🔜 Test round-trip sync: add on one device → `ph list all` on the other shows it
-5. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
+4. 🔜 Test: `ph sync remote` on debagent04 (pull + merge from laptop's pushes)
+5. 🔜 Test round-trip sync: add on one device → `ph list all` on the other shows it
+6. 🔜 Merge `P3-Remote_Sync` into `main` once cross-device sync works reliably
 
 ## Key Files
 | File | Purpose |

@@ -105,9 +105,11 @@ def main():
     subparsers.add_parser("tags", help="List all unique tags ever used")
 
     # Sync command
-    sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger")
+    sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger, or sync staging with remote")
+    sync_subparsers = sync_parser.add_subparsers(dest="sync_action")
     sync_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     sync_parser.add_argument("--till", help="Only sync entries up to and including this date (MM-DD or YYYY-MM-DD)")
+    sync_remote_p = sync_subparsers.add_parser("remote", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -385,8 +387,13 @@ def main():
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
-        till_date = _resolve_till_date(args.till) if args.till else None
-        sync_orchestrator.sync(till_date=till_date)
+        if getattr(args, 'sync_action', None) == "remote":
+            staging_service.check_and_sync(timeout_ms=500)
+            staging_service.push_to_remote(master_key=auth.get_key())
+            print("\u2713 Remote staging synced")
+        else:
+            till_date = _resolve_till_date(args.till) if args.till else None
+            sync_orchestrator.sync(till_date=till_date)
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
