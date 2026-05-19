@@ -377,5 +377,67 @@ class TestConfigTemplateRemoteSection(unittest.TestCase):
         self.assertIn("transport", ConfigManager.DEFAULTS.get("remote", {}))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestMainWiringRemoteUrl(unittest.TestCase):
+    """Verify main.py-style remote URL wiring logic."""
+
+    def _simulate_main_wiring(self, remote_url_value):
+        """Mimic the remote transport setup block from main.py."""
+        from security.config_manager import ConfigManager
+        store = _make_mock_config_store()
+        config = ConfigManager(store)
+
+        if remote_url_value is not None:
+            config.write({"remote": {"git_remote_url": remote_url_value}})
+
+        remote_url = config.get("remote.git_remote_url")
+        transport = None
+        device_id_provider = None
+        if remote_url:
+            transport = MagicMock()
+            transport.pull.return_value = None
+            transport.push.return_value = None
+            device_id_provider = MagicMock()
+            device_id_provider.get_device_identity.return_value = DeviceIdentity(
+                device_id="test-dev", device_proof="p", device_label="T"
+            )
+
+        staging_store = make_mock_staging_store()
+        svc = StagingService(
+            crypto=make_mock_crypto(b"\x00" * 32),
+            staging_store=staging_store,
+            transport=transport,
+            device_id_provider=device_id_provider,
+        )
+        return svc, transport, device_id_provider
+
+    def test_none_url_disables_remote(self):
+        """remote.git_remote_url=None -> transport=None, local-only."""
+        svc, transport, provider = self._simulate_main_wiring(None)
+        self.assertIsNone(transport)
+        self.assertIsNone(provider)
+        # check_and_sync returns READY (local-only) even when no remote
+        self.assertEqual(svc.check_and_sync(), SyncCheckResult.READY)
+        # push_to_remote is a no-op
+        svc.push_to_remote(b"\x00" * 32)  # should not raise
+
+    def test_empty_string_disables_remote(self):
+        """remote.git_remote_url='' -> transport=None, local-only."""
+        svc, transport, provider = self._simulate_main_wiring("")
+        self.assertIsNone(transport)
+        self.assertIsNone(provider)
+        self.assertEqual(svc.check_and_sync(), SyncCheckResult.READY)
+        svc.push_to_remote(b"\x00" * 32)
+
+    def test_valid_url_enables_remote(self):
+        """remote.git_remote_url='git@example:r.git' -> transport+provider set."""
+        svc, transport, provider = self._simulate_main_wiring(
+            "git@example.com:user/repo.git"
+        )
+        self.assertIsNotNone(transport)
+        self.assertIsNotNone(provider)
+        # check_and_sync with mocked transport returns READY
+        self.assertEqual(svc.check_and_sync(), SyncCheckResult.READY)
+        # push_to_remote uses the transport
+        svc.push_to_remote(b"\x00" * 32)
+        # Should call push on the mocked transport
+        transport.push.assert_called_once()
