@@ -238,7 +238,7 @@ class CLIInterface:
         for title, total_ms in sorted(rep.items(), key=lambda x: x[1], reverse=True):
             print(f"{title}: {total_ms // 60000}m")
 
-    def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False):
+    def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
         # Convert days_limit to from_date if from_date is not already set
@@ -364,16 +364,16 @@ class CLIInterface:
                 # Own entries first
                 if date_str in synced_by_date:
                     for entry_data in synced_by_date[date_str]:
-                        self._print_entry(entry_data, show_comments=show_comments)
+                        self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
                 # Then peeked spanning entries from previous day
                 if date_str in peek_entries:
                     for entry_data in peek_entries[date_str]:
-                        self._print_entry(entry_data, show_comments=show_comments)
+                        self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
 
             # Process staged entries for this date
             if source in ['staged', 'all'] and date_str in staged_by_date:
                 for entry_data in staged_by_date[date_str]:
-                    self._print_entry(entry_data, show_comments=show_comments)
+                    self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
 
     @staticmethod
     def _resolve_date_filters(days=None, date=None, week=None, month=None, year=None,
@@ -519,7 +519,7 @@ class CLIInterface:
 
         return (from_str, to_str)
 
-    def _print_entry(self, entry_data, show_comments=False):
+    def _print_entry(self, entry_data, show_comments=False, show_tags=False):
         """Helper method to print an entry (synced or staged)."""
         data = entry_data["data"]
 
@@ -569,5 +569,11 @@ class CLIInterface:
             if comment:
                 comment_str = f" — \"{comment}\""
 
-        print(f"  [{start_str} - {stop_str}] {data['title']}{marker}{source_indicator} ({data['duration'] // 60000}m){comment_str}")
+        tag_str = ""
+        if show_tags:
+            tags = data.get("tags", [])
+            if tags:
+                tag_str = f" [@{', @'.join(tags)}]"
+
+        print(f"  [{start_str} - {stop_str}] {data['title']}{marker}{source_indicator} ({data['duration'] // 60000}m){comment_str}{tag_str}")
         if meta: print(f"    Metadata: {meta}")

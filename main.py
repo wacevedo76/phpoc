@@ -132,10 +132,12 @@ def main():
     list_subparsers = list_parser.add_subparsers(dest="source", required=True)
 
     # Helper to add common date filter args and --show-comments to a subparser
-    def _add_date_args(p, add_show_comments=False):
+    def _add_date_args(p, add_show_comments=False, add_show_tags=False):
         p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
         if add_show_comments:
             p.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with entries")
+        if add_show_tags:
+            p.add_argument("--tags", action="store_true", help="Show tags inline with entries")
         p.add_argument("--date", help="Specific date (YYYY-MM-DD)")
         p.add_argument("--week", help="ISO week (YYYY-Www) or date within week (YYYY-MM-DD)")
         p.add_argument("--month", help="Month (YYYY-MM or MM)")
@@ -145,15 +147,15 @@ def main():
 
     # List all activities (synced + staged)
     list_all_p = list_subparsers.add_parser("all", help="List all activities (synced and staged)")
-    _add_date_args(list_all_p, add_show_comments=True)
+    _add_date_args(list_all_p, add_show_comments=True, add_show_tags=True)
 
     # List only synced activities
     list_synced_p = list_subparsers.add_parser("synced", help="List only synced activities")
-    _add_date_args(list_synced_p, add_show_comments=True)
+    _add_date_args(list_synced_p, add_show_comments=True, add_show_tags=True)
 
     # List only staged activities
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
-    _add_date_args(list_staged_p, add_show_comments=True)
+    _add_date_args(list_staged_p, add_show_comments=True, add_show_tags=True)
 
     # List only active (running) tasks — same as ph view
     list_active_p = list_subparsers.add_parser("active", help="List active (running) tasks")
@@ -435,7 +437,9 @@ def main():
                 from_date=args.from_date,
                 to_date=args.to_date,
             )
-            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str, show_comments=show_comments)
+            show_tags = args.tags if hasattr(args, 'tags') else False
+            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str,
+                            show_comments=show_comments, show_tags=show_tags)
     elif args.command == "modify":
         _handle_modify(ledger, args.index)
     elif args.command == "remove":
