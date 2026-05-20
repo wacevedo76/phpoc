@@ -102,7 +102,7 @@ def main():
 
     # View command
     view_parser = subparsers.add_parser("view", help="View active tasks (alias: ph list active)")
-    view_parser.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
+    view_parser.add_argument("--show-tags", action="store_true", help="Show tags inline with tasks")
     view_parser.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with tasks")
 
     # Tags command
@@ -137,7 +137,7 @@ def main():
         if add_show_comments:
             p.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with entries")
         if add_show_tags:
-            p.add_argument("--tags", action="store_true", help="Show tags inline with entries")
+            p.add_argument("--show-tags", action="store_true", help="Show tags inline with entries")
         p.add_argument("--date", help="Specific date (YYYY-MM-DD)")
         p.add_argument("--week", help="ISO week (YYYY-Www) or date within week (YYYY-MM-DD)")
         p.add_argument("--month", help="Month (YYYY-MM or MM)")
@@ -159,7 +159,7 @@ def main():
 
     # List only active (running) tasks — same as ph view
     list_active_p = list_subparsers.add_parser("active", help="List active (running) tasks")
-    list_active_p.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
+    list_active_p.add_argument("--show-tags", action="store_true", help="Show tags inline with tasks")
     list_active_p.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with tasks")
 
     # Modify command
@@ -394,7 +394,7 @@ def main():
         elif args.subcommand == "unpause":
             cli.add_unpause(args.title)
     elif args.command == "view":
-        show_tags = args.tags if hasattr(args, 'tags') else False
+        show_tags = args.show_tags if hasattr(args, 'show_tags') else False
         show_comments = args.show_comments if hasattr(args, 'show_comments') else False
         cli.view_active(show_tags=show_tags, show_comments=show_comments)
     elif args.command == "tags":
@@ -423,7 +423,7 @@ def main():
         cli.show_rep(args.days, from_date=from_str, to_date=to_str)
     elif args.command == "list":
         if args.source == "active":
-            show_tags = args.tags if hasattr(args, 'tags') else False
+            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
             show_comments = args.show_comments if hasattr(args, 'show_comments') else False
             cli.view_active(show_tags=show_tags, show_comments=show_comments)
         else:
@@ -437,7 +437,7 @@ def main():
                 from_date=args.from_date,
                 to_date=args.to_date,
             )
-            show_tags = args.tags if hasattr(args, 'tags') else False
+            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
             cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str,
                             show_comments=show_comments, show_tags=show_tags)
     elif args.command == "modify":
