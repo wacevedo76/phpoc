@@ -81,11 +81,14 @@ def main():
     oneoff_p = add_sub.add_parser("oneoff", help="Capture a completed task")
     oneoff_p.add_argument("title", nargs="?", help="Task title (optional, will prompt if omitted)")
     oneoff_p.add_argument("--tag", dest="tags", action="append", default=[], help="Add a tag (e.g. --tag music --tag learning)")
+    oneoff_p.add_argument("--comment", "-m", dest="comment", help="Add a comment / note")
     start_p = add_sub.add_parser("start", help="Start a task")
     start_p.add_argument("title")
     start_p.add_argument("--tag", dest="tags", action="append", default=[], help="Add a tag (e.g. --tag music --tag learning)")
+    start_p.add_argument("--comment", "-m", dest="comment", help="Add a comment / note")
     end_p = add_sub.add_parser("end", help="End a task")
     end_p.add_argument("title")
+    end_p.add_argument("--comment", "-m", dest="comment", help="Add a comment / note")
     pause_p = add_sub.add_parser("pause", help="Pause a task")
     pause_p.add_argument("title")
     unpause_p = add_sub.add_parser("unpause", help="Resume a paused task")
@@ -375,12 +378,15 @@ def main():
                 if tag_input:
                     raw_tags = [t.strip() for t in tag_input.split(",")]
                     tags = CLIInterface._normalize_tag_args(raw_tags)
-            cli.add_oneoff(title, int(time.time()*1000)-1000, int(time.time()*1000), tags=tags)
+            comment = args.comment if hasattr(args, 'comment') and args.comment else None
+            cli.add_oneoff(title, int(time.time()*1000)-1000, int(time.time()*1000), tags=tags, comment=comment)
         elif args.subcommand == "start":
             tags = CLIInterface._normalize_tag_args(args.tags) if hasattr(args, 'tags') and args.tags else None
-            cli.add_start(args.title, tags=tags)
+            comment = args.comment if hasattr(args, 'comment') and args.comment else None
+            cli.add_start(args.title, tags=tags, comment=comment)
         elif args.subcommand == "end":
-            cli.add_end(args.title)
+            comment = args.comment if hasattr(args, 'comment') and args.comment else None
+            cli.add_end(args.title, comment=comment)
         elif args.subcommand == "pause":
             cli.add_pause(args.title)
         elif args.subcommand == "unpause":

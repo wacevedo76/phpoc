@@ -103,23 +103,26 @@ class CLIInterface:
                 return
             self._staging.push_to_remote(master_key=mk)
 
-    def add_oneoff(self, title, start, stop, metadata=None, tags=None):
-        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags)
+    def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
+        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
         self._push_if_remote()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
-        print(f"\u2713 One-off habit captured: {title}{tag_str}")
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 One-off habit captured: {title}{tag_str}{comment_str}")
 
-    def add_start(self, title, tags=None):
-        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags)
+    def add_start(self, title, tags=None, comment=None):
+        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
         self._push_if_remote()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
-        print(f"\u2713 Started tracking: {title}{tag_str}")
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 Started tracking: {title}{tag_str}{comment_str}")
 
-    def add_end(self, title):
+    def add_end(self, title, comment=None):
         resolved = self._resolve_title(title)
-        self._staging.end(resolved, int(time.time()*1000))
+        self._staging.end(resolved, int(time.time()*1000), comment=comment)
         self._push_if_remote()
-        print(f"\u2713 Stopped tracking: {resolved}")
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 Stopped tracking: {resolved}{comment_str}")
 
     def add_pause(self, title):
         resolved = self._resolve_title(title)
