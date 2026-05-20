@@ -65,4 +65,5 @@ Config-driven transport creation, device identity integration.
 | `tests/test_remote_config_wiring.py` | 13 tests for config wiring |
 
 ## Triage Log
+- **2026-05-20**: Added `--show-comments`/`-c` flag to `ph view`, `ph list active`, and `ph list [all|synced|staged]` — displays inline comments on entries when the flag is passed. Touched `cli/interface.py`, `main.py`. Annotated `cli/interface.py` as HOT.
 - **2026-05-19**: Confirmed `phpoc config set remote.git_remote_url ""` disables remote sync (main.py: `if remote_url:` is falsy → transport=None). Added 3 wiring tests. Touched `tests/test_remote_config_wiring.py`. No new HOT annotations.

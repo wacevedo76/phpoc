@@ -100,6 +100,7 @@ def main():
     # View command
     view_parser = subparsers.add_parser("view", help="View active tasks (alias: ph list active)")
     view_parser.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
+    view_parser.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with tasks")
 
     # Tags command
     subparsers.add_parser("tags", help="List all unique tags ever used")
@@ -127,9 +128,11 @@ def main():
     list_parser = subparsers.add_parser("list", help="List detailed habits")
     list_subparsers = list_parser.add_subparsers(dest="source", required=True)
 
-    # Helper to add common date filter args to a subparser
-    def _add_date_args(p):
+    # Helper to add common date filter args and --show-comments to a subparser
+    def _add_date_args(p, add_show_comments=False):
         p.add_argument("days", type=int, nargs="?", help="Limit to last N days")
+        if add_show_comments:
+            p.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with entries")
         p.add_argument("--date", help="Specific date (YYYY-MM-DD)")
         p.add_argument("--week", help="ISO week (YYYY-Www) or date within week (YYYY-MM-DD)")
         p.add_argument("--month", help="Month (YYYY-MM or MM)")
@@ -139,19 +142,20 @@ def main():
 
     # List all activities (synced + staged)
     list_all_p = list_subparsers.add_parser("all", help="List all activities (synced and staged)")
-    _add_date_args(list_all_p)
+    _add_date_args(list_all_p, add_show_comments=True)
 
     # List only synced activities
     list_synced_p = list_subparsers.add_parser("synced", help="List only synced activities")
-    _add_date_args(list_synced_p)
+    _add_date_args(list_synced_p, add_show_comments=True)
 
     # List only staged activities
     list_staged_p = list_subparsers.add_parser("staged", help="List only staged activities")
-    _add_date_args(list_staged_p)
+    _add_date_args(list_staged_p, add_show_comments=True)
 
     # List only active (running) tasks — same as ph view
     list_active_p = list_subparsers.add_parser("active", help="List active (running) tasks")
     list_active_p.add_argument("--tags", action="store_true", help="Show tags inline with tasks")
+    list_active_p.add_argument("--show-comments", "-c", action="store_true", help="Show comments inline with tasks")
 
     # Modify command
     modify_p = subparsers.add_parser("modify", help="Modify a staged entry's end time and pauses")
@@ -383,7 +387,8 @@ def main():
             cli.add_unpause(args.title)
     elif args.command == "view":
         show_tags = args.tags if hasattr(args, 'tags') else False
-        cli.view_active(show_tags=show_tags)
+        show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+        cli.view_active(show_tags=show_tags, show_comments=show_comments)
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
@@ -411,8 +416,10 @@ def main():
     elif args.command == "list":
         if args.source == "active":
             show_tags = args.tags if hasattr(args, 'tags') else False
-            cli.view_active(show_tags=show_tags)
+            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+            cli.view_active(show_tags=show_tags, show_comments=show_comments)
         else:
+            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
             from_str, to_str = CLIInterface._resolve_date_filters(
                 days=args.days,
                 date=getattr(args, 'date', None),
@@ -422,7 +429,7 @@ def main():
                 from_date=args.from_date,
                 to_date=args.to_date,
             )
-            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str)
+            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str, show_comments=show_comments)
     elif args.command == "modify":
         _handle_modify(ledger, args.index)
     elif args.command == "remove":

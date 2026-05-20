@@ -8,8 +8,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 | File | Lines | Temp | Key contents |
 |---|---|---|---|
-| `main.py` | 462 | HOT | CLI entry — argparse dispatch to all commands, `_handle_config_command`, `_config_generate_template` |
-| `cli/interface.py` | 426 | COLD | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` |
+| `main.py` | 472 | HOT | CLI entry — argparse dispatch to all commands, `_handle_config_command`, `_config_generate_template` — wired `--show-comments`/`-c` to view/list commands |
+| `cli/interface.py` | 435 | HOT | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` — added `--show-comments`/`-c` support |
 | `cli/strategies.py` | ~150 | COLD | View-based InteractiveCLIStrategy (new, co-exists with `core/sync_confirmation.py` shim) |
 | `core/ledger.py` | 855 | COLD | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` — thin backward-compat wrapper over engine |
 | `core/sync/__init__.py` | 9 | COLD | Package — re-exports SyncDecision, SyncStrategy, SyncOrchestrator, AbstractStagingTransport |
