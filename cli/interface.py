@@ -86,20 +86,23 @@ class CLIInterface:
         result.sort()
         return result if result else None
 
-    def add_oneoff(self, title, start, stop, metadata=None, tags=None):
-        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags)
+    def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
+        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
         tag_str = f" [{', '.join(tags)}]" if tags else ""
-        print(f"\u2713 One-off habit captured: {title}{tag_str}")
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 One-off habit captured: {title}{tag_str}{comment_str}")
 
-    def add_start(self, title, tags=None):
-        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags)
+    def add_start(self, title, tags=None, comment=None):
+        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
         tag_str = f" [{', '.join(tags)}]" if tags else ""
-        print(f"\u2713 Started tracking: {title}{tag_str}")
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 Started tracking: {title}{tag_str}{comment_str}")
 
-    def add_end(self, title):
+    def add_end(self, title, comment=None):
         resolved = self._resolve_title(title)
-        self._staging.end(resolved, int(time.time()*1000))
-        print(f"\u2713 Stopped tracking: {resolved}")
+        self._staging.end(resolved, int(time.time()*1000), comment=comment)
+        comment_str = f" — \"{comment}\"" if comment else ""
+        print(f"\u2713 Stopped tracking: {resolved}{comment_str}")
 
     def add_pause(self, title):
         resolved = self._resolve_title(title)
@@ -111,7 +114,7 @@ class CLIInterface:
         self._staging.unpause(resolved, int(time.time()*1000))
         print(f"\u2713 Resumed: {resolved}")
 
-    def view_active(self, show_tags=False):
+    def view_active(self, show_tags=False, show_comments=False):
         staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
 
@@ -152,20 +155,26 @@ class CLIInterface:
                 if tags:
                     tag_str = f" [@{', @'.join(tags)}]"
 
+            comment_str = ""
+            if show_comments:
+                comment = data.get("comment")
+                if comment:
+                    comment_str = f" — \"{comment}\""
+
             if data.get("is_paused"):
                 # Task is paused — show duration up to the pause start
                 if pauses and pauses[-1].get("pause_stop") is None:
                     paused_since = pauses[-1]["pause_start"]
                     duration_ms = self._compute_duration(start_epoch, paused_since, pauses)
                     pause_time = time.strftime("%H:%M:%S", time.localtime(paused_since/1000))
-                    print(f"#{task_id} [{started}] {data['title']} (\u23f8 paused at {pause_time}, active: {duration_ms // 60000}m){tag_str}")
+                    print(f"#{task_id} [{started}] {data['title']} (\u23f8 paused at {pause_time}, active: {duration_ms // 60000}m){tag_str}{comment_str}")
                 else:
-                    print(f"#{task_id} [{started}] {data['title']} (\u23f8 paused){tag_str}")
+                    print(f"#{task_id} [{started}] {data['title']} (\u23f8 paused){tag_str}{comment_str}")
             else:
                 # Task is actively running — show live duration (excluding past pauses)
                 now = int(time.time() * 1000)
                 duration_ms = self._compute_duration(start_epoch, now, pauses)
-                print(f"#{task_id} [{started}] {data['title']} (active: {duration_ms // 60000}m){tag_str}")
+                print(f"#{task_id} [{started}] {data['title']} (active: {duration_ms // 60000}m){tag_str}{comment_str}")
 
     def show_rep(self, days_limit=None, from_date=None, to_date=None):
         # Use Blind Index for speed and privacy
@@ -189,7 +198,7 @@ class CLIInterface:
         for title, total_ms in sorted(rep.items(), key=lambda x: x[1], reverse=True):
             print(f"{title}: {total_ms // 60000}m")
 
-    def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None):
+    def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
         # Convert days_limit to from_date if from_date is not already set
@@ -316,16 +325,16 @@ class CLIInterface:
                 # Own entries first
                 if date_str in synced_by_date:
                     for entry_data in synced_by_date[date_str]:
-                        self._print_entry(entry_data)
+                        self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
                 # Then peeked spanning entries from previous day
                 if date_str in peek_entries:
                     for entry_data in peek_entries[date_str]:
-                        self._print_entry(entry_data)
+                        self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
 
             # Process staged entries for this date
             if source in ['staged', 'all'] and date_str in staged_by_date:
                 for entry_data in staged_by_date[date_str]:
-                    self._print_entry(entry_data)
+                    self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
 
     @staticmethod
     def _resolve_date_filters(days=None, date=None, week=None, month=None, year=None,
@@ -471,7 +480,7 @@ class CLIInterface:
 
         return (from_str, to_str)
 
-    def _print_entry(self, entry_data):
+    def _print_entry(self, entry_data, show_comments=False, show_tags=False):
         """Helper method to print an entry (synced or staged)."""
         data = entry_data["data"]
 
@@ -515,5 +524,18 @@ class CLIInterface:
 
         # Add source indicator
         source_indicator = " (Staged)" if entry_data["source"] == "staged" else ""
-        print(f"  [{start_str} - {stop_str}] {data['title']}{marker}{source_indicator} ({data['duration'] // 60000}m)")
+
+        comment_str = ""
+        if show_comments:
+            comment = data.get("comment")
+            if comment:
+                comment_str = f" — \"{comment}\""
+
+        tag_str = ""
+        if show_tags:
+            tags = data.get("tags", [])
+            if tags:
+                tag_str = f" [@{', @'.join(tags)}]"
+
+        print(f"  [{start_str} - {stop_str}] {data['title']}{marker}{source_indicator} ({data['duration'] // 60000}m){comment_str}{tag_str}")
         if meta: print(f"    Metadata: {meta}")
