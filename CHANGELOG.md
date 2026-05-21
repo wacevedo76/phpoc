@@ -2,6 +2,28 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
+## [0.6.0] — bc888c2 (P3-Remote_Sync — sync optimization)
+
+### Added
+- **Stable entry IDs** — every staging entry now gets a UUID (`entry_id`) on
+  creation. Persisted through write/read cycles and used as the primary dedup
+  key in the merge engine. Enables cross-device referencing: create on device A,
+  end on device B, device A sees the correct entry ended after pull.
+- **Single-pull `check_and_sync()`** — reduced from 3 transport pulls per command
+  to 1. The single pull handles device check, freshness check, AND merge data.
+- **Freshness-based pull skip** — `_last_push_at` timestamp + `_needs_full_pull()`
+  method. Same device + remote not newer → skip merge entirely. Handles
+  concurrent terminals on the same device.
+- **Merge engine entry_id dedup** — dedup by `entry_id` with backward-compatible
+  fallback to `(title, start_epoch)` for entries created before the change.
+- **24 new tests** in `test_staging_sync_optimization.py` covering: stable IDs,
+  cross-device lifecycle, freshness pull, push timeout/retry, auth cache,
+  offline recovery.
+
+**Metrics:** 1049 tests, 0 failures. 7 files changed, 1044 insertions, 39 deletions.
+
+**ADR:** ADR-021 adopted — sync optimization with stable IDs + freshness pull.
+
 ## [0.5.0] — 47ea8fd (P11-Day-Boundary-Span branch)
 
 ### Added

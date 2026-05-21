@@ -17,7 +17,11 @@
 - [x] Duplicate task ID fix in view
 - [x] Auth-only push retry (not for permission errors)
 - [x] `pull()` fallback to `crypto.master_key` for deobfuscation
-- [x] 1022 tests total, all passing
+- [x] **Sync optimization**: stable entry IDs (UUID per entry)
+- [x] **Sync optimization**: single-pull `check_and_sync()` (1 pull instead of 3)
+- [x] **Sync optimization**: freshness-based pull skip (`_last_push_at`, `_needs_full_pull`)
+- [x] **Sync optimization**: merge engine dedup by `entry_id` (backward compat fallback)
+- [x] 24 new optimization tests (1049 total, all passing)
 
 ### Remaining (Blocked by SSH/auth setup across machines)
 - [ ] Cross-device sync test (laptop ↔ debagent04)

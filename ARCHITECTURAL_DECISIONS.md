@@ -717,6 +717,113 @@ phpoc config set storage.data_dir /mnt/work-ledger
 **Date:** 2026-05-14
 **Status:** ✅ Implemented and merged
 
+---
+
+## ADR-021: Sync Optimization — Stable Entry IDs + Single-Pull Freshness
+
+**Date:** 2026-05-21
+**Status:** ✅ Implemented
+
+### Context
+The original staging sync design had three performance problems:
+
+1. **Triple pull:** Every mutating command (`capture`, `end`, `pause`, `unpause`)
+   called `check_and_sync()` which did:
+   - `check_remote_available()` — a full `transport.pull()` with wall-clock timeout
+   - `check_device()` — another full `transport.pull()` + deobfuscation just for `device_id`
+   - `self._remote.pull()` — a third pull for the actual merge data
+
+   Result: **3 transport pulls per command**, each involving `git pull --rebase`,
+   file read, AES-CTR decryption, and JSON parse.
+
+2. **No freshness tracking:** Every `check_and_sync()` pulled regardless of whether
+   the remote had actually changed. Same-device scenarios (the common case)
+   pulled and decrypted for nothing.
+
+3. **Title-based dedup:** The merge engine used `(title, start_epoch)` as its
+   dedup key. When two devices started the same-named task (e.g. "Coding") at
+   different milliseconds, both survived as separate entries. End/pause by title
+   could hit the wrong entry in cross-device flows. No stable reference existed
+   for a specific entry across devices.
+
+### Decision
+Three complementary changes:
+
+**A) Single-pull `check_and_sync()`:** One transport pull, one deobfuscation, one
+   JSON parse. The pulled blob dict is used for device check, freshness check,
+   AND merge data — all from the same `pull()` call. Catches exceptions as
+   `OFFLINE`; returns `READY` (nothing to merge) on `None`.
+
+**B) Freshness-based pull skip:** Two new mechanisms:
+   - `_last_push_at` timestamp on `StagingService` (ms epoch, updated on every
+     successful `push_to_remote()`)
+   - `_needs_full_pull(remote_blob)` method:
+     - Different `device_id` → always pull (cross-device data)
+     - Same device + `remote_updated_at > _last_push_at` → pull (concurrent
+       terminal or other instance pushed)
+     - Same device + `remote_updated_at <= _last_push_at` → skip (assume synced)
+
+**C) Stable entry IDs:** Every entry gets a UUID (`entry_id`) on creation:
+   - Generated in `LocalStagingCache.append()` via `str(uuid.uuid4())`
+   - Persisted in `data["entry_id"]` field in the raw entry
+   - Included in DTOs from `read_entries()` and preserved in `write_entries()`
+   - `MergeEngine.merge()` uses `entry_id` as primary dedup key
+   - Fallback to `(title, start_epoch)` for backward compatibility with entries
+     created before the change
+
+### Rationale
+- **Single pull:** Eliminates 2 redundant transport round-trips per command.
+  The device check no longer needs its own pull — `device_id` is the first
+  field in the blob dict.
+- **Freshness skip:** The common case is a single user on one device repeatedly
+  capturing entries. No remote changes in between means no merge needed.
+  The `git pull --rebase` + AES decrypt + JSON parse on every command was
+  the main latency source.
+- **Stable IDs:** Cross-device operations need a stable handle. Title matching
+  is ambiguous (two "Coding" tasks running) and epoch matching is fragile
+  (different devices can create at different milliseconds). The `entry_id` is
+  the definitive reference for end/pause/modify operations across devices.
+
+### Consequences
+- **Positive:**
+  - ~3x reduction in transport calls per command
+  - Most commands (same device, no remote change) skip the merge entirely
+  - Cross-device entry lifecycle works correctly (create on A, end on B, A sees
+    it as ended after pull)
+  - Merge engine handles concurrent terminals on the same device
+  - Backward compatible — all 1049 tests pass (1025 original + 24 new)
+- **Negative:**
+  - `_last_push_at` is in-memory only. If the process restarts without pushing,
+    the freshness check starts fresh (`_last_push_at = 0`), which is safe but
+    slightly less optimal (one extra merge on first command after restart).
+  - Entries created before this change have `entry_id = ""` and fall back to
+    the old dedup behavior. They're migrated on next write_entries cycle
+    (generates a new UUID), but that's a silent mutation.
+
+### ADR-015b consequences updated
+  The obfuscation design (ADR-015b) remains unchanged. The single-pull
+  optimization means the obfuscated blob is now decrypted once per command
+  instead of up to three times.
+
+---
+
+## Summary by Layer
+
+| Layer | ADRs |
+|-------|------|
+| **Key Management** | ADR-001 (Sovereign Key), ADR-004 (PBKDF2 600K) |
+| **Encryption** | ADR-002 (Encrypt-then-MAC), ADR-013 (`_enc` suffix) |
+| **Identity** | ADR-003 (Ed25519 Proxy) |
+| **Chain Structure** | ADR-007 (Hierarchical Lock Chain), ADR-012 (Chain Splitting) |
+| **Content Integrity** | ADR-005 (Extensible Content Hash), ADR-010 (Revert) |
+| **Queryability** | ADR-008 (Blind Index) |
+| **Staging** | ADR-009 (Plaintext Scratchpad), ADR-015 (Multi-Device Encrypted) |
+| **Versioning** | ADR-011 (Format Versioning) |
+| **Dependencies** | ADR-006 (Zero External Deps) |
+| **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
+| **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
+| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull)
+
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
 
