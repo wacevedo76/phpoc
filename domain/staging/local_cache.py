@@ -13,6 +13,7 @@ This is a critical boundary in the architecture:
 import json
 import hashlib
 import time
+import uuid
 from typing import Optional, List, Dict, Any, Tuple
 
 from security.crypto import AbstractCryptoManager
@@ -121,6 +122,7 @@ class LocalStagingCache:
                     "tags": data.get("tags", []),
                     "comment": data.get("comment"),
                     "media": data.get("media", []),
+                    "entry_id": data.get("entry_id", ""),
                     "metadata": metadata,
                     "date": date_str,
                     "source": "local",
@@ -152,6 +154,7 @@ class LocalStagingCache:
                 "metadata_enc": self._encrypt_field(json.dumps(entry.get("metadata", {}))),
                 "tags": entry.get("tags", []),
                 "media": entry.get("media", []),
+                "entry_id": entry.get("entry_id", str(uuid.uuid4())),
             }
             if entry.get("comment") is not None:
                 data["comment"] = entry["comment"]
@@ -208,6 +211,7 @@ class LocalStagingCache:
             "metadata_enc": self._encrypt_field(json.dumps(metadata or {})),
             "tags": normalized_tags,
             "media": media if media is not None else [],
+            "entry_id": str(uuid.uuid4()),
         }
         if comment is not None:
             data["comment"] = comment

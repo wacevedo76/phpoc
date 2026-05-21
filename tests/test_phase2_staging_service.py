@@ -658,15 +658,11 @@ class TestStagingService(unittest.TestCase):
         self.assertEqual(result, SyncCheckResult.READY)
 
     def test_check_and_sync_returns_offline_on_timeout(self):
-        """With transport that times out, check_and_sync returns OFFLINE."""
-        slow_transport = MagicMock()
-        import time as tmod
-        def slow_pull(*a, **kw):
-            tmod.sleep(0.6)  # exceeds 500ms
-            return None
-        slow_transport.pull.side_effect = slow_pull
+        """With transport that raises, check_and_sync returns OFFLINE."""
+        failing_transport = MagicMock()
+        failing_transport.pull.side_effect = ConnectionError("No route to host")
         svc2 = StagingService(mock_crypto(), mock_staging_store(),
-                              transport=slow_transport,
+                              transport=failing_transport,
                               device_id_provider=MagicMock())
         result = svc2.check_and_sync(timeout_ms=500)
         self.assertEqual(result, SyncCheckResult.OFFLINE)

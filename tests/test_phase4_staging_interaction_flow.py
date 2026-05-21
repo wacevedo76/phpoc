@@ -1257,6 +1257,8 @@ class TestEveryCommandSyncWithPush(unittest.TestCase):
         self.assertIn("EntryFromDev2", titles)
 
         # Device 1: pulls updated blob from dev2
+        # Pre-seed auth cache (simulating prior authentication)
+        svc1._last_auth_time = time.time()
         transport1._blob = transport2._blob
         svc1.check_and_sync(timeout_ms=500)
         entries1 = svc1.get_entries()

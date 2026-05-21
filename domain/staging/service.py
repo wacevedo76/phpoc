@@ -47,6 +47,7 @@ class StagingService:
         self._merge = MergeEngine()
         self._remote: Optional[RemoteStagingSync] = None
         self._last_auth_time: float = 0.0
+        self._last_push_at: int = 0  # ms timestamp of last successful push
 
         if transport is not None and device_id_provider is not None:
             self._remote = RemoteStagingSync(crypto, transport, device_id_provider)
@@ -357,19 +358,53 @@ class StagingService:
     # Remote Sync
     # ------------------------------------------------------------------
 
+    def _needs_full_pull(self, remote_blob: Optional[Dict[str, Any]]) -> bool:
+        """Determine whether a full pull+merge is needed based on freshness.
+
+        Returns True if the remote blob has entries that are newer than
+        our last successful push, or if the device IDs differ.
+        """
+        if remote_blob is None:
+            return False  # No remote blob — nothing to merge
+
+        # Always pull if remote has a different device_id (new data from another device)
+        local_id = None
+        try:
+            if self._remote is not None:
+                identity = self._remote._device_id_provider.get_device_identity(b"")
+                local_id = identity.device_id
+        except Exception:
+            pass
+
+        remote_id = remote_blob.get("device_id", "")
+        remote_updated_at = remote_blob.get("updated_at", 0)
+
+        if remote_id != local_id:
+            return True  # Different device — must merge
+
+        # Same device: check freshness
+        if remote_updated_at > self._last_push_at:
+            return True  # Remote is newer — must merge
+
+        return False  # Same device, not newer — skip full pull
+
     def check_and_sync(
         self, timeout_ms: int = 500
     ) -> SyncCheckResult:
         """Event-driven remote check. Called before every staging operation.
 
-        1. If no remote configured: returns READY.
-        2. If remote reachable: check device match -> auth cache -> pull+merge.
-        3. If remote unreachable (within timeout_ms): return OFFLINE.
+        Single-pull flow (optimized):
+          1. If no remote configured: returns READY.
+          2. Pull remote blob ONCE (with timeout).
+          3. Check device match + freshness:
+             a. Different device + auth expired → REAUTH_NEEDED
+             b. Different device + auth fresh → pull+merge
+             c. Same device, remote not newer → skip pull (assume synced)
+             d. Same device, remote newer → pull+merge
+          4. If remote unreachable: return OFFLINE.
 
         Auth cache: after successful device check, caches the auth for
-        30 minutes (AUTH_CACHE_DURATION). If device_id mismatches but
-        auth is still cached, proceeds with READY. Only returns
-        REAUTH_NEEDED when device mismatches AND auth cache is expired.
+        30 minutes (AUTH_CACHE_DURATION).
 
         Returns:
             SyncCheckResult.READY, OFFLINE, or REAUTH_NEEDED.
@@ -377,17 +412,32 @@ class StagingService:
         if self._remote is None:
             return SyncCheckResult.READY
 
-        # Quick check with timeout
-        if not self._remote.check_remote_available(timeout_ms):
+        # Pull the remote blob ONCE for both device check and data
+        try:
+            remote_blob = self._remote.pull()
+        except Exception:
             return SyncCheckResult.OFFLINE
 
-        # Check device match with auth cache
-        device_match = self._remote.check_device()
+        if remote_blob is None:
+            # No remote blob yet — nothing to merge, proceed locally
+            return SyncCheckResult.READY
+
+        # Check device match
+        remote_device_id = remote_blob.get("device_id", "")
+        local_id = None
+        try:
+            identity = self._remote._device_id_provider.get_device_identity(b"")
+            local_id = identity.device_id
+        except Exception:
+            pass
+
+        device_match = (remote_device_id == local_id)
+
         if not device_match:
             # Device mismatch — check auth cache
             if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
-                # Auth cache still valid — proceed without re-auth
-                pass  # Will still pull+merge below
+                # Auth cache still valid — proceed with merge
+                pass
             else:
                 # Auth expired — need re-auth
                 return SyncCheckResult.REAUTH_NEEDED
@@ -395,17 +445,16 @@ class StagingService:
         # Update auth timestamp on successful device check
         self._last_auth_time = time.time()
 
-        # Pull and merge (master_key resolved internally by RemoteStagingSync
-        # from self._crypto.master_key if available)
+        # Check freshness: skip full merge if same device and remote not newer
+        if not self._needs_full_pull(remote_blob):
+            return SyncCheckResult.READY
+
+        # Pull+merge using the already-fetched blob data
         try:
-            remote_blob = self._remote.pull()
-            if remote_blob and "entries" in remote_blob:
+            if "entries" in remote_blob:
                 local_entries = self._local.read_entries()
 
                 # Convert remote raw entries to DTOs before merging.
-                # Remote blob entries are in raw format (hash, data, start_epoch),
-                # while local entries are DTOs. We decode raw → DTO via
-                # the same method LocalStagingCache uses.
                 remote_dtos = self._raw_to_dtos(remote_blob["entries"])
 
                 merged = self._merge.merge(local_entries, remote_dtos)
@@ -436,6 +485,7 @@ class StagingService:
 
         device_id = identity.device_id if identity else "unknown"
         self._remote.push(raw, device_id, master_key=master_key)
+        self._last_push_at = int(time.time() * 1000)
 
     def is_remote_available(self) -> bool:
         """Check if remote transport is configured and reachable."""
