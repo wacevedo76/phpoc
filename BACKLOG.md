@@ -22,8 +22,11 @@
 - [x] **Sync optimization**: freshness-based pull skip (`_last_push_at`, `_needs_full_pull`)
 - [x] **Sync optimization**: merge engine dedup by `entry_id` (backward compat fallback)
 - [x] 24 new optimization tests (1049 total, all passing)
+- [x] **Detached HEAD fix**: explicit refspec fallback + multi-strategy branch re-attach
 
-### Remaining (Blocked by SSH/auth setup across machines)
+### Remaining
+- [ ] **Ledger sync** — sync the ledger chain (blocks, identity) via git, not just staging
+- [ ] **Async git transport** — make `GitStagingTransport._git()` non-blocking via `asyncio.create_subprocess_exec()`; enforce `timeout_ms` properly; keep `StagingService` and above synchronous (blocking absorbed by transport layer with `asyncio.run()`)
 - [ ] Cross-device sync test (laptop ↔ debagent04)
 - [ ] Handle case where `~/.local/share/phpoc/` doesn't exist yet on pull
 - [ ] First-time `phpoc view` on a machine with no local staging
