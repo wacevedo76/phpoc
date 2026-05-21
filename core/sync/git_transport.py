@@ -123,7 +123,7 @@ class GitStagingTransport(AbstractStagingTransport):
 
         # Push with retry on non-fast-forward
         try:
-            self._git("push")
+            self._push_or_detached_refspec()
         except RuntimeError as first_err:
             err_msg = str(first_err)
             # Only retry if the failure looks like a non-fast-forward rejection.
@@ -147,7 +147,7 @@ class GitStagingTransport(AbstractStagingTransport):
                     self._git("commit", "--allow-empty",
                               "-m", f"Update staging blob [{path}] (retry)")
                 try:
-                    self._git("push")
+                    self._push_or_detached_refspec()
                 except RuntimeError as exc:
                     raise RuntimeError(
                         f"Git push failed after retry for {self._remote_url}: {exc}"
@@ -159,6 +159,18 @@ class GitStagingTransport(AbstractStagingTransport):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _push_or_detached_refspec(self):
+        """Push, falling back to explicit refspec if HEAD is detached."""
+        try:
+            self._git("push")
+        except RuntimeError as exc:
+            err_str = str(exc)
+            if "not currently on a branch" in err_str:
+                logger.info("Detached HEAD; using explicit refspec for push...")
+                self._git("push", "origin", "HEAD:refs/heads/main")
+            else:
+                raise
 
     def _ensure_remote_url(self):
         """Ensure the clone's origin URL matches self._remote_url.
@@ -262,13 +274,36 @@ class GitStagingTransport(AbstractStagingTransport):
         try:
             # Check if HEAD is a symbolic ref (on a branch) or detached
             self._git("symbolic-ref", "-q", "HEAD")
+            return
         except RuntimeError:
             # Detached HEAD — force-create main branch and check it out
             logger.info("Detached HEAD detected; re-attaching to main...")
+
+        # Multiple recovery strategies for detached HEAD:
+        attempts = [
+            # Strategy 1: force-create branch at current HEAD
+            lambda: self._git("checkout", "-B", "main"),
+            # Strategy 2: if that fails (e.g. dirty tree), stash, then force
+            lambda: (
+                self._git("stash"),
+                self._git("checkout", "-B", "main"),
+            ),
+            # Strategy 3: if main branch object exists, reset to it
+            lambda: self._git("branch", "-f", "main", "HEAD"),
+        ]
+
+        for i, attempt in enumerate(attempts):
             try:
-                self._git("checkout", "-B", "main")
+                attempt()
+                # Verify we're now on a branch
+                self._git("symbolic-ref", "-q", "HEAD")
+                logger.info("Re-attached to main (strategy %d)", i + 1)
+                return
             except RuntimeError:
-                logger.warning("Failed to re-attach HEAD to main")
+                continue
+
+        # Give up but don't throw — caller can still do git push origin HEAD:main
+        logger.warning("Failed to re-attach HEAD to main; will use explicit refspec")
 
 
     def _git(self, *args: str) -> str:
