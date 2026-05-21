@@ -52,7 +52,7 @@ Stable entry IDs, cross-device lifecycle, freshness-based pull optimization, mer
 |---|---|---|
 | Code | `~/code/Testing/phpoc/` (rsynced) | `~/phpoc/` (source of truth) |
 | SSH to GitHub | ✅ | ✅ |
-| Passphrase | `"m0r3m0n3y"` | `"m0r3m0n3y"` |
+| Passphrase | `"PASSPHRASE_REDACTED"` | `"PASSPHRASE_REDACTED"` |
 | Ledger | ✅ initialized | Copied from laptop |
 | Master key | Same (same seed) | Same |
 | `view` works | ✅ | ✅ |
