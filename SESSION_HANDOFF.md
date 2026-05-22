@@ -32,6 +32,7 @@
 | `cli/interface.py` | `view_active()` with remote pull+merge, `_push_if_remote()` after every write |
 | `cli/trace.py` | `@trace` decorator — logs entry/exit/timing to `staging_log/` |
 | `scripts/remove_trace_logging.sh` | Reverts all trace code (imports, decorators, module, logs) |
+| `scripts/change_passphrase.py` | Re-encrypts recovery seed with a new passphrase (data preserved) |
 | `REMOTE_STAGING_ISSUE_TRACKING.md` | Full issue tracking + areas for improvement |
 | `staging_log/` | Trace output directory (⚠️ in `.gitignore` — contains master key bytes) |
 
@@ -86,7 +87,7 @@ All pushed to origin.
 
 ## Next Steps
 1. **On debagent04:** `git fetch origin && git reset --hard origin/P3-Remote_Sync` (after checking for unpushed work)
-2. **Generate a new passphrase** for app encryption, update remote clones on both machines
+2. **Run `python scripts/change_passphrase.py`** to generate a new passphrase (same recovery seed, all data preserved)
 3. Fix redundant `ls-remote` calls (AFI #2)
 4. Test device hand-off scenarios (AFI #3)
 5. When done: `./scripts/remove_trace_logging.sh`, commit cleanup, push
