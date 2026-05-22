@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.sync.transport import AbstractStagingTransport
+from cli.trace import trace
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +307,7 @@ class GitStagingTransport(AbstractStagingTransport):
         logger.warning("Failed to re-attach HEAD to main; will use explicit refspec")
 
 
+    @trace
     def _git(self, *args: str) -> str:
         """Run a git command in the clone directory.
 

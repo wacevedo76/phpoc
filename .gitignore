@@ -4,6 +4,3 @@ __pycache__/
 
 # Operational docs
 _Operational*
-
-# Trace logs (cross-device sync debugging)
-staging_log/
