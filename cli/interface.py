@@ -284,7 +284,10 @@ class CLIInterface:
             if start_val.startswith("plain:"):
                 start_epoch = int(start_val[6:])
             else:
-                start_epoch = int(self._crypto.decrypt(start_val))
+                try:
+                    start_epoch = int(self._crypto.decrypt(start_val))
+                except Exception:
+                    continue  # Skip entries with undecryptable timestamps
             date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
             if date_str not in staged_by_date:
                 staged_by_date[date_str] = []
@@ -526,18 +529,26 @@ class CLIInterface:
         """Helper method to print an entry (synced or staged)."""
         data = entry_data["data"]
 
-        start_val = data["startTime_enc"]
+        start_val = data.get("startTime_enc")
+        if not start_val:
+            return
         if start_val.startswith("plain:"):
             start_epoch = int(start_val[6:])
         else:
-            start_epoch = int(self._crypto.decrypt(start_val))
+            try:
+                start_epoch = int(self._crypto.decrypt(start_val))
+            except Exception:
+                return  # Skip entries with undecryptable timestamps
 
         if data["endTime_enc"]:
             end_val = data["endTime_enc"]
             if end_val.startswith("plain:"):
                 stop_epoch = int(end_val[6:])
             else:
-                stop_epoch = int(self._crypto.decrypt(end_val))
+                try:
+                    stop_epoch = int(self._crypto.decrypt(end_val))
+                except Exception:
+                    stop_epoch = None
         else:
             stop_epoch = None
 
@@ -546,7 +557,10 @@ class CLIInterface:
             if meta_enc.startswith("plain:"):
                 meta = json.loads(meta_enc[6:])
             else:
-                meta = json.loads(self._crypto.decrypt(meta_enc))
+                try:
+                    meta = json.loads(self._crypto.decrypt(meta_enc))
+                except Exception:
+                    meta = {}
         else:
             meta = {}
 
