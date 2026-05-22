@@ -15,7 +15,7 @@ This document captures issues found during cross-device staging sync testing bet
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
 | Remote URL | `git@github.com:wacevedo76/phpoc-staging.git` | same |
-| Passphrase | 🔴 **RETIRED** — see Security Incident | 🔴 **RETIRED** — see Security Incident |
+| Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
 
@@ -163,7 +163,7 @@ tracked in git.
 2. **Trace logs stripped** from commits `c764bea` (was 93236d5) and `613b32e` (was 2c2f0d7)
 3. **`.gitignore`** updated — `staging_log/` added (initial remediation)
 4. **Force-pushed** to origin — clean history live
-5. **Passphrase retired** — a new one must be generated
+5. **Passphrase retired** — new passphrase set via `ph recover` on both devices (2026-05-22)
 
 ### Post-remediation (2026-05-22)
 6. **Master key redaction** added to `cli/trace.py` — `_redact()` masks 32-byte keys
@@ -780,3 +780,66 @@ cache is stale (or never set), `check_and_sync()` will return `REAUTH_NEEDED`.
 
 **Open question:** Does `ph view` currently route through `check_and_sync()`? See Issue #2 which states
 `view_active()` bypasses it entirely.
+
+---
+
+## Next Phase: Remote Ledger Sync
+
+**Goal:** Sync the immutable ledger to the same git remote as staging, enabling
+cross-device `ph list all` without manual file transfer.
+
+**Status:** Design finalized (2026-05-22), not yet implemented.
+
+### Design
+
+**Same repo** as staging (`github.com:wacevedo76/phpoc-staging.git`):
+
+```
+staging/blobs/current.json   (existing — mutable, merge-needed)
+ledger/
+  blocks/
+    000000.json                 (genesis — pushed once)
+    000001.json                 (obfuscated single day block, sequence-numbered)
+    000002.json
+    ...
+  index.json                    (lightweight summary — duration + tags + entry count)
+```
+
+**Push:** Only new blocks since last sync. Genesis pushed once.
+**Pull:** List remote files → find missing → deobfuscate → verify chain → append.
+**Verification:** `prev_hash` chain + `day_hash` seal check. Tampered blocks detected and truncated.
+**Recovery:** Owner pushes clean local chain over polluted remote.
+**Index:** Activity title → `{ms, tags, entries}` per day. Enables fast queries and remote export without
+  downloading full blocks.
+
+### Key decisions
+
+1. **Genesis pushed once** — enables clone-and-recover on a new device
+2. **Sequence-numbered block files** (`000000.json`..`0000NN.json`) — handles multi-sync-per-day naturally
+3. **No index file for sync tracking** — list remote files via `ls-remote` instead; avoids write conflicts
+4. **Index file for activity analysis** — lightweight summaries, rebuildable from full blocks
+5. **Chain verification on pull** — rejects tampered blocks, truncates to last valid block
+6. **Local bare repos for testing** — no GitHub rate limits or network latency in tests
+
+### Tests needed (~24)
+
+See `test_remote_ledger_sync.py` (not yet created):
+
+| Category | Tests |
+|----------|-------|
+| Push | genesis once, new blocks only, multi-sync day, no-op when synced, first-time full, obfuscated output |
+| Pull | missing blocks, empty remote, append to local, index update |
+| Verification | valid chain, broken chain, tampered block, corrupt rollback, recovery |
+| Index | generated on push, correct durations, tags included, rebuildable |
+| Cross-device | A pushes → B pulls, idempotent double-pull |
+| Edge cases | genesis already remote, partial sync, empty ledger |
+
+### Files to modify/create
+
+| File | Change |
+|------|--------|
+| `domain/ledger/remote_sync.py` | New — `RemoteLedgerSync` class: push, pull, verify, recover |
+| `main.py` | New subcommand `ph sync remote_ledger` |
+| `tests/test_remote_ledger_sync.py` | New — ~24 tests against local bare repos |
+| `REMOTE_STAGING_ISSUE_TRACKING.md` | This section |
+| `SESSION_HANDOFF.md` | Updated next steps |

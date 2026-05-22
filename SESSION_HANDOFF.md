@@ -2,15 +2,18 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `fc5f7bb` (pushed to origin)
+- **Commit:** `137b544` (current — pushed to origin)
 - **Tests:** all passing
+- **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
+- **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
+- **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
 ## Two Machines
 
 | | x13 (laptop) | debagent04 (pi) |
 |---|---|---|
 | Device ID | `dc1da321-2c80-4815-a808-11295b8c59f9` | `bbb3badc-6365-49ea-b43c-53869ca0195f` |
-| Passphrase | 🔴 **RETIRED** — see Security Incident below | 🔴 **RETIRED** — see Security Incident below |
+| Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 | Remote URL | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
 
@@ -53,6 +56,7 @@ Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per comm
 - Commits `1c1e1f2` and `4533af8` on `P3-Remote_Sync` contained the passphrase in markdown docs
 - Push to origin made it publicly visible on GitHub
 - GitHub web edit `1823db7` only obscured `REMOTE_STAGING_ISSUE_TRACKING.md` (not `SESSION_HANDOFF.md`)
+- **Resolved:** Both devices re-authenticated via `ph recover` with original recovery seed (2026-05-22)
 
 ### Master key exposure (trace logs)
 - `staging_log/` was tracked in git; trace logs captured `master_key` bytes in cleartext
@@ -71,23 +75,39 @@ Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per comm
 ### Status
 - The old commit hashes (`1c1e1f2`, `4533af8`, `1823db7`) are still accessible via direct GitHub URL
 - Contact GitHub Support to purge objects from their storage (optional)
+- Both devices now use a new passphrase (set via `ph recover` with original seed)
+
+## Next Phase: Remote Ledger Sync
+
+**Status:** Design finalized (2026-05-22), not yet implemented.
+
+See `REMOTE_STAGING_ISSUE_TRACKING.md` → Next Phase: Remote Ledger Sync for full design.
+
+**Implementation order:**
+1. Create `domain/ledger/remote_sync.py` — `RemoteLedgerSync` class (push, pull, verify, recover)
+2. Wire subcommand `ph sync remote_ledger` in `main.py`
+3. Write `tests/test_remote_ledger_sync.py` (~24 tests against local bare repos)
+4. Cross-device testing (x13 → debagent04 round-trip)
 
 ## Recent Commits
 ```
-fc5f7bb  Add staging_log/ to .gitignore to prevent trace logs from being committed
-c08ed7c  Compact SESSION_HANDOFF.md with latest trace-logging setup and AFI tracking
-152ac90  Refine REMOTE_STAGING_ISSUE_TRACKING.md per review discussion
-56ded09  Add Areas for Improvement section to REMOTE_STAGING_ISSUE_TRACKING.md
-613b32e  Add git transport latency tracing via @trace on _git()
-5bd8eed  Add trace-logging instrumentation for cross-device sync debugging
-7bac5c4  Clarify ph view auth behavior: read-only skips auth gate, writes only
-2cee8c2  Add REMOTE_STAGING_ISSUE_TRACKING.md for cross-device collaboration
+137b544  fix: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
+ea87561  fix: rename 'sync remote' to 'sync remote_staging' for clarity
+566f1cb  docs: update ADR-014 and CHANGELOG for recover session cache fix
+389e268  fix: cache master key after ph recover
+d7ddf2e  Update REMOTE_STAGING_ISSUE_TRACKING.md with session 2 incident + add trace logs
+3b8a3aa  adds logs
+14f50f6  fix: handle undecryptable timestamps in list/view (key mismatch from ledger)
+e6b173f  adds staging_log
+cbc3a92  fix: cross-device sync, trace redaction, login/logout, ls-remote arg order
+912739e  Doc: add AFI #4 — same-device auth bypass observed + blob decryption verification
 ```
 All pushed to origin.
 
 ## Next Steps
-1. **On debagent04:** `git fetch origin && git reset --hard origin/P3-Remote_Sync` (after checking for unpushed work)
-2. **Run `python scripts/change_passphrase.py`** to generate a new passphrase (same recovery seed, all data preserved)
-3. Fix redundant `ls-remote` calls (AFI #2)
-4. Test device hand-off scenarios (AFI #3)
-5. When done: `./scripts/remove_trace_logging.sh`, commit cleanup, push
+1. **On debagent04:** `git fetch origin && git reset --hard origin/P3-Remote_Sync`
+2. ~~Set new passphrase on both devices~~ ✅ **Done**
+3. Implement **remote ledger sync** (see Next Phase section above)
+4. Fix redundant `ls-remote` calls (AFI #2)
+5. Test device hand-off scenarios (AFI #3)
+6. When done: remove trace logging, commit cleanup, push

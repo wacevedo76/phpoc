@@ -4,3 +4,6 @@ __pycache__/
 
 # Operational docs
 _Operational*
+
+# Trace logs — may contain sensitive data
+staging_log/
