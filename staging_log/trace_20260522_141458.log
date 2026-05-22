@@ -1,0 +1,13 @@
+14:14:58.275 [TRACE] === Trace session started ===  PID=1716532
+14:14:58.276 [TRACE] >>> CLIInterface.view_active(show_tags=False, show_comments=False)
+14:14:58.276 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+14:14:58.276 [TRACE] >>> RemoteStagingSync.pull()
+14:14:58.276 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+14:15:00.961 [TRACE] <<< GitStagingTransport._git  (2684.7 ms)  → '4634cf0286a0d04e967d9acd506e30184da32058\trefs/heads/main'
+14:15:00.961 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+14:15:00.963 [TRACE] <<< GitStagingTransport._git  (2.4 ms)  → 'refs/heads/main'
+14:15:00.963 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+14:15:03.833 [TRACE] <<< GitStagingTransport._git  (2869.8 ms)  → 'Already up to date.'
+14:15:03.834 [TRACE] <<< RemoteStagingSync.pull  (5558.0 ms)  → None
+14:15:03.834 [TRACE] <<< StagingService.check_and_sync  (5558.0 ms)  → <SyncCheckResult.READY: 'ready'>
+14:15:03.834 [TRACE] <<< CLIInterface.view_active  (5558.2 ms)  → None
