@@ -50,6 +50,14 @@ directly, bypassing `check_and_sync()`. This means:
 **Cross-device flow still works:** Write commands (`add end`, `add start`, etc.) go through
 `check_and_sync()` → device check → pull+merge → push.
 
+**Auth prompt only triggers on writes, not reads.** Running `ph view` will never prompt
+even if the auth cache is expired and the remote device differs. To test the auth flow,
+use a write command like `ph add start "test"` — this goes through `check_and_sync()`
+which compares device IDs and checks the 30-minute auth cache before allowing the merge.
+
+The `view_active()` method intentionally skips all auth for minimal latency on read-only
+operations. The auth gate is only relevant when a write might clobber another device's data.
+
 ### Issue #3: _needs_full_pull freshness optimization can skip cross-device pull
 
 **Status:** ❓ Needs investigation
