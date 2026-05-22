@@ -404,3 +404,56 @@ When both devices edit the same entry concurrently:
 - 🔲 Persisted `last_modified_at` / `last_pushed_at` — recommended, survives crashes
 - 🔲 Post-merge push from `view_active()` — closes the crash gap
 - 🔲 Concurrent-edit conflict strategy — per-entry blob files or custom merge driver
+
+### AFI #4: Same-device auth bypass — no re-auth prompt on self-pushes
+
+**Status:** ℹ️ By design, but noteworthy for hand-off testing
+**Discovered:** 2026-05-22, verified via live blob decryption
+
+**Observation:** When the **same device** (debagent04, `bbb3badc-...`) that last pushed the
+remote blob runs another command, `check_and_sync()` sees `device_match = True` and
+**skips the auth check entirely**. No passphrase prompt is shown, regardless of whether
+`_last_auth_time` is stale or fresh.
+
+**Code path** (`service.py:447-453`):
+```python
+if not device_match:
+    if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
+        pass  # Auth cache still valid
+    else:
+        return SyncCheckResult.REAUTH_NEEDED
+
+# Update auth timestamp on successful device check
+self._last_auth_time = time.time()
+```
+
+When `device_match` is `True`, the `if not device_match:` block is never entered,
+so the auth expiry check is never evaluated, and `_last_auth_time` is unconditionally
+updated.
+
+**Scenario that triggered this:**
+1. debagent04 did `add start "Working on Phpoc"` at ~11:57 CEST
+2. Remote blob had `device_id: bbb3badc-...` (from device's own prior push)
+3. Local device_id matched → `device_match = True` → no auth prompt
+4. Entry was written and pushed without any authentication gate
+
+**Verified via live blob decryption:**
+- Grabbed `current.json` from remote git clone (65592 bytes obfuscated)
+- Decrypted using the session master key in `/dev/shm/phpoc_session`
+- Confirmed remote blob content is an **exact mirror** of local `staging.json`,
+  containing all 8 entries including the active "Working on Phpoc" (`entry_id:
+  8661e6f1-...`)
+- Remote blob header: `device_id: bbb3badc-6365-49ea-b43c-53869ca0195f`,
+  `updated_at: 1779443859046`
+
+**Implication for cross-device hand-off (upcoming test):**
+When the x13 laptop pulls from GitHub and runs `ph view`, it will see
+`remote_device_id = bbb3badc-...` ≠ `local_device_id = dc1da321-...`. If the auth
+cache is stale (or never set), `check_and_sync()` will return `REAUTH_NEEDED`.
+
+**Test expected:**
+- x13 laptop: `ph view` → should prompt for passphrase (device mismatch + no fresh cookie)
+- After auth → should pull, decrypt, merge, and display the active entry from debagent04
+
+**Open question:** Does `ph view` currently route through `check_and_sync()`? See Issue #2 which states
+`view_active()` bypasses it entirely.
