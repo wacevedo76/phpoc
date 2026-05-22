@@ -29,6 +29,11 @@ class AbstractAuthenticator(ABC):
         """Clears any cached authentication state."""
         pass
 
+    @abstractmethod
+    def login(self) -> bool:
+        """Force re-authentication regardless of cached session."""
+        pass
+
 from security.recovery import RecoveryManager
 
 class PassphraseAuthenticator(AbstractAuthenticator):
@@ -91,6 +96,15 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             self._key = self.SESSION_FILE.read_bytes()
         return self._key
 
+    def login(self) -> bool:
+        """Force re-authentication regardless of cached session.
+
+        Clears the session cache, then runs the standard authenticate()
+        flow which prompts for a passphrase and re-creates the cache.
+        """
+        self.clear_session()
+        return self.authenticate()
+
     def clear_session(self):
         self._key = None
         if self.SESSION_FILE.exists():
@@ -114,6 +128,11 @@ class RecoveryAuthenticator(AbstractAuthenticator):
 
     def get_key(self) -> Optional[bytes]:
         return self._key
+
+    def login(self) -> bool:
+        """Force re-authentication regardless of cached session."""
+        self.clear_session()
+        return self.authenticate()
 
     def clear_session(self):
         self._key = None

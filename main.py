@@ -101,6 +101,10 @@ def main():
     # Recover command
     subparsers.add_parser("recover", help="Recover access using seed and set new passphrase")
 
+    # Login / Logout commands
+    subparsers.add_parser("login", help="Authenticate and cache session (re-prompts for passphrase)")
+    subparsers.add_parser("logout", help="Clear cached session (forces re-auth on next command)")
+
     # View command
     view_parser = subparsers.add_parser("view", help="View active tasks (alias: ph list active)")
     view_parser.add_argument("--show-tags", action="store_true", help="Show tags inline with tasks")
@@ -203,6 +207,11 @@ def main():
         CONFIG_DIR = _resolve_data_dir(overridden_dir=overridden_data_dir,
                                         config_manager=CONFIG)
         LEDGER_PATH, INDEX_PATH, STAGING_PATH, IDENTITY_PATH = _resolve_data_paths(CONFIG_DIR)
+
+    # Activate trace logging if config debug.trace_enabled is true
+    if CONFIG.get("debug.trace_enabled"):
+        from cli.trace import enable_tracing
+        enable_tracing()
 
     # Handle 'config' subcommand before auth (no auth needed)
     if args.command == "config":
@@ -311,6 +320,19 @@ def main():
 
         LEDGER_PATH.write_text(json.dumps(ledger_data, indent=2))
         print("Passphrase reset successful. You can now use your new passphrase.")
+        return
+
+    if args.command == "logout":
+        auth.clear_session()
+        print("\u2713 Session cleared. You will be prompted for your passphrase on the next command.")
+        return
+
+    if args.command == "login":
+        if auth.login():
+            print("\u2713 Authentication successful. Session cached.")
+        else:
+            print("Authentication failed.")
+            exit(1)
         return
 
     # --- Lazy Authentication Logic ---
@@ -559,6 +581,7 @@ def _config_generate_template(config):
         ("remote", "Remote sync settings (git transport)"),
         ("auth", "Authentication / passphrase settings"),
         ("device", "Device identity for multi-device use"),
+        ("debug", "Debug and diagnostics (trace logging)"),
         ("timeouts", "Timeout values for sync operations"),
         ("staging", "Staging blob size limits"),
     ]
@@ -622,6 +645,7 @@ def _get_config_comment(full_key: str) -> str:
         "auth.passphrase_required": "Set false to allow no-auth mode for add/start/end",
         "device.device_id": "Unique device identifier (auto-generated on init)",
         "device.device_label": "Human-readable device label (e.g. 'my laptop')",
+        "debug.trace_enabled": "Set true to log method-level traces to staging_log/ (no PHPOC_TRACE env var needed)",
         "timeouts.remote_check_ms": "How often to check for remote changes (milliseconds)",
         "timeouts.push_timeout_ms": "Timeout for push operations (milliseconds)",
         "staging.blob_size_tier": "Staging blob size limit: '64K', '256K', '1M', etc.",

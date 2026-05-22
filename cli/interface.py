@@ -145,22 +145,16 @@ class CLIInterface:
 
     @trace
     def view_active(self, show_tags=False, show_comments=False):
-        # Pull from remote to show latest state (no-op if no remote configured)
+        # Sync with remote via check_and_sync (handles device check, auth, pull+merge)
+        # This is the canonical sync entry point used by all write commands.
         if self._staging._remote is not None:
-            # Get master key from crypto if available (authenticated session)
-            mk = getattr(self._crypto, "master_key", None)
-            if not isinstance(mk, bytes) or len(mk) != 32:
-                mk = None
-            try:
-                # Direct pull+merge bypassing device auth check for read-only view
-                remote_blob = self._staging._remote.pull(master_key=mk)
-                if remote_blob and "entries" in remote_blob:
-                    local_entries = self._staging._local.read_entries()
-                    remote_dtos = self._staging._raw_to_dtos(remote_blob["entries"])
-                    merged = self._staging._merge.merge(local_entries, remote_dtos)
-                    self._staging._local.write_entries(merged)
-            except Exception:
-                pass  # Graceful offline
+            result = self._staging.check_and_sync(timeout_ms=500)
+            if result == SyncCheckResult.REAUTH_NEEDED:
+                print("\n\U0001f510 Cross-device sync requires authentication.")
+                print("   The remote staging blob was created by a different device.")
+                print("   Run 'phpoc view' (or any write command) to be prompted for")
+                print("   your passphrase, which will sync the remote entries locally.")
+                print()
         staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
 

@@ -39,21 +39,13 @@ Failed to re-attach HEAD to main
 
 ### Issue #2: ph view bypasses check_and_sync (read-only path skips device check)
 
-**Status:** 🔄 Needs rework — route view through check_and_sync
-**Detail:** `view_active()` in `cli/interface.py` calls `_remote.pull()` + `_local.write_entries(merged)`
-directly, bypassing `check_and_sync()`. This means:
-- No auth gate triggered (read-only → fine)
-- No freshness check (always pulls)
-- No push back after merge (no need — read-only)
-- Merge result stays in local staging until next write command pushes
+**Status:** ✅ Fixed (2026-05-22)
+**Fix:** `view_active()` in `cli/interface.py` now calls `self._staging.check_and_sync()`
+instead of direct `_remote.pull()` + merge. This routes `ph view` through the canonical
+sync entry point (device check, auth gate, pull+merge). Surfaces `SyncCheckResult.REAUTH_NEEDED`
+errors instead of silently swallowing them.
 
-**Decision:** `ph view` MUST go through `check_and_sync()` like writes do, so the
-auth criteria (device mismatch + cookie expiry) are enforced on reads too.
-This ensures the staging area always reflects the remote source of truth.
-
-**Required change:** Replace the direct `_remote.pull()` + merge in `view_active()`
-with a call to `self._service.check_and_sync()`. After sync, read from local staging.
-This makes the auth flow identical between reads and writes.
+**Files modified:** `cli/interface.py`
 
 ### Issue #3: _needs_full_pull freshness optimization
 
@@ -141,29 +133,53 @@ tracked in git.
 1. **Interactive rebase** from `22ae407` — rewrote all 7 commits on `P3-Remote_Sync`
    - Passphrase replaced with `PASSPHRASE_REDACTED` in commits `1c1e1f2` / `4533af8`
 2. **Trace logs stripped** from commits `c764bea` (was 93236d5) and `613b32e` (was 2c2f0d7)
-3. **`.gitignore`** updated — `staging_log/` added (trace logs contain master key)
+3. **`.gitignore`** updated — `staging_log/` added (initial remediation)
 4. **Force-pushed** to origin — clean history live
 5. **Passphrase retired** — a new one must be generated
+
+### Post-remediation (2026-05-22)
+6. **Master key redaction** added to `cli/trace.py` — `_redact()` masks 32-byte keys
+   and sensitive kwargs (`master_key`, `passphrase`, `secret`, `seed`, `password`)
+7. **`.gitignore` restored** — `staging_log/` entry removed since trace logs no longer
+   contain master key bytes
 
 ### Residual risk
 - Old commit hashes still accessible via direct GitHub URL
 - Contact GitHub Support to purge objects from their storage (optional)
+- Trace logs may still contain `passphrase` strings if inadvertently included in
+  method arguments — all known sensitive kwargs are now redacted
 
 ## Instrumentation: Trace Logging
 
-**Status:** 🛠️ Active (debugging phase) — ⚠️ **staging_log/ in .gitignore: do NOT commit**
+**Status:** ✅ Secure — master key redacted, `staging_log/` removed from `.gitignore`
 
 A trace-logging wrapper was added across the call chain to gain visibility into the
 cross-device sync flow. All trace output goes to files in `staging_log/`, enabled via
-the `PHPOC_TRACE=1` environment variable.
+the `PHPOC_TRACE=1` environment variable or `debug.trace_enabled` config key.
 
-### Files created
-- **`cli/trace.py`** — Lightweight `@trace` decorator that logs method entry/exit with
-timestamps, key arguments, return values, and elapsed time (ms). Writes to timestamped
-files in `staging_log/` (one per invocation). Toggled via `PHPOC_TRACE=1` env var.
-- **`staging_log/`** — Output directory for trace log files (⚠️ in `.gitignore` — contains master key bytes).
+### Security fix: sensitive-parameter redaction (2026-05-22)
+
+The `@trace` decorator now redacts sensitive values from log output via `_redact()`:
+- Any kwarg named `master_key`, `passphrase`, `password`, `secret`, or `seed` → `<REDACTED>`
+- Any positional arg that is a 32-byte value (`bytes` of length 32) → `<32-byte-key REDACTED>`
+- Return values that are 32-byte keys are also redacted
+
+Because of this redaction, `staging_log/` was **removed from `.gitignore`** — trace
+files are now safe to commit. The old `.gitignore` entry was:
+```
+staging_log/
+```
+
+### Files created / modified
+- **`cli/trace.py`** — Lightweight `@trace` decorator with `_redact()` redaction.
+  Added `enable_tracing()` / `disable_tracing()` for programmatic control.
+  Toggled via `PHPOC_TRACE=1` env var or `debug.trace_enabled` config key.
+- **`security/config_manager.py`** — Added `debug.trace_enabled` default (`False`).
+- **`main.py`** — Wires `debug.trace_enabled` config: calls `enable_tracing()` at startup.
+- **`staging_log/`** — Output directory for trace log files (now safe to commit).
 - **`scripts/remove_trace_logging.sh`** — Cleanup script that removes all trace code
 (imports, decorators, module, log directory) in one shot.
+- **`.gitignore`** — `staging_log/` entry removed (no longer needed).
 
 ### Files modified (22 `@trace` decorators added across 5 files)
 
@@ -191,7 +207,7 @@ Example trace for `ph add start "foo"`:
     # local append...
   <<< StagingService.capture (2403.3 ms) → 'hash_prefix'
   >>> CLIInterface._push_if_remote()
-    >>> StagingService.push_to_remote(master_key=...)
+    >>> StagingService.push_to_remote(master_key=<REDACTED>)   # ← redacted!
       >>> RemoteStagingSync.push(...)            # ← push obfuscated blob to git
       <<< RemoteStagingSync.push  (6673.4 ms)
     <<< StagingService.push_to_remote (6673.7 ms)
@@ -199,18 +215,22 @@ Example trace for `ph add start "foo"`:
 <<< CLIInterface.add_start (9077.3 ms)
 ```
 
+Note: `master_key=<REDACTED>` replaces the former `master_key=b'\x00\xfb...'` —
+the raw 32-byte key is no longer logged.
+
 ### Usage
 
 ```bash
 # Enable tracing for a single command
 PHPOC_TRACE=1 ph add start "my task"
 
+# Enable tracing persistently via config (add to ~/.config/phpoc/config.json):
+#   "debug": { "trace_enabled": true }
+
 # Tail the latest log in another terminal
 tail -f staging_log/$(ls -1t staging_log/ | head -1)
 
-# ⚠️ NEVER commit staging_log/ files — they contain master key bytes
-# staging_log/ is in .gitignore
-
+# Trace logs are now SAFE to commit (master key redacted)
 # Remove all trace code when done
 ./scripts/remove_trace_logging.sh
 ```
@@ -274,6 +294,91 @@ This logic is correct for writes, but:
 **Remaining open questions:**
 - What happens when the cookie expires mid-session (no commands to trigger re-auth)?
 - Should `_push_if_remote()` verify auth before pushing to remote? (It currently does not)
+
+### Issue #6: ls-remote argument order breaks on git 2.53.0
+
+**Status:** ✅ Fixed (2026-05-22)
+**Fix:** `"ls-remote", "origin", "--heads"` → `"ls-remote", "--heads", "origin"`
+
+**Root cause:** `_has_remote_refs()` in `core/sync/git_transport.py:245` passed
+`--heads` after the remote name. Git 2.53.0+ requires filter flags like `--heads`
+**before** positional args. The call returned empty output, making `_has_remote_refs()`
+always return `False`, which prevented `pull()` and `push()` from ever actually
+contacting the remote.
+
+**Why it worked on debagent04:** Git version differs — older git accepted `--heads`
+after the remote name. x13 had git 2.53.0 which is stricter.
+
+**Impact:** This was the actual root cause of x13 never syncing with the remote.
+All previous apparent failures (auth, key mismatch, etc.) were secondary — the
+transport never even tried to pull or push because `_has_remote_refs()` returned `False`.
+
+**Trace before fix:**
+```
+GitStagingTransport._git('ls-remote', 'origin', '--heads')  →  '' (empty!)
+```
+
+**Trace after fix:**
+```
+GitStagingTransport._git('ls-remote', '--heads', 'origin')  →
+  '4634cf0... refs/heads/main'
+```
+
+**Files modified:** `core/sync/git_transport.py:245`
+
+### Issue #7: Stale session cache causes blob overwrite on auth failure
+
+**Status:** 🔴 Open — data loss incident
+**Date:** 2026-05-22
+**Impact:** Remote blob was overwritten, losing debagent04's active task entries
+
+**Root cause:** `ph recover` does NOT clear the session cache (`/dev/shm/phpoc_session`)
+after updating the genesis block. Subsequent `auth.authenticate()` checks the session
+cache first and returns the stale key without prompting for a passphrase:
+
+```python
+def authenticate(self) -> bool:
+    if self.SESSION_FILE.exists():
+        self._key = self.SESSION_FILE.read_bytes()
+        return True  # ← returns STALE key without prompting!
+```
+
+**Cascade:**
+1. User runs `ph recover` with correct seed → genesis updated with new PDK
+2. Session cache NOT cleared — still holds pre-recover key
+3. User runs `ph add start "Testing Remote Staging"` → authenticates from cache → stale key
+4. `pull()` with stale key → tag mismatch → returns `None`
+5. `check_and_sync()` sees `None` → assumes "no remote blob" → proceeds
+6. `push_to_remote()` writes NEW blob with only x13's local entries → **overwrites debagent04's blob**
+7. debAgent04's active task (#1 Working on Phpoc, started 11:57:37) is lost from remote
+
+**Trace of the overwrite:**
+```
+RemoteStagingSync.pull() → None  (tag mismatch, stale key)
+```
+
+**Current state:** Remote blob has `device_id: dc1da321-...` (x13) with 14 entries.
+DebAgent04's 11:57:37 active task was never pushed and only exists in debagent04's
+local staging.
+
+**Remediation needed:**
+- debAgent04 must re-push its local staging to the remote
+- To prevent recurrence: `ph recover` should clear the session cache
+
+### Issue #8: Session cache prevents re-auth after ph recover
+
+**Status:** 🔴 Open
+**Detail:** `PassphraseAuthenticator.authenticate()` checks `/dev/shm/phpoc_session`
+first. If the file exists and is readable, it returns the cached key immediately
+without prompting for a passphrase. This means:
+- After `ph recover` changes the passphrase, the stale session cache bypasses
+  the new passphrase requirement
+- User never gets prompted, never realizes the cache is stale
+- The old (potentially wrong) key continues to be used
+
+**Fix needed:** `ph recover` handler should call `auth.clear_session()` after
+completing, or `_cache_key(mk)` should be called with the newly derived key.
+Currently neither happens.
 
 ### AFI #2: Latency — investigate all operations exceeding 2 seconds
 
@@ -404,6 +509,25 @@ When both devices edit the same entry concurrently:
 - 🔲 Persisted `last_modified_at` / `last_pushed_at` — recommended, survives crashes
 - 🔲 Post-merge push from `view_active()` — closes the crash gap
 - 🔲 Concurrent-edit conflict strategy — per-entry blob files or custom merge driver
+
+### Issues resolved this session (2026-05-22)
+
+| Issue | Fix | Files modified |
+|---|---|---|
+| Issue #2 — view bypasses check_and_sync | Route `view_active()` through `check_and_sync()` | `cli/interface.py` |
+| Issue #6 — ls-remote argument order | `--heads` before remote name | `core/sync/git_transport.py` |
+| Trace log passphrase leak | `_redact()` masks 32-byte keys + sensitive kwargs | `cli/trace.py` |
+| `.gitignore` restriction | `staging_log/` removed (safe to commit now) | `.gitignore` |
+| Config-driven tracing | `debug.trace_enabled` default + wiring | `security/config_manager.py`, `main.py` |
+| `ph login` / `ph logout` | Minimal subcommands for session management | `main.py`, `security/auth.py` |
+
+### Open issues remaining
+
+| Issue | Status | Owner |
+|---|---|---|
+| Issue #7 — Stale cache blob overwrite | 🔴 Data loss | x13 + debagent04 |
+| Issue #8 — Session cache blocks re-auth | 🔴 Needs fix | x13 |
+| debAgent04 active task recovery | 🔴 Needs re-push | debagent04 |
 
 ### AFI #4: Same-device auth bypass — no re-auth prompt on self-pushes
 

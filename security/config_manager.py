@@ -51,6 +51,9 @@ class ConfigManager:
             "remote_check_ms": 500,
             "push_timeout_ms": 5000,
         },
+        "debug": {
+            "trace_enabled": False,
+        },
         "staging": {
             "blob_size_tier": "64K",
         },

@@ -242,7 +242,7 @@ class GitStagingTransport(AbstractStagingTransport):
         if not self._clone_exists():
             return False
         try:
-            remote_refs = self._git("ls-remote", "origin", "--heads")
+            remote_refs = self._git("ls-remote", "--heads", "origin")
             return bool(remote_refs.strip())
         except RuntimeError:
             return False
