@@ -175,3 +175,114 @@ tail -f staging_log/$(ls -1t staging_log/ | head -1)
 - ❓ Auth cache expiry → REAUTH_NEEDED in cross-device scenario
 - ❓ `entry_id`-based dedup across devices (requires authenticated session)
 - ❓ `_needs_full_pull()` correct behavior when Device B modifies local staging without pushing
+
+## Areas for Improvement
+
+### AFI #1: Auth Criteria — enforce on device mismatch + cookie expiry
+
+**Assigned to:** x13 agent
+**Priority:** High
+**Description:** The current auth gate in `check_and_sync()` (service.py) checks two
+conditions but only gates *writes*. The auth criteria need to be hardened:
+
+1. **Device ID mismatch** — remote blob's `device_id` differs from local
+2. **Cookie expiry** — time since last successful auth exceeds `AUTH_CACHE_DURATION` (30 min)
+
+Both conditions must be **true simultaneously** before prompting for re-auth:
+- If device matches → no prompt (same device, trust it)
+- If device differs but cookie is fresh → no prompt (recently authenticated cross-device)
+- If device differs AND cookie expired → **REAUTH_NEEDED**
+
+**Current implementation** (`check_and_sync()` in `service.py`, lines 397-472):
+```python
+if not device_match:
+    if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
+        pass  # Auth cache still valid
+    else:
+        return SyncCheckResult.REAUTH_NEEDED
+```
+This logic is correct for writes, but:
+- `view_active()` bypasses `check_and_sync()` entirely — no auth check on reads
+- `_push_if_remote()` calls `push_to_remote()` directly without re-checking auth
+- The `_last_auth_time` is only updated on successful device check, not on every command
+
+**Open questions:**
+- Should read-only `ph view` also enforce auth when device differs + cookie expired?
+  (Currently it never prompts — see Issue #2)
+- What happens when the cookie expires mid-session (no write commands to trigger re-auth)?
+- Should `_push_if_remote()` verify auth before pushing to remote?
+
+### AFI #2: Latency — investigate all operations exceeding 2 seconds
+
+**Assigned to:** x13 agent (+ debagent04 for comparison)
+**Priority:** Medium
+**Observation from trace logs:** Several git operations regularly exceed 2 seconds:
+
+| Operation | Typical latency | Threshold | Investigation needed? |
+|---|---|---|---|
+| `ls-remote origin --heads` | **2,300–2,700 ms** | > 2s | ✅ Yes — called on every pull AND push |
+| `git pull --rebase --autostash` | (not yet measured) | > 2s | ❓ Needs trace data |
+| `git push` | **3,200–6,700 ms** | > 2s | ✅ Yes — blocks the entire command |
+| `git add` + `commit` | **~10 ms** | > 2s | ❌ Local only, fine |
+| Blob encrypt/decrypt | (not yet measured) | > 2s | ❓ Needs trace data |
+| Full `ph add start` | **~9,000 ms** | > 2s | ✅ Yes — total user-facing latency |
+
+**Key findings:**
+- Each `ph add`/`ph view` command makes **2 git network round-trips** (1x `ls-remote`
+  during pull, 1x `ls-remote` + 1x `push` during push) — all to GitHub over SSH.
+- The `ls-remote` call before push is redundant: the push phase just checked `ls-remote`
+  during pull. The second call happens because `push_to_remote()` → `push()` →
+  `_has_remote_refs()` independently.
+- `_has_remote_refs()` is called twice per command (once in `pull()`, once in `push()`).
+  Each call runs `ls-remote` which takes ~2.5s. This is **5s of unnecessary overhead**.
+
+**Optimization opportunities:**
+- Cache the result of `_has_remote_refs()` within a single command invocation
+- Merge `ls-remote` calls: the push phase could reuse the pull phase's result
+- Consider dropping `ls-remote` entirely for well-known repos (assume refs exist)
+- Total potential savings: **~5 seconds per command**
+
+**On debagent04:** Need to compare network latency (different ISP, different geographic
+location) — the SSH handshake + GitHub API response time may differ.
+
+### AFI #3: Staging Sync on Device Hand-off
+
+**Assigned to:** debagent04 agent (primary), x13 agent (validation)
+**Priority:** High
+**Description:** Ensure correct staging sync behavior when switching between devices.
+The following scenarios need to be verified:
+
+1. **Device A → Device B hand-off:**
+   - Device A does `add start "X"` → pushes blob with device_id A
+   - Device B does `ph view` → pulls blob, sees device_id A ≠ B
+   - Device B authenticates (cookie fresh) → merge occurs
+   - Device B does `add end "X"` → pushes blob with device_id B
+   - **Verification:** Device A pulls and sees X as ended
+
+2. **Concurrent edits (race condition):**
+   - Both devices pull the same blob at same timestamp
+   - Both add different entries locally
+   - Both push — whoever pushes second gets rejected (non-fast-forward)
+   - **Expected:** Second push does `pull --rebase`, merges, retries push
+   - **Risk:** Merge may duplicate entries or lose data
+
+3. **Stale cookie / re-auth mid-hand-off:**
+   - Device A uses → Device B uses after > 30 min of inactivity
+   - `check_and_sync()` returns `REAUTH_NEEDED`
+   - **Expected:** User is prompted for passphrase before merge proceeds
+   - **Risk:** If user declines re-auth, local staging is stale — next write may
+     clobber remote data
+
+4. **Device B makes local changes without pushing, then switches back to A:**
+   - Device B adds entries locally → does NOT push
+   - Device A does `ph view` → pulls remote blob (missing B's changes)
+   - Device A adds more entries → pushes
+   - Device B comes back → pulls, merges, pushes
+   - **Risk:** Device B's local-only changes are lost if B's staging is overwritten
+     by A's push before B can commit
+
+**Mitigation ideas:**
+- Enforce push on every write (already done in `_push_if_remote()`)
+- Add a dirty-flag check before pull: warn if local has un-pushed changes
+- Investigate whether `_needs_full_pull()` correctly triggers a merge when
+  device_id differs (currently returns True for different device — correct)
