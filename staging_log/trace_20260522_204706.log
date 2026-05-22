@@ -1,0 +1,13 @@
+20:47:06.821 [TRACE] === Trace session started ===  PID=871557
+20:47:06.821 [TRACE] >>> CLIInterface.view_active(show_tags=False, show_comments=False)
+20:47:06.821 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+20:47:06.821 [TRACE] >>> RemoteStagingSync.pull()
+20:47:06.821 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+20:47:09.202 [TRACE] <<< GitStagingTransport._git  (2380.2 ms)  → '0cd8a59e6c11e63012b49126b7e102a815e4cf28\trefs/heads/main'
+20:47:09.202 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+20:47:09.204 [TRACE] <<< GitStagingTransport._git  (2.0 ms)  → 'refs/heads/main'
+20:47:09.204 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+20:47:11.710 [TRACE] <<< GitStagingTransport._git  (2505.8 ms)  → 'Updating 713d1e5..0cd8a59\nFast-forward\n staging/blobs/current.json | Bin 0 -> 65592 bytes\n 1 file changed, 0 inse...
+20:47:11.952 [TRACE] <<< RemoteStagingSync.pull  (5130.7 ms)  → {'device_id': 'dc1da321-2c80-4815-a808-11295b8c59f9', 'device_proof': '', 'entries': [{'hash': 'ad8223a7c39e53bfaed67...
+20:47:11.952 [TRACE] <<< StagingService.check_and_sync  (5131.0 ms)  → <SyncCheckResult.REAUTH_NEEDED: 'reauth'>
+20:47:11.953 [TRACE] <<< CLIInterface.view_active  (5131.4 ms)  → None

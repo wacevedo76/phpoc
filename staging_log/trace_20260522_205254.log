@@ -1,0 +1,15 @@
+20:52:54.205 [TRACE] === Trace session started ===  PID=904890
+20:52:54.205 [TRACE] >>> CLIInterface.view_active(show_tags=False, show_comments=False)
+20:52:54.205 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+20:52:54.205 [TRACE] >>> RemoteStagingSync.pull()
+20:52:54.206 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+20:52:55.916 [TRACE] <<< GitStagingTransport._git  (1709.9 ms)  → '0cd8a59e6c11e63012b49126b7e102a815e4cf28\trefs/heads/main'
+20:52:55.916 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+20:52:55.918 [TRACE] <<< GitStagingTransport._git  (2.1 ms)  → 'refs/heads/main'
+20:52:55.918 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+20:52:57.715 [TRACE] <<< GitStagingTransport._git  (1796.8 ms)  → 'Already up to date.'
+20:52:57.912 [TRACE] <<< RemoteStagingSync.pull  (3706.8 ms)  → {'device_id': 'dc1da321-2c80-4815-a808-11295b8c59f9', 'device_proof': '', 'entries': [{'hash': 'ad8223a7c39e53bfaed67...
+20:52:57.913 [TRACE] >>> StagingService._needs_full_pull( {'device_id': 'dc1da321-2c80-4815-a808-11295b8c59f9', 'device_proof': '', 'entries': [{'hash': 'ad8223a7c39e53bfaed67...)
+20:52:57.913 [TRACE] <<< StagingService._needs_full_pull  (0.0 ms)  → True
+20:52:57.914 [TRACE] <<< StagingService.check_and_sync  (3708.3 ms)  → <SyncCheckResult.READY: 'ready'>
+20:52:57.914 [TRACE] <<< CLIInterface.view_active  (3708.7 ms)  → None

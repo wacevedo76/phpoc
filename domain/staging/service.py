@@ -16,7 +16,7 @@ import time
 import threading
 from typing import Optional, List, Dict, Any
 
-from security.crypto import AbstractCryptoManager
+from security.crypto import AbstractCryptoManager, NoAuthCryptoManager
 from storage.staging_store import AbstractStagingStore
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
@@ -446,8 +446,15 @@ class StagingService:
                 # Auth cache still valid — proceed with merge
                 pass
             else:
-                # Auth expired — need re-auth
-                return SyncCheckResult.REAUTH_NEEDED
+                # Auth cache expired — check if we have a live session key.
+                # A real CryptoManager (not NoAuthCryptoManager) means the user
+                # already authenticated this process invocation (e.g. via ph login
+                # or the lazy auth gate in main.py). Treat that as fresh auth.
+                if not isinstance(self._crypto, NoAuthCryptoManager):
+                    self._last_auth_time = time.time()
+                else:
+                    # No authenticated session — need re-auth
+                    return SyncCheckResult.REAUTH_NEEDED
 
         # Update auth timestamp on successful device check
         self._last_auth_time = time.time()

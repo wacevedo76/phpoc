@@ -19,6 +19,34 @@ This document captures issues found during cross-device staging sync testing bet
 
 ## Issues Found
 
+### Issue #13: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
+
+**Status:** ✅ Fixed (2026-05-22)
+**Fix:** `check_and_sync()` in `service.py` now checks `isinstance(self._crypto, NoAuthCryptoManager)`
+when auth cache is expired. A real `CryptoManager` means the process invocation already
+authenticated (via `ph login` or the lazy auth gate in `main.py`), so it sets
+`_last_auth_time = time.time()` and proceeds with the merge instead of returning
+`REAUTH_NEEDED`.
+
+**Root cause:** `_last_auth_time` is initialized to `0.0` in `StagingService.__init__()`
+and only updated inside `check_and_sync()` on successful device check. After `ph login`
+populates the session cache and `main.py` creates a `CryptoManager` with the key, the
+staging service has no way to know auth just happened. First cross-device `check_and_sync()`
+computes `time.time() - 0.0` which is always `> AUTH_CACHE_DURATION`, so it incorrectly
+returns `REAUTH_NEEDED`.
+
+**Files modified:** `domain/staging/service.py`
+
+**Trace before fix:**
+```
+check_and_sync()  → REAUTH_NEEDED  (session cache valid, but _last_auth_time = 0.0)
+```
+
+**Trace after fix:**
+```
+check_and_sync()  → READY  (CryptoManager detected, _last_auth_time set, merge proceeds)
+```
+
 ### Issue #1: Detached HEAD after push rejection → divergent histories
 
 **Status:** ✅ Fixed (commit `c7f3363`)
@@ -302,10 +330,15 @@ tail -f staging_log/$(ls -1t staging_log/ | head -1)
 - ✅ Device ID tracking in blob header
 - ✅ `git push` via explicit refspec on detached HEAD
 - ✅ Fresh clone + pull from empty remote
+- ✅ Cross-device `ph view` after `ph login` — debagent04 (`bbb3badc-...`)
+  successfully pulled x13's blob (`dc1da321-...`), merged, and displayed
+  both devices' entries (2026-05-22 20:51 CEST)
+- ✅ `NoAuthCryptoManager` isinstance check correctly gates auth — real
+  `CryptoManager` with valid key skips REAUTH_NEEDED; NoAuth falls through
 
 ### Needs Verification
 - ❓ Cross-device write flow (both devices make concurrent changes)
-- ❓ Auth cache expiry → REAUTH_NEEDED in cross-device scenario
+- ❓ Auth cache expiry → REAUTH_NEEDED after 30 min of inactivity in cross-device scenario
 - ❓ `entry_id`-based dedup across devices (requires authenticated session)
 - ❓ `_needs_full_pull()` correct behavior when Device B modifies local staging without pushing
 
@@ -572,16 +605,18 @@ When both devices edit the same entry concurrently:
 | `ph login` / `ph logout` | Minimal subcommands for session management | `main.py`, `security/auth.py` |
 | Issue #9 — Remote clone rebase conflict (session 2) | Silently swallowed | `core/sync/git_transport.py` (needs fix) |
 | Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed | operational |
+| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` | `domain/staging/service.py` |
 
 ### Open issues remaining
 
 | Issue | Status | Owner |
 |---|---|---|
-| Issue #7 — Stale cache blob overwrite | 🔴 Data loss | x13 + debagent04 |
-| Issue #8 — Session cache blocks re-auth | 🔴 Needs fix | x13 |
+| Issue #7 — Stale cache blob overwrite (session 2) | 🔴 Data loss (resolved by wipe) | x13 + debagent04 |
+| Issue #8 — Session cache blocks re-auth after ph recover | ✅ Fixed (commit `389e268`) | debagent04 |
 | Issue #9 — Rebase conflicts silently swallowed | 🔴 Needs fix | debagent04 |
-| Issue #11 — `ph recover` doesn't clear session cache | 🔴 Needs fix | debagent04 |
+| Issue #11 — `ph recover` doesn't clear session cache | ✅ Fixed (commit `389e268`) | debagent04 |
 | Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
+| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed (this session) | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
 
