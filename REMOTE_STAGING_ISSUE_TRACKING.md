@@ -10,12 +10,12 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `ce3c7ce` | `ce3c7ce` (3 ahead of origin) |
+| Commit | `fc5f7bb` | `fc5f7bb` (pushed to origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
 | Remote URL | `git@github.com:wacevedo76/phpoc-staging.git` | same |
-| Passphrase | `PASSPHRASE_REDACTED` | `PASSPHRASE_REDACTED` |
+| Passphrase | 🔴 **RETIRED** — see Security Incident | 🔴 **RETIRED** — see Security Incident |
 
 ## Issues Found
 
@@ -119,9 +119,39 @@ dedup in `MergeEngine._dedup_key()`.
 **Detail:** `/dev/shm/phpoc_session` stores the master key as 32 raw bytes (not hex-encoded).
 The session read code handles this correctly. No issue, just documented for awareness.
 
-## Instrumentation: Trace Logging Added
+## 🔴 Security Incident: Passphrase & Master Key Exposure
 
-**Status:** 🛠️ Active (debugging phase)
+**Date:** 2026-05-22
+**Severity:** Critical
+
+### What happened
+
+The passphrase `m0r3m0n3y` was accidentally committed to `P3-Remote_Sync` in two pushed
+commits (`1c1e1f2`, `4533af8`) via `REMOTE_STAGING_ISSUE_TRACKING.md` and
+`SESSION_HANDOFF.md`. Additionally, `staging_log/` trace files captured the 32-byte
+master encryption key (which is the decoded recovery seed) in cleartext and were
+tracked in git.
+
+### Why it matters
+- Master key = `base64_decode(recovery_seed)` — they are the same entropy
+- Anyone with the master key bytes can trivially derive the recovery seed
+- Passphrase alone is insufficient (needs encrypted seed from local ledger file)
+
+### Remediation
+1. **Interactive rebase** from `22ae407` — rewrote all 7 commits on `P3-Remote_Sync`
+   - Passphrase replaced with `PASSPHRASE_REDACTED` in commits `1c1e1f2` / `4533af8`
+2. **Trace logs stripped** from commits `c764bea` (was 93236d5) and `613b32e` (was 2c2f0d7)
+3. **`.gitignore`** updated — `staging_log/` added (trace logs contain master key)
+4. **Force-pushed** to origin — clean history live
+5. **Passphrase retired** — a new one must be generated
+
+### Residual risk
+- Old commit hashes still accessible via direct GitHub URL
+- Contact GitHub Support to purge objects from their storage (optional)
+
+## Instrumentation: Trace Logging
+
+**Status:** 🛠️ Active (debugging phase) — ⚠️ **staging_log/ in .gitignore: do NOT commit**
 
 A trace-logging wrapper was added across the call chain to gain visibility into the
 cross-device sync flow. All trace output goes to files in `staging_log/`, enabled via
@@ -131,7 +161,7 @@ the `PHPOC_TRACE=1` environment variable.
 - **`cli/trace.py`** — Lightweight `@trace` decorator that logs method entry/exit with
 timestamps, key arguments, return values, and elapsed time (ms). Writes to timestamped
 files in `staging_log/` (one per invocation). Toggled via `PHPOC_TRACE=1` env var.
-- **`staging_log/`** — Output directory for trace log files.
+- **`staging_log/`** — Output directory for trace log files (⚠️ in `.gitignore` — contains master key bytes).
 - **`scripts/remove_trace_logging.sh`** — Cleanup script that removes all trace code
 (imports, decorators, module, log directory) in one shot.
 
@@ -177,6 +207,9 @@ PHPOC_TRACE=1 ph add start "my task"
 
 # Tail the latest log in another terminal
 tail -f staging_log/$(ls -1t staging_log/ | head -1)
+
+# ⚠️ NEVER commit staging_log/ files — they contain master key bytes
+# staging_log/ is in .gitignore
 
 # Remove all trace code when done
 ./scripts/remove_trace_logging.sh
