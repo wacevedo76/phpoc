@@ -25,6 +25,7 @@ from enum import Enum
 
 from security.crypto import AbstractCryptoManager
 from security.device_identity import AbstractDeviceIdentityProvider
+from cli.trace import trace
 
 
 # Obfuscation tier sizes in bytes
@@ -222,6 +223,7 @@ class RemoteStagingSync:
     # Public API
     # ------------------------------------------------------------------
 
+    @trace
     def pull(self, master_key: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
         """Pull remote blob, deobfuscate, return parsed dict.
 
@@ -266,6 +268,7 @@ class RemoteStagingSync:
 
         return None
 
+    @trace
     def push(self, entries: List[Dict[str, Any]], device_id: str, master_key: Optional[bytes] = None):
         """Encrypt entries into blob format, obfuscate, and push via transport.
 
@@ -293,6 +296,7 @@ class RemoteStagingSync:
 
         self._transport.push(self._blob_path, blob_bytes)
 
+    @trace
     def check_device(self, master_key: Optional[bytes] = None) -> bool:
         """Compare local device_id with remote blob's device_id.
 

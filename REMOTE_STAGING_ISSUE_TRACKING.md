@@ -89,6 +89,77 @@ entry if two same-named tasks run concurrently.
 **Detail:** `/dev/shm/phpoc_session` stores the master key as 32 raw bytes (not hex-encoded).
 The session read code handles this correctly. No issue, just documented for awareness.
 
+## Instrumentation: Trace Logging Added
+
+**Status:** 🛠️ Active (debugging phase)
+
+A trace-logging wrapper was added across the call chain to gain visibility into the
+cross-device sync flow. All trace output goes to files in `staging_log/`, enabled via
+the `PHPOC_TRACE=1` environment variable.
+
+### Files created
+- **`cli/trace.py`** — Lightweight `@trace` decorator that logs method entry/exit with
+timestamps, key arguments, return values, and elapsed time (ms). Writes to timestamped
+files in `staging_log/` (one per invocation). Toggled via `PHPOC_TRACE=1` env var.
+- **`staging_log/`** — Output directory for trace log files.
+- **`scripts/remove_trace_logging.sh`** — Cleanup script that removes all trace code
+(imports, decorators, module, log directory) in one shot.
+
+### Files modified (22 `@trace` decorators added across 5 files)
+
+| File | Methods decorated | Role in add flow |
+|---|---|---|
+| `cli/interface.py` | `add_start`, `add_end`, `add_oneoff`, `add_pause`, `add_unpause`, `_push_if_remote`, `view_active`, `list_habits` | CLI entry points |
+| `domain/staging/service.py` | `capture`, `end`, `pause`, `unpause`, `check_and_sync`, `_needs_full_pull`, `push_to_remote` | Staging service (sync gate + CRUD) |
+| `domain/staging/remote_sync.py` | `pull`, `push`, `check_device` | Blob transport (git) |
+| `main.py` | `_handle_modify`, `_handle_remove` | Modify/remove command dispatch |
+| `compat/v0_3_0.py` | `modify_staged_entry`, `remove_staged_entry` | Legacy LedgerDomain methods |
+
+### What the trace reveals
+
+Example trace for `ph add start "foo"`:
+```
+>>> CLIInterface.add_start('foo')
+  >>> StagingService.capture('foo', epoch_ms, is_active=True)
+    >>> StagingService.check_and_sync(timeout_ms=500)
+      >>> RemoteStagingSync.pull()              # ← pull encrypted blob from git
+      <<< RemoteStagingSync.pull  (2374.8 ms)
+      >>> StagingService._needs_full_pull(...)   # ← freshness decision
+      <<< StagingService._needs_full_pull  (0.0 ms) → True
+      # merge happens...
+    <<< StagingService.check_and_sync (2375.8 ms) → READY
+    # local append...
+  <<< StagingService.capture (2403.3 ms) → 'hash_prefix'
+  >>> CLIInterface._push_if_remote()
+    >>> StagingService.push_to_remote(master_key=...)
+      >>> RemoteStagingSync.push(...)            # ← push obfuscated blob to git
+      <<< RemoteStagingSync.push  (6673.4 ms)
+    <<< StagingService.push_to_remote (6673.7 ms)
+  <<< CLIInterface._push_if_remote (6673.7 ms)
+<<< CLIInterface.add_start (9077.3 ms)
+```
+
+### Usage
+
+```bash
+# Enable tracing for a single command
+PHPOC_TRACE=1 ph add start "my task"
+
+# Tail the latest log in another terminal
+tail -f staging_log/$(ls -1t staging_log/ | head -1)
+
+# Remove all trace code when done
+./scripts/remove_trace_logging.sh
+```
+
+### Relevant to issues
+- **Issue #2** — `view_active` trace confirms it calls `RemoteStagingSync.pull()` directly
+  without going through `check_and_sync()` (no auth check, no freshness optimization).
+- **Issue #3** — `_needs_full_pull` trace shows its decision (True/False) with timing,
+  making it easy to verify the freshness optimization doesn't incorrectly skip cross-device pulls.
+- **Issue #4** — Trace on staging CRUD methods shows whether `NoAuthCryptoManager` or
+  authenticated `CryptoManager` is being used.
+
 ## Test Results
 
 ### Confirmed Working

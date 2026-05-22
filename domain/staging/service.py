@@ -22,6 +22,7 @@ from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
 from domain.staging.remote_sync import RemoteStagingSync, SyncCheckResult
 from security.device_identity import AbstractDeviceIdentityProvider
+from cli.trace import trace
 
 
 class StagingService:
@@ -56,6 +57,7 @@ class StagingService:
     # Entry CRUD
     # ------------------------------------------------------------------
 
+    @trace
     def capture(
         self,
         title: str,
@@ -89,6 +91,7 @@ class StagingService:
             media=media,
         )
 
+    @trace
     def end(self, title: str, end_epoch: int, comment: Optional[str] = None):
         """End an active task by title.
 
@@ -146,6 +149,7 @@ class StagingService:
         """
         self.end(title, end_epoch, comment=comment)
 
+    @trace
     def pause(
         self,
         title: str,
@@ -175,6 +179,7 @@ class StagingService:
 
         self._local.add_pause(found_index, pause_epoch, comment=comment)
 
+    @trace
     def unpause(
         self,
         title: str,
@@ -358,6 +363,7 @@ class StagingService:
     # Remote Sync
     # ------------------------------------------------------------------
 
+    @trace
     def _needs_full_pull(self, remote_blob: Optional[Dict[str, Any]]) -> bool:
         """Determine whether a full pull+merge is needed based on freshness.
 
@@ -388,6 +394,7 @@ class StagingService:
 
         return False  # Same device, not newer — skip full pull
 
+    @trace
     def check_and_sync(
         self, timeout_ms: int = 500
     ) -> SyncCheckResult:
@@ -465,6 +472,7 @@ class StagingService:
 
         return SyncCheckResult.READY
 
+    @trace
     def push_to_remote(self, master_key: bytes):
         """Serialize local staging, push via transport.
 

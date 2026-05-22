@@ -8,6 +8,7 @@ from security.crypto import AbstractCryptoManager
 from domain.staging.service import StagingService
 from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
+from cli.trace import trace
 
 
 class CLIInterface:
@@ -87,6 +88,7 @@ class CLIInterface:
         result.sort()
         return result if result else None
 
+    @trace
     def _push_if_remote(self):
         """Push staging to remote if configured (no-op otherwise).
 
@@ -103,6 +105,7 @@ class CLIInterface:
                 return
             self._staging.push_to_remote(master_key=mk)
 
+    @trace
     def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
         self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
         self._push_if_remote()
@@ -110,6 +113,7 @@ class CLIInterface:
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 One-off habit captured: {title}{tag_str}{comment_str}")
 
+    @trace
     def add_start(self, title, tags=None, comment=None):
         self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
         self._push_if_remote()
@@ -117,6 +121,7 @@ class CLIInterface:
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 Started tracking: {title}{tag_str}{comment_str}")
 
+    @trace
     def add_end(self, title, comment=None):
         resolved = self._resolve_title(title)
         self._staging.end(resolved, int(time.time()*1000), comment=comment)
@@ -124,18 +129,21 @@ class CLIInterface:
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 Stopped tracking: {resolved}{comment_str}")
 
+    @trace
     def add_pause(self, title):
         resolved = self._resolve_title(title)
         self._staging.pause(resolved, int(time.time()*1000))
         self._push_if_remote()
         print(f"\u2713 Paused: {resolved}")
 
+    @trace
     def add_unpause(self, title):
         resolved = self._resolve_title(title)
         self._staging.unpause(resolved, int(time.time()*1000))
         self._push_if_remote()
         print(f"\u2713 Resumed: {resolved}")
 
+    @trace
     def view_active(self, show_tags=False, show_comments=False):
         # Pull from remote to show latest state (no-op if no remote configured)
         if self._staging._remote is not None:
@@ -238,6 +246,7 @@ class CLIInterface:
         for title, total_ms in sorted(rep.items(), key=lambda x: x[1], reverse=True):
             print(f"{title}: {total_ms // 60000}m")
 
+    @trace
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 

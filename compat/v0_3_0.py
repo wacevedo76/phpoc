@@ -16,6 +16,7 @@ import time
 
 from security.crypto import AbstractCryptoManager
 from storage.interface import AbstractLedgerStore
+from cli.trace import trace
 
 
 class _LegacyChainAdapter:
@@ -325,6 +326,7 @@ class LedgerDomain:
             })
         return pending
 
+    @trace
     def modify_staged_entry(self, entry_index, end_epoch=None, pauses=None):
         staging = self.store.read_staging()
         if entry_index < 0 or entry_index >= len(staging):
@@ -353,6 +355,7 @@ class LedgerDomain:
         self.store.write_staging(staging)
         return {"title": data["title"], "duration": data.get("duration", 0)}
 
+    @trace
     def remove_staged_entry(self, entry_index):
         staging = self.store.read_staging()
         if entry_index < 0 or entry_index >= len(staging):

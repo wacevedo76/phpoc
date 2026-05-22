@@ -15,6 +15,7 @@ from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 from core.factory import LedgerFactory
 from cli.interface import CLIInterface
+from cli.trace import trace
 from domain.staging.service import StagingService
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
@@ -722,6 +723,7 @@ def _parse_time_input(value_str, date_str, start_epoch, end_epoch):
         return None, "Unrecognized time format. Use HH:MM, +N[m|h|s], -N[m|h|s], N[h][m][s], or epoch ms."
 
 
+@trace
 def _handle_modify(ledger, index):
     """Modify a staged entry's end time, pauses, comment, tags, and media."""
     staging = ledger.store.read_staging()
@@ -1042,6 +1044,7 @@ def _handle_modify(ledger, index):
         if any([comment_input or (current_comment and comment_input == ""), tags_modified, add_media]):
             ledger.store.write_staging(staging)
             print(f"\nDone: {data.get('title', '?')}")
+@trace
 def _handle_remove(ledger, index, auto_yes):
     """Remove a staged entry."""
     staging = ledger.store.read_staging()
