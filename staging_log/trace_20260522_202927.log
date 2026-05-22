@@ -1,0 +1,3 @@
+20:29:27.383 [TRACE] === Trace session started ===  PID=155413
+20:29:27.383 [TRACE] >>> CLIInterface.list_habits( 'all', None from_date=None, to_date=None, show_comments=False, show_tags=False)
+20:29:27.409 [TRACE] <<< CLIInterface.list_habits  (25.5 ms)  → None

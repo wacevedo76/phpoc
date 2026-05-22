@@ -118,7 +118,7 @@ def main():
     sync_subparsers = sync_parser.add_subparsers(dest="sync_action")
     sync_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     sync_parser.add_argument("--till", help="Only sync entries up to and including this date (MM-DD or YYYY-MM-DD)")
-    sync_remote_p = sync_subparsers.add_parser("remote", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
+    sync_remote_p = sync_subparsers.add_parser("remote_staging", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -425,7 +425,7 @@ def main():
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
-        if getattr(args, 'sync_action', None) == "remote":
+        if getattr(args, 'sync_action', None) == "remote_staging":
             staging_service.check_and_sync(timeout_ms=500)
             staging_service.push_to_remote(master_key=auth.get_key())
             print("\u2713 Remote staging synced")

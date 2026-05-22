@@ -1,0 +1,27 @@
+20:33:03.926 [TRACE] === Trace session started ===  PID=168411
+20:33:03.926 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+20:33:03.926 [TRACE] >>> RemoteStagingSync.pull()
+20:33:03.926 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+20:33:07.709 [TRACE] <<< GitStagingTransport._git  (3782.3 ms)  → '713d1e5bfe97e69b5f4a8475bcbe27497eec60ca\trefs/heads/main'
+20:33:07.709 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+20:33:07.711 [TRACE] <<< GitStagingTransport._git  (2.1 ms)  → 'refs/heads/main'
+20:33:07.711 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+20:33:10.991 [TRACE] <<< GitStagingTransport._git  (3279.5 ms)  → 'Already up to date.'
+20:33:10.991 [TRACE] <<< RemoteStagingSync.pull  (7064.7 ms)  → None
+20:33:10.991 [TRACE] <<< StagingService.check_and_sync  (7064.7 ms)  → <SyncCheckResult.READY: 'ready'>
+20:33:10.991 [TRACE] >>> StagingService.push_to_remote(master_key=<REDACTED>)
+20:33:10.992 [TRACE] >>> RemoteStagingSync.push( [{'hash': 'ad8223a7c39e53bfaed674019a5fec608966a3a1ae12d99ee23e17ca57726d1c', 'data': {'title': 'Working on phpoc', '..., 'dc1da321-2c80-4815-a808-11295b8c59f9' master_key=<REDACTED>)
+20:33:11.147 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+20:33:14.696 [TRACE] <<< GitStagingTransport._git  (3549.0 ms)  → '713d1e5bfe97e69b5f4a8475bcbe27497eec60ca\trefs/heads/main'
+20:33:14.696 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+20:33:14.698 [TRACE] <<< GitStagingTransport._git  (1.8 ms)  → 'refs/heads/main'
+20:33:14.698 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+20:33:17.750 [TRACE] <<< GitStagingTransport._git  (3051.8 ms)  → 'Already up to date.'
+20:33:17.751 [TRACE] >>> GitStagingTransport._git( 'add', 'staging/blobs/current.json')
+20:33:17.754 [TRACE] <<< GitStagingTransport._git  (3.2 ms)  → ''
+20:33:17.754 [TRACE] >>> GitStagingTransport._git( 'commit', '-m', 'Update staging blob [staging/blobs/current.json]')
+20:33:17.761 [TRACE] <<< GitStagingTransport._git  (6.6 ms)  → '[main 4f9b2d2] Update staging blob [staging/blobs/current.json]\n 1 file changed, 0 insertions(+), 0 deletions(-)\n ...
+20:33:17.761 [TRACE] >>> GitStagingTransport._git( 'push')
+20:33:21.228 [TRACE] <<< GitStagingTransport._git  (3467.6 ms)  → 'To github.com:wacevedo76/phpoc-staging.git\n   713d1e5..4f9b2d2  main -> main'
+20:33:21.229 [TRACE] <<< RemoteStagingSync.push  (10236.9 ms)  → None
+20:33:21.229 [TRACE] <<< StagingService.push_to_remote  (10237.5 ms)  → None

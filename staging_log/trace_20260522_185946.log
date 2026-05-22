@@ -1,0 +1,13 @@
+18:59:46.591 [TRACE] === Trace session started ===  PID=9113
+18:59:46.591 [TRACE] >>> CLIInterface.view_active(show_tags=False, show_comments=False)
+18:59:46.591 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+18:59:46.591 [TRACE] >>> RemoteStagingSync.pull()
+18:59:46.593 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+18:59:49.688 [TRACE] <<< GitStagingTransport._git  (3094.8 ms)  → '713d1e5bfe97e69b5f4a8475bcbe27497eec60ca\trefs/heads/main'
+18:59:49.688 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+18:59:49.691 [TRACE] <<< GitStagingTransport._git  (2.8 ms)  → 'refs/heads/main'
+18:59:49.691 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+18:59:53.599 [TRACE] <<< GitStagingTransport._git  (3908.1 ms)  → 'Updating b44f11b..713d1e5\nFast-forward\n staging/blobs/current.json | Bin 65592 -> 0 bytes\n 1 file changed, 0 inse...
+18:59:53.599 [TRACE] <<< RemoteStagingSync.pull  (7008.0 ms)  → None
+18:59:53.599 [TRACE] <<< StagingService.check_and_sync  (7008.0 ms)  → <SyncCheckResult.READY: 'ready'>
+18:59:53.600 [TRACE] <<< CLIInterface.view_active  (7008.9 ms)  → None
