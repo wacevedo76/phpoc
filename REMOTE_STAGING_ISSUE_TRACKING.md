@@ -243,6 +243,56 @@ tail -f staging_log/$(ls -1t staging_log/ | head -1)
 - **Issue #4** — Trace on staging CRUD methods shows whether `NoAuthCryptoManager` or
   authenticated `CryptoManager` is being used.
 
+## Session 2 Incident: Key Mismatch Cascade & Remote Wipe (2026-05-22 14:15–15:33)
+
+**Date:** 2026-05-22 (session 2, ~14:15–15:33)
+**Severity:** High — remote blob had to be wiped
+
+### Timeline
+
+| Time | Event |
+|---|---|
+| **14:13-14:14** | `ph view` x2 — remote at `4634cf0`, pull returns `None` (old key from pre-recover session) |
+| **14:15:18** | `ph add start "Testing Remote Staging"` — capture + push `9973cfe` with **stale** (pre-recover) key |
+| **14:23-14:27** | `ph view` — local clone at `9973cfe`, disk blob decrypts with stale key, merge runs |
+| **14:36:29** | `vim ~/.config/phpoc/config.json` — config edited |
+| **14:37:00** | `staging.json` overwritten (8 entries, "Testing Remote Staging" lost) |
+| **14:37:16** | `ph logout` |
+| **14:39:59** | `ph recover` — generates **new random seed**, re-encrypts with new passphrase |
+| **14:40:18** | `ph login` — prompts for new passphrase, derives new master key, caches in session |
+| **14:40-14:41** | `ph view` x2 — rebase conflict `a2a4c40` vs `9973cfe` → silently swallowed → stale `None` |
+| **15:27:28** | `ph view` — local clone still at `9973cfe`, disk blob decrypts with stale key |
+| **15:27:39** | `ph add end '1'` — ends "Testing Remote Staging", pushes `b44f11b` encrypted with **stale** key |
+| **15:27:51** | Push `9973cfe..b44f11b` to origin |
+| **15:31:42** | `ph view` — `git pull --rebase` says "Already up to date" (false — remote ahead) |
+| **15:33:45** | `ph view` — rebase conflict again, `pull()` returns `None` |
+| **~15:35** | `git reset --hard origin/main` fixes rebase conflict |
+| **~15:36** | All blobs undecryptable — session key doesn't match any blob's encryption key |
+| **~15:40** | `git rm staging/blobs/current.json` + push `713d1e5` — remote blob wiped |
+
+### Root Causes
+
+1. **Issue #8** — `ph recover` doesn't clear session cache; stale key continued in use after recovery
+2. **Issue #9** — `transport.pull()` silently swallows rebase conflicts, returns stale disk data
+3. **Issue #12** — `git pull --rebase` reports "Already up to date" when `origin/main` is ahead
+4. **Key mismatch by design** — `ph recover` generates a new random seed, making all previous blobs unrecoverable
+
+### Recovery performed
+
+1. Fixed rebase conflict: `git reset --hard origin/main`
+2. Wiped remote blob: `git rm staging/blobs/current.json` → commit `713d1e5` → `git push origin main`
+3. Local `staging.json` intact (8 entries incl. active "Working on Phpoc" 11:57:37)
+
+### Data lost
+- "Testing Remote Staging" entry (started 14:15, ended 15:27) — existed only in undecryptable remote blobs
+- All prior remote blob history (`9973cfe`, `b44f11b`) — encrypted with lost key
+
+### Remediation needed
+- **`ph recover` must call `auth.clear_session()`** after updating genesis (Issue #11)
+- **`ph recover` must re-encrypt with the SAME seed** instead of generating a new one, or warn the user
+- **`transport.pull()` must surface rebase conflicts** instead of swallowing them (Issue #9)
+- **False "Already up to date"** must be detected and handled (Issue #12)
+
 ## Test Results
 
 ### Confirmed Working
@@ -520,6 +570,8 @@ When both devices edit the same entry concurrently:
 | `.gitignore` restriction | `staging_log/` removed (safe to commit now) | `.gitignore` |
 | Config-driven tracing | `debug.trace_enabled` default + wiring | `security/config_manager.py`, `main.py` |
 | `ph login` / `ph logout` | Minimal subcommands for session management | `main.py`, `security/auth.py` |
+| Issue #9 — Remote clone rebase conflict (session 2) | Silently swallowed | `core/sync/git_transport.py` (needs fix) |
+| Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed | operational |
 
 ### Open issues remaining
 
@@ -527,9 +579,121 @@ When both devices edit the same entry concurrently:
 |---|---|---|
 | Issue #7 — Stale cache blob overwrite | 🔴 Data loss | x13 + debagent04 |
 | Issue #8 — Session cache blocks re-auth | 🔴 Needs fix | x13 |
-| debAgent04 active task recovery | 🔴 Needs re-push | debagent04 |
+| Issue #9 — Rebase conflicts silently swallowed | 🔴 Needs fix | debagent04 |
+| Issue #11 — `ph recover` doesn't clear session cache | 🔴 Needs fix | debagent04 |
+| Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
 
-### AFI #4: Same-device auth bypass — no re-auth prompt on self-pushes
+### Issue #9: Silently swallowed rebase conflict in transport.pull()
+
+**Status:** 🔴 Open — needs fix
+**Date:** 2026-05-22 (session 2)
+**Discovered:** Via trace log analysis on debagent04
+
+**Root cause:** `GitStagingTransport.pull()` in `core/sync/git_transport.py:60-89` wraps `git pull --rebase --autostash` in a try/except that **silently swallows** the exception:
+
+```python
+try:
+    self._git("pull", "--rebase", "--autostash")
+except RuntimeError:
+    pass  # ← Pull may fail on empty remote or disconnected — proceed without it
+```
+
+When the rebase hits a conflict (divergent histories), the exception is swallowed, the working tree is left in a conflicted state, and `pull()` reads the **stale conflicted file from disk** — returning corrupted or wrong data. The caller (`remote_sync.py`) has no way to distinguish "no remote blob" from "rebase conflict."
+
+**Impact:**
+- At 14:40-14:41, multiple `ph view` commands returned stale data from the conflicted working tree
+- The conflict persisted across commands because `_recover_git_abort_stuck_rebase()` only recovers if a rebase-merge directory exists — but after a failed rebase, the directory may or may not exist
+- By 15:33, the rebase was stuck again, requiring manual `git reset --hard origin/main`
+
+**Fix needed:** `pull()` should differentiate between "no remote" and "rebase conflict":
+1. Before pull, save the HEAD commit hash
+2. If pull raises, check if `rebase-merge` dir exists → abort rebase, raise explicit error
+3. If pull raises but no rebase state → it's a connectivity issue, return None
+
+**Trace:**
+```
+14:40:27 [TRACE] <<< GitStagingTransport._git  (2004.9 ms)  ✗ RuntimeError: Git command failed (exit 1): git pull --rebase --autostash
+  error: could not apply a2a4c40... Update staging blob [staging/blobs/current.json]
+14:40:27 [TRACE] <<< RemoteStagingSync.pull  (3742.2 ms)  → None
+```
+
+The error is swallowed, `pull()` returns `None`, `check_and_sync()` interprets it as "no remote blob," and proceeds without merging.
+
+**Related:** Issue #6 was the root cause of the divergent commit `a2a4c40` (ls-remote argument order prevented sync, so the local clone's commit was never pushed), which then caused every subsequent rebase to conflict.
+
+### Issue #10: Blob encryption key mismatch after ph recover
+
+**Status:** ✅ Resolved — remote blob wiped
+**Date:** 2026-05-22 (session 2)
+**Impact:** Remote blob at `9973cfe` and `b44f11b` encrypted with different master key than current session
+
+**Root cause:** `ph recover` at 14:39:59 generated a **new random recovery seed** and re-encrypted it with the new passphrase in the genesis block. All previous remote blobs were encrypted with the **old master key** (derived from the old seed). After recovery:
+- New passphrase → new PDK → new seed → new master key
+- Old blobs are permanently undecryptable with the new key
+
+**Cascade:**
+1. `ph recover` changes the recovery seed (not just the passphrase wrapping it)
+2. The genesis block's `recovery_seed_enc` now points to a new seed
+3. `ph login` at 14:40 re-authenticates successfully with new passphrase → new master key
+4. But the `b44f11b` blob (pushed at 15:27 from the post-recover session) was ALSO encrypted with a key that doesn't match — meaning the 14:40 `ph login` somehow produced a different key than what was used for the 15:27 push
+5. All subsequent `ph view` commands hit "Blob integrity check failed (tag mismatch)"
+
+**Trace:**
+```
+Blob integrity check failed (tag mismatch)  →  pull returns None
+```
+
+**Resolution:** Remote blob file deleted from git repo via:
+```bash
+git rm staging/blobs/current.json
+git commit -m "Remove staging blob (wipe remote data)"
+git push origin main
+```
+Commit `713d1e5` on `origin/main`. Next write command will push a fresh blob encrypted with the current session key.
+
+### Issue #11: ph recover doesn't clear session cache
+
+**Status:** 🔴 Open — needs fix
+**Date:** 2026-05-22 (session 1, re-identified in session 2)
+
+**Root cause:** `ph recover` in `main.py:254-277` doesn't call `auth.clear_session()` after updating the genesis block with the new passphrase-wrapped seed. The old session cache persists, and if `authenticate()` finds `SESSION_FILE.exists()`, it returns the stale key immediately without prompting for the new passphrase.
+
+**Impact (session 1):** After `ph recover`, the stale session cache caused the old key to be used for pushes, while subsequent `ph view` from a new terminal would prompt for the new passphrase and derive a different key — creating blobs encrypted with two different keys that can't cross-decrypt.
+
+**Impact (session 2):** At 14:40, `ph login` (which calls `clear_session()` before `authenticate()`) was used instead, but the 14:15-14:27 window had already used the stale key, creating undecryptable blobs.
+
+**Fix needed:** Add `auth.clear_session()` at the end of `ph recover`'s handler (or immediately after generating the new PDK and encrypted seed):
+```python
+if args.command == "recover":
+    # ... existing recovery code ...
+    ledger_data[0]["identity"]["recovery_seed_enc"] = new_enc_seed
+    # ... re-chain blocks ...
+    
+    auth.clear_session()  # ← Force re-auth with new passphrase next time
+```
+
+**Also:** `ph recover` should log out the old session explicitly to prevent the user from continuing with a now-stale session.
+
+### Issue #12: git pull --rebase reports 'Already up to date' when remote is ahead
+
+**Status:** 🔴 Open — needs investigation
+**Date:** 2026-05-22 (session 2)
+
+**Observation:** At 15:31:42, trace shows:
+```
+ls-remote sees b44f11b7af62d9db73543c84d6c39034947373c6  (remote is ahead)
+git pull --rebase --autostash  →  'Already up to date.'
+```
+
+The local clone was at `9973cfe`, and `origin/main` was at `b44f11b` (1 commit ahead). `git pull --rebase` should have fast-forwarded to `b44f11b`, but instead said "Already up to date."
+
+**Hypothesis:** The local clone's HEAD was on a **divergent branch** rather than the true `main`. The `symbolic-ref -q HEAD` check passed (returned `refs/heads/main`), but `refs/heads/main` pointed to `9973cfe` while `refs/remotes/origin/main` pointed to `b44f11b`. The fetch inside `pull --rebase` updated `origin/main` but git's "up to date" check compared local `main` (9973cfe) against `merge HEAD` = `origin/main` (b44f11b) — finding they diverged, but the autostash+rebase flow may have concluded there was nothing to rebase because the local commit was an ancestor.
+
+**Impact:** The blob file on disk remained at the `9973cfe` version (encrypted with old key), and `pull()` returned that stale encrypted blob without the caller realizing the remote had been updated.
+
+**Fix needed:** After `git pull --rebase`, verify that the current HEAD matches `origin/main`. Log a warning if they diverge.
+
+## AFI #4: Same-device auth bypass — no re-auth prompt on self-pushes
 
 **Status:** ℹ️ By design, but noteworthy for hand-off testing
 **Discovered:** 2026-05-22, verified via live blob decryption

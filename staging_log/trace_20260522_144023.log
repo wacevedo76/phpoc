@@ -1,0 +1,23 @@
+14:40:23.368 [TRACE] === Trace session started ===  PID=526754
+14:40:23.368 [TRACE] >>> CLIInterface.view_active(show_tags=False, show_comments=False)
+14:40:23.368 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+14:40:23.368 [TRACE] >>> RemoteStagingSync.pull()
+14:40:23.368 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+14:40:25.101 [TRACE] <<< GitStagingTransport._git  (1732.8 ms)  → '9973cfec46b7b0f400541458ac6b86a5ed794917\trefs/heads/main'
+14:40:25.101 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+14:40:25.104 [TRACE] <<< GitStagingTransport._git  (3.2 ms)  → 'refs/heads/main'
+14:40:25.104 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+14:40:27.109 [TRACE] <<< GitStagingTransport._git  (2004.9 ms)  ✗ RuntimeError: Git command failed (exit 1): git pull --rebase --autostash
+From github.com:wacevedo76/phpoc-staging
+   4634cf0..9973cfe  main       -> origin/main
+Rebasing (1/1)
+error: could not apply a2a4c40... Update staging blob [staging/blobs/current.json]
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+hint: Disable this message with "git config advice.mergeConflict false"
+Could not apply a2a4c40... Update staging blob [staging/blobs/current.json]
+14:40:27.110 [TRACE] <<< RemoteStagingSync.pull  (3742.2 ms)  → None
+14:40:27.110 [TRACE] <<< StagingService.check_and_sync  (3742.2 ms)  → <SyncCheckResult.READY: 'ready'>
+14:40:27.110 [TRACE] <<< CLIInterface.view_active  (3742.5 ms)  → None
