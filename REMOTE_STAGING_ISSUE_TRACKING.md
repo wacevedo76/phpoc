@@ -6,11 +6,11 @@ This document captures issues found during cross-device staging sync testing bet
 
 ## Environment
 
-| Property | debagant04 | x13 laptop |
+| Property | debagent04 | x13 laptop |
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `22ae407` | (pull from origin) |
+| Commit | `ce3c7ce` | `ce3c7ce` (3 ahead of origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
@@ -39,7 +39,7 @@ Failed to re-attach HEAD to main
 
 ### Issue #2: ph view bypasses check_and_sync (read-only path skips device check)
 
-**Status:** ✅ By design (confirmed working)
+**Status:** 🔄 Needs rework — route view through check_and_sync
 **Detail:** `view_active()` in `cli/interface.py` calls `_remote.pull()` + `_local.write_entries(merged)`
 directly, bypassing `check_and_sync()`. This means:
 - No auth gate triggered (read-only → fine)
@@ -47,41 +47,71 @@ directly, bypassing `check_and_sync()`. This means:
 - No push back after merge (no need — read-only)
 - Merge result stays in local staging until next write command pushes
 
-**Cross-device flow still works:** Write commands (`add end`, `add start`, etc.) go through
-`check_and_sync()` → device check → pull+merge → push.
+**Decision:** `ph view` MUST go through `check_and_sync()` like writes do, so the
+auth criteria (device mismatch + cookie expiry) are enforced on reads too.
+This ensures the staging area always reflects the remote source of truth.
 
-**Auth prompt only triggers on writes, not reads.** Running `ph view` will never prompt
-even if the auth cache is expired and the remote device differs. To test the auth flow,
-use a write command like `ph add start "test"` — this goes through `check_and_sync()`
-which compares device IDs and checks the 30-minute auth cache before allowing the merge.
+**Required change:** Replace the direct `_remote.pull()` + merge in `view_active()`
+with a call to `self._service.check_and_sync()`. After sync, read from local staging.
+This makes the auth flow identical between reads and writes.
 
-The `view_active()` method intentionally skips all auth for minimal latency on read-only
-operations. The auth gate is only relevant when a write might clobber another device's data.
-
-### Issue #3: _needs_full_pull freshness optimization can skip cross-device pull
+### Issue #3: _needs_full_pull freshness optimization
 
 **Status:** ❓ Needs investigation
-**Scenario:** Device A pushes blob → Device B pulls it (different device, auth OK) → merges →
-Device B runs another read (all same-device, no push) → `ph view` uses direct pull (bypasses
-freshness check) → works fine. But if Device B runs a **write command** like `add start`,
-`check_and_sync()` calls `_needs_full_pull()` which may skip if `updated_at <= _last_push_at`.
+**Assigned to:** x13 agent
+**Current behavior** (verified in code at `service.py:367-395`):
+- `_needs_full_pull()` returns `True` when `remote_id != local_id` — different device
+  always triggers a full pull. Correct.
+- `_needs_full_pull()` returns `True` when `remote_updated_at > _last_push_at` —
+  remote is newer. Correct.
+- `_needs_full_pull()` returns `False` only for same-device, local-is-freshest case.
+  Correct.
 
-**Observation from testing:** The direct pull in `view_active()` worked for reads. Writes go
-through `check_and_sync()` and freshness optimization is same-device only. Need to verify
-cross-device write flow doesn't get incorrectly skipped.
+**Cross-device write flow is NOT incorrectly skipped** because the device-ID check
+happens before the freshness check. The only concern is whether `_needs_full_pull()`
+is called at all (Issue #2's view bypass) — which is being fixed.
+
+**Consideration: content-aware sync (active-activity check)**
+Instead of the coarse "pull everything or skip" binary, could diff entries by
+`entry_id` and only merge the delta:
+
+```python
+def _diff_entries(local, remote):
+    local_ids = {e["entry_id"] for e in local if e.get("entry_id")}
+    remote_ids = {e.get("entry_id") for e in remote if e.get("entry_id")}
+    new_ids = remote_ids - local_ids
+    modified_ids = {
+        eid for eid in local_ids & remote_ids
+        if lookup_hash(local, eid) != lookup_hash(remote, eid)
+    }
+    return bool(new_ids or modified_ids)
+```
+
+However, diminishing returns apply: the git `pull` already fetched the blob by
+this point. The savings would be in the merge step (~10ms), not the network step
+(~2.5s). The much bigger savings target is the redundant `ls-remote` calls (see
+AFI #2).
 
 ### Issue #4: plain: prefix entries (NoAuth path) lack entry_id
 
-**Status:** ❓ Needs investigation
-**Observation:** All entries in the cross-device test have `plain:` prefixed timestamps and
-`entry_id: ""`. The stable entry ID optimization only generates UUIDs when `append()` is
-called with an authenticated `CryptoManager`. `NoAuthCryptoManager` entries bypass UUID
-generation.
+**Status:** ℹ️ No action needed — code handles correctly
+**Resolution analysis:** After reading the code, both `append()` and `write_entries()`
+in `local_cache.py` always generate `entry_id = str(uuid.uuid4())` when none exists.
 
-**Impact:** Merge dedup falls back to `(title, start_epoch)` for these entries. Same-title
-entries from different devices are not merged (different start_epoch) — they both survive.
-This is correct behavior but means cross-device `end`/`pause` by title may hit the wrong
-entry if two same-named tasks run concurrently.
+- `append()` (line 216): always sets `"entry_id": str(uuid.uuid4())` on new entries
+- `write_entries()` (line 149): sets `entry.get("entry_id", str(uuid.uuid4()))` —
+  fills in UUID for any legacy entry that lacks one
+
+So even entries created via `NoAuthCryptoManager` get a UUID the moment they pass
+through `write_entries()` (happens on every merge or update). The original observation
+of `entry_id: ""` was from before the stable-entry-ID feature landed.
+
+**Cross-device `end` by title also works correctly:** The `end()` method searches
+local entries by `title + is_active`. If both Device A and Device B started "Work",
+each has a local entry with their own `start_epoch`. `end "Work"` on Device B ends
+B's local entry only. After merge/push, Device A sees two separate "Work" entries
+(one running, one ended) — correctly handled by the `(title, start_epoch)` fallback
+dedup in `MergeEngine._dedup_key()`.
 
 ### Issue #5: Session cache is 32 raw bytes in /dev/shm
 
@@ -206,11 +236,11 @@ This logic is correct for writes, but:
 - `_push_if_remote()` calls `push_to_remote()` directly without re-checking auth
 - The `_last_auth_time` is only updated on successful device check, not on every command
 
-**Open questions:**
-- Should read-only `ph view` also enforce auth when device differs + cookie expired?
-  (Currently it never prompts — see Issue #2)
-- What happens when the cookie expires mid-session (no write commands to trigger re-auth)?
-- Should `_push_if_remote()` verify auth before pushing to remote?
+**Decision:** Issue #2 is now resolved — `view` will be routed through `check_and_sync()`.
+
+**Remaining open questions:**
+- What happens when the cookie expires mid-session (no commands to trigger re-auth)?
+- Should `_push_if_remote()` verify auth before pushing to remote? (It currently does not)
 
 ### AFI #2: Latency — investigate all operations exceeding 2 seconds
 
@@ -281,8 +311,63 @@ The following scenarios need to be verified:
    - **Risk:** Device B's local-only changes are lost if B's staging is overwritten
      by A's push before B can commit
 
-**Mitigation ideas:**
-- Enforce push on every write (already done in `_push_if_remote()`)
-- Add a dirty-flag check before pull: warn if local has un-pushed changes
-- Investigate whether `_needs_full_pull()` correctly triggers a merge when
-  device_id differs (currently returns True for different device — correct)
+**Fleshed-out mitigation analysis:**
+
+**Dirty-flag check (volatile — resets on crash):**
+Add a `_dirty: bool` to `StagingService` that is set `True` on every local staging
+write (`append`, `update`, `delete`) and cleared after successful `push_to_remote()`.
+Before any pull+merge, check:
+
+```python
+if self._dirty and self._remote is not None:
+    print("Warning: local staging has un-pushed changes. "
+          "Run a write command (add start/end) to push "
+          "before another device overwrites.")
+```
+
+**Problem:** `_dirty` is in-memory only. If the process crashes between a local
+write and the push, the flag resets to `False` and the warning never fires.
+
+**Persisted invariant (survives crashes):**
+Store `last_modified_at` and `last_pushed_at` in the local staging JSON metadata.
+On startup or before pull, compare: if `last_modified_at > last_pushed_at`, warn
+about un-pushed changes. This survives process crashes because it's on disk.
+
+**Crash-between-merge-and-push gap:**
+`check_and_sync()` pulls → merges → writes local. If the process crashes before
+`_push_if_remote()` runs, the local staging has merged remote data that was never
+pushed back. On next startup:
+- `view` (read-only) → no push → remote is behind
+- `add start` → `check_and_sync()` → `_needs_full_pull()` sees device matches +
+  `updated_at <= _last_push_at` (since we just merged the latest) → skips pull →
+  writes locally → pushes. Works, but the push includes both the merged data and
+  the new entry.
+
+**Simplest fix for the gap:** Have `view_active()` also call `_push_if_remote()`
+after the merge if the staging was modified. Track whether the merge actually
+changed anything (compare entry count/hashes before vs after).
+
+**Scenario 2 risk: concurrent-edit conflict during git rebase:**
+When both devices edit the same entry concurrently:
+1. Both pull blob at hash H1
+2. Device A modifies entry X → commits → pushes → remote at H2
+3. Device B modifies entry X → tries to push → non-fast-forward rejected
+4. Transport does `pull --rebase` → git tries line-based merge on JSON
+5. If both modified the same lines of the JSON → **merge conflict**
+6. Transport has no conflict resolution → fails
+
+**Mitigation:** Either:
+- Add a custom git merge driver (`git config merge.staging.driver`) that
+  understands the staging JSON schema and does a logical merge
+- Or detect the conflict in Python after `pull --rebase` fails, re-pull the
+  latest blob, diff logically, re-apply changes, re-push
+- Or reduce the window: single-file blobs are inherently conflict-prone;
+  splitting into per-entry files in the git repo would allow git to merge
+  independent changes cleanly
+
+**Status of original mitigations:**
+- ✅ Enforce push on every write — done (`_push_if_remote()`)
+- 🔲 Volatile dirty-flag — cheap to add, useful for warning, but crash-reset limits value
+- 🔲 Persisted `last_modified_at` / `last_pushed_at` — recommended, survives crashes
+- 🔲 Post-merge push from `view_active()` — closes the crash gap
+- 🔲 Concurrent-edit conflict strategy — per-entry blob files or custom merge driver
