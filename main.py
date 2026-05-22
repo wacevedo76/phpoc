@@ -319,6 +319,8 @@ def main():
                 block["signature"] = crypto.sign(block[hash_key], identity_secret)
 
         LEDGER_PATH.write_text(json.dumps(ledger_data, indent=2))
+        # Cache the recovered master key so subsequent commands can decrypt entries
+        auth._cache_key(mk)
         print("Passphrase reset successful. You can now use your new passphrase.")
         return
 
