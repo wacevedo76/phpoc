@@ -2,6 +2,30 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
+## [0.6.1] — 389e268 (P3-Remote_Sync — recover session cache fix)
+
+### Fixed
+- **`ph recover` now caches the master key** after re-sealing the ledger.
+  Previously the session cache held a stale key after recover, causing all
+  subsequent commands to fail decryption until the user ran `ph login`.
+- **Cross-device staging sync** — `ph view` now routes through `check_and_sync()`
+  for proper device check, auth gate, and error handling on pull failures.
+- **Trace log redaction** — `_redact()` masks 32-byte keys and sensitive kwargs
+  (master_key, passphrase, password, secret, seed) from trace output.
+- **`ls-remote` argument order** — `--heads` before `origin` for git 2.53.0+
+  compatibility.
+- **Undecryptable timestamps** — `_print_entry()` and staged data grouping now
+  skip entries with undecryptable startTime_enc/endTime_enc/metadata_enc
+  instead of crashing with UnicodeDecodeError.
+
+### Added
+- **`login`/`logout` subcommands** — force re-authentication without restart.
+  `login` clears session and re-prompts for passphrase; `logout` clears cache.
+- **Config-driven tracing** — `debug.trace_enabled` setting (default enabled).
+
+**ADR:** ADR-014 consequences updated (session cache now populated by
+`ph recover`).
+
 ## [0.6.0] — bc888c2 (P3-Remote_Sync — sync optimization)
 
 ### Added

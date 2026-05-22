@@ -435,6 +435,7 @@ The cache is cleared on:
 
 ### Consequences
 - **Positive:** Once-per-boot passphrase entry.
+- **Positive:** `ph recover` now automatically caches the master key after re-sealing the ledger (fix: commit 389e268). Previously the session cache held a stale key after recover, causing all subsequent commands to fail decryption until the user ran `ph login` to refresh it.
 - **Negative:** No locking — concurrent processes could race (low risk in single-user CLI). Session cache is local to a device — does not support cross-device session management (see D2).
 
 ---
