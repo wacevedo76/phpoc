@@ -1,0 +1,35 @@
+15:27:39.798 [TRACE] === Trace session started ===  PID=2000931
+15:27:39.798 [TRACE] >>> CLIInterface.add_end( '1' comment=None)
+15:27:39.798 [TRACE] >>> StagingService.end( 'Testing Remote Staging', 1779456459798 comment=None)
+15:27:39.799 [TRACE] >>> StagingService.check_and_sync(timeout_ms=500)
+15:27:39.799 [TRACE] >>> RemoteStagingSync.pull()
+15:27:39.799 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+15:27:42.811 [TRACE] <<< GitStagingTransport._git  (3011.9 ms)  → '9973cfec46b7b0f400541458ac6b86a5ed794917\trefs/heads/main'
+15:27:42.811 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+15:27:42.814 [TRACE] <<< GitStagingTransport._git  (2.6 ms)  → 'refs/heads/main'
+15:27:42.814 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+15:27:45.683 [TRACE] <<< GitStagingTransport._git  (2869.4 ms)  → 'Already up to date.'
+15:27:45.844 [TRACE] <<< RemoteStagingSync.pull  (6044.9 ms)  → {'device_id': 'dc1da321-2c80-4815-a808-11295b8c59f9', 'device_proof': '', 'entries': [{'hash': 'ad8223a7c39e53bfaed67...
+15:27:45.844 [TRACE] >>> StagingService._needs_full_pull( {'device_id': 'dc1da321-2c80-4815-a808-11295b8c59f9', 'device_proof': '', 'entries': [{'hash': 'ad8223a7c39e53bfaed67...)
+15:27:45.844 [TRACE] <<< StagingService._needs_full_pull  (0.0 ms)  → True
+15:27:45.844 [TRACE] <<< StagingService.check_and_sync  (6046.0 ms)  → <SyncCheckResult.READY: 'ready'>
+15:27:45.873 [TRACE] <<< StagingService.end  (6074.2 ms)  → None
+15:27:45.873 [TRACE] >>> CLIInterface._push_if_remote()
+15:27:45.873 [TRACE] >>> StagingService.push_to_remote(master_key=<REDACTED>)
+15:27:45.873 [TRACE] >>> RemoteStagingSync.push( [{'hash': 'ad8223a7c39e53bfaed674019a5fec608966a3a1ae12d99ee23e17ca57726d1c', 'data': {'title': 'Working on phpoc', '..., 'dc1da321-2c80-4815-a808-11295b8c59f9' master_key=<REDACTED>)
+15:27:46.032 [TRACE] >>> GitStagingTransport._git( 'ls-remote', '--heads', 'origin')
+15:27:48.750 [TRACE] <<< GitStagingTransport._git  (2718.5 ms)  → '9973cfec46b7b0f400541458ac6b86a5ed794917\trefs/heads/main'
+15:27:48.750 [TRACE] >>> GitStagingTransport._git( 'symbolic-ref', '-q', 'HEAD')
+15:27:48.753 [TRACE] <<< GitStagingTransport._git  (2.9 ms)  → 'refs/heads/main'
+15:27:48.753 [TRACE] >>> GitStagingTransport._git( 'pull', '--rebase', '--autostash')
+15:27:51.621 [TRACE] <<< GitStagingTransport._git  (2868.1 ms)  → 'Already up to date.'
+15:27:51.622 [TRACE] >>> GitStagingTransport._git( 'add', 'staging/blobs/current.json')
+15:27:51.626 [TRACE] <<< GitStagingTransport._git  (3.8 ms)  → ''
+15:27:51.626 [TRACE] >>> GitStagingTransport._git( 'commit', '-m', 'Update staging blob [staging/blobs/current.json]')
+15:27:51.634 [TRACE] <<< GitStagingTransport._git  (7.5 ms)  → '[main b44f11b] Update staging blob [staging/blobs/current.json]\n 1 file changed, 0 insertions(+), 0 deletions(-)'
+15:27:51.634 [TRACE] >>> GitStagingTransport._git( 'push')
+15:27:57.148 [TRACE] <<< GitStagingTransport._git  (5514.5 ms)  → 'To github.com:wacevedo76/phpoc-staging.git\n   9973cfe..b44f11b  main -> main'
+15:27:57.148 [TRACE] <<< RemoteStagingSync.push  (11275.4 ms)  → None
+15:27:57.148 [TRACE] <<< StagingService.push_to_remote  (11275.6 ms)  → None
+15:27:57.148 [TRACE] <<< CLIInterface._push_if_remote  (11275.6 ms)  → None
+15:27:57.148 [TRACE] <<< CLIInterface.add_end  (17350.1 ms)  → None
