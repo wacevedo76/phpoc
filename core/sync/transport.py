@@ -1,14 +1,14 @@
-"""AbstractStagingTransport — 2-method interface for remote staging transport.
-
-The transport is a minimal abstraction over the actual transfer mechanism
-(e.g., git, HTTP, local file copy, in-memory mock). Every implementation
-must provide pull(path) and push(path, data).
+"""AbstractStagingTransport — transport interface for remote staging/blob sync.
 
 Contract:
   - pull(path) -> bytes | None: Fetch blob at path, return None if absent.
   - push(path, data: bytes) -> None: Write blob at path.
   - Both methods are synchronous. Callers apply timeouts externally
     (e.g., via RemoteStagingSync.check_remote_available()).
+
+Optionally:
+  - list_files(prefix) -> List[str]: List file names under prefix.
+    Default returns empty list (for transports that don't support listing).
 """
 
 from typing import Optional
@@ -16,10 +16,9 @@ from abc import ABC, abstractmethod
 
 
 class AbstractStagingTransport(ABC):
-    """Two-method interface for remote staging blob transport.
+    """Transport interface for remote staging/blob sync.
 
-    Implementations: GitStagingTransport, HttpStagingTransport,
-    InMemoryStagingTransport (for tests), etc.
+    Implementations: GitStagingTransport, InMemoryStagingTransport (for tests).
     """
 
     @abstractmethod
@@ -43,3 +42,17 @@ class AbstractStagingTransport(ABC):
             data: Blob bytes to write.
         """
         ...
+
+    def list_files(self, prefix: str) -> list:
+        """List file names under a prefix on the remote.
+
+        Default implementation returns an empty list. Transports that
+        support listing (e.g., git ls-tree) should override this.
+
+        Args:
+            prefix: Remote directory prefix (e.g., ``ledger/blocks/``).
+
+        Returns:
+            List of filenames (basenames only) under the prefix.
+        """
+        return []

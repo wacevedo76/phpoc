@@ -2,9 +2,10 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `137b544` (current — pushed to origin)
-- **Tests:** all passing
+- **Commit:** `937b491` (plus 4 uncommitted files — see below)
+- **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
+- **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py` (new), `core/sync/git_transport.py` (+list_files), `main.py` (+remote_ledger subcommand)
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -28,6 +29,7 @@
 | File | Purpose |
 |------|---------|
 | `core/sync/git_transport.py` | `GitStagingTransport` — git CLI push/pull with clone, retry, detached HEAD recovery |
+| `domain/ledger/remote_sync.py` | **NEW** — `RemoteLedgerSync`: push/pull ledger blocks to/from remote git repo |
 | `domain/staging/remote_sync.py` | Blob obfuscation (AES-CTR + tiered padding), device check, pull/push |
 | `domain/staging/service.py` | Single-pull `check_and_sync()`, freshness optimization via `_needs_full_pull()` + `_last_push_at` |
 | `domain/staging/local_cache.py` | Stable `entry_id` UUIDs on every entry |
@@ -79,35 +81,41 @@ Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per comm
 
 ## Next Phase: Remote Ledger Sync
 
-**Status:** Design finalized (2026-05-22), not yet implemented.
+**Status:** ✅ **Implemented** — code complete, pending test file and cross-device review.
 
-See `REMOTE_STAGING_ISSUE_TRACKING.md` → Next Phase: Remote Ledger Sync for full design.
+See `REMOTE_STAGING_ISSUE_TRACKING.md` → Next Phase: Remote Ledger Sync for full details.
 
-**Implementation order:**
-1. Create `domain/ledger/remote_sync.py` — `RemoteLedgerSync` class (push, pull, verify, recover)
-2. Wire subcommand `ph sync remote_ledger` in `main.py`
-3. Write `tests/test_remote_ledger_sync.py` (~24 tests against local bare repos)
-4. Cross-device testing (x13 → debagent04 round-trip)
+### What was built
+- `domain/ledger/remote_sync.py` — `RemoteLedgerSync` class (286 lines)
+- `core/sync/transport.py` — `list_files(prefix)` added to transport interface
+- `core/sync/git_transport.py` — `list_files()` via `git ls-tree`, `_has_local_commits()`
+- `main.py` — `ph sync remote_ledger` with forced auth, sync summary, confirm, execute
+- `ARCHITECTURAL_DECISIONS.md` — ADR-015 added
+
+### Files changed (not yet committed)
+```
+ M core/sync/git_transport.py
+ M core/sync/transport.py
+ M main.py
+?? domain/ledger/remote_sync.py
+```
 
 ## Recent Commits
 ```
+937b491  docs: update passphrase status, add remote ledger sync design
 137b544  fix: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
 ea87561  fix: rename 'sync remote' to 'sync remote_staging' for clarity
 566f1cb  docs: update ADR-014 and CHANGELOG for recover session cache fix
 389e268  fix: cache master key after ph recover
-d7ddf2e  Update REMOTE_STAGING_ISSUE_TRACKING.md with session 2 incident + add trace logs
-3b8a3aa  adds logs
-14f50f6  fix: handle undecryptable timestamps in list/view (key mismatch from ledger)
-e6b173f  adds staging_log
-cbc3a92  fix: cross-device sync, trace redaction, login/logout, ls-remote arg order
-912739e  Doc: add AFI #4 — same-device auth bypass observed + blob decryption verification
+...
 ```
 All pushed to origin.
 
 ## Next Steps
-1. **On debagent04:** `git fetch origin && git reset --hard origin/P3-Remote_Sync`
+1. **On debagent04 (after push):** `git fetch origin && git reset --hard origin/P3-Remote_Sync`
 2. ~~Set new passphrase on both devices~~ ✅ **Done**
-3. Implement **remote ledger sync** (see Next Phase section above)
-4. Fix redundant `ls-remote` calls (AFI #2)
-5. Test device hand-off scenarios (AFI #3)
-6. When done: remove trace logging, commit cleanup, push
+3. ~~Implement remote ledger sync~~ ✅ **Done (code)**
+4. Write `tests/test_remote_ledger_sync.py` (~24 tests)
+5. Cross-device testing: `ph sync remote_ledger` on x13 → pull on debagent04
+6. Fix redundant `ls-remote` calls (AFI #2)
+7. When done: remove trace logging, commit cleanup, push

@@ -347,6 +347,66 @@ class GitStagingTransport(AbstractStagingTransport):
 
         return (result.stdout + result.stderr).strip()
 
+    def list_files(self, prefix: str) -> list:
+        """List filenames under *prefix* in the remote repo.
+
+        Ensures the clone is up-to-date, then runs ``git ls-tree -r HEAD``
+        to list files matching the prefix.
+
+        Args:
+            prefix: Remote directory prefix (e.g., ``ledger/blocks/``).
+
+        Returns:
+            List of filenames (basenames only) under the prefix. Empty if
+            none exist or if the repo has no commits yet.
+        """
+        self._ensure_clone()
+        self._ensure_remote_url()
+        self._recover_git_abort_stuck_rebase()
+
+        # Check if the clone has any commits yet
+        if not self._has_local_commits():
+            # Try pulling from remote first
+            if self._has_remote_refs():
+                self._ensure_on_branch()
+                try:
+                    self._git("pull", "--rebase", "--autostash")
+                except RuntimeError:
+                    pass
+            else:
+                return []
+
+        try:
+            output = self._git("ls-tree", "-r", "--name-only", "HEAD", "--", prefix)
+        except RuntimeError:
+            return []
+
+        if not output.strip():
+            return []
+
+        # Extract basenames from paths
+        files = []
+        for line in output.strip().split("\n"):
+            line = line.strip()
+            if line:
+                # line is like "ledger/blocks/000000.json"
+                # Strip the prefix to get just the filename
+                if line.startswith(prefix):
+                    files.append(line[len(prefix):])
+                else:
+                    files.append(line)
+        return files
+
+    def _has_local_commits(self) -> bool:
+        """Check if the local clone has at least one commit."""
+        if not self._clone_exists():
+            return False
+        try:
+            output = self._git("rev-parse", "--verify", "HEAD")
+            return bool(output.strip())
+        except RuntimeError:
+            return False
+
     def update_remote_url(self, new_url: str):
         """Change the remote URL for an existing clone.
 

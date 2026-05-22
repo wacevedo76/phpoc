@@ -862,3 +862,76 @@ Adopt **Fix A + Fix B** — a combined display-layer solution with no data model
 - **Negative:** The `⏭` marker is display-only — tools reading raw JSON won't see it (they compute dates independently). Fix B adds a decrypt-and-compare step per previous-day entry during filtered listing.
 - **Implementation scope:** `cli/interface.py:_print_entry()` (marker), `cli/interface.py:list_habits()` (peek logic), `cli/cli_parsers.py:parse_time_input()` (hour wrapping + auto-advance). No engine/chain/staging changes.
 - **All 972 tests pass.** 2 files changed, 104 lines added.
+
+---
+
+## ADR-015: Remote Ledger Sync (Append-Only Block Files)
+
+**Date:** 2026-05-22
+**Status:** ✅ Implemented (pending tests)
+
+### Context
+The ledger is local-only. To enable cross-device `ph list all`, the ledger
+needs to be synced to a remote. Unlike staging (which is a single mutable
+blob with merge conflicts), the ledger is append-only — blocks are never
+edited or deleted.
+
+### Decision
+The ledger is synced to the same git repo as staging
+(`github.com:wacevedo76/phpoc-staging.git`) using an append-log design:
+
+```
+staging/blobs/current.json   (existing — mutable, merge-needed)
+ledger/
+  blocks/
+    000000.json                 (genesis — pushed once)
+    000001.json                 (obfuscated single day block)
+    000002.json
+    ...
+  index.json                    (lightweight summary)
+```
+
+Each block is stored as an individual obfuscated file using the same
+AES-CTR + tiered-padding scheme as `RemoteStagingSync`. Block sequence
+numbers (`000000`..`0000NN`) serve as filenames, naturally handling
+multi-sync-per-day.
+
+Push/pull logic:
+- **Push:** List remote files → find missing indices → obfuscate + push each
+- **Pull:** List remote files → find missing indices → deobfuscate → verify
+  `prev_hash` linkage → return new blocks for local append
+
+The index file is pushed as a separate obfuscated blob (`ledger/index.json`)
+for lightweight remote queries without downloading blocks.
+
+### Transport changes
+- `AbstractStagingTransport` gains `list_files(prefix)` (default `[]`)
+- `GitStagingTransport.list_files()` implemented via
+  `git ls-tree -r HEAD --name-only -- <prefix>`
+
+### Auth + safety
+- `ph sync remote_ledger` forces re-auth before any operation
+- Displays a sync summary (local count vs remote count, which blocks
+  will be pushed/pulled)
+- Requires explicit `y/N` confirmation before executing
+
+### Rationale
+- Append-only means no merge conflicts — each block is independent
+- Sequence-numbered filenames avoid any date-level contention
+- Reuses existing `RemoteStagingSync` obfuscation (same master key
+  sub-key derivation) — no new crypto primitives
+- `list_files` via `git ls-tree` avoids needing a separate index file
+  for sync tracking (reducing write conflicts)
+
+### Consequences
+- **Positive:** Cross-device ledger sync is now possible. Genesis is pushed
+  once, enabling clone-and-recover on new devices. Chain verification on
+  pull prevents corrupted remotes from poisoning local data.
+- **Negative:** The `list_files()` method requires a local git clone with
+  up-to-date HEAD (adds a `git pull` before every `ls-tree`). Push/pull
+  latency scales linearly with the number of missing block files (O(N)
+  pull operations).
+- **Implementation scope:** `domain/ledger/remote_sync.py` (new, 286
+  lines), `core/sync/transport.py` (+`list_files`), `core/sync/git_transport.py`
+  (+`list_files` +`_has_local_commits`), `main.py` (+`remote_ledger` subcommand
+  with auth/review/confirm). No changes to engine, chain, or staging.

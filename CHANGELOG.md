@@ -2,6 +2,21 @@
 
 All notable changes to the PH Ledger (phpoc) project.
 
+## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
+
+### Added
+- **Remote ledger sync** — new `ph sync remote_ledger` subcommand pushes/pulls
+  ledger blocks to/from the same git repo as staging (append-only, no merge conflicts).
+- **`RemoteLedgerSync` class** (`domain/ledger/remote_sync.py`) — push_blocks,
+  pull_blocks, push_index, pull_index, get_remote_block_count, _verify_chain.
+- **`list_files(prefix)` on transport** — `AbstractStagingTransport` gains the
+  method (default `[]`); `GitStagingTransport` implements via `git ls-tree`.
+- **ADR-015** — documents the append-log remote ledger design (sequence-numbered
+  blocks, same obfuscation, forced auth + confirmation).
+
+### Changed
+- `ph sync --help` now lists both `remote_staging` and `remote_ledger` subcommands.
+
 ## [0.6.1] — 389e268 (P3-Remote_Sync — recover session cache fix)
 
 ### Fixed
