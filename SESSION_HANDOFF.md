@@ -2,11 +2,13 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `937b491` (plus uncommitted files — see below)
+- **Commit:** `07be382`
 - **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
-- **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py` (new), `core/sync/git_transport.py` (+list_files), `main.py` (+remote_ledger subcommand)
-- **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check via deterministic 32-byte HMAC cookie. Skips staging blob pull+decrypt when cookie matches remotely.
+- **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
+- **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
+- **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
+- **Next focus:** 🚀 **Mobile-first** — deploy Worker + R2 bucket, write `HttpStagingTransport`, enable mobile client
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -130,41 +132,78 @@ Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per comm
 - Contact GitHub Support to purge objects from their storage (optional)
 - Both devices now use a new passphrase (set via `ph recover` with original seed)
 
-## Next Phase: Remote Staging Reconciliation
+## Next Phase: Mobile-First Infrastructure
 
-**Status:** 🔮 Next up — define and implement reconciliation strategy.
+**Status:** 🚀 **New direction** — replace git/SSH transport with serverless HTTP (Cloudflare Worker + R2) to enable mobile clients and eliminate ~5s latency.
 
-The Device Cookie fast path handles the "same device, same session" case. When the
-cookie doesn't match (different device or expired session), the system must decide
-how to reconcile local and remote staging. The user has declared that **remote is
-the source of truth** — but the exact algorithm needs definition.
+### Why the change
 
-### Open questions for reconciliation design
+The Device Cookie benchmark proved that **99.9% of latency is SSH handshake**, not
+data transfer or crypto. Even the 32-byte fast path takes ~5s because of
+`git pull --rebase` over SSH. This is unfixable within the git transport — git is
+designed for source control, not real-time CLI checks.
 
-1. **Replace local entirely?** — Remote blob replaces local entirely. All local-only
-   entries are lost. Simple but destructive.
+More importantly, **mobile devices don't have git or SSH** — a fundamental
+architectural barrier. The new transport solves both problems at once.
 
-2. **Remote base + overlay local non-pushed entries?** — Remote entries take
-   precedence. Local-only entries (created offline or between pushes) are preserved
-   on top. Non-destructive, but can produce duplicate entries.
+### Target architecture
 
-3. **Full merge with remote winning conflicts?** — `MergeEngine` merge with
-   remote entries winning on `entry_id` collision. Most sophisticated, but
-   requires careful conflict resolution.
+```
+┌──────────────┐     HTTPS (GET/PUT)    ┌──────────────┐     S3 API      ┌────────┐
+│ Python CLI   │ ──────────────────────►│ Cloudflare   │ ──────────────►│  R2    │
+│ (and mobile) │ ◄─── HTTP (304/200) ───│ Worker       │ ◄──────────────│ Bucket │
+└──────────────┘                        └──────────────┘               └────────┘
+```
 
-4. **Auth on cookie mismatch vs. always?** — Current flow: cookie mismatch →
-   slow path → device check → auth gate. Should the reconciliation step be
-   gated on auth, or should auth be required any time remote != local?
+- **Worker:** ~40 lines of TypeScript — stateless pass-through (GET/PUT/LIST)
+- **R2 bucket:** Single bucket for both staging AND ledger data
+- **HttpStagingTransport:** ~100 lines of Python — implements `AbstractStagingTransport`
+- **ETag-based freshness:** `304 Not Modified` = zero bytes transferred = instant
 
-See `REMOTE_STAGING_ISSUE_TRACKING.md` → Device Cookie Implementation → Open
-questions for the current state.
+### Phase 1: Worker + Python CLI (this sprint)
+
+| Task | Effort |
+|------|--------|
+| Create R2 bucket (`phpoc-data`) | ~10 min |
+| Deploy Worker (GET/PUT/LIST + API key auth) | ~1 hr |
+| Write `HttpStagingTransport` in Python | ~2 hrs |
+| Migrate existing data from git to R2 | ~1 hr |
+| Wire into `main.py`, verify ~100ms latency | ~1 hr |
+
+### Phase 2: Mobile MVP (next)
+
+| Task | Effort |
+|------|--------|
+| Re-implement crypto (PBKDF2, AES-CTR, HMAC) in mobile framework | ~1-3 days |
+| Basic staging read/write via Worker HTTP API | ~1 day |
+| Device Cookie identity | ~1 day |
+| Minimal UI (start/stop/view) | ~1 week |
+
+### Phase 3: Staging reconciliation + Ledger sync (deferred)
+
+Staging reconciliation strategy definition is deferred until after the mobile MVP
+is working — the user expects to identify more issues with a real mobile client
+than by designing in the abstract.
+
+### Key design decisions (ADR-023)
+
+| Decision | Detail |
+|----------|--------|
+| **Transport** | `HttpStagingTransport` replaces `GitStagingTransport` |
+| **Storage** | Cloudflare R2 bucket (`phpoc-data`) — one bucket for both staging + ledger |
+| **Server** | Cloudflare Worker — stateless pass-through, ~40 lines |
+| **Auth** | Pre-shared API key (in Worker) |
+| **Freshness** | ETag / `If-None-Match` / `304 Not Modified` |
+| **Cost** | $0.00/mo at personal scale (R2 free tier) |
+| **Mobile** | Same HTTP API — no new backend needed |
+
+See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full details.
 
 ### Files changed (this session)
 ```
- M domain/cookie/device_cookie.py          (removed unused REMOTE_PATH constant)
- M ARCHITECTURAL_DECISIONS.md              (added ADR-022: Device Cookie)
- M REMOTE_STAGING_ISSUE_TRACKING.md        (added Device Cookie section, resolved AFI #1)
- M SESSION_HANDOFF.md                      (updated next steps to reconciliation)
+ M ARCHITECTURAL_DECISIONS.md              (added ADR-023: Serverless HTTP Transport)
+ M REMOTE_STAGING_ISSUE_TRACKING.md        (added Mobile-First section)
+ M SESSION_HANDOFF.md                      (updated to mobile-first direction)
 ```
 
 ## Recent Commits
@@ -179,12 +218,27 @@ ea87561  fix: rename 'sync remote' to 'sync remote_staging' for clarity
 All pushed to origin.
 
 ## Next Steps
-1. **On debagent04 (after push):** `git fetch origin && git reset --hard origin/P3-Remote_Sync`
-2. ~~Set new passphrase on both devices~~ ✅ **Done**
-3. ~~Implement remote ledger sync~~ ✅ **Done (code)**
-4. ~~Implement Device Cookie (AFI #1 fast path)~~ ✅ **Done**
-5. **Define Remote Staging Reconciliation strategy** ← **NEXT**
-6. Write `tests/test_remote_ledger_sync.py` (~24 tests)
-7. Cross-device testing: `ph sync remote_ledger` on x13 → pull on debagent04
-8. Fix redundant `ls-remote` calls (AFI #2)
-9. When done: remove trace logging, commit cleanup, push
+
+### Phase 1: Worker + R2 (this sprint)
+1. [ ] Create Cloudflare R2 bucket (`phpoc-data`)
+2. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
+3. [ ] Write `core/sync/http_transport.py` — ~100 lines implementing `AbstractStagingTransport`
+4. [ ] Push existing staging data from git to R2 via Worker
+5. [ ] Update `main.py` to use `HttpStagingTransport`
+6. [ ] Verify CLI latency drops from ~5000ms to ~100ms
+
+### Phase 2: Mobile MVP (next)
+1. [ ] Re-implement crypto primitives for mobile (PBKDF2, AES-CTR, HMAC-SHA256)
+2. [ ] Build basic staging CRUD via Worker HTTP API
+3. [ ] Device Cookie for fast-path identity
+4. [ ] Minimal mobile UI (start/stop/view activities)
+
+### Phase 3: Deferred
+1. [ ] Define staging reconciliation strategy (remote source of truth)
+2. [ ] Add ledger sync to mobile
+3. [ ] Remove trace logging, cleanup old git transport references
+
+### On debagent04 (after push)
+```
+git fetch origin && git reset --hard origin/P3-Remote_Sync
+```

@@ -510,6 +510,7 @@ Random filler bytes pad to class ceiling before encryption. User-configurable. B
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
+| **Sync / Transport** | ADR-021 (Sync Optimization), ADR-022 (Device Cookie), ADR-023 (Serverless HTTP Transport) |
 
 ---
 
@@ -823,7 +824,7 @@ Three complementary changes:
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path)
+| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path), ADR-023 (Serverless HTTP Transport)
 
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
@@ -1095,3 +1096,162 @@ write, preserving test compatibility.
 - `security/config_manager.py` — +`cookie.ttl_minutes`, +`cookie.enabled` defaults
 - `main.py` — pass cookie config to `StagingService` constructor
 - `tests/test_remote_config_wiring.py` — update for cookie push calls
+
+---
+
+## ADR-023: Serverless HTTP Transport — Replace git/SSH with Cloudflare Worker + R2
+
+**Date:** 2026-05-24
+**Status:** 🔮 Design direction — next implementation phase
+
+### Context
+
+The current transport is `GitStagingTransport` which shells out to `git` over SSH.
+This produces two critical problems:
+
+1. **~5s latency per command** — SSH handshake + `git pull --rebase` dominates every
+   remote operation, even the 32-byte Device Cookie fast path.
+2. **No mobile client possible** — git/SSH requires a full git installation and SSH
+   keys. Mobile platforms have neither.
+
+The Device Cookie benchmark (2026-05-24) measured:
+
+```
+Cookie check cycle — 5 runs
+  Average total:  5121.0 ms
+  Min total:      4911.3 ms
+  Max total:      5331.0 ms
+
+Phase averages:
+  Local TTL check:      0.119 ms    ← essentially free
+  Remote pull (git):  5120.900 ms   ← THE bottleneck (SSH handshake)
+  Timing-safe cmp:      0.007 ms    ← essentially free
+```
+
+99.9% of the latency is SSH connection setup, not data transfer.
+
+### Decision
+
+Replace `GitStagingTransport` with a **stateless serverless HTTP transport**:
+
+```
+┌──────────────┐     HTTPS      ┌──────────────┐     S3 API      ┌────────┐
+│  Python CLI  │ ──── GET/PUT ──►│  Cloudflare  │ ──── GET/PUT ──►│  R2    │
+│  (or mobile) │ ◄─── HTTP ─────│    Worker    │ ◄─── S3 ────────│ Bucket │
+└──────────────┘                └──────────────┘                 └────────┘
+```
+
+**The Worker** (~40 lines of TypeScript) is a stateless pass-through:
+- `GET /{path}` → read from R2 bucket, return with `ETag` header
+- `PUT /{path}` → write request body to R2 bucket
+- `GET /?prefix={prefix}` → list objects by prefix
+- No business logic, no crypto, no session state
+
+**The Python side** gets a new `HttpStagingTransport` (~100 lines):
+- Implements the same `AbstractStagingTransport` interface
+- Uses `urllib.request` (stdlib — zero deps)
+- Sends `If-None-Match` with cached ETag → gets `304 Not Modified` → returns cached data
+- First request: TLS handshake (~100ms). Subsequent: HTTP keep-alive (~10-50ms)
+
+**The bucket** (Cloudflare R2, or any S3-compatible) stores everything:
+```
+phpoc-data/
+├── staging/blobs/
+│   ├── current.json         ← Encrypted staging blob
+│   └── device_cookie.bin    ← 32-byte HMAC cookie
+└── ledger/
+    ├── blocks/              ← Sequence-numbered day blocks
+    │   ├── 000000.json
+    │   ├── 000001.json
+    │   └── ...
+    └── index.json           ← Lightweight summary
+```
+
+Both Remote Staging and Remote Ledger sync use the **same bucket, same Worker,
+same transport** — no changes to domain logic needed.
+
+### Cost
+
+At personal scale (~1000 commands/month):
+
+| Provider | Storage (2MB) | Requests | Egress | Total |
+|----------|--------------|----------|--------|-------|
+| Cloudflare R2 | $0.00 (free tier) | Free | Free | **$0.00/mo** |
+| AWS S3 | $0.000046 | ~$0.006 | ~$0.00 | **~$0.01/mo** |
+
+Both offer free tiers that cover this usage indefinitely.
+
+### Rationale
+
+1. **Stateless serverless** — The Worker has no state. Every request is
+   self-contained. No sessions, no databases, no background processes. Scales
+   to zero when not in use.
+
+2. **Mobile-ready** — The exact same HTTP API the Python CLI uses is what a
+   React Native, Flutter, or native mobile app calls. Mobile devices don't
+   need git or SSH.
+
+3. **ETag-based freshness** — The HTTP `304 Not Modified` response is the
+   protocol-level equivalent of the Device Cookie fast path. Zero bytes
+   transferred when nothing changed.
+
+4. **Preserves all domain logic** — `AbstractStagingTransport` abstracts the
+   transport. Swapping `GitStagingTransport` for `HttpStagingTransport` is a
+   1-line change in `main.py`. All 1049 tests continue to pass.
+
+5. **Platform independence** — The Worker itself is TypeScript (learned
+   incrementally on a tiny project), but clients can be Python, TypeScript,
+   Swift, Kotlin, or anything that speaks HTTP.
+
+6. **Existing infra** — User already has Cloudflare and AWS accounts. R2 and
+   S3 are 5-minute setups.
+
+### Consequences
+
+- **Positive:**
+  - CLI latency drops from ~5000ms to ~50-100ms
+  - Mobile client becomes possible with zero new backend work
+  - Same infrastructure serves staging AND ledger
+  - No git/SSH dependency — deploy once, forget
+  - Free at personal scale
+
+- **Negative:**
+  - Must deploy and maintain a Worker (trivial — ~40 lines, no dependencies)
+  - Must migrate existing remote data from git to R2 (one-time, scriptable)
+  - Loses accidental backup benefit of git history (mitigated by local ledger)
+  - Requires HTTPS (TLS certificate) — provided free by Cloudflare
+
+- **Open questions:**
+  - Authentication: pre-shared API key in the Worker, or per-request HMAC
+    signature (same crypto already in the codebase)?
+  - Staging reconciliation strategy must be defined before mobile app writes
+    can be reliable (deferred — see Phase 1 below)
+
+### Migration plan
+
+**Phase 1: Worker + Python CLI (this week)**
+1. Create R2 bucket (`phpoc-data`)
+2. Deploy Worker (GET/PUT/LIST with API key auth)
+3. Write `HttpStagingTransport` in Python
+4. Push all existing staging + ledger data from git to R2 via the Worker
+5. Update `main.py` to use `HttpStagingTransport`
+6. Verify CLI works end-to-end with ~100ms latency
+
+**Phase 2: Mobile MVP (next)**
+1. Re-implement crypto primitives (PBKDF2, AES-CTR, HMAC-SHA256) in mobile
+   framework of choice
+2. Build basic staging read/write via Worker HTTP API
+3. Device Cookie for identity
+4. Minimal UI (start/stop/view activities)
+
+**Phase 3: Staging reconciliation + Ledger sync**
+1. Define reconciliation strategy (remote source of truth)
+2. Add ledger block push/pull to mobile
+
+### Implementation scope
+- `core/sync/http_transport.py` — new, ~100 lines
+- `core/sync/transport.py` — unchanged (interface already exists)
+- `main.py` — 1-line change (`HttpStagingTransport` instead of `GitStagingTransport`)
+- `cli/interface.py` — remove `git pull --rebase` fallbacks (no longer needed)
+- `domain/` — unchanged (all domain logic is transport-agnostic)
+- `tests/` — add `test_http_transport.py` (~20 tests against a mock HTTP server)

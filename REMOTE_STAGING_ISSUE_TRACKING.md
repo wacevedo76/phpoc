@@ -1042,3 +1042,71 @@ ledger/
 
 - `tests/test_remote_ledger_sync.py` (~24 tests against local bare repos)
 - Cross-device testing (x13 → debagent04 round-trip)
+
+---
+
+## Mobile-First Infrastructure: Replace git/SSH with Serverless HTTP Transport (2026-05-24)
+
+**Status:** 🔮 Design direction — Phase 1 starts next sprint
+
+### Problem
+
+1. **~5s latency per command** — SSH handshake dominates. Device Cookie benchmark
+   showed 5121ms average for a 32-byte check; 99.9% of that is `git pull --rebase`.
+2. **No mobile client possible** — Mobile devices don't have git or SSH. Any
+   mobile app would need a separate HTTP backend anyway.
+3. **The CLI is a bottleneck itself** — user wants to use phpoc more than the CLI
+   allows. The CLI served as the most convenient build tool, but mobile is the
+   target platform.
+
+### Solution: Cloudflare Worker + R2 bucket
+
+A stateless serverless function (~40 lines TypeScript) that acts as an HTTP
+pass-through between clients and an R2 bucket. Both the Python CLI and a future
+mobile app use the same API.
+
+```
+┌──────────────┐     HTTPS (GET/PUT)    ┌──────────────┐     S3 API      ┌────────┐
+│ Python CLI   │ ──────────────────────►│ Cloudflare   │ ──────────────►│  R2    │
+│ (or mobile)  │ ◄─── HTTP (304/200) ───│ Worker       │ ◄──────────────│ Bucket │
+└──────────────┘                        └──────────────┘               └────────┘
+```
+
+### What changes
+
+| Layer | Change |
+|-------|--------|
+| `core/sync/http_transport.py` | **NEW** — `HttpStagingTransport` (~100 lines, stdlib only) |
+| `core/sync/git_transport.py` | Replaced — kept for reference, not used |
+| `main.py` | Swap `GitStagingTransport` → `HttpStagingTransport` (1 line) |
+| `domain/` | **Unchanged** — all domain logic is transport-agnostic |
+| tests | Add `test_http_transport.py` (~20 tests) |
+| Cloudflare | New R2 bucket + Worker deployment |
+
+### Why now
+
+The git-based transport was a pragmatic choice for the prototyping phase — easy
+to set up, zero infra cost, piggybacked on existing GitHub access. But it's now
+the primary bottleneck for both latency and platform reach. The `AbstractStagingTransport`
+interface was designed specifically to make this swap possible without touching
+domain logic.
+
+### Cost
+
+| Provider | Free tier | Monthly cost at personal scale |
+|----------|-----------|-------------------------------|
+| Cloudflare R2 | 10GB storage, 1M req/day | **$0.00** |
+| AWS S3 | 5GB, 20K GET, 2K PUT | **~$0.01** |
+
+### ADR
+
+See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full design rationale.
+
+### Open questions
+
+1. **Worker auth mechanism** — Pre-shared API key (simple) vs. HMAC request
+   signing (reuses existing crypto, more secure).
+2. **Existing data migration** — Script to pull staging blob + device cookie +
+   ledger blocks from git and push to R2 via Worker.
+3. **Mobile framework choice** — React Native vs Flutter vs native. Crypto
+   library availability will be a deciding factor.
