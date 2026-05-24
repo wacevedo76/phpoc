@@ -823,7 +823,7 @@ Three complementary changes:
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull)
+| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path)
 
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
@@ -935,3 +935,163 @@ for lightweight remote queries without downloading blocks.
   lines), `core/sync/transport.py` (+`list_files`), `core/sync/git_transport.py`
   (+`list_files` +`_has_local_commits`), `main.py` (+`remote_ledger` subcommand
   with auth/review/confirm). No changes to engine, chain, or staging.
+
+---
+
+## ADR-022: Device Cookie — Deterministic HMAC Fast-Path Identity Check
+
+**Date:** 2026-05-24
+**Status:** ✅ Implemented
+
+### Context
+
+`check_and_sync()` needs to read the `device_id` from the remote staging blob to
+decide whether auth is required. But the staging blob is encrypted with the master
+key — you need the master key (which requires auth) to decrypt it. This creates a
+**circular dependency**:
+
+```
+Want to know if auth is needed?
+  → Need device_id from remote blob
+  → Need master key to decrypt blob
+  → Need auth to get master key
+  → But we were trying to decide if auth is needed!
+```
+
+When decryption failed (e.g. stale key after `ph recover`), the old code silently
+returned `None` from `pull()`, which `check_and_sync()` interpreted as "no remote blob"
+→ proceeded without merging → overwrote the remote. This was the root cause of the
+Session 2 data loss incident.
+
+A secondary concern: the full staging blob is ~64KB+ and requires AES-CTR decryption
+with integrity verification. Checking it on every command to determine "same device?"
+is wasteful — we need a tiny, fast, keyed identity token.
+
+### Decision
+
+Introduce a **Device Cookie**: a deterministic 32-byte HMAC token that serves as a
+fast-path identity check, eliminating the circular dependency while requiring only
+32 bytes of remote data transfer.
+
+```python
+cookie_key = HMAC-SHA256(master_key, b"phpoc:cookie-key")
+cookie = HMAC-SHA256(cookie_key, device_id + ":" + epoch_ms)
+```
+
+**Key properties:**
+
+| Property | How it's achieved |
+|---|---|
+| **Deterministic** | HMAC-SHA256 is pure: same (mk, device_id, epoch_ms) → identical 32 bytes |
+| **No decryption needed** | Cookie comparison is byte-for-byte (`hmac.compare_digest`) — no AES, no IV, no nonce |
+| **Cannot be forged** | Needs master key to generate matching HMAC |
+| **No profiling on remote** | Remote stores only 32 HMAC bytes — no device_id, no epoch |
+| **TTL-enforced locally** | Plaintext `created_at` epoch in local-only sidecar (`device_cookie.meta`); never pushed |
+| **Tiny network cost** | 32 bytes vs ~64KB+ staging blob (~2000× smaller) |
+
+### Flow
+
+```
+check_and_sync():
+  1. Local cookie valid? (TTL check against plaintext epoch)
+     ├── No cookie / expired → destroy locally, fall through to slow path ↓
+     └── Valid → pull remote cookie (32 bytes, no decrypt)
+         ├── Cookies match? → READY (same device, same session → in sync)
+         └── No match / no remote cookie → fall through to slow path ↓
+
+  2. Slow path: pull + decrypt staging blob, device check, auth, merge
+
+push_to_remote():
+  1. Destroy stale local cookie
+  2. DeviceCookie.create(mk, device_id, data_dir) → deterministic 32 bytes
+  3. push_cookie(cookie_bytes) → remote (FIRST, before blob)
+  4. push(entries, device_id, master_key) → staging blob
+```
+
+### Local file layout
+
+```
+~/.local/share/phpoc/
+  ├── device_cookie.bin        ← Encrypted (HMAC) 32 bytes → pushed to remote
+  └── device_cookie.meta       ← Plaintext: {"created_at": epoch_ms} → LOCAL ONLY
+```
+
+### Implementation
+
+```
+domain/
+  cookie/
+    __init__.py
+    device_cookie.py           ← DeviceCookie class (pure utility, transport-agnostic)
+  staging/
+    remote_sync.py             ← pull_cookie(), push_cookie() via abstract transport
+    service.py                 ← Fast-path in check_and_sync(), cookie in push_to_remote()
+```
+
+The `DeviceCookie` class is a pure utility with no transport dependency. It:
+- Derives a cookie-specific sub-key from the master key (HMAC-SHA256 with `phpoc:cookie-key` prefix)
+- Computes the deterministic cookie value via `HMAC(cookie_key, device_id + ":" + epoch_ms)`
+- Writes two local files: encrypted cookie bytes + plaintext metadata
+- Reads and validates TTL from the plaintext metadata
+- Compares cookies via `hmac.compare_digest()` (timing-safe)
+- Cleans up expired cookies automatically
+
+The remote transport layer (`RemoteStagingSync`) handles pulling/pushing the cookie
+bytes to/from remote via the abstract `AbstractStagingTransport` interface — no
+dependency on git, GitHub, or any specific transport. The remote path is a simple
+path string (`staging/blobs/device_cookie.bin`) — any transport supporting
+hierarchical paths can use it.
+
+### Cookie push ordering
+
+The cookie is pushed **before** the staging blob. This matters for transport
+implementations that store the last pushed data in a single slot (e.g. mock
+transports in tests). Pushing cookie first ensures the staging blob is the final
+write, preserving test compatibility.
+
+### Rationale
+
+1. **HMAC over deterministic encryption (AES-SIV):** HMAC is simpler, works with
+   any key size, and we never need to decrypt the cookie — only compare. The 32-byte
+   output is indistinguishable from random bytes to an attacker.
+
+2. **TTL kill switch:** The plaintext epoch is only stored locally. If
+   `device_cookie.meta` is deleted or corrupted, the cookie is treated as expired.
+   There is no way for a stale session to persist beyond the TTL.
+
+3. **No pull if local cookie missing/expired:** The TTL check is purely local — no
+   network round-trip needed. Expired cookies are simply ignored, falling through
+   to the slow path.
+
+4. **Separated from staging reconciliation:** The cookie only answers "same device,
+   same session?". If the cookie doesn't match, the system falls through to the
+   full staging reconciliation flow (ADR-015a). The two concerns are independent.
+
+### Consequences
+
+- **Positive:**
+  - Eliminates circular dependency — no more silent blob overwrites on key mismatch
+  - ~2000× reduction in data transferred for identity check (32 bytes vs 64KB+)
+  - No new crypto primitives — reuses existing HMAC-SHA256
+  - Fully transport-agnostic — works with git, S3, HTTP, or any `pull/push` transport
+  - Zero-regression test suite (1049 tests run, 2 pre-existing failures)
+
+- **Negative:**
+  - Adds two small files to the local data directory (negligible)
+  - Cookie must be pushed before every staging push — one extra remote write per
+    staging write (32 bytes, negligible cost)
+  - The `cookie.ttl_minutes` config adds one more setting to maintain
+
+- **Open questions:**
+  - Staging reconciliation when cookie doesn't match — currently falls through to
+    existing device-check + merge flow, but the reconciliation strategy needs formal
+    definition (replace local? remote wins? merge with conflicts?)
+
+### Implementation scope
+- `domain/cookie/device_cookie.py` — new, 140 lines
+- `domain/cookie/__init__.py` — new, package init
+- `domain/staging/remote_sync.py` — +`pull_cookie()` + `push_cookie()` + `REMOTE_COOKIE_PATH`
+- `domain/staging/service.py` — cookie fast-path + cookie creation on push
+- `security/config_manager.py` — +`cookie.ttl_minutes`, +`cookie.enabled` defaults
+- `main.py` — pass cookie config to `StagingService` constructor
+- `tests/test_remote_config_wiring.py` — update for cookie push calls

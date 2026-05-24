@@ -278,11 +278,15 @@ class TestStagingServiceRemoteRoundtrip(unittest.TestCase):
             device_id="dev-1", device_proof="p", device_label="T"
         )
 
+        svc_data_dir = str(Path(self._tmpdir) / "data1")
+        svc2_data_dir = str(Path(self._tmpdir) / "data2")
+
         svc = StagingService(
             make_mock_crypto(b"\x00" * 32),
             make_mock_staging_store(),
             transport=transport,
             device_id_provider=device_provider,
+            data_dir=svc_data_dir,
         )
 
         svc.capture("Task1", 1000, stop_epoch=2000)
@@ -291,7 +295,7 @@ class TestStagingServiceRemoteRoundtrip(unittest.TestCase):
         svc.capture("Task2", 3000, stop_epoch=4000)
         svc.push_to_remote(b"dummy-no-obfuscation")
 
-        # Read from another service
+        # Read from another service (separate data_dir = no cookie cross-contamination)
         transport2 = GitStagingTransport(
             self._bare_path,
             str(Path(self._tmpdir) / "clone3"),
@@ -301,6 +305,7 @@ class TestStagingServiceRemoteRoundtrip(unittest.TestCase):
             make_mock_staging_store(),
             transport=transport2,
             device_id_provider=device_provider,
+            data_dir=svc2_data_dir,
         )
         svc2.check_and_sync()
         entries = svc2.get_entries()
@@ -439,5 +444,5 @@ class TestMainWiringRemoteUrl(unittest.TestCase):
         self.assertEqual(svc.check_and_sync(), SyncCheckResult.READY)
         # push_to_remote uses the transport
         svc.push_to_remote(b"\x00" * 32)
-        # Should call push on the mocked transport
-        transport.push.assert_called_once()
+        # Should call push on the mocked transport (cookie + blob = 2 calls)
+        self.assertEqual(transport.push.call_count, 2)

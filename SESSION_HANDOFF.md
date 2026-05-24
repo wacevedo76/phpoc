@@ -2,10 +2,11 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `937b491` (plus 4 uncommitted files — see below)
+- **Commit:** `937b491` (plus uncommitted files — see below)
 - **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py` (new), `core/sync/git_transport.py` (+list_files), `main.py` (+remote_ledger subcommand)
+- **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check via deterministic 32-byte HMAC cookie. Skips staging blob pull+decrypt when cookie matches remotely.
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -29,9 +30,10 @@
 | File | Purpose |
 |------|---------|
 | `core/sync/git_transport.py` | `GitStagingTransport` — git CLI push/pull with clone, retry, detached HEAD recovery |
-| `domain/ledger/remote_sync.py` | **NEW** — `RemoteLedgerSync`: push/pull ledger blocks to/from remote git repo |
-| `domain/staging/remote_sync.py` | Blob obfuscation (AES-CTR + tiered padding), device check, pull/push |
-| `domain/staging/service.py` | Single-pull `check_and_sync()`, freshness optimization via `_needs_full_pull()` + `_last_push_at` |
+| `domain/ledger/remote_sync.py` | `RemoteLedgerSync`: push/pull ledger blocks to/from remote git repo |
+| `domain/staging/remote_sync.py` | Blob obfuscation (AES-CTR + tiered padding), device check, pull/push, **pull_cookie/push_cookie** |
+| `domain/staging/service.py` | Single-pull `check_and_sync()`, freshness optimization, **Device Cookie fast path** |
+| `domain/cookie/device_cookie.py` | **NEW** — Deterministic HMAC cookie for cross-device identity. `create()`, `is_valid_locally()`, `matches()`, `destroy_locally()` |
 | `domain/staging/local_cache.py` | Stable `entry_id` UUIDs on every entry |
 | `domain/staging/merge_engine.py` | Dedup by `entry_id` (fallback `(title, epoch)` for legacy entries) |
 | `cli/interface.py` | `view_active()` with remote pull+merge, `_push_if_remote()` after every write |
@@ -41,10 +43,59 @@
 | `REMOTE_STAGING_ISSUE_TRACKING.md` | Full issue tracking + areas for improvement |
 | `staging_log/` | Trace output directory (⚠️ in `.gitignore` — contains master key bytes) |
 
-## Known Issues & Areas for Improvement (see REMOTE_STAGING_ISSUE_TRACKING.md)
+## Device Cookie — Fast-Path Cross-Device Check (AFI #1)
 
-### Auth Criteria (AFI #1 — x13)
-Re-auth must fire only when: **device_id differs** AND **cookie (> 30 min) expired**. Currently `view_active()` bypasses `check_and_sync()` entirely — no auth on reads. Need to decide if reads should also enforce auth.
+**Status:** ✅ **Implemented** (2026-05-24)
+
+### What it solves
+The Device Cookie eliminates the **circular dependency** where you needed to decrypt the
+full staging blob (~64KB+) just to find out *who* encrypted it. The blob's `device_id`
+field is inside the encrypted payload — you need the master key to read it, but you
+need to know if the device matches to decide whether auth is needed.
+
+### Design
+- **Cookie** = `HMAC-SHA256(cookie_key, device_id + ":" + epoch_ms)` → **32 bytes**
+- **Deterministic**: same inputs → same byte-for-byte output every time
+- **Encrypted form**: Only the 32 HMAC bytes are pushed to remote — no device_id,
+  no epoch, no profiling attack vector
+- **TTL**: Plaintext `{"created_at": epoch_ms}` stored locally only. Never pushed.
+  TTL defaults to 30 minutes, configurable via `cookie.ttl_minutes`.
+
+### Flow
+
+```
+Before every operation (check_and_sync):
+  1. Local cookie valid? (TTL not expired)
+     No → skip to slow path
+     Yes → pull REMOTE cookie (32 bytes, fast, no decrypt)
+         └── Remote cookie matches?
+             YES → READY (same device, same session → staging is in sync)
+             No  → fall through to slow path
+
+  2. Slow path: pull + decrypt full staging blob, device check, merge
+
+After every write (push_to_remote):
+  → Create fresh cookie locally
+  → Push_cookie() to remote (before pushing blob)
+  → Push blob
+```
+
+### Files
+| File | Change |
+|------|--------|
+| `domain/cookie/device_cookie.py` | **NEW** — `DeviceCookie` class with create, is_valid_locally, matches, destroy_locally |
+| `domain/staging/remote_sync.py` | Added `pull_cookie()` + `push_cookie()` methods |
+| `domain/staging/service.py` | Fast-path in `check_and_sync()`, cookie creation in `push_to_remote()` |
+| `security/config_manager.py` | Added `cookie.ttl_minutes: 30` + `cookie.enabled: true` defaults |
+| `main.py` | Both StagingService instantiations pass `cookie_ttl_minutes` + `data_dir` |
+
+### Security properties
+- Remote only stores 32 bytes of HMAC output — no device_id, no epoch
+- Without master key, cookie cannot be forged or traced to a device
+- TTL is enforced locally — no network round-trip needed to check expiry
+- Cookie comparison is timing-safe (`hmac.compare_digest`)
+
+## Known Issues & Areas for Improvement (see REMOTE_STAGING_ISSUE_TRACKING.md)
 
 ### Latency (AFI #2 — x13)
 Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per command** — once in pull, once in push. Each takes ~2.5s to GitHub. Total command time ~9s. **~5s of that is redundant ls-remote calls.** Fix: cache `_has_remote_refs()` result per invocation or drop it for established repos.
@@ -79,25 +130,41 @@ Critical finding: `_has_remote_refs()` (calls `ls-remote`) runs **twice per comm
 - Contact GitHub Support to purge objects from their storage (optional)
 - Both devices now use a new passphrase (set via `ph recover` with original seed)
 
-## Next Phase: Remote Ledger Sync
+## Next Phase: Remote Staging Reconciliation
 
-**Status:** ✅ **Implemented** — code complete, pending test file and cross-device review.
+**Status:** 🔮 Next up — define and implement reconciliation strategy.
 
-See `REMOTE_STAGING_ISSUE_TRACKING.md` → Next Phase: Remote Ledger Sync for full details.
+The Device Cookie fast path handles the "same device, same session" case. When the
+cookie doesn't match (different device or expired session), the system must decide
+how to reconcile local and remote staging. The user has declared that **remote is
+the source of truth** — but the exact algorithm needs definition.
 
-### What was built
-- `domain/ledger/remote_sync.py` — `RemoteLedgerSync` class (286 lines)
-- `core/sync/transport.py` — `list_files(prefix)` added to transport interface
-- `core/sync/git_transport.py` — `list_files()` via `git ls-tree`, `_has_local_commits()`
-- `main.py` — `ph sync remote_ledger` with forced auth, sync summary, confirm, execute
-- `ARCHITECTURAL_DECISIONS.md` — ADR-015 added
+### Open questions for reconciliation design
 
-### Files changed (not yet committed)
+1. **Replace local entirely?** — Remote blob replaces local entirely. All local-only
+   entries are lost. Simple but destructive.
+
+2. **Remote base + overlay local non-pushed entries?** — Remote entries take
+   precedence. Local-only entries (created offline or between pushes) are preserved
+   on top. Non-destructive, but can produce duplicate entries.
+
+3. **Full merge with remote winning conflicts?** — `MergeEngine` merge with
+   remote entries winning on `entry_id` collision. Most sophisticated, but
+   requires careful conflict resolution.
+
+4. **Auth on cookie mismatch vs. always?** — Current flow: cookie mismatch →
+   slow path → device check → auth gate. Should the reconciliation step be
+   gated on auth, or should auth be required any time remote != local?
+
+See `REMOTE_STAGING_ISSUE_TRACKING.md` → Device Cookie Implementation → Open
+questions for the current state.
+
+### Files changed (this session)
 ```
- M core/sync/git_transport.py
- M core/sync/transport.py
- M main.py
-?? domain/ledger/remote_sync.py
+ M domain/cookie/device_cookie.py          (removed unused REMOTE_PATH constant)
+ M ARCHITECTURAL_DECISIONS.md              (added ADR-022: Device Cookie)
+ M REMOTE_STAGING_ISSUE_TRACKING.md        (added Device Cookie section, resolved AFI #1)
+ M SESSION_HANDOFF.md                      (updated next steps to reconciliation)
 ```
 
 ## Recent Commits
@@ -115,7 +182,9 @@ All pushed to origin.
 1. **On debagent04 (after push):** `git fetch origin && git reset --hard origin/P3-Remote_Sync`
 2. ~~Set new passphrase on both devices~~ ✅ **Done**
 3. ~~Implement remote ledger sync~~ ✅ **Done (code)**
-4. Write `tests/test_remote_ledger_sync.py` (~24 tests)
-5. Cross-device testing: `ph sync remote_ledger` on x13 → pull on debagent04
-6. Fix redundant `ls-remote` calls (AFI #2)
-7. When done: remove trace logging, commit cleanup, push
+4. ~~Implement Device Cookie (AFI #1 fast path)~~ ✅ **Done**
+5. **Define Remote Staging Reconciliation strategy** ← **NEXT**
+6. Write `tests/test_remote_ledger_sync.py` (~24 tests)
+7. Cross-device testing: `ph sync remote_ledger` on x13 → pull on debagent04
+8. Fix redundant `ls-remote` calls (AFI #2)
+9. When done: remove trace logging, commit cleanup, push

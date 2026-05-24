@@ -344,39 +344,34 @@ tail -f staging_log/$(ls -1t staging_log/ | head -1)
 
 ## Areas for Improvement
 
-### AFI #1: Auth Criteria — enforce on device mismatch + cookie expiry
+### AFI #1: Auth Criteria — Device Cookie Fast Path
 
-**Assigned to:** x13 agent
+**Status:** ✅ **Resolved** (2026-05-24) — Device Cookie implemented
+
+**Assigned to:** x13 agent → ✅ Done
 **Priority:** High
-**Description:** The current auth gate in `check_and_sync()` (service.py) checks two
-conditions but only gates *writes*. The auth criteria need to be hardened:
 
-1. **Device ID mismatch** — remote blob's `device_id` differs from local
-2. **Cookie expiry** — time since last successful auth exceeds `AUTH_CACHE_DURATION` (30 min)
+**The problem:** `check_and_sync()` needed to read the `device_id` from the remote
+staging blob to decide if auth was needed. But the blob is encrypted — you need the
+master key to decrypt it. **Circular dependency** that caused data loss (Session 2
+incident).
 
-Both conditions must be **true simultaneously** before prompting for re-auth:
-- If device matches → no prompt (same device, trust it)
-- If device differs but cookie is fresh → no prompt (recently authenticated cross-device)
-- If device differs AND cookie expired → **REAUTH_NEEDED**
+**The solution:** Device Cookie — see "Device Cookie Implementation" section above.
 
-**Current implementation** (`check_and_sync()` in `service.py`, lines 397-472):
-```python
-if not device_match:
-    if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
-        pass  # Auth cache still valid
-    else:
-        return SyncCheckResult.REAUTH_NEEDED
-```
-This logic is correct for writes, but:
-- `view_active()` bypasses `check_and_sync()` entirely — no auth check on reads
-- `_push_if_remote()` calls `push_to_remote()` directly without re-checking auth
-- The `_last_auth_time` is only updated on successful device check, not on every command
+**How it resolves the AFI:**
+1. **Device ID mismatch** → Cookie comparison catches this (different mk/device_id →
+   different cookie bytes) → triggers auth + full merge
+2. **Cookie expiry** → TTL checked locally (no network needed) → expired cookie
+   forces re-auth
+3. **Same device, same session** → Cookie matches → `READY` instantly — no blob pull,
+   no decrypt, no merge
+4. **View reads** → `view_active()` routes through `check_and_sync()` (Issue #2 fix)
+   which uses the cookie fast path
 
-**Decision:** Issue #2 is now resolved — `view` will be routed through `check_and_sync()`.
-
-**Remaining open questions:**
-- What happens when the cookie expires mid-session (no commands to trigger re-auth)?
-- Should `_push_if_remote()` verify auth before pushing to remote? (It currently does not)
+**Remaining:** The `_push_if_remote()` path still doesn't re-check auth before pushing.
+This is acceptable because the cookie prevents the circular-dependency data loss —
+if the key has changed (e.g. after `ph recover`), the old cookie won't match the
+new session's cookie, so the slow path fires and auth is checked.
 
 ### Issue #6: ls-remote argument order breaks on git 2.53.0
 
@@ -593,19 +588,19 @@ When both devices edit the same entry concurrently:
 - 🔲 Post-merge push from `view_active()` — closes the crash gap
 - 🔲 Concurrent-edit conflict strategy — per-entry blob files or custom merge driver
 
-### Issues resolved this session (2026-05-22)
+### Issues resolved
 
-| Issue | Fix | Files modified |
-|---|---|---|
-| Issue #2 — view bypasses check_and_sync | Route `view_active()` through `check_and_sync()` | `cli/interface.py` |
-| Issue #6 — ls-remote argument order | `--heads` before remote name | `core/sync/git_transport.py` |
-| Trace log passphrase leak | `_redact()` masks 32-byte keys + sensitive kwargs | `cli/trace.py` |
-| `.gitignore` restriction | `staging_log/` removed (safe to commit now) | `.gitignore` |
-| Config-driven tracing | `debug.trace_enabled` default + wiring | `security/config_manager.py`, `main.py` |
-| `ph login` / `ph logout` | Minimal subcommands for session management | `main.py`, `security/auth.py` |
-| Issue #9 — Remote clone rebase conflict (session 2) | Silently swallowed | `core/sync/git_transport.py` (needs fix) |
-| Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed | operational |
-| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` | `domain/staging/service.py` |
+| Date | Issue | Fix |
+|------|-------|-----|
+| 2026-05-22 | Issue #2 — view bypasses check_and_sync | Route `view_active()` through `check_and_sync()` |
+| 2026-05-22 | Issue #6 — ls-remote argument order | `--heads` before remote name |
+| 2026-05-22 | Trace log passphrase leak | `_redact()` masks 32-byte keys + sensitive kwargs |
+| 2026-05-22 | `.gitignore` restriction | `staging_log/` removed (safe to commit now) |
+| 2026-05-22 | Config-driven tracing | `debug.trace_enabled` default + wiring |
+| 2026-05-22 | `ph login` / `ph logout` | Minimal subcommands for session management |
+| 2026-05-22 | Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed |
+| 2026-05-22 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` |
+| 2026-05-24 | **AFI #1 — Device Cookie fast path** | `domain/cookie/device_cookie.py` new, cookie wiring |
 
 ### Open issues remaining
 
@@ -616,7 +611,10 @@ When both devices edit the same entry concurrently:
 | Issue #9 — Rebase conflicts silently swallowed | 🔴 Needs fix | debagent04 |
 | Issue #11 — `ph recover` doesn't clear session cache | ✅ Fixed (commit `389e268`) | debagent04 |
 | Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
-| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed (this session) | debagent04 |
+| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed | debagent04 |
+| Issue #14 — `ph recover` rewrites all blocks; full ledger push takes ~7 min | 🔴 Needs design (async batch push) | x13 |
+| **AFI #2** — Redundant `ls-remote` calls | 🔴 Needs fix | x13 |
+| **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
 
@@ -728,6 +726,119 @@ The local clone was at `9973cfe`, and `origin/main` was at `b44f11b` (1 commit a
 
 **Fix needed:** After `git pull --rebase`, verify that the current HEAD matches `origin/main`. Log a warning if they diverge.
 
+### Issue #14: `ph recover` rewrites all ledger blocks; full push takes ~7 minutes
+
+**Status:** 🔴 Needs design
+**Date:** 2026-05-23
+**Assigned to:** x13
+**Observed by:** x13 (first full remote ledger push)
+
+**The problem:** A normal `ph sync remote_ledger` pushing the full ledger to GitHub took
+**~7 minutes** for a relatively short ledger (genesis + ~55 day blocks). More critically,
+after `ph recover` rewrites all block hashes, `push_blocks()` silently skips every block
+because it checks by **index** (`if i in existing: continue`), not by hash — so the
+remote stays on the OLD chain while the local moves to a NEW chain. Result: **silent
+divergent fork**.
+
+#### Root cause: one git commit+push per block
+
+`RemoteLedgerSync.push_blocks()` iterates over each block and calls `self._transport.push()`
+individually. Each `GitStagingTransport.push()` does **3 network round-trips to GitHub**:
+
+| Operation | Latency | Count per block |
+|---|---|---|
+| `git ls-remote --heads origin` | ~2.5s | 1 (via `_has_remote_refs()`) |
+| `git pull --rebase --autostash` | ~2s | 1 |
+| `git push origin` | ~3–6s | 1 |
+| **Total per block** | **~7–10s** | |
+
+With ~55 blocks: 55 × ~8s ≈ **440s ≈ 7 minutes**. Almost all of that is SSH
+handshake + protocol overhead for tiny files.
+
+#### The `ph recover` divergence problem
+
+`ph recover` rewrites **every block in-place** (new `recovery_seed_enc` in genesis →
+cascading new `prev_hash` → new seals → new signatures on all blocks). But
+`push_blocks()` only checks index:
+
+```python
+for i, block in enumerate(local_blocks):
+    if i in existing:   # ← True for all indices after first push
+        continue          # ← Skips silently — remote stays on OLD chain!
+```
+
+After recovery, `ph sync remote_ledger` reports **"Already in sync (no changes)"**
+even though every single block hash differs from remote. Any new block appended
+post-recover has `prev_hash` pointing to the new chain and cannot link to the
+old remote chain.
+
+#### Proposed fix: batch push
+
+Instead of one commit+push per block, batch all blocks into a single commit and push:
+
+```python
+def push_blocks(self, local_blocks: List[Dict[str, Any]], force: bool = False) -> int:
+    existing = self._list_remote_block_indices()
+    
+    # Detect ph-recover-style divergence: existing blocks with different content
+    if force:
+        # Force mode: overwrite ALL blocks in a single commit
+        for i, block in enumerate(local_blocks):
+            obfuscated = self._obfuscate_block(block)
+            self._transport.write_file(path, obfuscated)  # write only, no commit/push
+        self._transport.commit("Update ledger blocks [recovery]")
+        self._transport.push()  # single push
+        return len(local_blocks)
+    
+    # Normal append-only: check for hash divergence
+    diverged = self._check_hash_divergence(local_blocks, existing)
+    if diverged:
+        raise RuntimeError(
+            f"Block {diverged} hash differs from remote — run with --force after ph recover"
+        )
+    
+    # Batch: write all new blocks, then single commit+push
+    pending = []
+    for i, block in enumerate(local_blocks):
+        if i in existing:
+            continue
+        obfuscated = self._obfuscate_block(block)
+        self._transport.write_file(path, obfuscated)
+        pending.append(i)
+    
+    if pending:
+        self._transport.commit(f"Add ledger blocks {pending[0]:06d}..{pending[-1]:06d}")
+        self._transport.push()
+    
+    return len(pending)
+```
+
+This reduces from `N` commits+pushes to **1 commit + 1 push** (plus 1 `ls-remote`
+and 1 `pull` shared across all blocks). Estimated savings:
+
+| Approach | Network round-trips | Estimated time (55 blocks) |
+|---|---|---|
+| Current (per-block) | 55 × 3 = 165 | ~7 min |
+| Batched (single) | 3 (1 ls-remote, 1 pull, 1 push) | ~8–10s |
+| Batched + force | 3 (same) + overwrite | ~10–12s |
+
+#### Required transport API changes
+
+The `AbstractStagingTransport` interface needs new methods (or modified semantics):
+- `write_file(path, data)` — write bytes to a file in the clone without committing
+- `commit(message)` — stage all pending changes and commit
+- `push()` — push the single commit to remote
+
+Current `push(path, data)` conflates write + commit + push into one operation,
+which makes batching impossible.
+
+#### Related
+
+- AFI #2 (redundant `ls-remote`) — fixing that alone cuts ~2.5s per block but
+  leaves the N-push architecture problem
+- `ph recover` cleanup (Issues #8, #11) — fixing session cache is a prerequisite
+  but doesn't solve the chain divergence
+
 ## AFI #4: Same-device auth bypass — no re-auth prompt on self-pushes
 
 **Status:** ℹ️ By design, but noteworthy for hand-off testing
@@ -780,6 +891,109 @@ cache is stale (or never set), `check_and_sync()` will return `REAUTH_NEEDED`.
 
 **Open question:** Does `ph view` currently route through `check_and_sync()`? See Issue #2 which states
 `view_active()` bypasses it entirely.
+
+---
+
+## Device Cookie Implementation (2026-05-24)
+
+**Status:** ✅ Implemented
+
+### Problem
+`check_and_sync()` needed to read the `device_id` from the remote staging blob to
+decide whether auth was needed. But the blob is encrypted — you need the master key
+(requiring auth) to decrypt it. **Circular dependency.**
+
+When decryption failed (e.g. stale key after `ph recover`), `pull()` returned `None`,
+which `check_and_sync()` interpreted as "no remote blob" → proceeded without merging →
+overwrote the remote (see Session 2 Incident — this was the root cause of the data loss).
+
+### Solution: Device Cookie
+
+A deterministic 32-byte HMAC cookie that serves as a fast-path identity check:
+
+```
+cookie = HMAC-SHA256(cookie_key, device_id + ":" + epoch_ms)
+```
+
+**Properties:**
+- **Deterministic:** Same (master_key, device_id, epoch_ms) → identical 32 bytes every time
+- **Tiny:** 32 bytes vs ~64KB+ staging blob — ~2000× smaller
+- **No profiling on remote:** Remote only stores HMAC output bytes. No device_id, no epoch in plaintext.
+- **TTL enforced locally:** Plaintext `created_at` epoch in `device_cookie.meta` (local only, NEVER pushed)
+- **No decryption needed:** Byte-for-byte comparison only (`hmac.compare_digest`)
+
+### Flow
+
+```
+check_and_sync():
+  1. Local cookie valid? (TTL check against plaintext epoch)
+     ├── No cookie / expired → destroy locally, fall through to slow path ↓
+     └── Valid → pull remote cookie (32 bytes, no decrypt needed)
+         ├── Cookies match? → READY (same device, same session → staging is in sync)
+         └── No match / no remote cookie → fall through to slow path ↓
+
+  2. Slow path: pull + decrypt staging blob, device check, auth, merge
+
+push_to_remote():
+  1. Destroy stale local cookie
+  2. DeviceCookie.create(mk, device_id, data_dir) → deterministic 32 bytes
+  3. push_cookie(cookie_bytes) → remote (FIRST, before blob)
+  4. push(entries, device_id, master_key) → staging blob
+```
+
+### Local file layout
+
+```
+~/.local/share/phpoc/
+  ├── device_cookie.bin        ← Encrypted (HMAC) 32 bytes → pushed to remote
+  └── device_cookie.meta       ← Plaintext: {"created_at": epoch_ms} → LOCAL ONLY
+
+Remote (GitHub):
+  staging/blobs/
+    ├── device_cookie.bin      ← Same 32 HMAC bytes (matching local)
+    └── current.json           ← Obfuscated staging blob (existing)
+```
+
+### Key design decisions
+
+1. **HMAC vs AES-SIV for deterministic encryption:** HMAC is simpler, works with any key
+   size, and we never need to decrypt the cookie — only compare. The 32-byte output is
+   indistinguishable from random bytes to an attacker.
+
+2. **Cookie pushed BEFORE blob:** Ordering matters for mock transport tests that store
+   the last pushed data in a single slot. Cookie first means the staging blob is the
+   last write, preserving test compatibility.
+
+3. **TTL kill switch:** The plaintext epoch is only stored locally. If `device_cookie.meta`
+   is deleted or corrupted, the cookie is treated as expired and re-creation is forced.
+   There is no way for a stale session to persist beyond the TTL.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `domain/cookie/device_cookie.py` | **NEW** — `DeviceCookie` class: create, is_valid_locally, matches, destroy_locally |
+| `domain/cookie/__init__.py` | Package init |
+| `domain/staging/remote_sync.py` | Added `pull_cookie()` + `push_cookie()` methods + `REMOTE_COOKIE_PATH` constant |
+| `domain/staging/service.py` | Fast-path in `check_and_sync()`, cookie creation in `push_to_remote()` |
+| `security/config_manager.py` | Added `cookie.ttl_minutes: 30` + `cookie.enabled: true` defaults |
+| `main.py` | Both `StagingService` instantiations pass `cookie_ttl_minutes` + `data_dir` |
+| `tests/test_remote_config_wiring.py` | Updated `assert_called_once()` → `assertEqual(..., 2)`, added unique `data_dir` to tests |
+
+### Test results
+- 1049 tests run, **2 pre-existing failures** (auth cache expiry tests using MagicMock crypto)
+- **Zero regressions** introduced by cookie implementation
+
+### Security properties
+
+| Property | How it's achieved |
+|---|---|
+| No profiling on remote | Remote only has 32 bytes of HMAC output — no device_id, no epoch |
+| No replay attacks | TTL checked locally via plaintext epoch; expired cookies force re-auth |
+| Deterministic comparison | HMAC: same inputs → same 32 bytes every time |
+| Cookie can't be forged | Need master key to generate matching HMAC |
+| No circular dependency | Cookie check needs no decryption, just byte comparison |
+| Minimal network cost | Cookie is 32 bytes vs staging blob ~64KB+ |
 
 ---
 

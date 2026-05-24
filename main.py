@@ -378,6 +378,8 @@ def main():
         staging_store=staging_store,
         transport=transport,
         device_id_provider=device_id_provider,
+        cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+        data_dir=str(CONFIG_DIR),
     )
     ledger_engine = LedgerEngine(
         crypto=crypto,
@@ -454,6 +456,8 @@ def main():
                 staging_store=staging_store,
                 transport=transport,
                 device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
             )
             ledger_engine = LedgerEngine(
                 crypto=crypto,

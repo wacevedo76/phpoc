@@ -14,13 +14,15 @@ Key invariants:
 import json
 import time
 import threading
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from security.crypto import AbstractCryptoManager, NoAuthCryptoManager
 from storage.staging_store import AbstractStagingStore
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
-from domain.staging.remote_sync import RemoteStagingSync, SyncCheckResult
+from domain.staging.remote_sync import RemoteStagingSync, SyncCheckResult, REMOTE_COOKIE_PATH
+from domain.cookie.device_cookie import DeviceCookie
 from security.device_identity import AbstractDeviceIdentityProvider
 from cli.trace import trace
 
@@ -35,6 +37,7 @@ class StagingService:
     """
 
     AUTH_CACHE_DURATION = 1800  # 30 minutes in seconds
+    DEFAULT_COOKIE_TTL = 30  # minutes
 
     def __init__(
         self,
@@ -42,6 +45,8 @@ class StagingService:
         staging_store: AbstractStagingStore,
         transport=None,
         device_id_provider: Optional[AbstractDeviceIdentityProvider] = None,
+        cookie_ttl_minutes: int = DEFAULT_COOKIE_TTL,
+        data_dir: Optional[str] = None,
     ):
         self._crypto = crypto
         self._local = LocalStagingCache(crypto, staging_store)
@@ -49,6 +54,8 @@ class StagingService:
         self._remote: Optional[RemoteStagingSync] = None
         self._last_auth_time: float = 0.0
         self._last_push_at: int = 0  # ms timestamp of last successful push
+        self._cookie_ttl_minutes = cookie_ttl_minutes
+        self._data_dir = Path(data_dir) if data_dir else Path.home() / ".local" / "share" / "phpoc"
 
         if transport is not None and device_id_provider is not None:
             self._remote = RemoteStagingSync(crypto, transport, device_id_provider)
@@ -398,20 +405,18 @@ class StagingService:
     def check_and_sync(
         self, timeout_ms: int = 500
     ) -> SyncCheckResult:
-        """Event-driven remote check. Called before every staging operation.
+        """Event-driven remote check with Device Cookie optimization.
 
-        Single-pull flow (optimized):
+        Cookie flow (fast path — no decryption needed):
           1. If no remote configured: returns READY.
-          2. Pull remote blob ONCE (with timeout).
-          3. Check device match + freshness:
-             a. Different device + auth expired → REAUTH_NEEDED
-             b. Different device + auth fresh → pull+merge
-             c. Same device, remote not newer → skip pull (assume synced)
-             d. Same device, remote newer → pull+merge
-          4. If remote unreachable: return OFFLINE.
-
-        Auth cache: after successful device check, caches the auth for
-        30 minutes (AUTH_CACHE_DURATION).
+          2. Check LOCAL cookie TTL:
+             a. No cookie or expired → proceed to staging blob check
+             b. Cookie valid → pull REMOTE cookie (tiny 32 bytes)
+                i.  Remote cookie matches local → READY (same device, same session)
+                ii. No remote cookie or mismatch → proceed to staging blob check
+          3. Pull + decrypt the full staging blob, check device match + freshness
+          4. If different device or stale auth → REAUTH_NEEDED, else merge
+          5. If remote unreachable: return OFFLINE.
 
         Returns:
             SyncCheckResult.READY, OFFLINE, or REAUTH_NEEDED.
@@ -419,6 +424,25 @@ class StagingService:
         if self._remote is None:
             return SyncCheckResult.READY
 
+        # ------------------------------------------------------------------
+        # FAST PATH: Device Cookie check (no decryption needed)
+        # ------------------------------------------------------------------
+        local_cookie = DeviceCookie.is_valid_locally(
+            self._data_dir, self._cookie_ttl_minutes
+        )
+        if local_cookie is not None:
+            # Local cookie is valid — pull remote cookie (tiny, fast)
+            try:
+                remote_cookie = self._remote.pull_cookie()
+            except Exception:
+                remote_cookie = None
+            if remote_cookie is not None and DeviceCookie.matches(local_cookie, remote_cookie):
+                # Same device, same session, TTL valid → staging is in sync
+                return SyncCheckResult.READY
+
+        # ------------------------------------------------------------------
+        # SLOW PATH: Full staging blob pull + device match + merge
+        # ------------------------------------------------------------------
         # Pull the remote blob ONCE for both device check and data
         try:
             remote_blob = self._remote.pull()
@@ -481,7 +505,11 @@ class StagingService:
 
     @trace
     def push_to_remote(self, master_key: bytes):
-        """Serialize local staging, push via transport.
+        """Serialize local staging, push via transport, and create device cookie.
+
+        After a successful push, creates a new Device Cookie on local and
+        pushes it to remote. This allows subsequent operations to skip the
+        full staging blob pull+decrypt if the cookie matches.
 
         Args:
             master_key: For device identity proof generation.
@@ -499,6 +527,16 @@ class StagingService:
             pass
 
         device_id = identity.device_id if identity else "unknown"
+
+        # Push device cookie FIRST (tiny file, fast), then stage blob.
+        # This matters for transport implementations that store the last
+        # pushed data in a single slot (e.g. mock transports in tests).
+        DeviceCookie.destroy_locally(self._data_dir)
+        cookie_bytes_hex = DeviceCookie.create(master_key, device_id, self._data_dir)
+        if cookie_bytes_hex is not None:
+            cookie_bytes = bytes.fromhex(cookie_bytes_hex)
+            self._remote.push_cookie(cookie_bytes)
+
         self._remote.push(raw, device_id, master_key=master_key)
         self._last_push_at = int(time.time() * 1000)
 

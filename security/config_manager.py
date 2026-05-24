@@ -51,6 +51,10 @@ class ConfigManager:
             "remote_check_ms": 500,
             "push_timeout_ms": 5000,
         },
+        "cookie": {
+            "ttl_minutes": 30,
+            "enabled": True,
+        },
         "debug": {
             "trace_enabled": False,
         },

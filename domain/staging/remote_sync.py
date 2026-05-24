@@ -38,6 +38,9 @@ BLOB_TIERS = [TIER_64K, TIER_128K, TIER_256K, TIER_512K]
 # Prefix used to derive the blob obfuscation sub-key from the master key
 BLOB_SUBKEY_PREFIX = b"blob-obfuscation"
 
+# Remote path for the device cookie (32-byte HMAC, no decryption needed)
+REMOTE_COOKIE_PATH = "staging/blobs/device_cookie.bin"
+
 
 class SyncCheckResult(Enum):
     """Result of event-driven remote check before a staging command."""
@@ -74,6 +77,7 @@ class RemoteStagingSync:
         self._device_id_provider = device_id_provider
         self._blob_path = blob_path
         self._master_key = master_key
+
 
     # ------------------------------------------------------------------
     # Blob obfuscation (pad + encrypt)
@@ -329,6 +333,28 @@ class RemoteStagingSync:
         if blob is None:
             return None
         return blob.get("device_id")
+
+    @trace
+    def pull_cookie(self) -> Optional[bytes]:
+        """Pull only the device cookie file from remote.
+
+        The cookie is a tiny 32-byte HMAC value — no decryption needed.
+        This is orders of magnitude faster than pulling + decrypting the
+        full staging blob (~64KB+).
+
+        Returns:
+            Raw cookie bytes, or None if no cookie exists on remote.
+        """
+        return self._transport.pull(REMOTE_COOKIE_PATH)
+
+    @trace
+    def push_cookie(self, cookie_bytes: bytes):
+        """Push the encrypted device cookie to remote.
+
+        Args:
+            cookie_bytes: 32 bytes of HMAC output from DeviceCookie.
+        """
+        self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes)
 
     def check_remote_available(self, timeout_ms: int = 500) -> bool:
         """Quick reachability check on the transport.
