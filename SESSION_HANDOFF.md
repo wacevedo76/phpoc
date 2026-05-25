@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `d861222` (Phase B) → Phase C committed as `e947438`
+- **Commit:** `d861222` (Phase B) → Phase C committed as `0ed8fc7`
 - **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
