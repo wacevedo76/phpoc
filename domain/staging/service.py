@@ -7,8 +7,9 @@ and RemoteStagingSync (remote), and uses MergeEngine for reconciliations.
 Key invariants:
   - No caller ever sees the ``plain:`` prefix
   - Every CRUD method returns decrypted DTOs
-  - ``check_and_sync()`` is called implicitly on every command
-    (orchestrated by the caller — this class provides the method)
+  - Write methods (capture, end, pause, unpause, modify, remove) are
+    local-only. Remote sync is deferred to ``ph sync remote_staging``, the
+    background push (Phase B), or the daemon (Phase C).
 """
 
 import json
@@ -79,14 +80,13 @@ class StagingService:
     ) -> str:
         """Add entry to local staging.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Returns entry hash prefix (10 characters).
 
         Raises:
             ValueError: If collision detected (same start_epoch).
         """
-        self.check_and_sync(timeout_ms=500)
         return self._local.append(
             title,
             start_epoch,
@@ -102,12 +102,11 @@ class StagingService:
     def end(self, title: str, end_epoch: int, comment: Optional[str] = None):
         """End an active task by title.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Raises:
             ValueError: If no active task found with that title.
         """
-        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -165,12 +164,11 @@ class StagingService:
     ):
         """Pause a running task.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Raises:
             ValueError: If not found, not active, or already paused.
         """
-        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -195,12 +193,11 @@ class StagingService:
     ):
         """Unpause a paused task.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Raises:
             ValueError: If not found, not active, or not paused.
         """
-        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -225,7 +222,7 @@ class StagingService:
     ):
         """Modify a completed entry's end time and/or pauses.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Args:
             entry_index: Index in the staging array.
@@ -235,7 +232,6 @@ class StagingService:
         Raises:
             ValueError: If entry not found, out of range, or still active.
         """
-        self.check_and_sync(timeout_ms=500)
         entries = self._local.read_entries()
 
         if entry_index < 0 or entry_index >= len(entries):
@@ -272,12 +268,11 @@ class StagingService:
     def remove(self, entry_index: int):
         """Remove a staged entry by index.
 
-        Automatically calls check_and_sync() before the local operation.
+        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
 
         Raises:
             ValueError: If entry_index is out of range.
         """
-        self.check_and_sync(timeout_ms=500)
         try:
             self._local.delete(entry_index)
         except IndexError as e:

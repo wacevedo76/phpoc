@@ -39,7 +39,7 @@ try:
         DeviceIdentity,
         RandomUUIDDeviceIdentityProvider,
     )
-    from security.crypto import AbstractCryptoManager
+    from security.crypto import AbstractCryptoManager, NoAuthCryptoManager
     from storage.staging_store import AbstractStagingStore
     HAS_PHASE2 = True
 except ImportError:
@@ -279,70 +279,71 @@ class TestOfflineQueue(unittest.TestCase):
 # =============================================================================
 
 class TestEveryCommandSync(unittest.TestCase):
-    """Every staging command calls check_and_sync automatically.
+    """Write commands no longer call check_and_sync automatically.
 
-    Test that check_and_sync is invoked on capture, end, pause, unpause,
-    modify, and remove operations.
+    Phase B/C deferred sync (WAL + background push + daemon) means write
+    methods are local-only. check_and_sync is called from the daemon event
+    loop and from explicit ``ph sync remote_staging``.
     """
 
     def setUp(self):
         skip_unless_phase4()
 
-    def test_capture_calls_check_and_sync(self):
-        """capture() invokes check_and_sync before storing."""
+    def test_capture_does_not_call_check_and_sync(self):
+        """capture() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.capture("Guitar", 1000, stop_epoch=2000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_end_calls_check_and_sync(self):
-        """end() invokes check_and_sync before updating."""
+    def test_end_does_not_call_check_and_sync(self):
+        """end() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, is_active=True)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.end("Task", 5000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_end_at_calls_check_and_sync(self):
-        """end_at() invokes check_and_sync."""
+    def test_end_at_does_not_call_check_and_sync(self):
+        """end_at() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, is_active=True)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.end_at("Task", 5000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_pause_calls_check_and_sync(self):
-        """pause() invokes check_and_sync."""
+    def test_pause_does_not_call_check_and_sync(self):
+        """pause() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, is_active=True)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.pause("Task", 2000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_unpause_calls_check_and_sync(self):
-        """unpause() invokes check_and_sync."""
+    def test_unpause_does_not_call_check_and_sync(self):
+        """unpause() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, is_active=True)
         svc.pause("Task", 2000)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.unpause("Task", 3000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_modify_calls_check_and_sync(self):
-        """modify() invokes check_and_sync."""
+    def test_modify_does_not_call_check_and_sync(self):
+        """modify() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, stop_epoch=2000)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.modify(0, end_epoch=3000)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
-    def test_remove_calls_check_and_sync(self):
-        """remove() invokes check_and_sync."""
+    def test_remove_does_not_call_check_and_sync(self):
+        """remove() does NOT invoke check_and_sync (local-only write)."""
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("Task", 1000, stop_epoch=2000)
         with patch.object(svc, "check_and_sync", wraps=svc.check_and_sync) as spy:
             svc.remove(0)
-            spy.assert_called_once()
+            spy.assert_not_called()
 
     def test_read_operations_no_check_and_sync(self):
         """Read-only operations do NOT call check_and_sync (no side effects)."""
@@ -439,7 +440,7 @@ class TestAuthCache(unittest.TestCase):
         )
 
         svc = StagingService(
-            mock_crypto(), mock_staging_store(),
+            NoAuthCryptoManager(), mock_staging_store(),
             transport=transport,
             device_id_provider=device_provider,
         )

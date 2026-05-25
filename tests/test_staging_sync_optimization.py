@@ -43,7 +43,7 @@ from security.device_identity import (
     AbstractDeviceIdentityProvider,
     DeviceIdentity,
 )
-from security.crypto import PureAESCTR
+from security.crypto import PureAESCTR, NoAuthCryptoManager
 
 
 # =============================================================================
@@ -820,7 +820,7 @@ class TestAuthCacheInteraction(unittest.TestCase):
         store = _make_staging_store()
         transport = _make_transport()
         provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(self._crypto, store, transport=transport,
+        svc = StagingService(NoAuthCryptoManager(), store, transport=transport,
                              device_id_provider=provider)
 
         # Remote blob has DIFFERENT device_id
