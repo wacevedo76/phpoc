@@ -1102,6 +1102,18 @@ domain logic.
 
 See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full design rationale.
 
+## Phase 1 Progress (2026-05-24)
+
+| Task | Status |
+|------|--------|
+| Create R2 bucket `phpoc-data` | ✅ Done |
+| Create R2 API token (`phpoc-r2-bucket`) | ✅ Done — saved locally |
+| Deploy Worker (GET/PUT/LIST + API key auth) | ⬜ |
+| Write `HttpStagingTransport` in Python | ⬜ |
+| Migrate existing data from git to R2 | ⬜ |
+| Wire into `main.py` | ⬜ |
+| Verify ~100ms latency | ⬜ |
+
 ### Open questions
 
 1. **Worker auth mechanism** — Pre-shared API key (simple) vs. HMAC request

@@ -2,13 +2,13 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `07be382`
+- **Commit:** `34edff9`
 - **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
-- **Next focus:** 🚀 **Mobile-first** — deploy Worker + R2 bucket, write `HttpStagingTransport`, enable mobile client
+- **Next focus:** 🚀 **Phase 1 (in progress)** — R2 bucket `phpoc-data` created, API token saved. Next: deploy Worker.
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -162,13 +162,14 @@ architectural barrier. The new transport solves both problems at once.
 
 ### Phase 1: Worker + Python CLI (this sprint)
 
-| Task | Effort |
-|------|--------|
-| Create R2 bucket (`phpoc-data`) | ~10 min |
-| Deploy Worker (GET/PUT/LIST + API key auth) | ~1 hr |
-| Write `HttpStagingTransport` in Python | ~2 hrs |
-| Migrate existing data from git to R2 | ~1 hr |
-| Wire into `main.py`, verify ~100ms latency | ~1 hr |
+| Task | Effort | Status |
+|------|--------|--------|
+| Create R2 bucket (`phpoc-data`) | ~10 min | ✅ Done (2026-05-24) |
+| Create R2 API token | ~5 min | ✅ Done — `phpoc-r2-bucket` token saved locally |
+| Deploy Worker (GET/PUT/LIST + API key auth) | ~1 hr | ⬜ |
+| Write `HttpStagingTransport` in Python | ~2 hrs | ⬜ |
+| Migrate existing data from git to R2 | ~1 hr | ⬜ |
+| Wire into `main.py`, verify ~100ms latency | ~1 hr | ⬜ |
 
 ### Phase 2: Mobile MVP (next)
 
@@ -202,12 +203,13 @@ See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full details.
 ### Files changed (this session)
 ```
  M ARCHITECTURAL_DECISIONS.md              (added ADR-023: Serverless HTTP Transport)
- M REMOTE_STAGING_ISSUE_TRACKING.md        (added Mobile-First section)
- M SESSION_HANDOFF.md                      (updated to mobile-first direction)
+ M REMOTE_STAGING_ISSUE_TRACKING.md        (added Mobile-First section, Phase 1 progress)
+ M SESSION_HANDOFF.md                      (updated to mobile-first direction, Phase 1 checklist)
 ```
 
 ## Recent Commits
 ```
+34edff9  docs: mobile app considerations, Waydroid Niri research, update project docs
 937b491  docs: update passphrase status, add remote ledger sync design
 137b544  fix: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
 ea87561  fix: rename 'sync remote' to 'sync remote_staging' for clarity
@@ -220,12 +222,13 @@ All pushed to origin.
 ## Next Steps
 
 ### Phase 1: Worker + R2 (this sprint)
-1. [ ] Create Cloudflare R2 bucket (`phpoc-data`)
-2. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
-3. [ ] Write `core/sync/http_transport.py` — ~100 lines implementing `AbstractStagingTransport`
-4. [ ] Push existing staging data from git to R2 via Worker
-5. [ ] Update `main.py` to use `HttpStagingTransport`
-6. [ ] Verify CLI latency drops from ~5000ms to ~100ms
+1. [x] Create Cloudflare R2 bucket (`phpoc-data`)
+2. [x] Create R2 API token (`phpoc-r2-bucket`, saved locally)
+3. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
+4. [ ] Write `core/sync/http_transport.py` — ~100 lines implementing `AbstractStagingTransport`
+5. [ ] Push existing staging data from git to R2 via Worker
+6. [ ] Update `main.py` to use `HttpStagingTransport`
+7. [ ] Verify CLI latency drops from ~5000ms to ~100ms
 
 ### Phase 2: Mobile MVP (next)
 1. [ ] Re-implement crypto primitives for mobile (PBKDF2, AES-CTR, HMAC-SHA256)
