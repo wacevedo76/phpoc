@@ -10,6 +10,7 @@ from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from cli.trace import trace
 from cli.background import _show_sync_notifications, _spawn_background_sync_check
+from cli.wal import _write_wal_pending, _spawn_background_push
 
 
 class CLIInterface:
@@ -106,10 +107,41 @@ class CLIInterface:
                 return
             self._staging.push_to_remote(master_key=mk)
 
+    def _defer_push(self):
+        """Phase B: write WAL + spawn background push instead of blocking.
+
+        Called after every write command (add_start, add_end, etc.) to
+        return control to the user instantly (~2ms) while the remote
+        push happens in a detached subprocess.
+        """
+        if self._staging._remote is None:
+            return
+
+        # Read current staging entries for the WAL hash
+        try:
+            entries = self._staging._local._store.read_entries()
+        except Exception:
+            entries = []
+
+        # Get device_id
+        mk = getattr(self._crypto, "master_key", None)
+        if isinstance(mk, bytes) and len(mk) == 32:
+            try:
+                identity = self._staging._device_id_provider.get_device_identity(mk)
+                device_id = identity.device_id
+            except Exception:
+                device_id = "unknown"
+        else:
+            device_id = "unknown"
+
+        # Write WAL (crash-safe bookmark) then spawn background push
+        _write_wal_pending(self._staging._data_dir, entries, device_id)
+        _spawn_background_push(self._staging._data_dir)
+
     @trace
     def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
         self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
-        self._push_if_remote()
+        self._defer_push()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 One-off habit captured: {title}{tag_str}{comment_str}")
@@ -117,7 +149,7 @@ class CLIInterface:
     @trace
     def add_start(self, title, tags=None, comment=None):
         self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
-        self._push_if_remote()
+        self._defer_push()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 Started tracking: {title}{tag_str}{comment_str}")
@@ -126,7 +158,7 @@ class CLIInterface:
     def add_end(self, title, comment=None):
         resolved = self._resolve_title(title)
         self._staging.end(resolved, int(time.time()*1000), comment=comment)
-        self._push_if_remote()
+        self._defer_push()
         comment_str = f" — \"{comment}\"" if comment else ""
         print(f"\u2713 Stopped tracking: {resolved}{comment_str}")
 
@@ -134,14 +166,14 @@ class CLIInterface:
     def add_pause(self, title):
         resolved = self._resolve_title(title)
         self._staging.pause(resolved, int(time.time()*1000))
-        self._push_if_remote()
+        self._defer_push()
         print(f"\u2713 Paused: {resolved}")
 
     @trace
     def add_unpause(self, title):
         resolved = self._resolve_title(title)
         self._staging.unpause(resolved, int(time.time()*1000))
-        self._push_if_remote()
+        self._defer_push()
         print(f"\u2713 Resumed: {resolved}")
 
     @trace

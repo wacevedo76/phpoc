@@ -192,6 +192,11 @@ def main():
     bg_p.add_argument("--dir", type=str, dest="data_dir",
                        help=argparse.SUPPRESS)
 
+    # Hidden internal subcommand (no help text — spawned by Phase B background push)
+    bg_push_p = subparsers.add_parser("_background_push", add_help=False)
+    bg_push_p.add_argument("--dir", type=str, dest="data_dir",
+                            help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
     if not args.command:
@@ -352,6 +357,15 @@ def main():
         handle_background_sync_check(data_dir_str)
         return
 
+    # --- Hidden internal command (background push, spawned by Phase B) ---
+    if args.command == "_background_push":
+        from cli.wal import _background_push
+        data_dir_str = str(CONFIG_DIR)
+        if args.data_dir:
+            data_dir_str = args.data_dir
+        _background_push(data_dir_str)
+        return
+
     # --- Lazy Authentication Logic ---
     
     # List of commands that REQUIRE a valid passphrase
@@ -403,6 +417,11 @@ def main():
         identity_secret=None,
     )
     cli = CLIInterface(staging_service, ledger_engine, crypto)
+
+    # Phase B: Replay any pending WAL (crash-safe deferred push) before commands
+    if remote_url and CONFIG_DIR:
+        from cli.wal import _replay_wal
+        _replay_wal(CONFIG_DIR, staging_service)
     sync_orchestrator = SyncOrchestrator(
         staging_service=staging_service,
         ledger_engine=ledger_engine,
