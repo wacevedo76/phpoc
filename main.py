@@ -197,6 +197,13 @@ def main():
     bg_push_p.add_argument("--dir", type=str, dest="data_dir",
                             help=argparse.SUPPRESS)
 
+    # Daemon subcommand (Phase C — persistent background sync)
+    daemon_p = subparsers.add_parser("daemon", help="Start/stop/status of the background sync daemon")
+    daemon_sub = daemon_p.add_subparsers(dest="daemon_action")
+    daemon_sub.add_parser("start", help="Start the daemon in the background")
+    daemon_sub.add_parser("stop", help="Stop the daemon gracefully")
+    daemon_sub.add_parser("status", help="Show daemon running state and last sync info")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -364,6 +371,20 @@ def main():
         if args.data_dir:
             data_dir_str = args.data_dir
         _background_push(data_dir_str)
+        return
+
+    # --- Daemon subcommand (Phase C) ---
+    if args.command == "daemon":
+        from cli.daemon import PhDaemon
+        daemon = PhDaemon(CONFIG_DIR)
+        if args.daemon_action == "start":
+            daemon.start()
+        elif args.daemon_action == "stop":
+            daemon.stop()
+        elif args.daemon_action == "status":
+            daemon.status()
+        else:
+            print("Usage: ph daemon <start|stop|status>")
         return
 
     # --- Lazy Authentication Logic ---

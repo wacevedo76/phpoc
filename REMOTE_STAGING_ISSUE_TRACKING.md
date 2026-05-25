@@ -602,7 +602,10 @@ When both devices edit the same entry concurrently:
 | 2026-05-22 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` |
 | 2026-05-24 | **AFI #1 — Device Cookie fast path** | `domain/cookie/device_cookie.py` new, cookie wiring |
 | 2026-05-25 | **AFI #2 partial — Phase A instant reads** | Background subprocess avoids ls-remote on reads; display in ~50ms. `cli/background.py` new, `view_active()` restructured. 31 tests. |
+| 2026-05-25 | **AFI #2 partial — Phase B instant writes** | WAL-backed deferred push; writes return in ~2ms, remote push deferred to background. `cli/wal.py` new, `_defer_push()` in all 5 write methods. `main.py` replay at startup. 54 tests. |
 | 2026-05-25 | **Cookie renewal threshold** | `cookie.renewal_threshold` added to config defaults (0.9). Threaded through background process. Configurable per-device. |
+| 2026-05-25 | **Phase C tests (daemon mode)** | `tests/test_daemon.py` (41 tests) + `tests/test_daemon_sync.py` (24 tests) — 65 tests total for daemon lifecycle, DebounceQueue, SyncWorker retry/conflict, event loop, file watcher, status publishing. Written before implementation (TDD spec). |
+| 2026-05-25 | **Phase C implementation (daemon)** | `cli/daemon.py`, `cli/daemon_sync.py`, `cli/daemon_cli.py` written. `main.py` — `ph daemon start/stop/status` subcommand. 65 tests all pass. |
 
 ### Open issues remaining
 
@@ -615,7 +618,7 @@ When both devices edit the same entry concurrently:
 | Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed | debagent04 |
 | Issue #14 — `ph recover` rewrites all blocks; full ledger push takes ~7 min | 🔴 Needs design (async batch push) | x13 |
-| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (Phase A: reads bypass `ls-remote` entirely via background subprocess). Writes still synchronous. | x13 |
+| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (Phase A: reads bypass `ls-remote` entirely via background subprocess. Phase B: writes return instantly via WAL, push deferred to background. Phase C: daemon eliminates subprocess-per-command overhead with persistent event loop + debounce.) | x13 |
 | **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
@@ -1105,6 +1108,18 @@ domain logic.
 See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full design rationale.
 
 ## Phase 1 Progress (2026-05-24)
+
+### Phase C — Daemon mode: ✅ Implemented
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `cli/daemon.py` | ~330 | PhDaemon lifecycle (start/stop/status), DebounceQueue, FileWatcher, event loop, status publishing |
+| `cli/daemon_sync.py` | ~160 | SyncWorker with retry/conflict/session, SyncResult |
+| `cli/daemon_cli.py` | ~25 | `ph daemon start/stop/status` argument handlers |
+| `tests/test_daemon.py` | ~800 | 41 tests — daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing |
+| `tests/test_daemon_sync.py` | ~400 | 24 tests — SyncWorker session/retry/conflict, pull_check, SyncResult |
+
+**65 tests all pass.** `main.py` updated with `ph daemon start/stop/status` subcommand.
 
 | Task | Status |
 |------|--------|

@@ -2,15 +2,17 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `34edff9`
+- **Commit:** `d861222` (Phase B) → Phase C committed as `e947438`
 - **Tests:** all passing (2 pre-existing failures unrelated to changes)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
 - **Next focus:** 🚀 **Phase 1 (in progress)** — R2 bucket `phpoc-data` created, API token saved. Next: deploy Worker.
-- **Latency strategy:** 🆕 `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan
-- **Phase A implemented:** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal at configurable threshold. `cookie.renewal_threshold` in config defaults (0.9). 31 new tests in `tests/test_background_sync.py`.
+- **Latency strategy:** ✅ `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan (A ✅, B ✅, C 🟡 tests written)
+- **Phase A (reads):** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal at configurable threshold. `cookie.renewal_threshold` in config defaults (0.9). 31 tests.
+- **Phase B (writes):** `cli/wal.py` (350 lines) — WAL-backed instant writes, crash-safe deferred push, replay at startup, background push subprocess. `cli/interface.py` restructured: all 5 write methods call `_defer_push()` instead of synchronous `_push_if_remote()`. 54 tests.
+- **Phase C (daemon):** ✅ Implemented. `cli/daemon.py` (~330 lines), `cli/daemon_sync.py` (~160 lines), `cli/daemon_cli.py` (~25 lines). `main.py` — `ph daemon start/stop/status` subcommand. 65 tests (all pass).
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -45,6 +47,14 @@
 | `scripts/remove_trace_logging.sh` | Reverts all trace code (imports, decorators, module, logs) |
 | `scripts/change_passphrase.py` | Re-encrypts recovery seed with a new passphrase (data preserved) |
 | `REMOTE_STAGING_ISSUE_TRACKING.md` | Full issue tracking + areas for improvement |
+| `cli/wal.py` | 🆕 WAL lifecycle, crash recovery, `_spawn_background_push()`, `format_wal_status()` |
+| `tests/test_background_sync.py` | 31 tests — Phase A background cookie check + notifications |
+| `tests/test_wal.py` | 54 tests — Phase B WAL lifecycle + deferred push |
+| `cli/daemon.py` | 🆕 ~330 lines — PhDaemon lifecycle, DebounceQueue, FileWatcher, event loop, `_publish_status()` |
+| `cli/daemon_sync.py` | 🆕 ~160 lines — SyncWorker retry/conflict/session, SyncResult |
+| `cli/daemon_cli.py` | 🆕 ~25 lines — `ph daemon start/stop/status` handlers |
+| `tests/test_daemon.py` | 🆕 41 tests — Phase C daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing |
+| `tests/test_daemon_sync.py` | 🆕 24 tests — Phase C SyncWorker session/retry/conflict, pull_check |
 | `staging_log/` | Trace output directory (⚠️ in `.gitignore` — contains master key bytes) |
 
 ## Device Cookie — Fast-Path Cross-Device Check (AFI #1)
@@ -230,8 +240,19 @@ All pushed to origin.
     - `cli/interface.py` — `view_active()` restructured for instant display
     - Cookie auto-renewal at configurable threshold (`cookie.renewal_threshold`, default 0.9)
     - `tests/test_background_sync.py` — 31 tests across 6 classes
-3. [ ] Implement Phase B (WAL-backed instant writes + `ph sync status`)
-4. [ ] Optionally implement Phase C (`ph daemon`)
+3. [x] Implement Phase B (WAL-backed instant writes)
+    - `cli/wal.py` — WAL lifecycle, crash recovery (_replay_wal), background push
+    - `cli/interface.py` — `_defer_push()` replaces `_push_if_remote()` in all 5 write methods
+    - `main.py` — `_background_push` subcommand, WAL replay at startup
+    - `tests/test_wal.py` — 54 tests across 8 classes
+4. [x] Implement Phase C (`ph daemon`)
+    - `cli/daemon.py` — PhDaemon lifecycle, DebounceQueue, FileWatcher, event loop, `_publish_status()`
+    - `cli/daemon_sync.py` — SyncWorker with retry/conflict/session, SyncResult
+    - `cli/daemon_cli.py` — `ph daemon start/stop/status` handlers
+    - `main.py` — daemon subparser + dispatch
+    - `tests/test_daemon.py` — 41 tests (daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing)
+    - `tests/test_daemon_sync.py` — 24 tests (SyncWorker session/retry/conflict, pull_check, SyncResult)
+    - **All 65 tests pass**
 5. [ ] If validated: update ADR-023 and `REMOTE_STAGING_ISSUE_TRACKING.md`
 
 ### Phase 1: Worker + R2
