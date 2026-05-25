@@ -9,6 +9,8 @@
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
 - **Next focus:** 🚀 **Phase 1 (in progress)** — R2 bucket `phpoc-data` created, API token saved. Next: deploy Worker.
+- **Latency strategy:** 🆕 `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan
+- **Phase A implemented:** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal at configurable threshold. `cookie.renewal_threshold` in config defaults (0.9). 31 new tests in `tests/test_background_sync.py`.
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -221,7 +223,18 @@ All pushed to origin.
 
 ## Next Steps
 
-### Phase 1: Worker + R2 (this sprint)
+### Phase 0: CLI Latency Fix (this sprint)
+1. [x] Strategy documented in `_Operational-ph_Staging-latency-issue-strategy.md`
+2. [x] Implement Phase A (instant reads + background cookie check + cookie renewal)
+    - `cli/background.py` — subprocess spawn, notification IPC, debounce lock
+    - `cli/interface.py` — `view_active()` restructured for instant display
+    - Cookie auto-renewal at configurable threshold (`cookie.renewal_threshold`, default 0.9)
+    - `tests/test_background_sync.py` — 31 tests across 6 classes
+3. [ ] Implement Phase B (WAL-backed instant writes + `ph sync status`)
+4. [ ] Optionally implement Phase C (`ph daemon`)
+5. [ ] If validated: update ADR-023 and `REMOTE_STAGING_ISSUE_TRACKING.md`
+
+### Phase 1: Worker + R2
 1. [x] Create Cloudflare R2 bucket (`phpoc-data`)
 2. [x] Create R2 API token (`phpoc-r2-bucket`, saved locally)
 3. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript

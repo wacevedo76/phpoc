@@ -601,6 +601,8 @@ When both devices edit the same entry concurrently:
 | 2026-05-22 | Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed |
 | 2026-05-22 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` |
 | 2026-05-24 | **AFI #1 — Device Cookie fast path** | `domain/cookie/device_cookie.py` new, cookie wiring |
+| 2026-05-25 | **AFI #2 partial — Phase A instant reads** | Background subprocess avoids ls-remote on reads; display in ~50ms. `cli/background.py` new, `view_active()` restructured. 31 tests. |
+| 2026-05-25 | **Cookie renewal threshold** | `cookie.renewal_threshold` added to config defaults (0.9). Threaded through background process. Configurable per-device. |
 
 ### Open issues remaining
 
@@ -613,7 +615,7 @@ When both devices edit the same entry concurrently:
 | Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed | debagent04 |
 | Issue #14 — `ph recover` rewrites all blocks; full ledger push takes ~7 min | 🔴 Needs design (async batch push) | x13 |
-| **AFI #2** — Redundant `ls-remote` calls | 🔴 Needs fix | x13 |
+| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (Phase A: reads bypass `ls-remote` entirely via background subprocess). Writes still synchronous. | x13 |
 | **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()

@@ -54,6 +54,7 @@ class ConfigManager:
         "cookie": {
             "ttl_minutes": 30,
             "enabled": True,
+            "renewal_threshold": 0.9,
         },
         "debug": {
             "trace_enabled": False,

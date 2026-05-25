@@ -9,6 +9,7 @@ from domain.staging.service import StagingService
 from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from cli.trace import trace
+from cli.background import _show_sync_notifications, _spawn_background_sync_check
 
 
 class CLIInterface:
@@ -145,18 +146,17 @@ class CLIInterface:
 
     @trace
     def view_active(self, show_tags=False, show_comments=False):
-        # Sync with remote via check_and_sync (handles device check, auth, pull+merge)
-        # This is the canonical sync entry point used by all write commands.
-        if self._staging._remote is not None:
-            result = self._staging.check_and_sync(timeout_ms=500)
-            if result == SyncCheckResult.REAUTH_NEEDED:
-                print("\n\U0001f510 Cross-device sync requires authentication.")
-                print("   The remote staging blob was created by a different device.")
-                print("   Run 'phpoc view' (or any write command) to be prompted for")
-                print("   your passphrase, which will sync the remote entries locally.")
-                print()
+        # Phase A: Show any pending sync notifications from background checks
+        _show_sync_notifications(self._staging._data_dir)
+
+        # Phase A: Read and display local data INSTANTLY (no remote blocking)
         staging = self._staging._local._store.read_entries()
         active = [e for e in staging if e["data"].get("is_active")]
+
+        # Phase A: Spawn background remote check (non-blocking, fire-and-forget)
+        # Must fire before any early return so reads are always async.
+        if self._staging._remote is not None:
+            _spawn_background_sync_check(self._staging)
 
         print("\n--- Running Tasks ---")
         if not active:
@@ -217,6 +217,8 @@ class CLIInterface:
                 now = int(time.time() * 1000)
                 duration_ms = self._compute_duration(start_epoch, now, pauses)
                 print(f"#{task_id} [{started}] {data['title']} (active: {duration_ms // 60000}m){tag_str}{comment_str}")
+
+
 
     def show_rep(self, days_limit=None, from_date=None, to_date=None):
         # Use Blind Index for speed and privacy

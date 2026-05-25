@@ -187,6 +187,11 @@ def main():
     revert_p.add_argument("--list", action="store_true",
                           help="Show ledger summary with recent day blocks")
 
+    # Hidden internal subcommand (no help text — spawned by Phase A background process)
+    bg_p = subparsers.add_parser("_background_sync_check", add_help=False)
+    bg_p.add_argument("--dir", type=str, dest="data_dir",
+                       help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
     if not args.command:
@@ -336,6 +341,15 @@ def main():
         else:
             print("Authentication failed.")
             exit(1)
+        return
+
+    # --- Hidden internal command (background sync check, spawned by Phase A) ---
+    if args.command == "_background_sync_check":
+        from cli.background import handle_background_sync_check
+        data_dir_str = str(CONFIG_DIR)
+        if args.data_dir:
+            data_dir_str = args.data_dir
+        handle_background_sync_check(data_dir_str)
         return
 
     # --- Lazy Authentication Logic ---
