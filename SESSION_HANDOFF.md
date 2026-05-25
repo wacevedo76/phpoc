@@ -2,17 +2,19 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `d861222` (Phase B) → Phase C committed as `0ed8fc7`
-- **Tests:** all passing (2 pre-existing failures unrelated to changes)
+- **Commit:** `76209c0` (Phase B/C + stale-remote fix + onboarding)
+- **Tests:** 1199 all passing (0 failures)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
-- **Next focus:** 🚀 **Phase 1 (in progress)** — R2 bucket `phpoc-data` created, API token saved. Next: deploy Worker.
-- **Latency strategy:** ✅ `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan (A ✅, B ✅, C 🟡 tests written)
-- **Phase A (reads):** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal at configurable threshold. `cookie.renewal_threshold` in config defaults (0.9). 31 tests.
-- **Phase B (writes):** `cli/wal.py` (350 lines) — WAL-backed instant writes, crash-safe deferred push, replay at startup, background push subprocess. `cli/interface.py` restructured: all 5 write methods call `_defer_push()` instead of synchronous `_push_if_remote()`. 54 tests.
-- **Phase C (daemon):** ✅ Implemented. `cli/daemon.py` (~330 lines), `cli/daemon_sync.py` (~160 lines), `cli/daemon_cli.py` (~25 lines). `main.py` — `ph daemon start/stop/status` subcommand. 65 tests (all pass).
+- **Next focus:** 🚀 **Phase 1 — Cloudflare Worker deploy + HttpStagingTransport**
+- **Latency strategy:** ✅ `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan (A ✅, B ✅, C ✅ daemon implemented)
+- **Phase A (reads):** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal. 31 tests.
+- **Phase B (writes):** `cli/wal.py` (350 lines) — WAL-backed instant writes, crash-safe deferred push, replay at startup, background push subprocess. 54 tests.
+- **Phase C (daemon):** ✅ Implemented. `cli/daemon.py` (~330 lines), `cli/daemon_sync.py` (~160 lines), `cli/daemon_cli.py` (~25 lines). `main.py` — `ph daemon start/stop/status`. 65 tests.
+- **Onboarding:** ✅ `cli/onboarding.py` (474 lines) — `ph onboarding` imports existing ledger to new device via git transport.
+- **Bug fix:** `check_and_sync()` removed from write methods — stale remote was resurrecting ended tasks (MergeEngine remote-wins).
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -53,6 +55,7 @@
 | `cli/daemon.py` | 🆕 ~330 lines — PhDaemon lifecycle, DebounceQueue, FileWatcher, event loop, `_publish_status()` |
 | `cli/daemon_sync.py` | 🆕 ~160 lines — SyncWorker retry/conflict/session, SyncResult |
 | `cli/daemon_cli.py` | 🆕 ~25 lines — `ph daemon start/stop/status` handlers |
+| `cli/onboarding.py` | 🆕 474 lines — `ph onboarding` full flow: git remote → seed → pull ledger/staging/index → extract identity → new passphrase → verify |
 | `tests/test_daemon.py` | 🆕 41 tests — Phase C daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing |
 | `tests/test_daemon_sync.py` | 🆕 24 tests — Phase C SyncWorker session/retry/conflict, pull_check |
 | `staging_log/` | Trace output directory (⚠️ in `.gitignore` — contains master key bytes) |
@@ -219,43 +222,20 @@ See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full details.
  M SESSION_HANDOFF.md                      (updated to mobile-first direction, Phase 1 checklist)
 ```
 
-## Recent Commits
+## Recent Commits (this session)
 ```
-34edff9  docs: mobile app considerations, Waydroid Niri research, update project docs
-937b491  docs: update passphrase status, add remote ledger sync design
-137b544  fix: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
-ea87561  fix: rename 'sync remote' to 'sync remote_staging' for clarity
-566f1cb  docs: update ADR-014 and CHANGELOG for recover session cache fix
-389e268  fix: cache master key after ph recover
-...
+8b5a529  fix: remove check_and_sync from write methods — stale-remote resurrection cycle
+76209c0  feat: ph onboarding — import existing ledger to new device via git transport
 ```
 All pushed to origin.
 
 ## Next Steps
 
-### Phase 0: CLI Latency Fix (this sprint)
-1. [x] Strategy documented in `_Operational-ph_Staging-latency-issue-strategy.md`
-2. [x] Implement Phase A (instant reads + background cookie check + cookie renewal)
-    - `cli/background.py` — subprocess spawn, notification IPC, debounce lock
-    - `cli/interface.py` — `view_active()` restructured for instant display
-    - Cookie auto-renewal at configurable threshold (`cookie.renewal_threshold`, default 0.9)
-    - `tests/test_background_sync.py` — 31 tests across 6 classes
-3. [x] Implement Phase B (WAL-backed instant writes)
-    - `cli/wal.py` — WAL lifecycle, crash recovery (_replay_wal), background push
-    - `cli/interface.py` — `_defer_push()` replaces `_push_if_remote()` in all 5 write methods
-    - `main.py` — `_background_push` subcommand, WAL replay at startup
-    - `tests/test_wal.py` — 54 tests across 8 classes
-4. [x] Implement Phase C (`ph daemon`)
-    - `cli/daemon.py` — PhDaemon lifecycle, DebounceQueue, FileWatcher, event loop, `_publish_status()`
-    - `cli/daemon_sync.py` — SyncWorker with retry/conflict/session, SyncResult
-    - `cli/daemon_cli.py` — `ph daemon start/stop/status` handlers
-    - `main.py` — daemon subparser + dispatch
-    - `tests/test_daemon.py` — 41 tests (daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing)
-    - `tests/test_daemon_sync.py` — 24 tests (SyncWorker session/retry/conflict, pull_check, SyncResult)
-    - **All 65 tests pass**
-5. [ ] If validated: update ADR-023 and `REMOTE_STAGING_ISSUE_TRACKING.md`
+### Completed this session
+1. [x] **Stale-remote fix:** removed `check_and_sync()` from all 6 write methods in `StagingService`. Write methods are now local-only. Remote sync handled by WAL+background push (Phase B) and daemon (Phase C). Fixes the cycle: `ph end 1` → stale remote resurrects ended task → `ph end 1` cycles forever.
+2. [x] **Onboarding:** `cli/onboarding.py` (474 lines) — `ph onboarding` command imports existing ledger to a new device: git remote → seed → pull ledger/staging/index → extract identity from genesis → set passphrase → re-seal/re-sign → verify.
 
-### Phase 1: Worker + R2
+### Phase 1: Worker + R2 (tomorrow)
 1. [x] Create Cloudflare R2 bucket (`phpoc-data`)
 2. [x] Create R2 API token (`phpoc-r2-bucket`, saved locally)
 3. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
@@ -269,11 +249,6 @@ All pushed to origin.
 2. [ ] Build basic staging CRUD via Worker HTTP API
 3. [ ] Device Cookie for fast-path identity
 4. [ ] Minimal mobile UI (start/stop/view activities)
-
-### Phase 3: Deferred
-1. [ ] Define staging reconciliation strategy (remote source of truth)
-2. [ ] Add ledger sync to mobile
-3. [ ] Remove trace logging, cleanup old git transport references
 
 ### On debagent04 (after push)
 ```

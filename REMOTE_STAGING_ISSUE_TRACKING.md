@@ -10,7 +10,7 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `fc5f7bb` | `fc5f7bb` (pushed to origin) |
+| Commit | `76209c0` | `76209c0` (pushed to origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
@@ -18,6 +18,33 @@ This document captures issues found during cross-device staging sync testing bet
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
+
+### Issue #15: Stale-remote resurrection — check_and_sync in write methods re-introduces ended tasks
+
+**Status:** ✅ Fixed (2026-05-25, commit `8b5a529`)
+**Fix:** Removed `self.check_and_sync(timeout_ms=500)` from all 6 write methods in `StagingService`
+(`capture`, `end`, `pause`, `unpause`, `modify`, `remove`).
+
+**Root cause:** Every write method called `check_and_sync()` at the top, which pulled the
+stale remote blob (background push hadn't completed yet) and merged it with `MergeEngine`
+where **remote always wins on same entry_id** (`merge_engine.py` line 49: `seen[key] =
+entry_copy` for remote entries). This resurrected tasks the user had just ended, creating
+an infinite cycle:
+
+```
+ph end 1 → ends Working on Phpoc → check_and_sync merges stale remote blob
+         → remote still has Working on Phpoc active → remote wins → resurrected!
+ph view  → shows both tasks active (ended task came back)
+ph end 1 → ends other task → check_and_sync resurrects again...
+```
+
+**Fix rationale:** Phase B WAL + background push handles crash safety. Phase C daemon
+handles periodic sync. `check_and_sync()` is still called from `ph sync remote_staging`
+and the daemon event loop.
+
+**Test updates:** `TestEveryCommandSync` now asserts `check_and_sync` is NOT called from
+write methods. Auth expiry tests use `NoAuthCryptoManager` to bypass the isinstance check.
+336 tests passing.
 
 ### Issue #13: _last_auth_time = 0.0 causes false REAUTH_NEEDED after ph login
 
@@ -601,11 +628,11 @@ When both devices edit the same entry concurrently:
 | 2026-05-22 | Issue #10 — Blob key mismatch after ph recover | Remote wiped, fresh blob needed |
 | 2026-05-22 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | isinstance check on `NoAuthCryptoManager` |
 | 2026-05-24 | **AFI #1 — Device Cookie fast path** | `domain/cookie/device_cookie.py` new, cookie wiring |
-| 2026-05-25 | **AFI #2 partial — Phase A instant reads** | Background subprocess avoids ls-remote on reads; display in ~50ms. `cli/background.py` new, `view_active()` restructured. 31 tests. |
-| 2026-05-25 | **AFI #2 partial — Phase B instant writes** | WAL-backed deferred push; writes return in ~2ms, remote push deferred to background. `cli/wal.py` new, `_defer_push()` in all 5 write methods. `main.py` replay at startup. 54 tests. |
-| 2026-05-25 | **Cookie renewal threshold** | `cookie.renewal_threshold` added to config defaults (0.9). Threaded through background process. Configurable per-device. |
-| 2026-05-25 | **Phase C tests (daemon mode)** | `tests/test_daemon.py` (41 tests) + `tests/test_daemon_sync.py` (24 tests) — 65 tests total for daemon lifecycle, DebounceQueue, SyncWorker retry/conflict, event loop, file watcher, status publishing. Written before implementation (TDD spec). |
-| 2026-05-25 | **Phase C implementation (daemon)** | `cli/daemon.py`, `cli/daemon_sync.py`, `cli/daemon_cli.py` written. `main.py` — `ph daemon start/stop/status` subcommand. 65 tests all pass. |
+| 2026-05-25 | **AFI #2 partial — Phase A instant reads** | Background subprocess avoids ls-remote on reads; display in ~50ms. |
+| 2026-05-25 | **AFI #2 partial — Phase B instant writes** | WAL-backed deferred push; writes return in ~2ms, remote push deferred to background. |
+| 2026-05-25 | **Phase C** | Daemon mode (ph daemon start/stop/status), 65 tests. |
+| 2026-05-25 | **Stale-remote resurrection bug** | Removed `check_and_sync()` from all 6 write methods. Remote-always-wins MergeEngine was resurrecting ended tasks from stale remote blob. Writes are now local-only; remote sync via WAL/daemon. 3 test files updated. |
+| 2026-05-25 | **Onboarding command** | `ph onboarding` — `cli/onboarding.py` (474 lines). Pulls ledger/staging/index from git remote, extracts identity from genesis, runs recover flow. Transport-agnostic via `AbstractStagingTransport`. |
 
 ### Open issues remaining
 
