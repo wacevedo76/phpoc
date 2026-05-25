@@ -101,6 +101,9 @@ def main():
     # Recover command
     subparsers.add_parser("recover", help="Recover access using seed and set new passphrase")
 
+    # Onboarding command (import existing ledger to a new device)
+    subparsers.add_parser("onboarding", help="Import existing ledger to this device via git remote")
+
     # Login / Logout commands
     subparsers.add_parser("login", help="Authenticate and cache session (re-prompts for passphrase)")
     subparsers.add_parser("logout", help="Clear cached session (forces re-auth on next command)")
@@ -267,6 +270,11 @@ def main():
             auth._cache_key(mk)
         else:
             print("Ledger already exists.")
+        return
+
+    if args.command == "onboarding":
+        from cli.onboarding import run_onboarding
+        ok = run_onboarding(data_dir=CONFIG_DIR, config_manager=CONFIG)
         return
 
     if args.command == "recover":
