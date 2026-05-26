@@ -10,16 +10,56 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `ee2339e` | `ee2339e` (pulled from origin) |
+| Commit | `d25d9b4` | `ee2339e` (needs pull) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Transport | `http` → `https://phpoc-staging.wacevedo.workers.dev` | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
-| API key | 🟢 **Set** | 🔴 **null** (not set) |
-| Device cookie | 🟢 **Present** (specifier `9add2bfb...`) | 🔴 **None** (no write has succeeded) |
+| API key | 🟢 **Set** | 🔴 **Must set** |
+| Device cookie | 🟢 **Present** (specifier `a68de5ed...`) | 🔴 **None** (no write has succeeded) |
 | Remote URL (git fallback) | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
+
+### Issue #19: Sync commands pushed device cookie to remote (false ownership claim)
+
+**Status:** ✅ Fixed (2026-05-27, commits `88e7e52` + `d25d9b4`)
+
+**Problem:** `ph sync remote_staging` called `push_to_remote()`, which always
+created a new device cookie and pushed it to R2. This made the syncing device
+appear to be the last writer — even though it only synced, not wrote.
+
+**Fix:**
+- `push_to_remote()` → used by write operations (WAL pushes, `_push_if_remote`,
+  daemon sync worker). Pushes cookie + blob.
+- `push_blob_only()` → used by `ph sync remote_staging`. Pushes blob only,
+  **no cookie overwrite**.
+- Internal `_push_cookie()` extracted from `push_to_remote()`.
+
+**Files modified:** `domain/staging/service.py`, `main.py`
+
+### Issue #18: Cookie specifier IS the truth — mismatch alone forces auth
+
+**Status:** ✅ Fixed (2026-05-27, commit `d25d9b4`)
+
+**Problem:** The slow path checked the blob's `device_id` field for auth decisions,
+not the cookie specifier. If the blob's `device_id` matched local (e.g. after a
+merge+push cycle where the local device overwrote the remote cookie), cross-device
+changes weren't detected.
+
+**Fix:**
+- `check_and_sync()` fast path: cookie specifier match → READY
+- `check_and_sync()` slow path: specifier mismatch (or no cookie) → check auth.
+  Auth gate uses `_is_auth_fresh()` (TTL cache OR live CryptoManager presence).
+- Blob's `device_id` field is no longer consulted for auth decisions.
+- `_is_auth_fresh()` extracted — consolidates auth freshness check into one helper.
+- `RemoteStagingSync` wrapping restored in constructor for cookie push/pull.
+
+**Key behavioral change:** A cookie specifier mismatch now **always** triggers the
+auth gate. Previously, if auth was cached or CryptoManager was present, it would
+skip auth even with a specifier mismatch.
+
+**Files modified:** `domain/staging/service.py`
 
 ### Issue #18: x13 has `api_key: null` in config — HTTPS pushes fail silently
 
@@ -720,23 +760,26 @@ When both devices edit the same entry concurrently:
 | 2026-05-26 | **Issue #16 — HTTP timeout too low** | Default timeout 10s → 60s. Block 000029.json timed out during push (month summary, large obfuscated payload). |
 | 2026-05-27 | **Device Cookie redesign** | HMAC → random specifier. `device_specifier` string comparison is definitive across shared-key devices. Commit `a5793fe`. |
 | 2026-05-27 | **`ph dev cookie` command** | New diagnostic subcommand to inspect remote + local cookies. Commit `ee2339e`. |
+| 2026-05-27 | **Issue #19 — Sync must not push cookie** | `push_blob_only()` extracted; `ph sync remote_staging` uses it. Write ops still use `push_to_remote()` (cookie + blob). Commit `88e7e52`. |
+| 2026-05-27 | **Cookie specifier IS the truth** | Mismatch always forces auth. `_is_auth_fresh()` helper. Blob `device_id` no longer consulted for auth. Commit `d25d9b4`. |
 
 ### Open issues remaining
 
 | Issue | Status | Owner |
 |---|---|---|
 | **Issue #18** — x13 `api_key` is null 🔴 | 🔴 **Blocking cross-device sync from x13** | x13 |
+| Issue #19 — Sync pushes cookie to remote (false ownership) | ✅ Fixed (`88e7e52`) | debagent04 |
+| Issue (cookie redesign) — Specifier IS the truth, mismatch forces auth | ✅ Fixed (`d25d9b4`) | debagent04 |
 | Issue #7 — Stale cache blob overwrite (session 2) | 🔴 Data loss (resolved by wipe) | x13 + debagent04 |
-| Issue #8 — Session cache blocks re-auth after ph recover | ✅ Fixed (commit `389e268`) | debagent04 |
-| Issue #9 — Rebase conflicts silently swallowed | 🔴 Needs fix | debagent04 |
-| Issue #11 — `ph recover` doesn't clear session cache | ✅ Fixed (commit `389e268`) | debagent04 |
-| Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
-| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed | debagent04 |
-| Issue #14 — `ph recover` rewrites all blocks; full ledger push takes ~7 min | 🔴 Needs design (async batch push) | x13 |
-| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (HTTP transport eliminates SSH/git handshake entirely) | x13 |
-| **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing (blocked by #18) | debagent04 |
-| **Device Cookie redesign** | ✅ Done (2026-05-27, commit `a5793fe`) | debagent04 |
-| **`ph dev cookie` command** | ✅ Done (2026-05-27, commit `ee2339e`) | debagent04 |
+| Issue #8 — Session cache blocks re-auth after ph recover | ✅ Fixed | debagent04 |
+| Issue #9 — Rebase conflicts silently swallowed | 🔴 Deprecated (HTTP transport replaces git) | debagent04 |
+| Issue #11 — `ph recover` doesn't clear session cache | ✅ Fixed | debagent04 |
+| Issue #12 — `git pull --rebase` false 'Already up to date' | 🔴 Deprecated (HTTP transport replaces git) | debagent04 |
+| Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | ✅ Fixed | debagent04 |
+| Issue #14 — `ph recover` rewrites all blocks (slow push) | 🔴 Needs design | x13 |
+| **AFI #3** — Cross-device sync testing | 🔴 **Next step** — blocked on x13 api_key | debagent04 + x13 |
+| **Device Cookie redesign** | ✅ Done (`a5793fe`) | debagent04 |
+| **`ph dev cookie` command** | ✅ Done (`ee2339e`) | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
 

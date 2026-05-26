@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `ee2339e` (feat: add ph dev cookie command to inspect remote device cookie)
+- **Commit:** `d25d9b4` (fix: specifier mismatch always forces auth; sync never pushes cookie)
 - **Tests:** 1267 all passing
 - **Remote staging:** Using HTTP transport via Cloudflare Worker ✅
 - **Remote ledger:** ✅ **Migrated to R2** — 56 blocks + index pushed via HTTP
@@ -14,29 +14,39 @@
 - **Onboarding:** ✅ `cli/onboarding.py` (474 lines) — `ph onboarding`
 - **Bug fix (stale-remote resurrection):** `check_and_sync()` removed from all write methods
 - **Bug fix (cookie redesign):** Old HMAC-based cookies replaced by random-specifier design
+- **Critical refactor:** Cookie specifier IS the truth — mismatch always forces auth, no longer checks blob's `device_id` field
+- **Sync does NOT push cookie:** `ph sync remote_staging` uses `push_blob_only()` — blob only, remote cookie is never overwritten by sync
+- **Auth gate:** `_is_auth_fresh()` helper — uses TTL cache OR live CryptoManager presence
 - **Navigation:** `ph dev cookie` — inspect remote + local cookies for debugging
 - **Ledger data:** 56 blocks + index pushed from x13 to R2 via HTTP transport
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 
-## Device Cookie — Redesigned (2026-05-27)
+## Device Cookie — Final Design (2026-05-27)
 
-**Old design (HMAC-based):**
-- Cookie = HMAC(master_key, device_id + epoch_ms) → 32 raw bytes
-- Comparison was byte-for-byte — if both devices shared the same master key (recovery seed), the HMAC byte comparison could match even when different devices had written
-- 32 raw bytes on R2 — opaque, hard to debug
-
-**New design (random specifier):**
+**Design (random specifier):**
 - Remote cookie (R2):  `{"device_uuid": "<UUID>", "device_specifier": "<random 32-char hex>"}`
 - Local cookie (disk): `{"device_specifier": "<same random>", "creation_time": "<epoch_ms>"}`
 
-**Flow:**
-1. `check_and_sync()` checks local cookie exists + TTL valid
-2. Pulls remote cookie from R2 (tiny JSON, ~100 bytes)
-3. Compares `device_specifier` values — if they match → same device session → READY
-4. If they don't match → different device has written → slow path (pull + decrypt + merge)
-5. `push_to_remote()` generates a new random specifier, stores locally, pushes to R2
+**Cookie is the truth.** A specifier mismatch definitively means a different device
+wrote since our last push. This alone forces the auth gate — no fallback to blob's
+`device_id` field.
 
-**Key property:** The `device_specifier` is a random token, freshly generated on each cookie creation. When x13 pushes, it writes x13's specifier. The next debagent04 command compares its local specifier against R2's → **definitive mismatch** → forces blob pull + merge.
+**Two push paths:**
+| Method | Used by | Pushes cookie? |
+|--------|---------|----------------|
+| `push_to_remote()` | Write ops (add, end, etc.) | ✅ Yes — generates new specifier |
+| `push_blob_only()` | `ph sync remote_staging` | ❌ No — blob only, cookie stays |
+
+**Flow:**
+1. `check_and_sync()` → local cookie TTL valid?
+   - Yes → pull remote cookie, compare `device_specifier`
+     - Match → **READY** (fast path, same device session)
+     - Mismatch → fall through ↓
+   - No cookie/expired → fall through ↓
+2. Slow path: pull blob from R2
+3. `_is_auth_fresh()`? (TTL cache OR CryptoManager present?)
+   - No → `REAUTH_NEEDED`
+   - Yes → merge remote into local → READY
 
 **`ph dev cookie` command** (added in `ee2339e`):
 ```
@@ -56,11 +66,11 @@ Local Device Cookie:
 | | x13 (laptop) | debagent04 (pi) |
 |---|---|---|
 | Device ID | `dc1da321-2c80-4815-a808-11295b8c59f9` | `bbb3badc-6365-49ea-b43c-53869ca0195f` |
-| Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
+| Passphrase | 🟢 **Updated** | 🟢 **Updated** |
 | Transport | `http` → `https://phpoc-staging.wacevedo.workers.dev` | `http` (same URL) |
-| API key | 🔴 **Not set** — `ph config set http.api_key "<key>"` needed | 🟢 **Set** |
+| API key | 🔴 **Must set:** `ph config set http.api_key "<key>"` | 🟢 **Set** |
+| Cookie status | 🔴 **None** — no write succeeded yet | 🟢 **Working** (specifier `a68de5ed...`) |
 | Remote clone dir | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
-| Cookie status | Unknown — needs `ph dev cookie` | 🟢 Working |
 
 ## Key Files
 | File | Purpose |
@@ -85,20 +95,57 @@ Local Device Cookie:
 
 ## Recent Commits (this session)
 ```
+d25d9b4  fix: specifier mismatch always forces auth; sync never pushes cookie
+88e7e52  fix: sync commands must not push device cookie to remote
 ee2339e  feat: add ph dev cookie command to inspect remote device cookie
 a5793fe  redesign: device cookie uses random specifier instead of HMAC
-d1f0f29  fix: cookie fast path falls through after stale threshold
 6240f92  feat: inline sync before commands, background push fix, config fix
-60e1b79  fix: api_key was null in debagent04 config - set via ph config set
-...
+```
+
+## Testing Checklist
+
+### 1. On x13 — set API key first
+```bash
+cd ~/phpoc
+git pull origin P3-Remote_Sync
+ph config set http.api_key "e433b6f13a68aad1fa67d68116b3f6210b7424d6c928ff75a021ffd0ef34fb64"
+```
+
+### 2. On x13 — verify cookie and sync
+```bash
+ph dev cookie          # should show remote cookie (from debagent04), no local cookie
+ph sync remote_staging # pulls debagent04's blob, pushes x13's local data
+ph dev cookie          # still no local cookie — sync doesn't create one
+ph add start "Test"    # creates local cookie, pushes to R2
+ph dev cookie          # now shows local cookie, specifiers match
+```
+
+### 3. Cross-device: x13 → debagent04
+```bash
+# On x13:
+ph add start "Cross-device test"
+
+# On debagent04:
+ph view                # should show "Cross-device test" as active
+ph dev cookie          # specifiers DON'T match (debagent04's local ≠ x13's remote)
+```
+
+### 4. Cross-device: debagent04 → x13
+```bash
+# On debagent04:
+ph add end "Cross-device test"
+
+# On x13:
+ph view                # should show task as ended
+```
+
+### 5. Verify auth gate
+```bash
+# On debagent04, while x13 has the remote cookie:
+ph logout
+ph view                # should prompt for passphrase (cookie mismatch + auth expired)
 ```
 
 ## Known Issue: x13 has `api_key: null`
 On x13, `ph config set http.api_key "<key>"` is needed before HTTPS pushes will succeed.
 Without it, `ph sync remote_staging` and background pushes silently fail (403 Forbidden).
-
-## Next Steps
-1. **On x13:** `git pull origin P3-Remote_Sync` → `ph config set http.api_key "<key>"`
-2. **On x13:** `ph dev cookie` to verify cookie exists locally
-3. **Cross-device test:** `ph add start "Test"` on x13 → `ph view` on debagent04 shows it
-4. **Cross-device test:** `ph add end "Test"` on debagent04 → `ph view` on x13 shows it ended
