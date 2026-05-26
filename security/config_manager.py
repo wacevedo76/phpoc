@@ -40,6 +40,7 @@ class ConfigManager:
             "git_remote_url": None,
         },
         "http": {
+            "provider": None,   # "cloudflare", "generic", or None
             "base_url": None,
             "api_key": None,
         },

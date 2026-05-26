@@ -207,6 +207,16 @@ def main():
     daemon_sub.add_parser("stop", help="Stop the daemon gracefully")
     daemon_sub.add_parser("status", help="Show daemon running state and last sync info")
 
+    # Transport command
+    transport_p = subparsers.add_parser("transport", help="Manage remote transport (git/http)")
+    transport_sub = transport_p.add_subparsers(dest="transport_action")
+    transport_show = transport_sub.add_parser("show", help="Show current transport settings")
+    transport_set = transport_sub.add_parser("set", help="Change transport type")
+    transport_set.add_argument("transport_type", choices=["git", "http"],
+                               help="Transport type: git or http")
+    transport_set.add_argument("http_provider", nargs="?", choices=["cloudflare"],
+                               help="HTTP provider (optional, for http transport)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -400,6 +410,12 @@ def main():
             daemon.status()
         else:
             print("Usage: ph daemon <start|stop|status>")
+        return
+
+    # --- Transport subcommand ---
+    if args.command == "transport":
+        from cli.transport_cmd import run_transport_command
+        run_transport_command(args, CONFIG, CONFIG_PATH)
         return
 
     # --- Lazy Authentication Logic ---
