@@ -432,8 +432,19 @@ class StagingService:
             except Exception:
                 remote_cookie = None
             if remote_cookie is not None and DeviceCookie.matches(local_cookie, remote_cookie):
-                # Same device, same session, TTL valid → staging is in sync
-                return SyncCheckResult.READY
+                # Cookie matches — same device was the last writer.
+                # But if our last push was a while ago, another device
+                # may have pushed since then (and then our own push
+                # overwrote their cookie after merge). Check staleness.
+                if self._last_push_at > 0:
+                    elapsed_s = (int(time.time() * 1000) - self._last_push_at) // 1000
+                    if elapsed_s > self.COOKIE_STALE_THRESHOLD_S:
+                        # Stale — fall through to slow path to check blob
+                        pass
+                    else:
+                        return SyncCheckResult.READY
+                else:
+                    return SyncCheckResult.READY
 
         # ------------------------------------------------------------------
         # SLOW PATH: Full staging blob pull + device match + merge
