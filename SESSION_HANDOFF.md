@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `5853d5c` (Phase B/C + stale-remote fix + onboarding + Phase 1 tests)
+- **Commit:** `a88516b` (Phase 1: HttpStagingTransport + Worker + config wiring)
 - **Tests:** 1199 all passing + 66 Phase 1 tests written (TDD, fail cleanly until implementation)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
@@ -60,6 +60,12 @@
 | `tests/test_daemon.py` | 🆕 41 tests — Phase C daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing |
 | `tests/test_daemon_sync.py` | 🆕 24 tests — Phase C SyncWorker session/retry/conflict, pull_check |
 | `staging_log/` | Trace output directory (⚠️ in `.gitignore` — contains master key bytes) |
+| `core/sync/http_transport.py` | 🆕 **Phase 1** — 285 lines: HTTP GET/PUT/LIST with ETag caching, configurable timeout, API key |
+| `tests/test_http_transport.py` | 🆕 **Phase 1** — 66 tests: transport contract, ETag caching, errors, integration, Worker contract |
+| `worker/src/index.ts` | 🆕 **Phase 1** — 149 lines TypeScript Cloudflare Worker: GET/PUT/LIST + ETag + API key auth |
+| `worker/wrangler.toml` | 🆕 **Phase 1** — Cloudflare Workers config with R2 bucket binding |
+| `worker/package.json` | 🆕 **Phase 1** — Worker project dependencies (wrangler, vitest, typescript) |
+| `worker/tsconfig.json` | 🆕 **Phase 1** — TypeScript config for Worker |
 
 ## Device Cookie — Fast-Path Cross-Device Check (AFI #1)
 
@@ -241,11 +247,14 @@ All pushed to origin.
 1. [x] Create Cloudflare R2 bucket (`phpoc-data`)
 2. [x] Create R2 API token (`phpoc-r2-bucket`, saved locally)
 3. [x] Write tests for `HttpStagingTransport` (66 tests, 6 classes)
-4. [ ] Implement `core/sync/http_transport.py` — ~150 lines
-5. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
-6. [ ] Push existing staging data from git to R2 via Worker
-7. [ ] Swap `GitStagingTransport` → `HttpStagingTransport` in `main.py` and `cli/onboarding.py`
-8. [ ] Verify CLI latency drops from ~5000ms to ~100ms
+4. [x] Implement `core/sync/http_transport.py` (285 lines) — pull/push/list_files with ETag caching
+5. [x] Create Worker source: `worker/src/index.ts` (149 lines), `worker/wrangler.toml`, `worker/package.json`, `worker/tsconfig.json`
+6. [x] Add `create_transport_from_config()` factory to `core/sync/transport.py`
+7. [x] Wire HTTP transport into `main.py` and `cli/onboarding.py`
+8. [x] Add `http.base_url` / `http.api_key` config defaults
+9. [ ] Deploy Worker: `cd worker && npx wrangler deploy`
+10. [ ] Push existing staging data from git to R2 via Worker
+11. [ ] Set `transport: http` in config, verify ~100ms latency
 
 ### Phase 2: Mobile MVP (next)
 1. [ ] Re-implement crypto primitives for mobile (PBKDF2, AES-CTR, HMAC-SHA256)

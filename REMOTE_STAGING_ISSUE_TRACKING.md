@@ -10,7 +10,7 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `5853d5c` | `5853d5c` (pushed to origin) |
+| Commit | `a88516b` | `a88516b` (pushed to origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
@@ -634,6 +634,9 @@ When both devices edit the same entry concurrently:
 | 2026-05-25 | **Stale-remote resurrection bug** | Removed `check_and_sync()` from all 6 write methods. Remote-always-wins MergeEngine was resurrecting ended tasks from stale remote blob. Writes are now local-only; remote sync via WAL/daemon. 3 test files updated. |
 | 2026-05-25 | **Onboarding command** | `ph onboarding` — `cli/onboarding.py` (474 lines). Pulls ledger/staging/index from git remote, extracts identity from genesis, runs recover flow. Transport-agnostic via `AbstractStagingTransport`. |
 | 2026-05-26 | **Phase 1 tests written (TDD)** | `tests/test_http_transport.py` — 66 tests covering transport contract, ETag caching, error handling, RemoteStagingSync/RemoteLedgerSync integration, Worker HTTP contract spec. Fail cleanly until implementation. |
+| 2026-05-26 | **HttpStagingTransport implemented** | `core/sync/http_transport.py` (285 lines) — GET/PUT/LIST with ETag caching, configurable timeout, API key header, URL validation. All 66 tests pass. |
+| 2026-05-26 | **Worker source created** | `worker/src/index.ts` (149 lines) — TypeScript Cloudflare Worker: GET/PUT/LIST + ETag + API key auth. Generic HTTP-to-R2 proxy. `worker/wrangler.toml`, `worker/package.json`, `worker/tsconfig.json`. |
+| 2026-05-26 | **Transport factory + wiring** | `core/sync/transport.py` — `create_transport_from_config()` factory. `main.py` and `cli/onboarding.py` use config to choose HTTP or git transport. `security/config_manager.py` — `http.base_url` and `http.api_key` defaults. |
 
 ### Open issues remaining
 
