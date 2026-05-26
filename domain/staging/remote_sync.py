@@ -338,21 +338,21 @@ class RemoteStagingSync:
     def pull_cookie(self) -> Optional[bytes]:
         """Pull only the device cookie file from remote.
 
-        The cookie is a tiny 32-byte HMAC value — no decryption needed.
+        The cookie is a small JSON blob (device_specifier + device_uuid).
         This is orders of magnitude faster than pulling + decrypting the
         full staging blob (~64KB+).
 
         Returns:
-            Raw cookie bytes, or None if no cookie exists on remote.
+            Raw cookie bytes (JSON), or None if no cookie exists on remote.
         """
         return self._transport.pull(REMOTE_COOKIE_PATH)
 
     @trace
     def push_cookie(self, cookie_bytes: bytes):
-        """Push the encrypted device cookie to remote.
+        """Push the device cookie to remote.
 
         Args:
-            cookie_bytes: 32 bytes of HMAC output from DeviceCookie.
+            cookie_bytes: JSON bytes of {"device_uuid": ..., "device_specifier": ...}.
         """
         self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes)
 

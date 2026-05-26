@@ -187,7 +187,7 @@ def _try_renew_aging_cookie(
 
     try:
         meta = json.loads(meta_path.read_text())
-        created_at = meta.get("created_at")
+        created_at = meta.get("creation_time")
         if created_at is None:
             return False
 
@@ -217,11 +217,11 @@ def _try_renew_aging_cookie(
             return False
 
         # Create fresh cookie and push to remote
-        cookie_hex = DeviceCookie.create(master_key, device_id, data_dir)
-        if cookie_hex is None:
+        remote_cookie = DeviceCookie.create(device_id, data_dir)
+        if remote_cookie is None:
             return False
 
-        cookie_bytes = bytes.fromhex(cookie_hex)
+        cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
         remote_sync.push_cookie(cookie_bytes)
         logger.debug("Device cookie renewed (device=%s, age=%dms)", device_id, age_ms)
         return True
@@ -277,7 +277,8 @@ def _run_cookie_check(
             # (the user will get the normal error on their next explicit sync)
             return
 
-        if remote_cookie is None or not DeviceCookie.matches(local_cookie, remote_cookie):
+        remote_parsed = DeviceCookie.parse_remote(remote_cookie) if remote_cookie else None
+        if remote_parsed is None or not DeviceCookie.matches(local_cookie, remote_parsed):
             # Remote has no cookie, or cookie from a different device/session
             _write_notification(notification_path, {
                 "type": "remote_changes",

@@ -1,138 +1,124 @@
-"""DeviceCookie — deterministic encrypted cookie for cross-device identity check.
+"""DeviceCookie — random-specifier cookie for cross-device identity check.
 
-The Device Cookie solves the circular dependency problem where you need to
-decrypt the staging blob just to find out *who* encrypted it.
+Design (your spec):
+  - Remote cookie:  {"device_uuid": "<UUID>", "device_specifier": "<random>"}
+  - Local cookie:   {"device_specifier": "<same random>", "creation_time": "<epoch_ms>"}
+  
+  On every staging write, a new random specifier is generated, stored locally,
+  and pushed to remote as part of the cookie.
 
-Design:
-  - Cookie = HMAC-SHA256(cookie_key, device_id + ":" + epoch_ms)
-  - Deterministic: same inputs → same 32 bytes every time
-  - Requires master key to generate or verify (HMAC is a keyed hash)
-  - Remote only ever sees the encrypted (HMAC) bytes — no plaintext profiling
-  - Local also stores the epoch in plaintext for TTL check (never pushed)
+  On every staging read:
+    1. Check local cookie exists and TTL hasn't expired (creation_time)
+    2. Pull remote cookie — compare device_specifier values
+    3. Match → same device session → READY (fast path)
+    4. No match → different device wrote → slow path (pull + merge)
+    5. No remote cookie → first time → slow path
 
-Flow:
-  1. Every write operation creates/renews the cookie on local and pushes it to remote
-  2. Every operation checks: local cookie valid? matches remote cookie?
-  3. If both: same device, same session → skip staging reconciliation
-  4. If not: proceed to auth + full staging blob pull+merge
-
-Security properties:
-  - Remote only stores 32 bytes of HMAC output — no device_id, no epoch
-  - Without master key, cookie cannot be forged or traced to a device
-  - TTL is enforced locally — no network round-trip needed to check expiry
-  - Cookie comparison is timing-safe (hmac.compare_digest)
+Security:
+  - device_specifier is a random 16-byte hex string — cannot be guessed
+  - No master key needed for comparison (the specifier IS the identity proof)
+  - Remote stores no plaintext cookie key — just the random specifier + UUID
+  - device_uuid on remote is informational (for debugging), NOT used for auth
 """
 
 import json
 import time
-import hmac
+import os
 import hashlib
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Prefix used to derive the cookie HMAC key from the master key
-COOKIE_KEY_PREFIX = b"phpoc:cookie-key"
+
+# Aliases for backward compatibility — files renamed but kept in same locations
+COOKIE_FILE = "device_cookie.bin"       # Remote cookie (JSON blob → pushed to remote)
+META_FILE = "device_cookie.meta"        # Local cookie (JSON, local only)
 
 
 class DeviceCookie:
-    """Deterministic encrypted cookie for cross-device identity verification.
+    """Random-specifier cookie for cross-device identity verification.
 
     Usage::
 
         # After successful auth + push:
-        DeviceCookie.create(mk, device_id, data_dir)
+        DeviceCookie.create(device_id, data_dir)
+        # → writes local cookie + returns remote cookie dict
 
         # Before any operation:
         local = DeviceCookie.is_valid_locally(data_dir, ttl_minutes=30)
         if local is not None:
-            remote = transport.pull("staging/blobs/device_cookie.bin")
-            if remote is not None and DeviceCookie.matches(local, remote):
-                return READY  # Same device, same session
+            remote = pull from "staging/blobs/device_cookie.bin"
+            remote_parsed = DeviceCookie.parse_remote(remote)
+            if remote_parsed and DeviceCookie.matches(local, remote_parsed):
+                return READY  # Same device session
     """
 
-    # Local filenames (in data_dir)
-    COOKIE_FILE = "device_cookie.bin"       # Encrypted (HMAC) bytes — pushed to remote
-    META_FILE = "device_cookie.meta"        # Plaintext: { "created_at": epoch_ms } — local only
-
     # ------------------------------------------------------------------
-    # Key derivation
+    # Cookie value generation
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _derive_cookie_key(master_key: bytes) -> bytes:
-        """Derive a dedicated HMAC key for cookies from the master key.
-
-        Uses SHA-256, producing a 32-byte key.
-        """
-        return hmac.new(master_key, COOKIE_KEY_PREFIX, hashlib.sha256).digest()
-
-    # ------------------------------------------------------------------
-    # Cookie value derivation (deterministic)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _compute_cookie(cookie_key: bytes, device_id: str, epoch_ms: int) -> bytes:
-        """Compute the deterministic 32-byte cookie value.
-
-        Args:
-            cookie_key: 32-byte key derived from master key.
-            device_id: This device's UUID.
-            epoch_ms: Creation timestamp in milliseconds.
-
-        Returns:
-            32 bytes of HMAC output (deterministic).
-        """
-        payload = f"{device_id}:{epoch_ms}".encode("utf-8")
-        return hmac.new(cookie_key, payload, hashlib.sha256).digest()
+    def _generate_specifier() -> str:
+        """Generate a random 32-char hex string as the device specifier."""
+        return os.urandom(16).hex()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     @staticmethod
-    def create(master_key: bytes, device_id: str, data_dir: Path) -> Optional[str]:
-        """Create a new device cookie on local and return its path for remote push.
+    def create(device_id: str, data_dir: Path) -> Optional[Dict[str, Any]]:
+        """Create a new device cookie.
 
-        Writes two local files:
-          - device_cookie.bin  → 32 bytes of HMAC output (to be pushed to remote)
-          - device_cookie.meta → plaintext JSON with epoch (local TTL check only)
-
-        The cookie is re-creatable: same (master_key, device_id, epoch_ms) → same bytes.
-        But epoch_ms is unique per creation, so each cookie is unique.
+        Writes local cookie (specifier + creation_time) and returns the
+        remote cookie dict to be pushed to R2.
 
         Args:
-            master_key: 32-byte master key.
             device_id: This device's UUID string.
             data_dir: Local data directory (~/.local/share/phpoc/).
 
         Returns:
-            The encrypted cookie bytes as hex string (for reference), or None on failure.
+            Remote cookie dict {"device_uuid": ..., "device_specifier": ...}
+            to be pushed to remote, or None on failure.
         """
         try:
-            cookie_key = DeviceCookie._derive_cookie_key(master_key)
+            specifier = DeviceCookie._generate_specifier()
             epoch_ms = int(time.time() * 1000)
-            cookie_bytes = DeviceCookie._compute_cookie(cookie_key, device_id, epoch_ms)
 
-            # Write encrypted cookie (to be pushed to remote)
-            cookie_path = data_dir / DeviceCookie.COOKIE_FILE
-            cookie_path.parent.mkdir(parents=True, exist_ok=True)
-            cookie_path.write_bytes(cookie_bytes)
+            # Remote cookie — pushed to R2 (JSON bytes)
+            remote_cookie = {
+                "device_uuid": device_id,
+                "device_specifier": specifier,
+            }
 
-            # Write plaintext metadata (local only — NEVER push this)
-            meta_path = data_dir / DeviceCookie.META_FILE
-            meta_path.write_text(json.dumps({"created_at": epoch_ms}))
+            # Local cookie — local only (JSON)
+            local_cookie = {
+                "device_specifier": specifier,
+                "creation_time": epoch_ms,
+            }
 
-            logger.debug("Device cookie created for device %s (epoch=%d)", device_id, epoch_ms)
-            return cookie_bytes.hex()
+            # Write local cookie
+            meta_path = data_dir / META_FILE
+            meta_path.parent.mkdir(parents=True, exist_ok=True)
+            meta_path.write_text(json.dumps(local_cookie))
+
+            # Write remote cookie bytes (to be pushed to transport)
+            cookie_path = data_dir / COOKIE_FILE
+            cookie_path.write_text(json.dumps(remote_cookie))
+
+            logger.debug(
+                "Device cookie created for device %s (spec=%s...)",
+                device_id, specifier[:8],
+            )
+            return remote_cookie
         except Exception as exc:
             logger.error("Failed to create device cookie: %s", exc)
             return None
 
     @staticmethod
-    def is_valid_locally(data_dir: Path, ttl_minutes: int = 30) -> Optional[bytes]:
+    def is_valid_locally(data_dir: Path, ttl_minutes: int = 30) -> Optional[Dict[str, Any]]:
         """Check if a local device cookie exists and its TTL has not expired.
 
         Args:
@@ -140,18 +126,21 @@ class DeviceCookie:
             ttl_minutes: How long the cookie is valid (configurable, default 30).
 
         Returns:
-            The encrypted cookie bytes if valid, None if missing or expired.
+            The local cookie dict {"device_specifier": ..., "creation_time": ...}
+            if valid, None if missing or expired.
         """
-        cookie_path = data_dir / DeviceCookie.COOKIE_FILE
-        meta_path = data_dir / DeviceCookie.META_FILE
+        meta_path = data_dir / META_FILE
 
-        if not cookie_path.exists() or not meta_path.exists():
+        if not meta_path.exists():
             return None
 
         try:
-            meta = json.loads(meta_path.read_text())
-            created_at = meta.get("created_at")
-            if created_at is None:
+            local_cookie = json.loads(meta_path.read_text())
+            specifier = local_cookie.get("device_specifier")
+            created_at = local_cookie.get("creation_time")
+
+            if not specifier or not created_at:
+                DeviceCookie.destroy_locally(data_dir)
                 return None
 
             elapsed_ms = int(time.time() * 1000) - created_at
@@ -161,26 +150,66 @@ class DeviceCookie:
                 DeviceCookie.destroy_locally(data_dir)
                 return None
 
-            return cookie_path.read_bytes()
+            return local_cookie
         except (json.JSONDecodeError, OSError, IOError) as exc:
             logger.warning("Failed to read local device cookie: %s", exc)
             DeviceCookie.destroy_locally(data_dir)
             return None
 
     @staticmethod
-    def matches(local_cookie: bytes, remote_cookie: bytes) -> bool:
-        """Timing-safe comparison of two encrypted cookie byte strings.
+    def parse_remote(raw_bytes: bytes) -> Optional[Dict[str, Any]]:
+        """Parse raw bytes from remote into a cookie dict.
 
         Args:
-            local_cookie: Bytes from local device_cookie.bin.
-            remote_cookie: Bytes from remote device_cookie.bin.
+            raw_bytes: Raw bytes from transport pull of device_cookie.bin.
 
         Returns:
-            True if they are identical (same device, same session).
+            Dict {"device_uuid": ..., "device_specifier": ...}
+            or None if parsing fails.
         """
-        if not isinstance(local_cookie, bytes) or not isinstance(remote_cookie, bytes):
-            return False
-        return hmac.compare_digest(local_cookie, remote_cookie)
+        try:
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            return None
+
+    @staticmethod
+    def matches(
+        local_cookie: Dict[str, Any],
+        remote_cookie: Dict[str, Any],
+    ) -> bool:
+        """Compare device_specifier between local and remote cookies.
+
+        Args:
+            local_cookie: Dict from local cookie file.
+            remote_cookie: Dict from remote cookie (parsed via parse_remote).
+
+        Returns:
+            True if the device_specifier values match (same device session).
+        """
+        local_spec = local_cookie.get("device_specifier", "")
+        remote_spec = remote_cookie.get("device_specifier", "")
+        return bool(local_spec and remote_spec and local_spec == remote_spec)
+
+    @staticmethod
+    def get_remote_bytes(data_dir: Path) -> Optional[bytes]:
+        """Read the remote cookie bytes from local cache (written by create()).
+
+        The remote cookie is stored locally as device_cookie.bin so it can
+        be pushed to the transport without needing the device_id again.
+
+        Args:
+            data_dir: Local data directory.
+
+        Returns:
+            JSON bytes of the remote cookie dict, or None.
+        """
+        cookie_path = data_dir / COOKIE_FILE
+        try:
+            if cookie_path.exists():
+                return cookie_path.read_bytes()
+        except OSError:
+            pass
+        return None
 
     @staticmethod
     def destroy_locally(data_dir: Path):
@@ -189,10 +218,8 @@ class DeviceCookie:
         Args:
             data_dir: Local data directory (~/.local/share/phpoc/).
         """
-        cookie_path = data_dir / DeviceCookie.COOKIE_FILE
-        meta_path = data_dir / DeviceCookie.META_FILE
-
-        for path in (cookie_path, meta_path):
+        for name in (COOKIE_FILE, META_FILE):
+            path = data_dir / name
             try:
                 if path.exists():
                     path.unlink()

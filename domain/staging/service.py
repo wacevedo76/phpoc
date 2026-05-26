@@ -431,19 +431,10 @@ class StagingService:
                 remote_cookie = self._remote.pull_cookie()
             except Exception:
                 remote_cookie = None
-            if remote_cookie is not None and DeviceCookie.matches(local_cookie, remote_cookie):
-                # Cookie matches — same device was the last writer.
-                # But if our last push was a while ago, another device
-                # may have pushed since then (and then our own push
-                # overwrote their cookie after merge). Check staleness.
-                if self._last_push_at > 0:
-                    elapsed_s = (int(time.time() * 1000) - self._last_push_at) // 1000
-                    if elapsed_s > self.COOKIE_STALE_THRESHOLD_S:
-                        # Stale — fall through to slow path to check blob
-                        pass
-                    else:
-                        return SyncCheckResult.READY
-                else:
+            if remote_cookie is not None:
+                remote_parsed = DeviceCookie.parse_remote(remote_cookie)
+                if remote_parsed is not None and DeviceCookie.matches(local_cookie, remote_parsed):
+                    # Specifiers match — same device session, staging is in sync
                     return SyncCheckResult.READY
 
         # ------------------------------------------------------------------
@@ -538,9 +529,9 @@ class StagingService:
         # This matters for transport implementations that store the last
         # pushed data in a single slot (e.g. mock transports in tests).
         DeviceCookie.destroy_locally(self._data_dir)
-        cookie_bytes_hex = DeviceCookie.create(master_key, device_id, self._data_dir)
-        if cookie_bytes_hex is not None:
-            cookie_bytes = bytes.fromhex(cookie_bytes_hex)
+        remote_cookie = DeviceCookie.create(device_id, self._data_dir)
+        if remote_cookie is not None:
+            cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
             self._remote.push_cookie(cookie_bytes)
 
         self._remote.push(raw, device_id, master_key=master_key)
