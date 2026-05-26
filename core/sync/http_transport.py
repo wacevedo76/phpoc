@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Seconds to wait before giving up on a single HTTP request.
 # Used as the default when no explicit timeout is provided.
-_DEFAULT_TIMEOUT_S = 10.0
+_DEFAULT_TIMEOUT_S = 60.0
 
 # Custom header names
 _API_KEY_HEADER = "X-Api-Key"
