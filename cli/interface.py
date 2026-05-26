@@ -24,6 +24,44 @@ class CLIInterface:
         self._ledger_engine = ledger_engine
         self._crypto = crypto
 
+    def _sync_before_command(self, require_auth: bool = False) -> bool:
+        """Sync staging with remote before executing a command.
+
+        Checks device cookie for fast-path (same device, same session).
+        If cookie mismatch or expired, pulls remote blob, merges, and
+        if required, prompts for authentication.
+
+        Args:
+            require_auth: If True, REAUTH_NEEDED will prompt the user.
+
+        Returns:
+            True if sync was successful or not needed, False if re-auth
+            failed (only when require_auth=True).
+        """
+        if self._staging._remote is None:
+            return True  # No remote configured — nothing to sync
+
+        result = self._staging.check_and_sync(timeout_ms=500)
+
+        if result == SyncCheckResult.READY:
+            return True
+
+        if result == SyncCheckResult.OFFLINE:
+            # Remote unreachable — continue with local data
+            return True
+
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if require_auth:
+                print("\nRemote staging has changed since your last session.")
+                print("Please re-authenticate to sync.")
+                # The caller (main.py) handles authentication flow.
+                # Signal back that re-auth is needed.
+                return False
+            # Non-auth commands (view, list) can still show local data
+            return True
+
+        return True
+
     def _resolve_title(self, identifier):
         """Resolve a string identifier to a title.
         If identifier looks like a positive integer (e.g. '1', '2'),
@@ -140,7 +178,9 @@ class CLIInterface:
 
     @trace
     def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
-        self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
+        if not self._sync_before_command(require_auth=True):
+            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            return
         self._defer_push()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         comment_str = f" — \"{comment}\"" if comment else ""
@@ -148,7 +188,9 @@ class CLIInterface:
 
     @trace
     def add_start(self, title, tags=None, comment=None):
-        self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
+        if not self._sync_before_command(require_auth=True):
+            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            return
         self._defer_push()
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         comment_str = f" — \"{comment}\"" if comment else ""
@@ -156,6 +198,9 @@ class CLIInterface:
 
     @trace
     def add_end(self, title, comment=None):
+        if not self._sync_before_command(require_auth=True):
+            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            return
         resolved = self._resolve_title(title)
         self._staging.end(resolved, int(time.time()*1000), comment=comment)
         self._defer_push()
@@ -178,6 +223,9 @@ class CLIInterface:
 
     @trace
     def view_active(self, show_tags=False, show_comments=False):
+        # Sync with remote before showing data (fast cookie check, no auth needed)
+        self._sync_before_command(require_auth=False)
+
         # Phase A: Show any pending sync notifications from background checks
         _show_sync_notifications(self._staging._data_dir)
 
@@ -276,6 +324,7 @@ class CLIInterface:
 
     @trace
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
+        self._sync_before_command(require_auth=False)
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
         # Convert days_limit to from_date if from_date is not already set
