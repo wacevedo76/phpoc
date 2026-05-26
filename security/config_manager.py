@@ -39,6 +39,10 @@ class ConfigManager:
             "transport": "git",
             "git_remote_url": None,
         },
+        "http": {
+            "base_url": None,
+            "api_key": None,
+        },
         "auth": {
             "cache_timeout_minutes": 30,
             "passphrase_required": True,

@@ -26,6 +26,7 @@ from security.crypto import CryptoManager
 from security.auth import RecoveryAuthenticator
 from security.recovery import RecoveryManager
 from domain.ledger.remote_sync import RemoteLedgerSync
+from core.sync.transport import AbstractStagingTransport, create_transport_from_config
 from core.sync.git_transport import GitStagingTransport
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
@@ -346,12 +347,18 @@ def _write_staging_json(blob_data: dict, staging_path: Path) -> bool:
     return True
 
 
-def run_onboarding(data_dir: Path, config_manager) -> bool:
+def run_onboarding(
+    data_dir: Path,
+    config_manager,
+    transport: Optional[AbstractStagingTransport] = None,
+) -> bool:
     """Run the full onboarding flow.
 
     Args:
         data_dir: Path to the data directory (resolved via --dir, XDG, etc.)
         config_manager: ConfigManager instance for reading/writing config.
+        transport: Pre-configured transport. If ``None``, prompts for
+                   git remote URL and creates a ``GitStagingTransport``.
 
     Returns:
         True if onboarding completed successfully.
@@ -369,13 +376,18 @@ def run_onboarding(data_dir: Path, config_manager) -> bool:
             print("Onboarding cancelled.")
             return False
     
-    # ── Step 1: Git Remote URL ──────────────────────────────────────
-    url = _prompt_git_remote_url()
-    if url is None:
-        return False
-    
-    clone_path = str(data_dir / "remote")
-    transport = GitStagingTransport(url, clone_path)
+    # ── Step 1: Remote Transport ────────────────────────────────────
+    if transport is None:
+        # Git-specific flow: prompt for URL, create transport
+        url = _prompt_git_remote_url()
+        if url is None:
+            return False
+        clone_path = str(data_dir / "remote")
+        transport = GitStagingTransport(url, clone_path)
+        remote_url = url
+    else:
+        # Pre-configured transport (e.g., HttpStagingTransport)
+        remote_url = None
     
     # ── Step 2: Recovery Seed ────────────────────────────────────────
     print("\n=== Step 5: Recovery Seed ===")
@@ -424,7 +436,8 @@ def run_onboarding(data_dir: Path, config_manager) -> bool:
         print("  Wrote empty index.json.")
     
     # ── Save remote URL to config ────────────────────────────────────
-    _setup_staging_remote(url, data_dir, config_manager)
+    if remote_url is not None:
+        _setup_staging_remote(remote_url, data_dir, config_manager)
     
     # ── Step 6: Set new passphrase ───────────────────────────────────
     recover_ok = _recover_ledger(ledger_path, data_dir, mk)

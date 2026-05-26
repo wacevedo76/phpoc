@@ -19,7 +19,7 @@ from cli.trace import trace
 from domain.staging.service import StagingService
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
-from core.sync.git_transport import GitStagingTransport
+from core.sync.transport import create_transport_from_config
 from storage.implementations.file_staging import FileStagingStore
 from security.device_identity import RandomUUIDDeviceIdentityProvider
 
@@ -274,7 +274,15 @@ def main():
 
     if args.command == "onboarding":
         from cli.onboarding import run_onboarding
-        ok = run_onboarding(data_dir=CONFIG_DIR, config_manager=CONFIG)
+        from core.sync.transport import create_transport_from_config
+        config_with_dir = dict(CONFIG)
+        config_with_dir["_config_dir"] = str(CONFIG_DIR)
+        onboarding_transport = create_transport_from_config(config_with_dir)
+        ok = run_onboarding(
+            data_dir=CONFIG_DIR,
+            config_manager=CONFIG,
+            transport=onboarding_transport,
+        )
         return
 
     if args.command == "recover":
@@ -420,12 +428,11 @@ def main():
     ledger = LedgerDomain(crypto, store)
 
     # Remote transport setup (from config)
-    remote_url = CONFIG.get("remote.git_remote_url")
-    transport = None
+    config_with_dir = dict(CONFIG)
+    config_with_dir["_config_dir"] = str(CONFIG_DIR)
+    transport = create_transport_from_config(config_with_dir)
     device_id_provider = None
-    if remote_url:
-        clone_path = str(CONFIG_DIR / "remote")
-        transport = GitStagingTransport(remote_url, clone_path)
+    if transport is not None:
         device_id_provider = RandomUUIDDeviceIdentityProvider(CONFIG)
 
     # New layered components
