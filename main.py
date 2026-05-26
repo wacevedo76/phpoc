@@ -124,6 +124,12 @@ def main():
     sync_remote_p = sync_subparsers.add_parser("remote_staging", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
     sync_ledger_p = sync_subparsers.add_parser("remote_ledger", help="Sync ledger blocks with remote (push/pull append-only chain)")
     sync_ledger_p.add_argument("--force", action="store_true", help="Force overwrite all remote blocks from local (for chain divergence recovery)")
+
+    # Dev command (developer diagnostics)
+    dev_parser = subparsers.add_parser("dev", help="Developer diagnostics")
+    dev_sub = dev_parser.add_subparsers(dest="dev_action")
+    dev_cookie_p = dev_sub.add_parser("cookie", help="Display the remote device cookie (from R2)")
+
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -630,6 +636,41 @@ def main():
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
+    elif args.command == "dev":
+        dev_action = getattr(args, 'dev_action', None)
+        if dev_action == "cookie":
+            if staging_service._remote is None:
+                print("Remote transport not configured.")
+                exit(1)
+            try:
+                raw = staging_service._remote.pull_cookie()
+                if raw is None:
+                    print("No remote device cookie found.")
+                else:
+                    import json
+                    cookie = json.loads(raw.decode("utf-8"))
+                    print("Remote Device Cookie:")
+                    print(f"  device_uuid:       {cookie.get('device_uuid', 'N/A')}")
+                    print(f"  device_specifier:  {cookie.get('device_specifier', 'N/A')}")
+                    # Also show local cookie for comparison
+                    from domain.cookie.device_cookie import DeviceCookie
+                    local = DeviceCookie.is_valid_locally(
+                        staging_service._data_dir,
+                        ttl_minutes=staging_service._cookie_ttl_minutes,
+                    )
+                    if local:
+                        print()
+                        print("Local Device Cookie:")
+                        print(f"  device_specifier:  {local.get('device_specifier', 'N/A')}")
+                        print(f"  creation_time:     {local.get('creation_time', 'N/A')}")
+                        match = local.get('device_specifier') == cookie.get('device_specifier')
+                        print(f"  specifiers match:  {match}")
+                    else:
+                        print("  (no local cookie)")
+            except Exception as e:
+                print(f"Failed to fetch remote device cookie: {e}")
+        else:
+            print("Unknown dev command. Available: ph dev cookie")
     elif args.command == "rep":
         from_str, to_str = CLIInterface._resolve_date_filters(
             days=args.days,
