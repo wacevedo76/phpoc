@@ -274,8 +274,7 @@ def main():
 
     if args.command == "onboarding":
         from cli.onboarding import run_onboarding
-        from core.sync.transport import create_transport_from_config
-        config_with_dir = dict(CONFIG)
+        config_with_dir = dict(CONFIG.read())
         config_with_dir["_config_dir"] = str(CONFIG_DIR)
         onboarding_transport = create_transport_from_config(config_with_dir)
         ok = run_onboarding(
@@ -428,7 +427,7 @@ def main():
     ledger = LedgerDomain(crypto, store)
 
     # Remote transport setup (from config)
-    config_with_dir = dict(CONFIG)
+    config_with_dir = dict(CONFIG.read())
     config_with_dir["_config_dir"] = str(CONFIG_DIR)
     transport = create_transport_from_config(config_with_dir)
     device_id_provider = None
@@ -455,7 +454,7 @@ def main():
     cli = CLIInterface(staging_service, ledger_engine, crypto)
 
     # Phase B: Replay any pending WAL (crash-safe deferred push) before commands
-    if remote_url and CONFIG_DIR:
+    if transport is not None and CONFIG_DIR:
         from cli.wal import _replay_wal
         _replay_wal(CONFIG_DIR, staging_service)
     sync_orchestrator = SyncOrchestrator(
