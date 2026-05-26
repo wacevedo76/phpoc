@@ -1022,6 +1022,13 @@ cache is stale (or never set), `check_and_sync()` will return `REAUTH_NEEDED`.
 
 ### Changelog: 2026-05-27 — Redesign from HMAC to random specifier
 
+**2026-05-27 (second update):** `check_and_sync()` refactored so the
+cookie specifier IS the truth. A specifier mismatch alone forces auth
+— no longer checks blob's `device_id` field. `_is_auth_fresh()` helper
+extracted. Sync commands (`ph sync remote_staging`) use `push_blob_only()`
+which never touches the remote cookie. Write commands use `push_to_remote()`
+which pushes both cookie + blob.
+
 The original HMAC-based cookie design had a subtle flaw: when both devices
 share the same master key (recovery seed), the HMAC comparison is byte-for-byte
 identical even though different devices wrote their own cookies. This meant the
