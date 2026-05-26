@@ -123,6 +123,7 @@ def main():
     sync_parser.add_argument("--till", help="Only sync entries up to and including this date (MM-DD or YYYY-MM-DD)")
     sync_remote_p = sync_subparsers.add_parser("remote_staging", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
     sync_ledger_p = sync_subparsers.add_parser("remote_ledger", help="Sync ledger blocks with remote (push/pull append-only chain)")
+    sync_ledger_p.add_argument("--force", action="store_true", help="Force overwrite all remote blocks from local (for chain divergence recovery)")
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
@@ -580,6 +581,8 @@ def main():
                     n_entries = len(b.get("entries", []))
                     print(f"  -> Will push block #{remote_count + push_blocks.index(b) + 1}: "
                           f"{date_str} ({btype}, {n_entries} entr{'y' if n_entries == 1 else 'ies'})")
+            elif args.force:
+                print(f"  -> Force push all {local_count} blocks (overwriting remote)")
             else:
                 print("  -> Already in sync (no changes)")
                 return
@@ -591,15 +594,26 @@ def main():
                 return
 
             # 4. Execute pull/push
-            new_blocks, _ = ledger_sync.pull_blocks(ledger_data)
-            if new_blocks:
-                ledger_engine.chain.append_blocks(new_blocks)
-                print(f"\u2713 Pulled {len(new_blocks)} block(s) from remote")
+            if args.force:
+                # Force overwrite: push ALL blocks regardless of remote state
+                pushed = 0
+                for i, block in enumerate(ledger_data):
+                    filename = f"{i:06d}.json"
+                    path = f"ledger/blocks/{filename}"
+                    obfuscated = ledger_sync._obfuscate_block(block)
+                    transport.push(path, obfuscated)
+                    pushed += 1
+                print(f"\u2713 Force-pushed {pushed} block(s) to remote (overwritten)")
+            else:
+                new_blocks, _ = ledger_sync.pull_blocks(ledger_data)
+                if new_blocks:
+                    ledger_engine.chain.append_blocks(new_blocks)
+                    print(f"\u2713 Pulled {len(new_blocks)} block(s) from remote")
 
-            ledger_data = ledger.get_ledger_data()
-            pushed = ledger_sync.push_blocks(ledger_data)
-            if pushed:
-                print(f"\u2713 Pushed {pushed} block(s) to remote")
+                ledger_data = ledger.get_ledger_data()
+                pushed = ledger_sync.push_blocks(ledger_data)
+                if pushed:
+                    print(f"\u2713 Pushed {pushed} block(s) to remote")
 
             # Sync the index
             try:
