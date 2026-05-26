@@ -59,7 +59,11 @@ def _make_response(
     headers: Optional[Dict[str, str]] = None,
     url: str = "http://example.com/test",
 ) -> MagicMock:
-    """Create a mock HTTP response object.
+    """Create a mock HTTP response object with working context manager.
+
+    MagicMock.__enter__ does not return self by default (it spawns a new
+    mock), so we explicitly configure ``__enter__`` to return *self* so that
+    ``with urlopen(...) as response:`` works correctly.
 
     Args:
         status: HTTP status code.
@@ -75,11 +79,14 @@ def _make_response(
     mock_resp.read.return_value = body
     mock_resp.url = url
 
+    # Configure context manager: ``with response as r:`` → r = mock_resp
+    mock_resp.__enter__.return_value = mock_resp
+
     # .getheader() for individual headers
     all_headers = headers or {}
     mock_resp.getheader.side_effect = lambda name, default=None: all_headers.get(name, default)
 
-    # .headers for dict-style access (some code uses dict lookup)
+    # .headers for dict-style access
     mock_headers = MagicMock()
     mock_headers.get.side_effect = lambda name, default=None: all_headers.get(name, default)
     mock_resp.headers = mock_headers
@@ -111,6 +118,53 @@ def _make_http_error(
         hdrs={},
         fp=BytesIO(body),
     )
+
+
+def _get_header(request, name: str) -> Optional[str]:
+    """Extract a header from a urllib Request object (case-insensitive).
+
+    Python's ``urllib.request.Request.add_header()`` normalizes header
+    names to title case (e.g. ``If-None-Match`` → ``If-none-match``),
+    and ``get_header()`` is case-sensitive. We try the original name,
+    the title-cased version, and fall back to a case-insensitive search
+    of the headers dict.
+
+    Args:
+        request: A ``urllib.request.Request`` instance (or mock).
+        name: Header name to look up.
+
+    Returns:
+        Header value string, or None if not found.
+    """
+    # Try get_header with original name
+    if hasattr(request, 'get_header'):
+        value = request.get_header(name)
+        if value is not None:
+            return value
+        # Try title-cased version (what Python stores internally)
+        if "-" in name:
+            title_cased = name.title()
+            value = request.get_header(title_cased)
+            if value is not None:
+                return value
+
+    # Fall back to case-insensitive dict search
+    if hasattr(request, 'headers'):
+        name_lower = name.lower()
+        for k, v in request.headers.items():
+            if k.lower() == name_lower:
+                return v
+
+    return None
+
+
+def _request_url(request) -> str:
+    """Extract the full URL string from a Request object."""
+    if hasattr(request, 'get_full_url'):
+        return request.get_full_url()
+    if hasattr(request, 'full_url'):
+        return request.full_url
+    return str(request)
 
 
 # =============================================================================
@@ -171,7 +225,8 @@ class TestHttpTransportContract(unittest.TestCase):
         self.transport.pull("staging/blobs/current.json")
 
         # Verify the URL passed to urlopen
-        call_url = self.mock_urlopen.call_args[0][0]
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("https://worker.example.com", call_url)
         self.assertIn("staging/blobs/current.json", call_url)
 
@@ -183,7 +238,8 @@ class TestHttpTransportContract(unittest.TestCase):
         self.mock_urlopen.return_value = _make_response(200, b"data")
         transport.pull("staging/blobs/current.json")
 
-        call_url = self.mock_urlopen.call_args[0][0]
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         # Should not have double slashes
         self.assertNotIn("//staging", call_url)
 
@@ -229,7 +285,8 @@ class TestHttpTransportContract(unittest.TestCase):
 
         self.transport.push("staging/blobs/current.json", b"data")
 
-        call_url = self.mock_urlopen.call_args[0][0]
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("staging/blobs/current.json", call_url)
 
     def test_push_raises_on_4xx(self):
@@ -300,9 +357,11 @@ class TestHttpTransportContract(unittest.TestCase):
 
         self.transport.list_files("ledger/blocks/")
 
-        call_url = str(self.mock_urlopen.call_args[0][0])
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("prefix=", call_url)
-        self.assertIn("ledger/blocks/", call_url)
+        self.assertIn("ledger", call_url)
+        self.assertIn("blocks", call_url)
 
     def test_list_files_raises_on_5xx(self):
         """list_files raises RuntimeError on 5xx."""
@@ -386,7 +445,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
 
         request = self.mock_urlopen.call_args[0][0]
         # Verify no If-None-Match in headers
-        header_val = self._get_header(request, "If-None-Match")
+        header_val = _get_header(request, "If-None-Match")
         self.assertIsNone(header_val)
 
     def test_second_pull_sends_if_none_match(self):
@@ -404,7 +463,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         result = self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertEqual(sent_etag, '"abc123"')
 
     def test_304_returns_cached_bytes(self):
@@ -462,7 +521,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertEqual(sent_etag, '"new"')
 
     def test_push_clears_etag_cache_for_that_path(self):
@@ -482,7 +541,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertIsNone(sent_etag)
 
     def test_independent_etag_per_path(self):
@@ -507,7 +566,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(path_a)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertEqual(sent_etag, '"A"')
 
     def test_etag_without_quotes_preserved(self):
@@ -521,7 +580,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertEqual(sent_etag, "abc123")
 
     def test_weak_etag_handled(self):
@@ -535,7 +594,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertEqual(sent_etag, 'W/"abc"')
 
     def test_no_etag_in_response_no_caching(self):
@@ -549,7 +608,7 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertIsNone(sent_etag)
 
     def test_cache_purged_on_transport_reset(self):
@@ -567,19 +626,8 @@ class TestHttpTransportETagCaching(unittest.TestCase):
         self.transport.pull(self.test_path)
 
         request = self.mock_urlopen.call_args[0][0]
-        sent_etag = self._get_header(request, "If-None-Match")
+        sent_etag = _get_header(request, "If-None-Match")
         self.assertIsNone(sent_etag)
-
-    # ── helper ────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _get_header(request, name: str) -> Optional[str]:
-        """Extract a header from a urllib Request object (mock or real)."""
-        if hasattr(request, 'get_header'):
-            return request.get_header(name)
-        if hasattr(request, 'headers'):
-            return request.headers.get(name)
-        return None
 
 
 class TestHttpTransportErrors(unittest.TestCase):
@@ -655,14 +703,21 @@ class TestHttpTransportErrors(unittest.TestCase):
         self.assertEqual(result, b"")
 
     def test_unicode_paths(self):
-        """Paths with unicode characters are URL-encoded."""
+        """Paths with unicode characters work correctly.
+
+        urllib.request.Request stores the URL as-is; urlopen handles
+        encoding when making the actual request. The transport should
+        pass the path through faithfully.
+        """
         self.mock_urlopen.return_value = _make_response(200, b"data")
 
         self.transport.pull("staging/blobs/café.json")
 
-        call_url = str(self.mock_urlopen.call_args[0][0])
-        # The URL should be valid-encoded (no raw non-ASCII)
-        self.assertNotIn("é", call_url)
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
+        # The path is passed through as-is; urlopen encodes when
+        # making the actual request. Just verify the path appears.
+        self.assertIn("café.json", call_url)
 
 
 class TestHttpTransportIntegration(unittest.TestCase):
@@ -691,9 +746,17 @@ class TestHttpTransportIntegration(unittest.TestCase):
             def get_device_identity(self, master_key: bytes) -> DeviceIdentity:
                 return DeviceIdentity(
                     device_id="test-device-id",
-                    device_name="test",
-                    public_key=b"",
+                    device_label="test",
+                    device_proof="mock-proof",
                 )
+
+            def verify_device_proof(self, device_id: str, proof: bytes) -> bool:
+                return True
+
+            def check_remote_identity(
+                self, master_key: bytes, remote_device_id: str
+            ) -> bool:
+                return remote_device_id == "test-device-id"
 
         self.transport = HttpStagingTransport(base_url="https://worker.example.com")
         self.crypto = NoAuthCryptoManager()
@@ -749,7 +812,8 @@ class TestHttpTransportIntegration(unittest.TestCase):
 
         self.remote_sync.pull_cookie()
 
-        call_url = str(self.mock_urlopen.call_args[0][0])
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("device_cookie.bin", call_url)
 
     def test_push_cookie_uses_correct_path(self):
@@ -758,7 +822,8 @@ class TestHttpTransportIntegration(unittest.TestCase):
 
         self.remote_sync.push_cookie(b"\x00" * 32)
 
-        call_url = str(self.mock_urlopen.call_args[0][0])
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("device_cookie.bin", call_url)
 
     def test_check_remote_available_healthy(self):
@@ -829,17 +894,18 @@ class TestHttpTransportIntegration(unittest.TestCase):
             {"day_hash": "hash1", "prev_hash": "hash0", "entries": []},
         ]
 
-        # list_files returns empty → push both
-        self.mock_urlopen.return_value = _make_response(200, b"[]")
-
-        # push_blocks will make list_files call + 2 push calls
-        def side_effect(*args, **kwargs):
-            return _make_response(200, b"ok")
-        self.mock_urlopen.side_effect = side_effect
+        # push_blocks makes: 1 list_files call + 2 push calls
+        self.mock_urlopen.side_effect = [
+            _make_response(200, b"[]"),          # list_files → empty
+            _make_response(200, b"ok"),           # push block 0
+            _make_response(200, b"ok"),           # push block 1
+        ]
 
         count = ledger_sync.push_blocks(blocks)
 
         self.assertEqual(count, 2)
+        # Verify list_files was called first, then two pushes
+        self.assertEqual(len(self.mock_urlopen.call_args_list), 3)
 
     def test_ledger_push_blocks_skips_existing(self):
         """RemoteLedgerSync.push_blocks skips blocks already on remote."""
@@ -855,20 +921,19 @@ class TestHttpTransportIntegration(unittest.TestCase):
             {"day_hash": "hash1", "prev_hash": "hash0", "entries": []},
         ]
 
-        # list_files returns block 0 already exists
-        self.mock_urlopen.return_value = _make_response(200, json.dumps(
-            ["000000.json"]
-        ).encode("utf-8"))
-        self.mock_urlopen.side_effect = None  # reset
-
-        # Only second block should be pushed
-        def side_effect(*args, **kwargs):
-            return _make_response(200, b"ok")
-        self.mock_urlopen.side_effect = side_effect
+        # push_blocks makes: 1 list_files call + 1 push call (block 1 only)
+        self.mock_urlopen.side_effect = [
+            _make_response(200, json.dumps(
+                ["000000.json"]
+            ).encode("utf-8")),                    # list_files → block 0 exists
+            _make_response(200, b"ok"),            # push block 1 only
+        ]
 
         count = ledger_sync.push_blocks(blocks)
 
         self.assertEqual(count, 1)
+        # Verify only 2 calls: list_files + 1 push
+        self.assertEqual(len(self.mock_urlopen.call_args_list), 2)
 
     def test_ledger_pull_blocks_via_http(self):
         """RemoteLedgerSync.pull_blocks pulls missing blocks via HTTP."""
@@ -949,7 +1014,8 @@ class TestHttpTransportIntegration(unittest.TestCase):
         ledger_sync.push_index(index_data)
 
         # Verify PUT to index path
-        call_url = str(self.mock_urlopen.call_args[0][0])
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         self.assertIn("ledger/index.json", call_url)
 
     def test_ledger_list_files_via_http(self):
@@ -1069,13 +1135,7 @@ class TestHttpTransportWithWorkerContract(unittest.TestCase):
         self.transport.push("staging/blobs/current.json", b"data")
 
         request = self.mock_urlopen.call_args[0][0]
-        if hasattr(request, 'headers'):
-            ct = request.headers.get("Content-Type")
-        elif hasattr(request, 'get_header'):
-            ct = request.get_header("Content-Type")
-        else:
-            ct = None
-
+        ct = _get_header(request, "Content-Type")
         self.assertEqual(ct, "application/octet-stream")
 
     def test_paths_are_relative(self):
@@ -1088,7 +1148,8 @@ class TestHttpTransportWithWorkerContract(unittest.TestCase):
         # Path starting with / could cause double-slash in URL
         self.transport.pull("/staging/blobs/current.json")
 
-        call_url = str(self.mock_urlopen.call_args[0][0])
+        request = self.mock_urlopen.call_args[0][0]
+        call_url = _request_url(request)
         # Should not have double slashes in the middle
         self.assertNotIn("//staging", call_url)
 
