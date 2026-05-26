@@ -10,14 +10,28 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `a88516b` | `a88516b` (pushed to origin) |
+| Commit | `7afd688` | `7afd688` (pushed to origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
-| Remote clone | `~/.local/share/phpoc/remote/` | `~/.local/share/phpoc/remote/` |
-| Remote URL | `git@github.com:wacevedo76/phpoc-staging.git` | same |
+| Transport | `git` (not yet migrated) | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
+| Remote URL (git fallback) | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
+
+### Issue #16: HTTP transport default timeout (10s) too low for large ledger blocks
+
+**Status:** ✅ Fixed (2026-05-26, commit `7afd688`)
+**Fix:** Bumped `_DEFAULT_TIMEOUT_S` from 10.0 → 60.0 in `core/sync/http_transport.py`.
+
+**Root cause:** `ph sync remote_ledger` push failed on block #29 (000029.json, a month
+summary) with `TimeoutError: The write operation timed out`. Blocks 0-28 pushed fine
+(~10s each was sufficient), but larger blocks with many entries produce obfuscated
+payloads (AES-CTR + tiered padding up to 2x) that exceed 10s upload time on some
+connections.
+
+**Impact:** Blocks 0-28 were already in R2. After fix, re-run pushed blocks 29-55
+successfully. No data loss.
 
 ### Issue #15: Stale-remote resurrection — check_and_sync in write methods re-introduces ended tasks
 
@@ -637,6 +651,9 @@ When both devices edit the same entry concurrently:
 | 2026-05-26 | **HttpStagingTransport implemented** | `core/sync/http_transport.py` (285 lines) — GET/PUT/LIST with ETag caching, configurable timeout, API key header, URL validation. All 66 tests pass. |
 | 2026-05-26 | **Worker source created** | `worker/src/index.ts` (149 lines) — TypeScript Cloudflare Worker: GET/PUT/LIST + ETag + API key auth. Generic HTTP-to-R2 proxy. `worker/wrangler.toml`, `worker/package.json`, `worker/tsconfig.json`. |
 | 2026-05-26 | **Transport factory + wiring** | `core/sync/transport.py` — `create_transport_from_config()` factory. `main.py` and `cli/onboarding.py` use config to choose HTTP or git transport. `security/config_manager.py` — `http.base_url` and `http.api_key` defaults. |
+| 2026-05-26 | **403 bug: urllib.request header case-mangling** | Switched from `urllib.request` to `http.client.HTTPSConnection`. Python 3.14 lowercases `X-Api-Key` → `X-api-key` internally; Cloudflare Workers fails to match. `http.client` preserves header case. |
+| 2026-05-26 | **Phase 1 MVP complete** | Worker deployed to `phpoc-staging.wacevedo.workers.dev`. `ph transport set` commands. Staging blob + 56 ledger blocks + index migrated from git to R2. `time ph view` → near-instant (was ~5000ms). |
+| 2026-05-26 | **Issue #16 — HTTP timeout too low** | Default timeout 10s → 60s. Block 000029.json timed out during push (month summary, large obfuscated payload). |
 
 ### Open issues remaining
 
@@ -1138,35 +1155,87 @@ domain logic.
 
 See `ARCHITECTURAL_DECISIONS.md` → ADR-023 for full design rationale.
 
-## Phase 1 Progress (2026-05-24)
+## Phase 1: HTTP Transport — ✅ Complete (2026-05-26)
 
-### Phase C — Daemon mode: ✅ Implemented
+### Architecture
+
+```
+┌──────────────┐     HTTPS (GET/PUT)    ┌──────────────┐     S3 API      ┌────────┐
+│ Python CLI   │ ──────────────────────►│ Cloudflare   │ ──────────────►│  R2    │
+│ (and mobile) │ ◄─── HTTP (304/200) ───│ Worker       │ ◄──────────────│ Bucket │
+└──────────────┘                        └──────────────┘               └────────┘
+```
+
+### Completed files
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `cli/daemon.py` | ~330 | PhDaemon lifecycle (start/stop/status), DebounceQueue, FileWatcher, event loop, status publishing |
-| `cli/daemon_sync.py` | ~160 | SyncWorker with retry/conflict/session, SyncResult |
-| `cli/daemon_cli.py` | ~25 | `ph daemon start/stop/status` argument handlers |
-| `tests/test_daemon.py` | ~800 | 41 tests — daemon lifecycle, DebounceQueue, event loop, file watcher, status publishing |
-| `tests/test_daemon_sync.py` | ~400 | 24 tests — SyncWorker session/retry/conflict, pull_check, SyncResult |
+| `worker/src/index.ts` | 149 | TypeScript Cloudflare Worker — GET/PUT/LIST + ETag + API key auth |
+| `worker/wrangler.toml` | — | Cloudflare Workers config with R2 bucket binding |
+| `core/sync/http_transport.py` | 217 | `HttpStagingTransport` — HTTP GET/PUT/LIST with ETag caching, `http.client` backend |
+| `core/sync/transport.py` | — | `create_transport_from_config()` factory |
+| `cli/transport_cmd.py` | 224 | `ph transport show/set` commands |
+| `tests/test_http_transport.py` | — | 68 tests: transport contract, ETag caching, errors, integration, Worker contract |
 
-**65 tests all pass.** `main.py` updated with `ph daemon start/stop/status` subcommand.
+### Task checklist
 
 | Task | Status |
 |------|--------|
-| Create R2 bucket `phpoc-data` | ✅ Done |
+| Create R2 bucket (`phpoc-staging`) | ✅ Done |
 | Create R2 API token (`phpoc-r2-bucket`) | ✅ Done — saved locally |
-| Deploy Worker (GET/PUT/LIST + API key auth) | ⬜ |
-| Write `HttpStagingTransport` in Python | ⬜ |
-| Migrate existing data from git to R2 | ⬜ |
-| Wire into `main.py` | ⬜ |
-| Verify ~100ms latency | ⬜ |
+| Deploy Worker (GET/PUT/LIST + API key auth) | ✅ Deployed to `phpoc-staging.wacevedo.workers.dev` |
+| Write `HttpStagingTransport` in Python | ✅ Done |
+| Migrate staging data from git to R2 | ✅ `ph sync remote_staging` → pushed blob |
+| Migrate ledger data from git to R2 | ✅ `ph sync remote_ledger` → 56 blocks + index |
+| Wire into `main.py` | ✅ Done |
+| `ph transport set` commands | ✅ Commands for git/http/cloudflare setup |
+| API key from env var | ✅ `$PHPOC_CLOUDFLARE_API_KEY` fallback |
+| Fix 403 bug (urllib header case) | ✅ Switched to `http.client` |
+| Fix timeout for large blocks | ✅ 10s → 60s default |
+| Verify ~100ms latency | ✅ `time ph view` → near-instant |
 
-### Open questions
+### Resolved issues encountered
 
-1. **Worker auth mechanism** — Pre-shared API key (simple) vs. HMAC request
-   signing (reuses existing crypto, more secure).
-2. **Existing data migration** — Script to pull staging blob + device cookie +
-   ledger blocks from git and push to R2 via Worker.
-3. **Mobile framework choice** — React Native vs Flutter vs native. Crypto
+1. **Python 3.14 `urllib.request`** lowercases `X-Api-Key` → `X-api-key`. Cloudflare Workers DNS lookup or header matching fails on the lowercased variant. Switched to `http.client.HTTPSConnection` which preserves header case.
+2. **`ConfigManager` not iterable** — `dict(CONFIG)` fails because `ConfigManager` doesn't implement `__iter__`. Fixed: `dict(CONFIG.read())`.
+3. **`UnboundLocalError` on `remote_url`** — WAL replay tries to use `remote_url` when transport is `None`. Fixed: guard with `transport is not None`.
+4. **Default timeout (10s) too low** for large obfuscated ledger blocks (month summaries). Fixed: 60s default.
+
+### Key design decisions
+
+| Decision | Detail |
+|----------|--------|
+| **Transport** | `HttpStagingTransport` replaces `GitStagingTransport` |
+| **Storage** | Cloudflare R2 bucket — one bucket for both staging + ledger |
+| **Server** | Cloudflare Worker — stateless pass-through, 149 lines TypeScript |
+| **Auth** | Pre-shared API key (Worker secret `PHPOC_API_KEY`) |
+| **Python HTTP lib** | `http.client` (not `urllib.request` — header case bug in Python 3.14) |
+| **Freshness** | ETag / `If-None-Match` / `304 Not Modified` |
+| **Cost** | $0.00/mo at personal scale (R2 free tier) |
+| **Mobile** | Same HTTP API — no new backend needed |
+| **Storage abstraction** | Worker abstracts R2; swap R2 ↔ S3 ↔ Backblaze B2 by changing only Worker, not Python code |
+| **Encryption** | 100% client-side; Worker/R2 see only opaque encrypted bytes |
+
+### Data migrated
+
+| Object | Source | Destination | Method |
+|--------|--------|-------------|--------|
+| Staging blob | git remote (GitHub) | R2 `staging/blobs/current.json` | `ph sync remote_staging` |
+| Device cookie | git remote (GitHub) | R2 `staging/blobs/device_cookie.bin` | pushed alongside blob |
+| 56 ledger blocks | local ledger (x13) | R2 `ledger/blocks/000000.json`..`000055.json` | `ph sync remote_ledger` |
+| Ledger index | local index (x13) | R2 `ledger/index.json` | `ph sync remote_ledger` |
+
+### Remaining: debagent04 migration
+
+debagent04 still uses git transport. Steps to migrate:
+1. `git fetch origin && git reset --hard origin/P3-Retrieve_Sync`
+2. `ph transport set http` → URL `https://phpoc-staging.wacevedo.workers.dev` → API key blank (uses `$PHPOC_CLOUDFLARE_API_KEY`)
+3. `ph sync remote_staging` — pulls staging blob from R2 via HTTP
+4. `ph sync remote_ledger` — pulls 56 blocks + index from R2 via HTTP
+
+### Open questions for Phase 2 (Mobile MVP)
+
+1. **Mobile framework choice** — React Native vs Flutter vs native. Crypto
    library availability will be a deciding factor.
+2. **Mobile crypto port** — Re-implement PBKDF2, AES-CTR, HMAC-SHA256 for the
+   chosen mobile platform. MIT-licensed JS crypto libraries exist for RN.

@@ -2,10 +2,10 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `0553f0e` (fix: switch HttpStagingTransport from urllib.request to http.client)
+- **Commit:** `7afd688` (fix: increase default HTTP timeout 10s → 60s for large ledger blocks)
 - **Tests:** 1267 all passing (68 HTTP transport + 1199 existing)
 - **Remote staging:** Using HTTP transport via Cloudflare Worker ✅
-- **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
+- **Remote ledger:** ✅ **Migrated to R2** — 56 blocks + index pushed via HTTP
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **Phase 1 (HTTP transport):** ✅ **Complete** — Worker deployed, ~5000ms → near-instant latency
 - **Latency strategy:** ✅ `_Operational-ph_Staging-latency-issue-strategy.md` — all phases implemented (A ✅, B ✅, C ✅, Phase 1 ✅)
@@ -16,6 +16,8 @@
 - **Phase 1 (HTTP transport):** ✅ **Complete** — `HttpStagingTransport` using `http.client`, Cloudflare Worker + R2, ETag caching, `ph transport` commands, env var API key fallback
 - **Bug fix:** `check_and_sync()` removed from write methods — stale remote was resurrecting ended tasks (MergeEngine remote-wins).
 - **Bug fix:** Python 3.14 `urllib.request` header case-mangling (X-Api-Key → X-api-key) — switched to `http.client`
+- **Bug fix:** Default HTTP timeout 10s → 60s — ledger block 000029.json (month summary) timed out during push
+- **Ledger data:** 56 blocks + index pushed from x13 to R2 via HTTP transport
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
 
@@ -93,7 +95,9 @@
 8. [x] Wired HTTP transport into `main.py` and `cli/onboarding.py`
 9. [x] Fixed Python 3.14 `urllib.request` bug (header case-mangling → `http.client`)
 10. [x] Pushed existing staging data from git → R2 via Worker: `ph sync remote_staging`
-11. [x] Verified latency: `time ph view` → near-instant (was ~5000ms with git/SSH)
+11. [x] Pushed ledger data (56 blocks + index) from git → R2 via Worker: `ph sync remote_ledger`
+12. [x] Fixed timeout: bumped default 10s → 60s for large ledger blocks
+13. [x] Verified latency: `time ph view` → near-instant (was ~5000ms with git/SSH)
 
 ### Key design decisions (ADR-023)
 | Decision | Detail |
@@ -132,6 +136,7 @@ See `REMOTE_STAGING_ISSUE_TRACKING.md` for full tracking.
 
 ## Recent Commits (this session)
 ```
+7afd688  fix: increase default HTTP timeout 10s → 60s for large ledger blocks
 0553f0e  fix: switch HttpStagingTransport from urllib.request to http.client
 7da3279  feat: API key from env var $PHPOC_CLOUDFLARE_API_KEY
 0510d6e  feat: ph transport command — manage git/http transport config
@@ -143,7 +148,7 @@ a88516b  Phase 1: Worker source, transport factory, config wiring
 
 ### Short-term
 1. [ ] Configure HTTP transport on debagent04: `ph transport set http` → Worker URL → API key from env var
-2. [ ] `ph onboarding` on mobile device (Phase 2)
+2. [ ] `ph sync remote_ledger` on debagent04 (will pull 56 blocks from R2, already pushed from x13)
 
 ### Phase 2: Mobile MVP (future)
 1. [ ] Re-implement crypto primitives for mobile (PBKDF2, AES-CTR, HMAC-SHA256)
