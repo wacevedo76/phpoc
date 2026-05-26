@@ -722,16 +722,15 @@ def _handle_config_command(args, config):
         except (json.JSONDecodeError, ValueError):
             parsed = args.value
         keys = args.key.split(".")
-        if len(keys) == 1:
-            config.write({keys[0]: parsed})
-        else:
-            nested = {}
-            current = nested
-            for k in keys[:-1]:
+        # Read existing config and merge
+        existing = config.read()
+        current = existing
+        for k in keys[:-1]:
+            if k not in current or not isinstance(current[k], dict):
                 current[k] = {}
-                current = current[k]
-            current[keys[-1]] = parsed
-            config.write(nested)
+            current = current[k]
+        current[keys[-1]] = parsed
+        config.write(existing)
         print(f"Set config.{args.key} = {args.value}")
     elif args.config_action == "init":
         _config_generate_template(config)
