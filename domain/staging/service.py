@@ -421,6 +421,7 @@ class StagingService:
             return SyncCheckResult.READY
 
         # Merge using the already-fetched blob data
+        merge_ok = True
         try:
             if "entries" in remote_blob:
                 local_entries = self._local.read_entries()
@@ -428,10 +429,17 @@ class StagingService:
                 merged = self._merge.merge(local_entries, remote_dtos)
                 self._local.write_entries(merged)
         except Exception:
+            merge_ok = False
+
+        # Create device cookie regardless of merge outcome.
+        # The cookie is about device identity, not data integrity.
+        # A failed merge still means auth passed — create cookie so
+        # subsequent calls hit the fast path.
+        self._ensure_cookie()
+
+        if not merge_ok:
             return SyncCheckResult.OFFLINE
 
-        # Cookie created after successful auth + merge — subsequent calls fast-path
-        self._ensure_cookie()
         return SyncCheckResult.READY
 
     # ------------------------------------------------------------------
