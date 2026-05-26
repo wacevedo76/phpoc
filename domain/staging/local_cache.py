@@ -110,6 +110,9 @@ class LocalStagingCache:
                     "%Y-%m-%d", time.gmtime(start_epoch // 1000)
                 )
 
+                device_uuid = self._from_plain(data.get("device_uuid_enc"))
+                end_device_uuid = self._from_plain(data.get("end_device_uuid_enc"))
+
                 dto = {
                     "entry_index": idx,
                     "title": data.get("title", ""),
@@ -127,6 +130,8 @@ class LocalStagingCache:
                     "date": date_str,
                     "source": "local",
                     "hash": entry.get("hash", ""),
+                    "device_uuid": device_uuid or "",
+                    "end_device_uuid": end_device_uuid or "",
                 }
                 result.append(dto)
             except Exception:
@@ -155,6 +160,8 @@ class LocalStagingCache:
                 "tags": entry.get("tags", []),
                 "media": entry.get("media", []),
                 "entry_id": entry.get("entry_id", str(uuid.uuid4())),
+                "device_uuid_enc": self._encrypt_field(entry.get("device_uuid", "")),
+                "end_device_uuid_enc": self._encrypt_field(entry.get("end_device_uuid", "")),
             }
             if entry.get("comment") is not None:
                 data["comment"] = entry["comment"]
@@ -181,7 +188,8 @@ class LocalStagingCache:
                is_active: bool = False,
                tags: Optional[List[str]] = None,
                comment: Optional[str] = None,
-               media: Optional[List[Dict[str, Any]]] = None) -> str:
+               media: Optional[List[Dict[str, Any]]] = None,
+               device_uuid: Optional[str] = None) -> str:
         """Append a new staging entry. Returns the entry hash prefix (10 chars).
 
         Raises:
@@ -212,6 +220,7 @@ class LocalStagingCache:
             "tags": normalized_tags,
             "media": media if media is not None else [],
             "entry_id": str(uuid.uuid4()),
+            "device_uuid_enc": self._encrypt_field(device_uuid or ""),
         }
         if comment is not None:
             data["comment"] = comment
@@ -251,6 +260,7 @@ class LocalStagingCache:
         field_mapping = {
             "start_epoch": "startTime_enc",
             "end_epoch": "endTime_enc",
+            "end_device_uuid": "end_device_uuid_enc",
         }
 
         for field_key, field_value in fields.items():

@@ -124,9 +124,28 @@ class StagingService:
     # Local staging CRUD (no remote calls)
     # ------------------------------------------------------------------
 
+    def _get_device_id(self) -> Optional[str]:
+        """Resolve the local device UUID, if a valid crypto session exists."""
+        if self._device_id_provider is None:
+            return None
+        mk = getattr(self._crypto, "master_key", None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            return None
+        try:
+            identity = self._device_id_provider.get_device_identity(mk)
+            return identity.device_id
+        except Exception:
+            return None
+
     def capture(self, title, epoch_ms, is_active=True, tags=None, comment=None):
-        """Add a new staging entry locally. No remote sync."""
-        self._local.append(title, epoch_ms, is_active=is_active, tags=tags or [], comment=comment)
+        """Add a new staging entry locally. No remote sync.
+
+        Attaches the local device UUID (encrypted) to every entry so
+        each entry carries provenance information about which device
+        created it.
+        """
+        device_uuid = self._get_device_id()
+        self._local.append(title, epoch_ms, is_active=is_active, tags=tags or [], comment=comment, device_uuid=device_uuid)
 
     def end(self, title, end_epoch, comment=None):
         """End an active task. Local-only write."""
@@ -144,9 +163,11 @@ class StagingService:
         if entries[found_index].get("is_paused"):
             self._local.close_pause(found_index, end_epoch)
 
+        end_device_uuid = self._get_device_id()
         self._local.update(found_index, {
             "end_epoch": end_epoch,
             "is_active": False,
+            "end_device_uuid": end_device_uuid or "",
         })
 
         # Recompute duration
@@ -268,6 +289,29 @@ class StagingService:
             return True
         return False
 
+    def _ensure_cookie(self):
+        """Create a device cookie if one does not exist locally.
+
+        Called after a successful slow-path auth + merge so that subsequent
+        ``check_and_sync()`` calls hit the fast path (cookie specifier
+        comparison without pulling + decrypting the staging blob).
+
+        This is idempotent: if a local cookie already exists, it is
+        replaced with a fresh specifier. Failure is non-critical — the
+        caller still returns READY.
+        """
+        if self._remote is None:
+            return
+        mk = getattr(self._crypto, "master_key", None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            return
+        try:
+            identity = self._remote._device_id_provider.get_device_identity(mk)
+            DeviceCookie.destroy_locally(self._data_dir)
+            self._push_cookie(identity.device_id)
+        except Exception:
+            pass  # Non-critical: cookie creation failure doesn't block READY
+
     # ------------------------------------------------------------------
     # Freshness optimization
     # ------------------------------------------------------------------
@@ -372,6 +416,8 @@ class StagingService:
 
         # Check freshness: skip full merge if same device and remote not newer
         if not self._needs_full_pull(remote_blob):
+            # Still no local cookie — create one so next call hits the fast path
+            self._ensure_cookie()
             return SyncCheckResult.READY
 
         # Merge using the already-fetched blob data
@@ -384,6 +430,8 @@ class StagingService:
         except Exception:
             return SyncCheckResult.OFFLINE
 
+        # Cookie created after successful auth + merge — subsequent calls fast-path
+        self._ensure_cookie()
         return SyncCheckResult.READY
 
     # ------------------------------------------------------------------

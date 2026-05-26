@@ -10,12 +10,12 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `d25d9b4` | `ee2339e` (needs pull) |
+| Commit | `pending` (latest changes) | `pending` (needs pull — includes API key fix, device UUID, cookie creation) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Transport | `http` → `https://phpoc-staging.wacevedo.workers.dev` | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
-| API key | 🟢 **Set** | 🔴 **Must set** |
-| Device cookie | 🟢 **Present** (specifier `a68de5ed...`) | 🔴 **None** (no write has succeeded) |
+| API key | 🟢 **Set** | 🟢 **Set** (`e433b6f...`) |
+| Device cookie | 🟢 **Present** (specifier `a68de5ed...`) | 🔴 **None** (but `ph view` creates one on auth now) |
 | Remote URL (git fallback) | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
@@ -762,6 +762,9 @@ When both devices edit the same entry concurrently:
 | 2026-05-27 | **`ph dev cookie` command** | New diagnostic subcommand to inspect remote + local cookies. Commit `ee2339e`. |
 | 2026-05-27 | **Issue #19 — Sync must not push cookie** | `push_blob_only()` extracted; `ph sync remote_staging` uses it. Write ops still use `push_to_remote()` (cookie + blob). Commit `88e7e52`. |
 | 2026-05-27 | **Cookie specifier IS the truth** | Mismatch always forces auth. `_is_auth_fresh()` helper. Blob `device_id` no longer consulted for auth. Commit `d25d9b4`. |
+| 2026-05-26 | **Issue #20 — Missing capture() calls in CLI** | `add_start` and `add_oneoff` lost their `capture()` calls during refactoring in `6240f92`. Entry was never created — only sync + defer push ran. Restored. |
+| 2026-05-26 | **Issue #21 — Device UUID provenance on entries** | Every entry now carries encrypted `device_uuid_enc` (creator) and `end_device_uuid_enc` (ender). `_get_device_id()` helper in `StagingService`. |
+| 2026-05-26 | **Issue #22 — Cookie not created on slow-path auth+merge** | `check_and_sync()` now calls `_ensure_cookie()` after a successful slow-path auth+merge. Next read fast-paths via cookie specifier match. |
 
 ### Open issues remaining
 
@@ -777,9 +780,12 @@ When both devices edit the same entry concurrently:
 | Issue #12 — `git pull --rebase` false 'Already up to date' | 🔴 Deprecated (HTTP transport replaces git) | debagent04 |
 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | ✅ Fixed | debagent04 |
 | Issue #14 — `ph recover` rewrites all blocks (slow push) | 🔴 Needs design | x13 |
-| **AFI #3** — Cross-device sync testing | 🔴 **Next step** — blocked on x13 api_key | debagent04 + x13 |
+| **AFI #3** — Cross-device sync testing | 🔴 **Next step** — x13 API key now set, device UUID provenance added for traceability | debagent04 + x13 |
 | **Device Cookie redesign** | ✅ Done (`a5793fe`) | debagent04 |
 | **`ph dev cookie` command** | ✅ Done (`ee2339e`) | debagent04 |
+| **Issue #20 — Missing capture() in add_start/add_oneoff** | ✅ Fixed (restored `capture()` calls) | x13 |
+| **Issue #21 — Device UUID provenance** | ✅ Done (`device_uuid_enc`, `end_device_uuid_enc`) | x13 |
+| **Issue #22 — Cookie creation on slow-path** | ✅ Done (`_ensure_cookie()` in `check_and_sync()`) | x13 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
 
