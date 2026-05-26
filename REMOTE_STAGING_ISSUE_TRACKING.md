@@ -10,14 +10,46 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `7afd688` | `7afd688` (pushed to origin) |
+| Commit | `137b544` + fix | `7afd688` (pushed to origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
-| Transport | `git` (not yet migrated) | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
+| Transport | `http` → `https://phpoc-staging.wacevedo.workers.dev` | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
 | Remote URL (git fallback) | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
+
+### Issue #17: Ledger chain divergence — remote blocks don't link to local
+
+**Status:** ✅ Fixed (2026-05-26)
+**Fix:** `_verify_chain()` now supports `strict=False` mode that returns the first
+mismatched block index instead of raising. `pull_blocks()` uses this to detect
+divergence, log a warning, and return only blocks that chain correctly from the
+local tail. Blocks that can't be linked are skipped.
+
+**Root cause:** x13 and debagent04 had different staging data committed to their
+respective ledgers at the same block index (block 46). x13's block 47 pointed to
+x13's block 46 hash (`a1fa50...`), but debagent04's block 46 had a different hash
+(`97144f...`). When `pull_blocks()` tried to verify the combined chain, it raised
+`ValueError` because `block[47].prev_hash != block[46].hash`.
+
+**Why chains diverged:** Each device independently syncs staging → ledger, producing
+blocks whose hashes depend on the exact set of entries. If x13 had entries that
+debagent04 didn't (or vice versa), the hash chain diverges at the point where the
+entry sets first differed.
+
+**Fix rationale:** Ledger blocks are append-only and hash-linked — incompatible
+remote blocks can't be force-appended. The fix detects the divergence, skips
+incompatible remote blocks, and reports what happened. The skipped blocks
+represent data recorded on x13 that can't be merged into debagent04's chain.
+
+**Files modified:** `domain/ledger/remote_sync.py`, `main.py`
+
+**Additional fixes in same session:**
+- `main.py` — `remote_ledger` sync no longer forces `auth.clear_session()`;
+  uses cached session key if available instead of always requiring re-auth.
+- `security/auth.py` — `authenticate()` now supports `PHPOC_PASSPHRASE` env
+  var as fallback when running in non-TTY environments (CI, automation).
 
 ### Issue #16: HTTP transport default timeout (10s) too low for large ledger blocks
 

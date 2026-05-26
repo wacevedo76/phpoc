@@ -143,7 +143,32 @@ class RemoteLedgerSync:
 
         # Verify chain integrity: check prev_hash linkage
         combined = (local_blocks or []) + new_blocks
-        self._verify_chain(combined)
+        divergence_idx = self._verify_chain(combined, strict=False)
+        if divergence_idx is not None:
+            # Chains diverged — the remote chain is incompatible with local.
+            # This happens when two devices have different data at the same
+            # block index (different staging → different ledger hashes).
+            # We can only pull blocks that chain correctly from the last
+            # matching local block.
+            remote_div_idx = divergence_idx - local_count
+            if remote_div_idx <= 0:
+                # The very first remote block doesn't link — nothing to pull
+                logger.warning(
+                    "Ledger chain divergence at block %d: remote prev_hash "
+                    "does not match local block hash. Remote blocks are from "
+                    "an incompatible chain. Nothing pulled.",
+                    divergence_idx,
+                )
+                return None, max_remote + 1
+            # Some remote blocks link correctly; return only those
+            divergent_blocks = new_blocks[remote_div_idx:]
+            new_blocks = new_blocks[:remote_div_idx]
+            logger.warning(
+                "Ledger chain divergence at block %d: %d remote block(s) "
+                "from an incompatible chain will be skipped.",
+                divergence_idx,
+                len(divergent_blocks),
+            )
 
         return new_blocks, max_remote + 1
 
@@ -231,7 +256,9 @@ class RemoteLedgerSync:
         return indices
 
     @staticmethod
-    def _verify_chain(blocks: List[Dict[str, Any]]) -> None:
+    def _verify_chain(
+        blocks: List[Dict[str, Any]], strict: bool = True
+    ) -> Optional[int]:
         """Verify chain integrity across a list of blocks.
 
         Checks:
@@ -243,12 +270,19 @@ class RemoteLedgerSync:
 
         Args:
             blocks: Full list of ledger blocks (genesis onward).
+            strict: If True, raises ValueError on mismatch (original behavior).
+                    If False, returns the index of the first mismatched block,
+                    or None if the chain is valid.
+
+        Returns:
+            None if chain is valid.
+            int (block index) of first mismatch if strict=False.
 
         Raises:
-            ValueError: If chain integrity check fails.
+            ValueError: If strict=True and chain integrity check fails.
         """
         if not blocks:
-            return
+            return None
 
         for i in range(1, len(blocks)):
             current = blocks[i]
@@ -261,17 +295,21 @@ class RemoteLedgerSync:
                 or prev.get("year_hash")
             )
             if not prev_hash:
-                raise ValueError(
-                    f"Block {i - 1} has no hash key "
-                    f"(day_hash/month_hash/year_hash)"
-                )
+                if strict:
+                    raise ValueError(
+                        f"Block {i - 1} has no hash key "
+                        f"(day_hash/month_hash/year_hash)"
+                    )
+                return i
 
             # Check prev_hash linkage
             if current.get("prev_hash") != prev_hash:
-                raise ValueError(
-                    f"Block {i} prev_hash ({current.get('prev_hash')}) "
-                    f"does not match block {i - 1} hash ({prev_hash})"
-                )
+                if strict:
+                    raise ValueError(
+                        f"Block {i} prev_hash ({current.get('prev_hash')}) "
+                        f"does not match block {i - 1} hash ({prev_hash})"
+                    )
+                return i
 
             # Verify the current block has a hash
             current_hash = (
@@ -280,7 +318,11 @@ class RemoteLedgerSync:
                 or current.get("year_hash")
             )
             if not current_hash:
-                raise ValueError(
-                    f"Block {i} has no hash key "
-                    f"(day_hash/month_hash/year_hash)"
-                )
+                if strict:
+                    raise ValueError(
+                        f"Block {i} has no hash key "
+                        f"(day_hash/month_hash/year_hash)"
+                    )
+                return i
+
+        return None

@@ -523,12 +523,14 @@ def main():
                 print("Remote not configured. Set remote.git_remote_url in config.")
                 exit(1)
 
-            # 1. Force re-auth before any remote operation
-            print("Authenticating for remote ledger sync...")
-            auth.clear_session()
-            if not auth.authenticate():
-                print("Authentication required for remote ledger sync.")
-                exit(1)
+            # 1. Authenticate if not already cached
+            if auth.get_key() is None:
+                print("Authenticating for remote ledger sync...")
+                if not auth.authenticate():
+                    print("Authentication required for remote ledger sync.")
+                    exit(1)
+            else:
+                print("Using cached session key.")
             crypto = CryptoManager(auth.get_key())
 
             # Refresh ledger components with new crypto

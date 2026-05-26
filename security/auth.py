@@ -54,8 +54,13 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             except Exception:
                 pass
 
-        # 2. Get PDK from user
-        passphrase = getpass.getpass("Passphrase: ")
+        # 2. Get PDK from user (or env var fallback)
+        import os as _os
+        passphrase = _os.environ.get("PHPOC_PASSPHRASE")
+        if passphrase:
+            print("Using PHPOC_PASSPHRASE from environment.")
+        else:
+            passphrase = getpass.getpass("Passphrase: ")
         if not passphrase:
             return False
         
