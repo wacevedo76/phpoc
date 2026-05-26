@@ -1,40 +1,88 @@
-"""StagingService — public API for all staging operations.
+"""StagingService — unified sync gate + local I/O for staging entries.
 
-StagingService is the facade that higher layers (SyncOrchestrator, CLI, views)
-use for all staging CRUD operations. It delegates to LocalStagingCache (local)
-and RemoteStagingSync (remote), and uses MergeEngine for reconciliations.
+The StagingService is the central point for all staging operations:
 
-Key invariants:
-  - No caller ever sees the ``plain:`` prefix
-  - Every CRUD method returns decrypted DTOs
-  - Write methods (capture, end, pause, unpause, modify, remove) are
-    local-only. Remote sync is deferred to ``ph sync remote_staging``, the
-    background push (Phase B), or the daemon (Phase C).
+  1. **Local CRUD** — capture/end/pause/unpause/modify/remove entries
+     in the local staging store. These are low-latency (no remote calls).
+
+  2. **Sync gate** — ``check_and_sync()`` is the single entry point for
+     remote staging sync. It decides whether to pull+merge (different
+     device or stale local) or skip (same device, up to date).
+
+  3. **Push** — ``push_to_remote()`` serialises local entries, obfuscates,
+     and pushes to the remote transport. Called from Phase B (WAL) and
+     Phase C (daemon).
+
+  4. **Device Cookie** — ``check_and_sync()`` uses a fast-path cookie check
+     to avoid pulling the ~64 KB staging blob when the same device session
+     was the last writer. The cookie is a tiny JSON blob with a random
+     ``device_specifier`` — no decryption needed.
+
+Usage::
+
+    crypto = CryptoManager(master_key)
+    store = FileStagingStore(staging_path)
+    staging = StagingService(crypto, store, transport, ...)
+
+    # Before any command:
+    result = staging.check_and_sync()
+    if result == SyncCheckResult.REAUTH_NEEDED:
+        # Prompt user for passphrase and re-create CryptoManager
+        ...
+
+    # After successful auth:
+    staging.capture("New task")
+    staging.end("Old task")
+    staging.push_to_remote(master_key)
 """
 
 import json
 import time
-import threading
+import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any, List
 
-from security.crypto import AbstractCryptoManager, NoAuthCryptoManager
-from storage.staging_store import AbstractStagingStore
+from cli.trace import trace
+from domain.cookie.device_cookie import DeviceCookie
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
-from domain.staging.remote_sync import RemoteStagingSync, SyncCheckResult, REMOTE_COOKIE_PATH
-from domain.cookie.device_cookie import DeviceCookie
-from security.device_identity import AbstractDeviceIdentityProvider
-from cli.trace import trace
+from domain.staging.remote_sync import RemoteStagingSync
+from security.crypto import (
+    AbstractCryptoManager,
+    NoAuthCryptoManager,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SyncCheckResult:
+    """Result of ``check_and_sync()``."""
+
+    READY = "READY"
+    OFFLINE = "OFFLINE"
+    REAUTH_NEEDED = "REAUTH_NEEDED"
 
 
 class StagingService:
-    """Public API for all staging operations.
+    """Central sync gate + local I/O for staging entries.
 
-    Attributes:
-        _local: LocalStagingCache instance.
-        _remote: Optional RemoteStagingSync instance.
-        _merge: MergeEngine instance.
+    Parameters are intentionally positional-optional for test convenience.
+    At minimum, a crypto and staging_store are required for local I/O.
+    A remote transport (and device_id_provider) are required for remote sync.
+
+    Args:
+        crypto: Must be ``NoAuthCryptoManager()`` OR a ``CryptoManager`` with
+            a valid master key. ``NoAuthCryptoManager`` is used when the user
+            hasn't authenticated yet (commands that only need local reads).
+        staging_store: Implements ``read(skip_verify=True)`` for per-entry
+            skip_verify (``NoAuthCryptoManager`` can't verify seals).
+        identity_secret: For Device ID derivation. Defaults to ``"phpoc"``.
+        transport: ``AbstractStagingTransport`` for remote sync. ``None`` to
+            disable remote operations entirely.
+        device_id_provider: Implements ``get_device_identity(device_secret)``
+            to produce a signed DeviceIdentity used as the remote blob header.
+        cookie_ttl_minutes: How long a device cookie is valid (default 30).
+        data_dir: Local data directory path as string. Used for cookie files.
     """
 
     AUTH_CACHE_DURATION = 1800  # 30 minutes in seconds
@@ -43,70 +91,45 @@ class StagingService:
     def __init__(
         self,
         crypto: AbstractCryptoManager,
-        staging_store: AbstractStagingStore,
-        transport=None,
-        device_id_provider: Optional[AbstractDeviceIdentityProvider] = None,
+        staging_store: "FileStagingStore",
+        identity_secret: Optional[str] = None,
+        transport: Optional["AbstractStagingTransport"] = None,
+        device_id_provider: Optional[Any] = None,
         cookie_ttl_minutes: int = DEFAULT_COOKIE_TTL,
         data_dir: Optional[str] = None,
     ):
         self._crypto = crypto
         self._local = LocalStagingCache(crypto, staging_store)
         self._merge = MergeEngine()
-        self._remote: Optional[RemoteStagingSync] = None
-        self._last_auth_time: float = 0.0
-        self._last_push_at: int = 0  # ms timestamp of last successful push
-        self._cookie_ttl_minutes = cookie_ttl_minutes
-        self._data_dir = Path(data_dir) if data_dir else Path.home() / ".local" / "share" / "phpoc"
-
+        self._identity_secret = identity_secret or "phpoc"
+        # Wrap transport in RemoteStagingSync for cookie push/pull
         if transport is not None and device_id_provider is not None:
             self._remote = RemoteStagingSync(crypto, transport, device_id_provider)
+        else:
+            self._remote = None
+        self._device_id_provider = device_id_provider
+        self._last_push_at = 0
+        self._last_auth_time = 0.0  # Updated on first successful check
+
+        # Resolve data_dir to a Path
+        if data_dir:
+            self._data_dir = Path(data_dir)
+        else:
+            import platformdirs
+            self._data_dir = Path(platformdirs.user_data_dir("phpoc", ensure_exists=True))
+
+        self._cookie_ttl_minutes = cookie_ttl_minutes
 
     # ------------------------------------------------------------------
-    # Entry CRUD
+    # Local staging CRUD (no remote calls)
     # ------------------------------------------------------------------
 
-    @trace
-    def capture(
-        self,
-        title: str,
-        start_epoch: int,
-        *,
-        stop_epoch: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        is_active: bool = False,
-        tags: Optional[List[str]] = None,
-        comment: Optional[str] = None,
-        media: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """Add entry to local staging.
+    def capture(self, title, epoch_ms, is_active=True, tags=None, comment=None):
+        """Add a new staging entry locally. No remote sync."""
+        self._local.append(title, epoch_ms, is_active=is_active, tags=tags or [], comment=comment)
 
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Returns entry hash prefix (10 characters).
-
-        Raises:
-            ValueError: If collision detected (same start_epoch).
-        """
-        return self._local.append(
-            title,
-            start_epoch,
-            end_epoch=stop_epoch,
-            metadata=metadata,
-            is_active=is_active,
-            tags=tags,
-            comment=comment,
-            media=media,
-        )
-
-    @trace
-    def end(self, title: str, end_epoch: int, comment: Optional[str] = None):
-        """End an active task by title.
-
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Raises:
-            ValueError: If no active task found with that title.
-        """
+    def end(self, title, end_epoch, comment=None):
+        """End an active task. Local-only write."""
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -153,22 +176,10 @@ class StagingService:
         Raises:
             ValueError: If no active task found with that title.
         """
-        self.end(title, end_epoch, comment=comment)
+        return self.end(title, end_epoch, comment)
 
-    @trace
-    def pause(
-        self,
-        title: str,
-        pause_epoch: int,
-        comment: Optional[str] = None,
-    ):
-        """Pause a running task.
-
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Raises:
-            ValueError: If not found, not active, or already paused.
-        """
+    def pause(self, title, pause_epoch):
+        """Pause an active task (mark is_paused). Local-only."""
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -179,25 +190,10 @@ class StagingService:
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        if entries[found_index].get("is_paused"):
-            raise ValueError(f"Task '{title}' is already paused.")
+        self._local.open_pause(found_index, pause_epoch)
 
-        self._local.add_pause(found_index, pause_epoch, comment=comment)
-
-    @trace
-    def unpause(
-        self,
-        title: str,
-        unpause_epoch: int,
-        comment: Optional[str] = None,
-    ):
-        """Unpause a paused task.
-
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Raises:
-            ValueError: If not found, not active, or not paused.
-        """
+    def unpause(self, title, unpause_epoch):
+        """Unpause a paused task (resume). Local-only."""
         entries = self._local.read_entries()
         found_index = None
         for i, entry in enumerate(entries):
@@ -208,174 +204,86 @@ class StagingService:
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        if not entries[found_index].get("is_paused"):
-            raise ValueError(f"Task '{title}' is not paused.")
-
-        self._local.close_pause(found_index, unpause_epoch, comment=comment)
+        self._local.close_pause(found_index, unpause_epoch)
 
     def modify(
         self,
-        entry_index: int,
-        *,
-        end_epoch: Optional[int] = None,
-        pauses: Optional[List[Dict[str, Any]]] = None,
+        entry_index,
+        title=None,
+        tags: Optional[List[str]] = None,
+        comment: Optional[str] = None,
     ):
-        """Modify a completed entry's end time and/or pauses.
-
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Args:
-            entry_index: Index in the staging array.
-            end_epoch: New end epoch ms, or None to keep current.
-            pauses: New pauses list, or None to keep current.
-
-        Raises:
-            ValueError: If entry not found, out of range, or still active.
-        """
-        entries = self._local.read_entries()
-
-        if entry_index < 0 or entry_index >= len(entries):
-            raise ValueError(f"No staged entry at index {entry_index}.")
-
-        entry = entries[entry_index]
-        if entry.get("is_active"):
-            raise ValueError(
-                f"Cannot modify active task '{entry['title']}'. End it first."
-            )
-
-        update_fields = {}
-        if end_epoch is not None:
-            update_fields["end_epoch"] = end_epoch
-        if pauses is not None:
-            update_fields["pauses"] = pauses
-
-        if update_fields:
-            self._local.update(entry_index, update_fields)
-
-        # Recompute duration
-        raw = self._local._store.read_entries()
-        data = raw[entry_index]["data"]
-        pauses_enc = data.get("pauses_enc", self._local._encrypt_field(json.dumps([])))
-        resolved_pauses = json.loads(self._local._from_plain(pauses_enc) or "[]")
-
-        resolved_end = end_epoch if end_epoch is not None else entry.get("end_epoch")
-        if resolved_end is not None:
-            duration = self._local._compute_duration(
-                entry["start_epoch"], resolved_end, resolved_pauses
-            )
-            self._local.update(entry_index, {"duration": duration})
+        """Modify a staged entry's title/tags/comment in-place."""
+        override = {}
+        if title is not None:
+            override["title"] = title
+        if tags is not None:
+            override["tags"] = tags
+        if comment is not None:
+            override["comment"] = comment
+        self._local.update(entry_index, override)
 
     def remove(self, entry_index: int):
-        """Remove a staged entry by index.
-
-        Local-only write — no remote sync. Use `ph sync remote_staging` or the daemon to push.
-
-        Raises:
-            ValueError: If entry_index is out of range.
-        """
-        try:
-            self._local.delete(entry_index)
-        except IndexError as e:
-            raise ValueError(str(e))
-
-    # ------------------------------------------------------------------
-    # Queries (returns decrypted DTOs, no plain: prefix)
-    # ------------------------------------------------------------------
-
-    def get_entries(self) -> List[Dict[str, Any]]:
-        """All staged entries with decrypted fields (DTOs)."""
-        return self._local.read_entries()
-
-    def get_completed(self) -> List[Dict[str, Any]]:
-        """Only completed entries (non-active, non-paused)."""
-        entries = self._local.read_entries()
-        return [
-            e for e in entries
-            if not e.get("is_active", False) and not e.get("is_paused", False)
-        ]
-
-    def get_active(self) -> List[Dict[str, Any]]:
-        """Only active (running) entries."""
-        entries = self._local.read_entries()
-        return [e for e in entries if e.get("is_active", False)]
-
-    def get_pending_sync(self) -> List[Dict[str, Any]]:
-        """Entries ready to sync (completed, not synced).
-
-        Returns completed entries that are candidates for sync.
-        (The actual "already synced" set is managed by the SyncOrchestrator.)
-        """
-        return self.get_completed()
+        """Delete a staged entry."""
+        self._local.remove(entry_index)
 
     def remove_synced(self, indices: List[int]):
-        """Remove entries that were successfully synced.
+        """Remove multiple staged entries by index."""
+        for idx in sorted(indices, reverse=True):
+            self._local.remove(idx)
 
-        Active and paused entries are preserved.
+    def read_entries(self) -> List[Dict[str, Any]]:
+        """Read local staging entries as plain dicts."""
+        return self._local.read_entries()
 
-        Args:
-            indices: Staging-level indices of synced entries to remove.
+    # ------------------------------------------------------------------
+    # Quick-reachability check
+    # ------------------------------------------------------------------
+
+    def check_remote_ping(self, timeout_ms: int = 500) -> bool:
+        """Quick reachability check. Returns True if remote is responsive."""
+        if self._remote is None:
+            return False
+        try:
+            self._remote.pull_cookie()
+            return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # Cookie helpers
+    # ------------------------------------------------------------------
+
+    def _is_auth_fresh(self) -> bool:
+        """Check whether the current session is authenticated.
+
+        Returns True if:
+          - Auth cache is within TTL (_last_auth_time > 0 and fresh), OR
+          - A real CryptoManager with valid key is present
+            (not NoAuthCryptoManager)
         """
-        all_entries = self._local.read_entries()
-        # Find the actual staging indices for synced entries
-        # (entry_index in DTOs may differ from raw staging indices after removals)
-        self._local.remove_multiple(indices)
+        if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
+            return True
+        if not isinstance(self._crypto, NoAuthCryptoManager):
+            return True
+        return False
 
     # ------------------------------------------------------------------
-    # Remote entry conversion
+    # Freshness optimization
     # ------------------------------------------------------------------
 
-    def _raw_to_dtos(self, raw_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert raw entries (from remote blob) to DTOs for merge compatibility.
+    def _needs_full_pull(self, remote_blob: Dict[str, Any]) -> bool:
+        """Decide if the full staging blob needs to be pulled.
 
-        Remote blob entries have format: {hash, data (with encrypted fields),
-        start_epoch}. DTOs have: {title, start_epoch, end_epoch, ...}.
-        This method does the conversion by writing raw entries into a temp
-        staging store and reading them back through LocalStagingCache.
+        Based on comparing device_id and updated_at with local state.
 
         Args:
-            raw_entries: List of raw staging entries.
+            remote_blob: Decrypted blob from remote.
 
         Returns:
-            List of decrypted DTOs.
+            True if a full merge is needed, False to skip.
         """
-        if not raw_entries:
-            return []
-
-        # Use an in-memory store that conforms to AbstractStagingStore
-        class _ConversionStore:
-            def __init__(self):
-                self._data = []
-            def read_entries(self): return list(self._data)
-            def write_entries(self, entries): self._data[:] = list(entries)
-            def append_entry(self, entry): self._data.append(entry)
-            def remove_entries(self, indices):
-                for i in sorted(indices, reverse=True):
-                    if 0 <= i < len(self._data):
-                        self._data.pop(i)
-            def update_entry(self, index, fields):
-                if 0 <= index < len(self._data):
-                    self._data[index].update(fields)
-
-        temp_store = _ConversionStore()
-        temp_store.write_entries(raw_entries)
-        temp_cache = LocalStagingCache(self._crypto, temp_store)
-        return temp_cache.read_entries()
-
-    # ------------------------------------------------------------------
-    # Remote Sync
-    # ------------------------------------------------------------------
-
-    @trace
-    def _needs_full_pull(self, remote_blob: Optional[Dict[str, Any]]) -> bool:
-        """Determine whether a full pull+merge is needed based on freshness.
-
-        Returns True if the remote blob has entries that are newer than
-        our last successful push, or if the device IDs differ.
-        """
-        if remote_blob is None:
-            return False  # No remote blob — nothing to merge
-
-        # Always pull if remote has a different device_id (new data from another device)
+        # Get local device ID
         local_id = None
         try:
             if self._remote is not None:
@@ -396,37 +304,42 @@ class StagingService:
 
         return False  # Same device, not newer — skip full pull
 
+    # ------------------------------------------------------------------
+    # Sync gate (single point of entry for remote staging sync)
+    # ------------------------------------------------------------------
+
     @trace
     def check_and_sync(
         self, timeout_ms: int = 500
     ) -> SyncCheckResult:
-        """Event-driven remote check with Device Cookie optimization.
+        """Event-driven remote check with Device Cookie as the truth.
 
-        Cookie flow (fast path — no decryption needed):
+        Cookie is the definitive cross-device check:
           1. If no remote configured: returns READY.
           2. Check LOCAL cookie TTL:
-             a. No cookie or expired → proceed to staging blob check
-             b. Cookie valid → pull REMOTE cookie (tiny 32 bytes)
-                i.  Remote cookie matches local → READY (same device, same session)
-                ii. No remote cookie or mismatch → proceed to staging blob check
-          3. Pull + decrypt the full staging blob, check device match + freshness
-          4. If different device or stale auth → REAUTH_NEEDED, else merge
-          5. If remote unreachable: return OFFLINE.
+             a. No cookie or expired -> proceed to slow path
+             b. Cookie valid -> pull REMOTE cookie
+                i.  Remote cookie specifier MATCHES local -> READY (same device session)
+                ii. No remote cookie or specifier MISMATCH -> proceed to slow path
+          3. Slow path: specifier mismatch OR no cookie -> pull blob, then
+             check auth. If auth is fresh (within cache or crypto present), merge.
+             If auth is stale -> REAUTH_NEEDED.
+          4. If remote unreachable: return OFFLINE.
 
-        Returns:
-            SyncCheckResult.READY, OFFLINE, or REAUTH_NEEDED.
+        **A specifier mismatch ALWAYS means a different device wrote.**
+        That alone is the auth trigger. The cookie is the truth, not the
+        blob's device_id field.
         """
         if self._remote is None:
             return SyncCheckResult.READY
 
         # ------------------------------------------------------------------
-        # FAST PATH: Device Cookie check (no decryption needed)
+        # FAST PATH: Device Cookie specifier comparison (no decryption needed)
         # ------------------------------------------------------------------
         local_cookie = DeviceCookie.is_valid_locally(
             self._data_dir, self._cookie_ttl_minutes
         )
         if local_cookie is not None:
-            # Local cookie is valid — pull remote cookie (tiny, fast)
             try:
                 remote_cookie = self._remote.pull_cookie()
             except Exception:
@@ -434,71 +347,56 @@ class StagingService:
             if remote_cookie is not None:
                 remote_parsed = DeviceCookie.parse_remote(remote_cookie)
                 if remote_parsed is not None and DeviceCookie.matches(local_cookie, remote_parsed):
-                    # Specifiers match — same device session, staging is in sync
+                    # Specifiers match -- same device session, staging is in sync
                     return SyncCheckResult.READY
 
         # ------------------------------------------------------------------
-        # SLOW PATH: Full staging blob pull + device match + merge
+        # SLOW PATH: Cookie mismatch or no cookie -> pull blob, check auth, merge
         # ------------------------------------------------------------------
-        # Pull the remote blob ONCE for both device check and data
+        # The cookie specifier mismatch means a different device wrote to remote
+        # since our last push. Auth is required to decrypt and merge.
+
         try:
             remote_blob = self._remote.pull()
         except Exception:
             return SyncCheckResult.OFFLINE
 
         if remote_blob is None:
-            # No remote blob yet — nothing to merge, proceed locally
             return SyncCheckResult.READY
 
-        # Check device match
-        remote_device_id = remote_blob.get("device_id", "")
-        local_id = None
-        try:
-            identity = self._remote._device_id_provider.get_device_identity(b"")
-            local_id = identity.device_id
-        except Exception:
-            pass
-
-        device_match = (remote_device_id == local_id)
-
-        if not device_match:
-            # Device mismatch — check auth cache
-            if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
-                # Auth cache still valid — proceed with merge
-                pass
-            else:
-                # Auth cache expired — check if we have a live session key.
-                # A real CryptoManager (not NoAuthCryptoManager) means the user
-                # already authenticated this process invocation (e.g. via ph login
-                # or the lazy auth gate in main.py). Treat that as fresh auth.
-                if not isinstance(self._crypto, NoAuthCryptoManager):
-                    self._last_auth_time = time.time()
-                else:
-                    # No authenticated session — need re-auth
-                    return SyncCheckResult.REAUTH_NEEDED
-
-        # Update auth timestamp on successful device check
-        self._last_auth_time = time.time()
+        # Auth check: specifier mismatch forces auth gate.
+        if self._is_auth_fresh():
+            self._last_auth_time = time.time()
+        else:
+            return SyncCheckResult.REAUTH_NEEDED
 
         # Check freshness: skip full merge if same device and remote not newer
         if not self._needs_full_pull(remote_blob):
             return SyncCheckResult.READY
 
-        # Pull+merge using the already-fetched blob data
+        # Merge using the already-fetched blob data
         try:
             if "entries" in remote_blob:
                 local_entries = self._local.read_entries()
-
-                # Convert remote raw entries to DTOs before merging.
                 remote_dtos = self._raw_to_dtos(remote_blob["entries"])
-
                 merged = self._merge.merge(local_entries, remote_dtos)
-                # Rebuild raw from merged DTOs
                 self._local.write_entries(merged)
         except Exception:
             return SyncCheckResult.OFFLINE
 
         return SyncCheckResult.READY
+
+    # ------------------------------------------------------------------
+    # Raw -> DTO conversion
+    # ------------------------------------------------------------------
+
+    def _raw_to_dtos(self, raw_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Pass raw entry dicts through (MergeEngine works with dicts)."""
+        return raw_entries
+
+    # ------------------------------------------------------------------
+    # Push to remote
+    # ------------------------------------------------------------------
 
     @trace
     def push_to_remote(self, master_key: bytes):
@@ -515,7 +413,6 @@ class StagingService:
             return
 
         raw = self._local._store.read_entries()
-        # Get device identity for the blob header
         identity = None
         try:
             if self._remote is not None:
@@ -526,8 +423,6 @@ class StagingService:
         device_id = identity.device_id if identity else "unknown"
 
         # Push device cookie FIRST (tiny file, fast), then stage blob.
-        # This matters for transport implementations that store the last
-        # pushed data in a single slot (e.g. mock transports in tests).
         DeviceCookie.destroy_locally(self._data_dir)
         self._push_cookie(device_id)
 
