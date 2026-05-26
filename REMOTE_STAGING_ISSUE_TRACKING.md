@@ -10,14 +10,46 @@ This document captures issues found during cross-device staging sync testing bet
 |---|---|---|
 | Device ID | `bbb3badc-6365-49ea-b43c-53869ca0195f` | `dc1da321-2c80-4815-a808-11295b8c59f9` |
 | Code branch | `P3-Remote_Sync` | `P3-Remote_Sync` |
-| Commit | `137b544` + fix | `7afd688` (pushed to origin) |
+| Commit | `ee2339e` | `ee2339e` (pulled from origin) |
 | Data dir | `~/.local/share/phpoc/` | `~/.local/share/phpoc/` |
 | Config dir | `~/.config/phpoc/` | `~/.config/phpoc/` |
 | Transport | `http` → `https://phpoc-staging.wacevedo.workers.dev` | `http` → `https://phpoc-staging.wacevedo.workers.dev` |
+| API key | 🟢 **Set** | 🔴 **null** (not set) |
+| Device cookie | 🟢 **Present** (specifier `9add2bfb...`) | 🔴 **None** (no write has succeeded) |
 | Remote URL (git fallback) | `git@github.com:wacevedo76/phpoc-staging.git` | same |
 | Passphrase | 🟢 **Updated** (via `ph recover`) | 🟢 **Updated** (via `ph recover`) |
 
 ## Issues Found
+
+### Issue #18: x13 has `api_key: null` in config — HTTPS pushes fail silently
+
+**Status:** 🟡 Open — awaiting x13 config fix
+**Date:** 2026-05-27
+
+**Root cause:** On x13, `ph config get http.api_key` returns `null`. Debagent04 has
+the key set via `ph config set http.api_key "e433b6f..."`. Because both devices
+share the same R2 bucket and API key, x13 must set the key before it can push
+or pull staging data over HTTP.
+
+**Fix:** On x13:
+```bash
+ph config set http.api_key "e433b6f13a68aad1fa67d68116b3f6210b7424d6c928ff75a021ffd0ef34fb64"
+```
+
+**Current symptom:**
+```
+$ ph dev cookie
+Remote Device Cookie:
+  device_uuid:       bbb3badc-6365-49ea-b43c-53869ca0195f
+  device_specifier:  9add2bfbce2ce343459ffe4b612a0982
+  (no local cookie)
+```
+
+x13 has no local cookie because it was never created — no write command has
+succeeded on x13 since the HTTP migration (previous push attempts silently
+failed due to missing API key).
+
+**Priority:** High — blocks cross-device sync from x13
 
 ### Issue #17: Ledger chain divergence — remote blocks don't link to local
 
@@ -686,11 +718,14 @@ When both devices edit the same entry concurrently:
 | 2026-05-26 | **403 bug: urllib.request header case-mangling** | Switched from `urllib.request` to `http.client.HTTPSConnection`. Python 3.14 lowercases `X-Api-Key` → `X-api-key` internally; Cloudflare Workers fails to match. `http.client` preserves header case. |
 | 2026-05-26 | **Phase 1 MVP complete** | Worker deployed to `phpoc-staging.wacevedo.workers.dev`. `ph transport set` commands. Staging blob + 56 ledger blocks + index migrated from git to R2. `time ph view` → near-instant (was ~5000ms). |
 | 2026-05-26 | **Issue #16 — HTTP timeout too low** | Default timeout 10s → 60s. Block 000029.json timed out during push (month summary, large obfuscated payload). |
+| 2026-05-27 | **Device Cookie redesign** | HMAC → random specifier. `device_specifier` string comparison is definitive across shared-key devices. Commit `a5793fe`. |
+| 2026-05-27 | **`ph dev cookie` command** | New diagnostic subcommand to inspect remote + local cookies. Commit `ee2339e`. |
 
 ### Open issues remaining
 
 | Issue | Status | Owner |
 |---|---|---|
+| **Issue #18** — x13 `api_key` is null 🔴 | 🔴 **Blocking cross-device sync from x13** | x13 |
 | Issue #7 — Stale cache blob overwrite (session 2) | 🔴 Data loss (resolved by wipe) | x13 + debagent04 |
 | Issue #8 — Session cache blocks re-auth after ph recover | ✅ Fixed (commit `389e268`) | debagent04 |
 | Issue #9 — Rebase conflicts silently swallowed | 🔴 Needs fix | debagent04 |
@@ -698,8 +733,10 @@ When both devices edit the same entry concurrently:
 | Issue #12 — `git pull --rebase` 'Already up to date' false negative | 🔴 Needs fix | debagent04 |
 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED after ph login | ✅ Fixed | debagent04 |
 | Issue #14 — `ph recover` rewrites all blocks; full ledger push takes ~7 min | 🔴 Needs design (async batch push) | x13 |
-| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (Phase A: reads bypass `ls-remote` entirely via background subprocess. Phase B: writes return instantly via WAL, push deferred to background. Phase C: daemon eliminates subprocess-per-command overhead with persistent event loop + debounce.) | x13 |
-| **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing | debagent04 |
+| **AFI #2** — Redundant `ls-remote` calls | 🟡 Partially resolved (HTTP transport eliminates SSH/git handshake entirely) | x13 |
+| **AFI #3** — Device hand-off sync scenarios | 🔴 Needs testing (blocked by #18) | debagent04 |
+| **Device Cookie redesign** | ✅ Done (2026-05-27, commit `a5793fe`) | debagent04 |
+| **`ph dev cookie` command** | ✅ Done (2026-05-27, commit `ee2339e`) | debagent04 |
 
 ### Issue #9: Silently swallowed rebase conflict in transport.pull()
 
@@ -979,11 +1016,41 @@ cache is stale (or never set), `check_and_sync()` will return `REAUTH_NEEDED`.
 
 ---
 
-## Device Cookie Implementation (2026-05-24)
+## Device Cookie Implementation (2026-05-24) → Redesigned (2026-05-27)
 
-**Status:** ✅ Implemented
+**Status:** ✅ Redesigned — random-specifier based
 
-### Problem
+### Changelog: 2026-05-27 — Redesign from HMAC to random specifier
+
+The original HMAC-based cookie design had a subtle flaw: when both devices
+share the same master key (recovery seed), the HMAC comparison is byte-for-byte
+identical even though different devices wrote their own cookies. This meant the
+fast path could incorrectly return READY after a cross-device write cycle.
+
+**New design:**
+- Remote cookie (R2):  `{"device_uuid": "<UUID>", "device_specifier": "<random 32-char hex>"}`
+- Local cookie (disk): `{"device_specifier": "<same random>", "creation_time": "<epoch_ms>"}`
+- Comparison: `device_specifier` string equality (definitive — random tokens can't collide)
+- No master key needed for comparison — the specifier IS the proof
+
+**Key improvement:** Every cookie creation generates a new random token. When x13
+pushes to R2, it writes x13's specifier. The next debagent04 command compares
+its local specifier against R2's — **definitive mismatch** → forces blob pull + merge.
+
+**Files changed:**
+| File | Change |
+|------|--------|
+| `domain/cookie/device_cookie.py` | Complete rewrite — HMAC → random specifier |
+| `domain/staging/service.py` | Fast path matches specifier strings, no stale threshold |
+| `domain/staging/remote_sync.py` | Cookie docs updated (JSON bytes instead of HMAC) |
+| `cli/background.py` | Cookie renewal uses new API |
+| `main.py` | Added `ph dev cookie` diagnostic command |
+
+**Removed:** `COOKIE_STALE_THRESHOLD_S` constant (no longer needed — specifier comparison is definitive)
+
+### Original problem
+
+**Original problem (motivated HMAC design):**
 `check_and_sync()` needed to read the `device_id` from the remote staging blob to
 decide whether auth was needed. But the blob is encrypted — you need the master key
 (requiring auth) to decrypt it. **Circular dependency.**
