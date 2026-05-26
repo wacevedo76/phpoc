@@ -117,9 +117,17 @@ definition.
   `REAUTH_NEEDED` for **all** commands. `view_active()` and `list_habits()`
   check the return and abort early. No stale local data is shown.
 
+**Bug in initial fix:** `interface.py` imported `SyncCheckResult` from
+`domain.staging.remote_sync` (an Enum with `REAUTH_NEEDED = "reauth"`),
+but `service.py`'s `check_and_sync()` returns a plain class with
+`REAUTH_NEEDED = "REAUTH_NEEDED"`. The string comparison never matched,
+so `_sync_before_command` always fell through to `return True`.
+**Fixed:** import changed to `from domain.staging.service import SyncCheckResult`.
+
 **Files changed:**
 - `domain/staging/service.py` — lines 393-408 (specifier_mismatch flag + unconditional REAUTH_NEEDED)
-- `cli/interface.py` — lines 27-75 (_sync_before_command returns False), lines 234-236 (view_active early return), lines 334-336 (list_habits early return)
+- `cli/interface.py` — line 10 (fixed import), lines 27-75 (_sync_before_command returns False),
+  lines 234-236 (view_active early return), lines 334-336 (list_habits early return)
 
 ## Key Files
 | File | Purpose |

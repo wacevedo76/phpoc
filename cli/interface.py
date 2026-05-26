@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from security.crypto import AbstractCryptoManager
 from domain.staging.service import StagingService
-from domain.staging.remote_sync import SyncCheckResult
+from domain.staging.service import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from cli.trace import trace
 from cli.background import _show_sync_notifications, _spawn_background_sync_check
