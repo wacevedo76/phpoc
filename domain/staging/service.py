@@ -364,15 +364,19 @@ class StagingService:
              a. No cookie or expired -> proceed to slow path
              b. Cookie valid -> pull REMOTE cookie
                 i.  Remote cookie specifier MATCHES local -> READY (same device session)
-                ii. No remote cookie or specifier MISMATCH -> proceed to slow path
-          3. Slow path: specifier mismatch OR no cookie -> pull blob, then
-             check auth. If auth is fresh (within cache or crypto present), merge.
-             If auth is stale -> REAUTH_NEEDED.
-          4. If remote unreachable: return OFFLINE.
+                ii. Remote cookie exists but specifier MISMATCH -> mark specifier_mismatch
+          3. Slow path (specifier mismatch or no local cookie):
+             - Pull blob from remote
+             - If specifier_mismatch: ALWAYS return REAUTH_NEEDED (force auth)
+             - If no specifier mismatch: check auth freshness, require re-auth if stale
+          4. After successful auth, merge remote into local, create new device cookie.
+          5. If remote unreachable: return OFFLINE.
 
-        **A specifier mismatch ALWAYS means a different device wrote.**
-        That alone is the auth trigger. The cookie is the truth, not the
-        blob's device_id field.
+        **A specifier mismatch ALWAYS forces authentication.**
+        Per your spec: "if local device_specifier do NOT match remote
+        device specifier. Force authentication." Regardless of whether
+        a CryptoManager already has a valid cached key — the user must
+        explicitly consent to merging across devices.
         """
         if self._remote is None:
             return SyncCheckResult.READY
@@ -383,6 +387,7 @@ class StagingService:
         local_cookie = DeviceCookie.is_valid_locally(
             self._data_dir, self._cookie_ttl_minutes
         )
+        specifier_mismatch = False
         if local_cookie is not None:
             try:
                 remote_cookie = self._remote.pull_cookie()
@@ -393,6 +398,8 @@ class StagingService:
                 if remote_parsed is not None and DeviceCookie.matches(local_cookie, remote_parsed):
                     # Specifiers match -- same device session, staging is in sync
                     return SyncCheckResult.READY
+                # Remote cookie exists but specifiers don't match — different device wrote
+                specifier_mismatch = True
 
         # ------------------------------------------------------------------
         # SLOW PATH: Cookie mismatch or no cookie -> pull blob, check auth, merge
@@ -408,11 +415,21 @@ class StagingService:
         if remote_blob is None:
             return SyncCheckResult.READY
 
-        # Auth check: specifier mismatch forces auth gate.
-        if self._is_auth_fresh():
-            self._last_auth_time = time.time()
-        else:
+        # Auth check: specifier mismatch ALWAYS forces auth gate.
+        # Per your spec: "if local device_specifier do NOT match remote
+        # device specifier. Force authentication." Regardless of whether
+        # a CryptoManager already has the key cached — the user must
+        # explicitly consent to merging across devices.
+        if specifier_mismatch:
             return SyncCheckResult.REAUTH_NEEDED
+
+        # No specifier mismatch (no local cookie, or no remote cookie).
+        # Normal auth freshness check applies.
+        if not self._is_auth_fresh():
+            return SyncCheckResult.REAUTH_NEEDED
+
+        # Auth is fresh — proceed with merge
+        self._last_auth_time = time.time()
 
         # Check freshness: skip full merge if same device and remote not newer
         if not self._needs_full_pull(remote_blob):

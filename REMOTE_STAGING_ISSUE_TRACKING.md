@@ -21,6 +21,46 @@ This document captures issues found during cross-device staging sync testing bet
 
 ## Issues Found
 
+### Issue #23: Specifier mismatch did not force auth when CryptoManager was cached
+
+**Status:** ✅ Fixed (2026-05-26, this session)
+
+**Problem:** `check_and_sync()` fast path detected a cookie specifier mismatch (different
+device wrote to remote), but the slow path called `_is_auth_fresh()` which returned `True`
+whenever a `CryptoManager` with a valid key was present. Since `main.py` authenticates
+at process start, the `CryptoManager` was always present, and the auth prompt was never
+shown — even though a different device had staging.
+
+```python
+# Old code in check_and_sync() slow path:
+if self._is_auth_fresh():
+    self._last_auth_time = time.time()  # Always True when CryptoManager present
+else:
+    return SyncCheckResult.REAUTH_NEEDED
+```
+
+**Fix:** Track `specifier_mismatch` as an explicit boolean during the fast path. When
+set, `check_and_sync()` returns `REAUTH_NEEDED` unconditionally — no longer consults
+`_is_auth_fresh()` at all.
+
+**Additionally:** `_sync_before_command()` in `cli/interface.py` previously returned
+`True` on `REAUTH_NEEDED` for read-only commands (`require_auth=False`), allowing
+`ph view` to show stale local data silently. Now it returns `False` for all commands,
+and both `view_active()` and `list_habits()` check the return value and abort early.
+
+**Workflow design confirmed:**
+1. Remote should only ever hold one Device Cookie.
+2. `ph view` compares local vs remote device_specifier. Match = proof this device
+   was the last to interact with staging.
+3. If specifiers don't match → **force authentication** unconditionally.
+4. After successful auth → create new random specifier locally, push cookie to
+   remote (overwriting the old one), pull blob, merge, push merged blob.
+
+**Files changed:**
+- `domain/staging/service.py` — `check_and_sync()` lines 393-408
+- `cli/interface.py` — `_sync_before_command()` lines 27-75, `view_active()` lines 234-236,
+  `list_habits()` lines 334-336
+
 ### Issue #19: Sync commands pushed device cookie to remote (false ownership claim)
 
 **Status:** ✅ Fixed (2026-05-27, commits `88e7e52` + `d25d9b4`)
@@ -770,9 +810,10 @@ When both devices edit the same entry concurrently:
 
 | Issue | Status | Owner |
 |---|---|---|
-| **Issue #18** — x13 `api_key` is null 🔴 | 🔴 **Blocking cross-device sync from x13** | x13 |
+| **Issue #23 — Specifier mismatch didn't force auth** | ✅ **Fixed** — `specifier_mismatch` flag bypasses `_is_auth_fresh()` | debagent04 |
+| **Issue #18** — x13 `api_key` is null 🔴 | ✅ Fixed — key set on x13 | x13 |
 | Issue #19 — Sync pushes cookie to remote (false ownership) | ✅ Fixed (`88e7e52`) | debagent04 |
-| Issue (cookie redesign) — Specifier IS the truth, mismatch forces auth | ✅ Fixed (`d25d9b4`) | debagent04 |
+| Issue (cookie redesign) — Specifier IS the truth, mismatch forces auth | ✅ Fixed (`d25d9b4` + this session's hardening) | debagent04 |
 | Issue #7 — Stale cache blob overwrite (session 2) | 🔴 Data loss (resolved by wipe) | x13 + debagent04 |
 | Issue #8 — Session cache blocks re-auth after ph recover | ✅ Fixed | debagent04 |
 | Issue #9 — Rebase conflicts silently swallowed | 🔴 Deprecated (HTTP transport replaces git) | debagent04 |
@@ -780,7 +821,7 @@ When both devices edit the same entry concurrently:
 | Issue #12 — `git pull --rebase` false 'Already up to date' | 🔴 Deprecated (HTTP transport replaces git) | debagent04 |
 | Issue #13 — `_last_auth_time = 0.0` false REAUTH_NEEDED | ✅ Fixed | debagent04 |
 | Issue #14 — `ph recover` rewrites all blocks (slow push) | 🔴 Needs design | x13 |
-| **AFI #3** — Cross-device sync testing | 🔴 **Next step** — x13 API key now set, device UUID provenance added for traceability | debagent04 + x13 |
+| **AFI #3** — Cross-device sync testing | 🔴 **Next step** — specifier mismatch auth gate verified, full hand-off flow pending | debagent04 + x13 |
 | **Device Cookie redesign** | ✅ Done (`a5793fe`) | debagent04 |
 | **`ph dev cookie` command** | ✅ Done (`ee2339e`) | debagent04 |
 | **Issue #20 — Missing capture() in add_start/add_oneoff** | ✅ Fixed (restored `capture()` calls) | x13 |

@@ -31,12 +31,17 @@ class CLIInterface:
         If cookie mismatch or expired, pulls remote blob, merges, and
         if required, prompts for authentication.
 
+        Only one device can access staging at a time. If the remote
+        device_specifier doesn't match local, a different device has
+        staging. Authentication is required to proceed.
+
         Args:
-            require_auth: If True, REAUTH_NEEDED will prompt the user.
+            require_auth: If True, REAUTH_NEEDED will signal the caller
+                to handle the authentication flow (write commands).
 
         Returns:
             True if sync was successful or not needed, False if re-auth
-            failed (only when require_auth=True).
+            was needed and caller should abort.
         """
         if self._staging._remote is None:
             return True  # No remote configured — nothing to sync
@@ -51,14 +56,12 @@ class CLIInterface:
             return True
 
         if result == SyncCheckResult.REAUTH_NEEDED:
-            if require_auth:
-                print("\nRemote staging has changed since your last session.")
-                print("Please re-authenticate to sync.")
-                # The caller (main.py) handles authentication flow.
-                # Signal back that re-auth is needed.
-                return False
-            # Non-auth commands (view, list) can still show local data
-            return True
+            # Specifier mismatch or stale session — must re-auth.
+            # Only one device can access staging at a time.
+            if not require_auth:
+                print("\nRemote staging is held by a different device.")
+                print("Please re-authenticate to access remote staging.")
+            return False
 
         return True
 
@@ -225,8 +228,11 @@ class CLIInterface:
 
     @trace
     def view_active(self, show_tags=False, show_comments=False):
-        # Sync with remote before showing data (fast cookie check, no auth needed)
-        self._sync_before_command(require_auth=False)
+        # Sync with remote before showing data.
+        # If re-auth is needed (specifier mismatch or stale session),
+        # _sync_before_command returns False with a message.
+        if not self._sync_before_command(require_auth=False):
+            return
 
         # Phase A: Show any pending sync notifications from background checks
         _show_sync_notifications(self._staging._data_dir)
@@ -326,7 +332,8 @@ class CLIInterface:
 
     @trace
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
-        self._sync_before_command(require_auth=False)
+        if not self._sync_before_command(require_auth=False):
+            return
         print(f"\n--- Detailed Habit List ({source.capitalize()}) ---")
 
         # Convert days_limit to from_date if from_date is not already set
