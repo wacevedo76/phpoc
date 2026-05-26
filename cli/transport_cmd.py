@@ -45,6 +45,9 @@ def _show_transport(config):
     api_key = config.get("http.api_key")
     git_url = config.get("remote.git_remote_url")
 
+    import os
+    env_key = os.environ.get("PHPOC_CLOUDFLARE_API_KEY")
+
     print("Transport Configuration")
     print("=" * 60)
     print(f"  Transport:     {transport}")
@@ -58,7 +61,12 @@ def _show_transport(config):
     elif transport == "http":
         print(f"  Provider:      {provider or 'generic'}")
         print(f"  Base URL:      {base_url or '(not set)'}")
-        print(f"  API key:       {'****' if api_key else '(not set)'}")
+        if api_key:
+            print(f"  API key:       ****  (from config file)")
+        elif env_key:
+            print(f"  API key:       ****  (from $PHPOC_CLOUDFLARE_API_KEY)")
+        else:
+            print(f"  API key:       (not set)")
         print()
         if provider == "cloudflare":
             print("  Cloudflare Worker endpoints (expected by phpoc):")
@@ -130,7 +138,7 @@ def _switch_to_git(config, config_path: Optional[Path] = None):
     print()
     print("Note: The git remote must be accessible via SSH keys.")
     print("      On first use, the repo will be cloned automatically.")
-    print()
+    print("  (The $PHPOC_CLOUDFLARE_API_KEY env var is ignored when transport is git.)")
 
 
 def _switch_to_http_generic(config, config_path: Optional[Path] = None):
@@ -152,7 +160,13 @@ def _switch_to_http_generic(config, config_path: Optional[Path] = None):
     # Strip trailing slash
     base_url = base_url.rstrip("/")
 
-    api_key = input("API key (optional, press Enter to skip): ").strip()
+    print()
+    print("  API key options:")
+    print("    1. Enter it now (stored in config file)")
+    print("    2. Skip — use $PHPOC_CLOUDFLARE_API_KEY env var instead")
+    print("       (set in ~/.config/zsh/.zshrc or similar)")
+    print()
+    api_key = input("API key (optional, press Enter to use env var): ").strip()
 
     config.write({
         "remote": {
@@ -165,6 +179,10 @@ def _switch_to_http_generic(config, config_path: Optional[Path] = None):
         },
     })
     print(f"  Transport set to HTTP (base URL: {base_url})")
+    if api_key:
+        print(f"  API key: stored in config file")
+    else:
+        print(f"  API key: sourced from $PHPOC_CLOUDFLARE_API_KEY at runtime")
     print()
 
 
@@ -201,10 +219,16 @@ def _switch_to_cloudflare(config, config_path: Optional[Path] = None):
         return
     base_url = base_url.rstrip("/")
 
-    api_key = input("API key (matches the PHPOC_API_KEY secret): ").strip()
+    print()
+    print("  API key options:")
+    print("    1. Enter it now (stored in config file)")
+    print("    2. Skip — use $PHPOC_CLOUDFLARE_API_KEY env var instead")
+    print("       (set in ~/.config/zsh/.zshrc or similar)")
+    print("       Recommended: keeps secrets out of version-controlled configs")
+    print()
+    api_key = input("API key (optional, press Enter to use env var): ").strip()
     if not api_key:
-        print("Warning: No API key set. The Worker requires one if configured.")
-        print("  Set it later with: ph config set http.api_key <your-key>")
+        print("  Using $PHPOC_CLOUDFLARE_API_KEY from environment at runtime.")
 
     config.write({
         "remote": {
@@ -218,6 +242,10 @@ def _switch_to_cloudflare(config, config_path: Optional[Path] = None):
     })
     print(f"  Transport set to HTTP (Cloudflare Worker)")
     print(f"  Base URL: {base_url}")
+    if api_key:
+        print(f"  API key: stored in config file")
+    else:
+        print(f"  API key: sourced from $PHPOC_CLOUDFLARE_API_KEY at runtime")
     print()
     print("  To verify it works, run: ph sync remote_staging --pull")
     print("  To deploy Worker updates: cd worker && npx wrangler deploy")

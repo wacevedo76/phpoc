@@ -48,6 +48,11 @@ _API_KEY_HEADER = "X-Api-Key"
 _CONTENT_TYPE = "application/octet-stream"
 _USER_AGENT = "phpoc-http-transport/1.0"
 
+# Environment variable that can supply the API key instead of putting it
+# directly in the config file. Set this in your shell profile (e.g. .zshrc):
+#   export PHPOC_CLOUDFLARE_API_KEY="your-key-here"
+_API_KEY_ENV_VAR = "PHPOC_CLOUDFLARE_API_KEY"
+
 
 class HttpStagingTransport(AbstractStagingTransport):
     """Push/pull staging blobs via HTTP(S) with ETag-based caching.
@@ -68,6 +73,8 @@ class HttpStagingTransport(AbstractStagingTransport):
                       ``http://`` or ``https://``.
             api_key: Optional pre-shared API key. If provided, sent as
                      ``X-Api-Key`` header on every request.
+                     If not provided, falls back to the environment
+                     variable ``PHPOC_CLOUDFLARE_API_KEY``.
 
         Raises:
             ValueError: If *base_url* is empty or has an unsupported scheme.
@@ -81,7 +88,12 @@ class HttpStagingTransport(AbstractStagingTransport):
 
         # Normalize: strip trailing slash for consistent URL joining
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+
+        # Resolve API key: constructor arg → env var → None
+        import os
+        self.api_key = api_key or os.environ.get(_API_KEY_ENV_VAR)
+        self._api_key_source = "arg" if api_key else ("env" if self.api_key else "none")
+
         self._etag_cache: Dict[str, Tuple[str, bytes]] = {}
 
     # ------------------------------------------------------------------
