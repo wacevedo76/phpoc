@@ -504,9 +504,9 @@ class StagingService:
     def push_to_remote(self, master_key: bytes):
         """Serialize local staging, push via transport, and create device cookie.
 
-        After a successful push, creates a new Device Cookie on local and
-        pushes it to remote. This allows subsequent operations to skip the
-        full staging blob pull+decrypt if the cookie matches.
+        Creates a fresh Device Cookie on local and pushes it to remote first,
+        then pushes the staging blob. The cookie allows fast-path identity
+        checks on subsequent operations.
 
         Args:
             master_key: For device identity proof generation.
@@ -529,11 +529,49 @@ class StagingService:
         # This matters for transport implementations that store the last
         # pushed data in a single slot (e.g. mock transports in tests).
         DeviceCookie.destroy_locally(self._data_dir)
+        self._push_cookie(device_id)
+
+        self._remote.push(raw, device_id, master_key=master_key)
+        self._last_push_at = int(time.time() * 1000)
+
+    def _push_cookie(self, device_id: str):
+        """Create a fresh device cookie and push it to remote.
+
+        Only write operations that produce new staging data should call this.
+        Sync-only operations (ph sync remote_staging) must NOT push the cookie
+        — the remote cookie is the authoritative record of which device last
+        wrote, and sync commands do not write.
+
+        Args:
+            device_id: This device's UUID.
+        """
         remote_cookie = DeviceCookie.create(device_id, self._data_dir)
         if remote_cookie is not None:
             cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
             self._remote.push_cookie(cookie_bytes)
 
+    def push_blob_only(self, master_key: bytes):
+        """Push only the staging blob to remote, WITHOUT creating/pushing a cookie.
+
+        Used by sync commands (ph sync remote_staging) that should reconcile
+        data but not claim ownership of the remote cookie. The remote cookie
+        is only updated by real write operations.
+
+        Args:
+            master_key: For device identity proof generation.
+        """
+        if self._remote is None:
+            return
+
+        raw = self._local._store.read_entries()
+        identity = None
+        try:
+            if self._remote is not None:
+                identity = self._remote._device_id_provider.get_device_identity(master_key)
+        except Exception:
+            pass
+
+        device_id = identity.device_id if identity else "unknown"
         self._remote.push(raw, device_id, master_key=master_key)
         self._last_push_at = int(time.time() * 1000)
 

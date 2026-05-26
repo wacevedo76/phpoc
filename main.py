@@ -521,7 +521,7 @@ def main():
     elif args.command == "sync":
         if getattr(args, 'sync_action', None) == "remote_staging":
             staging_service.check_and_sync(timeout_ms=500)
-            staging_service.push_to_remote(master_key=auth.get_key())
+            staging_service.push_blob_only(master_key=auth.get_key())
             print("\u2713 Remote staging synced")
         elif getattr(args, 'sync_action', None) == "remote_ledger":
             from domain.ledger.remote_sync import RemoteLedgerSync
