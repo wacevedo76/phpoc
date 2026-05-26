@@ -273,31 +273,36 @@ def _background_push(data_dir_str: str):
     Silent on success — errors go to the log, not stderr.
     """
     data_dir = Path(data_dir_str)
-    if not data_dir.exists():
-        logger.debug("Background push: data_dir %s does not exist, skipping", data_dir)
-        return
 
-    # Read WAL to know what to push
-    wal_data = _read_wal(data_dir)
-    if wal_data is None:
-        logger.debug("Background push: no WAL, nothing to push")
-        return
-
-    # Check session key
-    if not _SESSION_FILE.exists():
-        logger.debug("Background push: no session key, writing notification")
-        notification_path = data_dir / SYNC_NOTIFICATION_FILENAME
-        _write_notification(notification_path, {
-            "type": "auth_needed",
-            "message": (
-                "Local changes saved. Authenticate to push to remote. "
-                "Run 'ph login' or 'ph sync remote_staging'."
-            ),
-            "timestamp": int(time.time() * 1000),
-        })
-        return
-
+    # Clean up the sync_check.lock on exit (created by the spawner).
+    # Use a try/finally so the lock is always released, even on crash.
+    from cli.background import _clear_lock_file, SYNC_CHECK_LOCK_FILENAME
+    lock_path = data_dir / SYNC_CHECK_LOCK_FILENAME
     try:
+        if not data_dir.exists():
+            logger.debug("Background push: data_dir %s does not exist, skipping", data_dir)
+            return
+
+        # Read WAL to know what to push
+        wal_data = _read_wal(data_dir)
+        if wal_data is None:
+            logger.debug("Background push: no WAL, nothing to push")
+            return
+
+        # Check session key
+        if not _SESSION_FILE.exists():
+            logger.debug("Background push: no session key, writing notification")
+            notification_path = data_dir / SYNC_NOTIFICATION_FILENAME
+            _write_notification(notification_path, {
+                "type": "auth_needed",
+                "message": (
+                    "Local changes saved. Authenticate to push to remote. "
+                    "Run 'ph login' or 'ph sync remote_staging'."
+                ),
+                "timestamp": int(time.time() * 1000),
+            })
+            return
+
         master_key = _SESSION_FILE.read_bytes()
         if len(master_key) != 32:
             logger.warning("Background push: invalid session key length")
@@ -377,6 +382,8 @@ def _background_push(data_dir_str: str):
     except Exception as exc:
         logger.warning("Background push failed: %s", exc)
         # WAL is preserved for retry
+    finally:
+        _clear_lock_file(lock_path)
 
 
 # ------------------------------------------------------------------
