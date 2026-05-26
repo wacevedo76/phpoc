@@ -7,3 +7,6 @@ _Operational*
 
 # Trace logs — may contain sensitive data
 staging_log/
+
+# Node.js dependencies (worker project)
+node_modules/

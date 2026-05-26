@@ -28,12 +28,12 @@ ETag caching:
   - ``reset_cache()`` clears all cached ETags.
 """
 
+import http.client
 import json
 import logging
-import urllib.request
-import urllib.error
+import socket
 from typing import Optional, Dict, List, Tuple
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urlparse
 
 from core.sync.transport import AbstractStagingTransport
 
@@ -115,48 +115,60 @@ class HttpStagingTransport(AbstractStagingTransport):
         Raises:
             RuntimeError: On network errors, timeouts, non-404 4xx, or 5xx.
         """
-        url = self._build_url(path)
+        url_path = self._build_path(path)
         timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
 
-        request = urllib.request.Request(url, method="GET")
-
-        # Add API key if configured
-        self._add_api_key(request)
+        # Build headers
+        headers = {}
+        self._add_api_key(headers)
 
         # Send If-None-Match if we have a cached ETag for this path
         cached = self._etag_cache.get(path)
         if cached is not None:
             cached_etag, _cached_body = cached
-            request.add_header("If-None-Match", cached_etag)
+            headers["If-None-Match"] = cached_etag
 
         try:
-            with urllib.request.urlopen(request, timeout=timeout_s) as response:
-                if response.status == 304:
-                    # Not Modified — return cached body
-                    logger.debug("304 for %s — returning cached %d bytes", path, len(_cached_body))
-                    # Do NOT call response.read() — the body is empty on 304
-                    return _cached_body
+            conn = self._connect(timeout_s)
+            conn.request("GET", url_path, headers=headers)
+            resp = conn.getresponse()
 
-                body = response.read()
+            if resp.status == 304:
+                conn.close()
+                # Not Modified — return cached body
+                logger.debug(
+                    "304 for %s — returning cached %d bytes",
+                    path, len(_cached_body),
+                )
+                return _cached_body
 
+            body = resp.read()
+
+            if resp.status == 200:
                 # Cache ETag if present
-                etag = response.headers.get("ETag")
+                etag = resp.getheader("ETag")
                 if etag:
                     self._etag_cache[path] = (etag, body)
-
+                conn.close()
                 return body
 
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
+            if resp.status == 404:
+                conn.close()
                 return None
-            raise RuntimeError(
-                f"HTTP {e.code} pulling {path}: {e.reason}"
-            ) from e
 
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise RuntimeError(
-                f"Network error pulling {path}: {e}"
-            ) from e
+            # Non-404 error
+            reason = resp.reason or ""
+            conn.close()
+            raise RuntimeError(f"HTTP {resp.status} pulling {path}: {reason}")
+
+        except (socket.timeout, TimeoutError) as e:
+            raise RuntimeError(f"Timeout pulling {path}: {e}") from e
+        except (socket.gaierror, ConnectionRefusedError, ConnectionError) as e:
+            raise RuntimeError(f"Network error pulling {path}: {e}") from e
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Error pulling {path}: {e}") from e
 
     def push(self, path: str, data: bytes, timeout_ms: Optional[int] = None) -> None:
         """Write blob to remote via HTTP PUT.
@@ -169,38 +181,39 @@ class HttpStagingTransport(AbstractStagingTransport):
         Raises:
             RuntimeError: On network errors, timeouts, or non-2xx responses.
         """
-        url = self._build_url(path)
+        url_path = self._build_path(path)
         timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
 
-        request = urllib.request.Request(
-            url,
-            data=data,
-            method="PUT",
-        )
-        request.add_header("Content-Type", _CONTENT_TYPE)
-
-        self._add_api_key(request)
+        headers = {
+            "Content-Type": _CONTENT_TYPE,
+        }
+        self._add_api_key(headers)
 
         try:
-            with urllib.request.urlopen(request, timeout=timeout_s) as response:
-                # 2xx = success; clear cache for this path (server has newer data)
-                if 200 <= response.status < 300:
-                    self._etag_cache.pop(path, None)
-                    return
+            conn = self._connect(timeout_s)
+            conn.request("PUT", url_path, body=data, headers=headers)
+            resp = conn.getresponse()
 
-                raise RuntimeError(
-                    f"HTTP {response.status} pushing {path}"
-                )
+            if 200 <= resp.status < 300:
+                # Success; clear cache for this path (server has newer data)
+                self._etag_cache.pop(path, None)
+                resp.read()  # drain
+                conn.close()
+                return
 
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(
-                f"HTTP {e.code} pushing {path}: {e.reason}"
-            ) from e
+            reason = resp.reason or ""
+            body = resp.read()
+            conn.close()
+            raise RuntimeError(f"HTTP {resp.status} pushing {path}: {reason}")
 
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise RuntimeError(
-                f"Network error pushing {path}: {e}"
-            ) from e
+        except (socket.timeout, TimeoutError) as e:
+            raise RuntimeError(f"Timeout pushing {path}: {e}") from e
+        except (socket.gaierror, ConnectionRefusedError, ConnectionError) as e:
+            raise RuntimeError(f"Network error pushing {path}: {e}") from e
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Error pushing {path}: {e}") from e
 
     def list_files(self, prefix: str, timeout_ms: Optional[int] = None) -> List[str]:
         """List filenames under *prefix* via HTTP GET with ?prefix= query.
@@ -216,17 +229,20 @@ class HttpStagingTransport(AbstractStagingTransport):
             RuntimeError: On network errors, timeouts, or 5xx.
         """
         params = urlencode({"prefix": prefix})
-        url = f"{self.base_url}/?{params}"
+        url_path = f"/?{params}"
         timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
 
-        request = urllib.request.Request(url, method="GET")
-        self._add_api_key(request)
+        headers = {}
+        self._add_api_key(headers)
 
         try:
-            with urllib.request.urlopen(request, timeout=timeout_s) as response:
-                body = response.read()
-                if not body:
-                    return []
+            conn = self._connect(timeout_s)
+            conn.request("GET", url_path, headers=headers)
+            resp = conn.getresponse()
+            body = resp.read()
+
+            if resp.status == 200:
+                conn.close()
                 parsed = json.loads(body.decode("utf-8"))
                 if not isinstance(parsed, list):
                     raise RuntimeError(
@@ -235,17 +251,26 @@ class HttpStagingTransport(AbstractStagingTransport):
                     )
                 return parsed
 
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
+            if resp.status == 404:
+                conn.close()
                 return []
-            raise RuntimeError(
-                f"HTTP {e.code} listing {prefix}: {e.reason}"
-            ) from e
 
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            reason = resp.reason or ""
+            conn.close()
+            raise RuntimeError(f"HTTP {resp.status} listing {prefix}: {reason}")
+
+        except (socket.timeout, TimeoutError) as e:
+            raise RuntimeError(f"Timeout listing {prefix}: {e}") from e
+        except (socket.gaierror, ConnectionRefusedError, ConnectionError) as e:
+            raise RuntimeError(f"Network error listing {prefix}: {e}") from e
+        except RuntimeError:
+            raise
+        except json.JSONDecodeError as e:
             raise RuntimeError(
-                f"Network error listing {prefix}: {e}"
+                f"Invalid JSON response from list_files({prefix}): {e}"
             ) from e
+        except Exception as e:
+            raise RuntimeError(f"Error listing {prefix}: {e}") from e
 
     # ------------------------------------------------------------------
     # ETag cache management
@@ -263,29 +288,63 @@ class HttpStagingTransport(AbstractStagingTransport):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_url(self, path: str) -> str:
-        """Build the full URL from base URL and path.
+    def _connect(self, timeout: float) -> http.client.HTTPSConnection:
+        """Create an HTTPS (or HTTP) connection to the remote server.
 
-        Normalizes the path: strips leading slash to avoid double slashes
-        in the final URL.
+        Args:
+            timeout: Socket timeout in seconds.
+
+        Returns:
+            An ``HTTPSConnection`` or ``HTTPConnection`` instance.
+
+        Raises:
+            ValueError: If the base URL cannot be parsed.
+        """
+        parsed = urlparse(self.base_url)
+        host = parsed.hostname
+        port = parsed.port
+        secure = parsed.scheme == "https"
+
+        if secure:
+            conn = http.client.HTTPSConnection(
+                host, port=port, timeout=timeout,
+            )
+        else:
+            conn = http.client.HTTPConnection(
+                host, port=port, timeout=timeout,
+            )
+        return conn
+
+    def _build_path(self, path: str) -> str:
+        """Build the URL path from base URL and remote path.
+
+        Extracts the path component from the base URL (if any) and appends
+        the remote path.
 
         Args:
             path: Remote path, possibly starting with /.
 
         Returns:
-            Full URL string (e.g., ``https://worker.example.com/staging/blobs/x.json``).
+            Full URL path string (e.g., ``/staging/blobs/x.json``).
         """
+        parsed = urlparse(self.base_url)
+        base_path = parsed.path.rstrip("/")
         clean_path = path.lstrip("/")
-        return f"{self.base_url}/{clean_path}"
+        if base_path:
+            return f"{base_path}/{clean_path}"
+        return f"/{clean_path}"
 
-    def _add_api_key(self, request: urllib.request.Request) -> None:
-        """Add API key header to request if configured.
+    def _add_api_key(self, headers: dict) -> None:
+        """Add API key header to request headers dict if configured.
+
+        Uses ``http.client`` which preserves header case in the actual
+        HTTP request (unlike ``urllib.request`` which lowercases keys).
 
         Args:
-            request: The urllib Request to add the header to.
+            headers: Dict of headers to add the key to.
         """
         if self.api_key is not None:
-            request.add_header(_API_KEY_HEADER, self.api_key)
+            headers[_API_KEY_HEADER] = self.api_key
 
     # ------------------------------------------------------------------
     # Convenience property (used by is checks / isinstance in callers)
