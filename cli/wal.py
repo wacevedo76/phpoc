@@ -311,12 +311,25 @@ def _background_push(data_dir_str: str):
         config_store = FileConfigStore(config_path)
         config = ConfigManager(config_store)
 
-        remote_url = config.get("remote.git_remote_url")
-        if not remote_url:
-            logger.debug("Background push: no remote configured, skipping")
-            return
+        transport = None
+        transport_type = config.get("remote.transport", "git")
 
-        from core.sync.git_transport import GitStagingTransport
+        if transport_type == "http":
+            base_url = config.get("http.base_url")
+            api_key = config.get("http.api_key")
+            if not base_url:
+                logger.debug("Background push: http.base_url not set, skipping")
+                return
+            from core.sync.http_transport import HttpStagingTransport
+            transport = HttpStagingTransport(base_url=base_url, api_key=api_key)
+        else:
+            remote_url = config.get("remote.git_remote_url")
+            if not remote_url:
+                logger.debug("Background push: no remote configured, skipping")
+                return
+            from core.sync.git_transport import GitStagingTransport
+            transport = GitStagingTransport(remote_url, str(data_dir / "remote"))
+
         from domain.staging.remote_sync import RemoteStagingSync
         from domain.staging.service import StagingService
         from domain.staging.local_cache import LocalStagingCache
@@ -329,7 +342,6 @@ def _background_push(data_dir_str: str):
         local_cache = LocalStagingCache(data_store)
 
         device_provider = RandomUUIDDeviceIdentityProvider(config)
-        transport = GitStagingTransport(remote_url, str(data_dir / "remote"))
         remote_sync = RemoteStagingSync(
             crypto=crypto,
             transport=transport,
