@@ -2,18 +2,19 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `76209c0` (Phase B/C + stale-remote fix + onboarding)
-- **Tests:** 1199 all passing (0 failures)
+- **Commit:** `5853d5c` (Phase B/C + stale-remote fix + onboarding + Phase 1 tests)
+- **Tests:** 1199 all passing + 66 Phase 1 tests written (TDD, fail cleanly until implementation)
 - **Remote staging:** Fresh blob pushed at `4f9b2d2` (x13 device)
 - **Remote ledger sync:** ✅ **Implemented** — `domain/ledger/remote_sync.py`
 - **Device Cookie:** ✅ **Implemented** — fast-path cross-device identity check
 - **ADR-023:** 🔮 Design direction — replace git/SSH with Cloudflare Worker + R2 for mobile-friendly HTTP transport
-- **Next focus:** 🚀 **Phase 1 — Cloudflare Worker deploy + HttpStagingTransport**
+- **Next focus:** 🚀 **Phase 1 — implement HttpStagingTransport + deploy Worker**
 - **Latency strategy:** ✅ `_Operational-ph_Staging-latency-issue-strategy.md` — 3-phase plan (A ✅, B ✅, C ✅ daemon implemented)
 - **Phase A (reads):** `cli/background.py` (430 lines) — instant reads via background subprocess, notification IPC, debounce lock, cookie auto-renewal. 31 tests.
 - **Phase B (writes):** `cli/wal.py` (350 lines) — WAL-backed instant writes, crash-safe deferred push, replay at startup, background push subprocess. 54 tests.
 - **Phase C (daemon):** ✅ Implemented. `cli/daemon.py` (~330 lines), `cli/daemon_sync.py` (~160 lines), `cli/daemon_cli.py` (~25 lines). `main.py` — `ph daemon start/stop/status`. 65 tests.
 - **Onboarding:** ✅ `cli/onboarding.py` (474 lines) — `ph onboarding` imports existing ledger to new device via git transport.
+- **Phase 1 tests:** ✅ `tests/test_http_transport.py` (66 tests, 6 classes) — TDD spec for `HttpStagingTransport`: transport contract, ETag caching, error handling, integration with `RemoteStagingSync`/`RemoteLedgerSync`, Worker HTTP contract.
 - **Bug fix:** `check_and_sync()` removed from write methods — stale remote was resurrecting ended tasks (MergeEngine remote-wins).
 - **Trace logging:** Disabled (`debug.trace_enabled: false` in config)
 - **Passphrase:** Updated on both devices — no longer using `m0r3m0n3y`
@@ -232,17 +233,19 @@ All pushed to origin.
 ## Next Steps
 
 ### Completed this session
-1. [x] **Stale-remote fix:** removed `check_and_sync()` from all 6 write methods in `StagingService`. Write methods are now local-only. Remote sync handled by WAL+background push (Phase B) and daemon (Phase C). Fixes the cycle: `ph end 1` → stale remote resurrects ended task → `ph end 1` cycles forever.
-2. [x] **Onboarding:** `cli/onboarding.py` (474 lines) — `ph onboarding` command imports existing ledger to a new device: git remote → seed → pull ledger/staging/index → extract identity from genesis → set passphrase → re-seal/re-sign → verify.
+1. [x] **Stale-remote fix:** removed `check_and_sync()` from all 6 write methods in `StagingService`.
+2. [x] **Onboarding:** `cli/onboarding.py` (474 lines) — `ph onboarding` command.
+3. [x] **Phase 1 tests:** `tests/test_http_transport.py` (66 tests) — TDD spec for `HttpStagingTransport`, integration with `RemoteStagingSync`/`RemoteLedgerSync`, Worker HTTP contract.
 
-### Phase 1: Worker + R2 (tomorrow)
+### Phase 1: Worker + R2 (next)
 1. [x] Create Cloudflare R2 bucket (`phpoc-data`)
 2. [x] Create R2 API token (`phpoc-r2-bucket`, saved locally)
-3. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
-4. [ ] Write `core/sync/http_transport.py` — ~100 lines implementing `AbstractStagingTransport`
-5. [ ] Push existing staging data from git to R2 via Worker
-6. [ ] Update `main.py` to use `HttpStagingTransport`
-7. [ ] Verify CLI latency drops from ~5000ms to ~100ms
+3. [x] Write tests for `HttpStagingTransport` (66 tests, 6 classes)
+4. [ ] Implement `core/sync/http_transport.py` — ~150 lines
+5. [ ] Deploy Worker (GET/PUT/LIST + API key auth) — ~40 lines TypeScript
+6. [ ] Push existing staging data from git to R2 via Worker
+7. [ ] Swap `GitStagingTransport` → `HttpStagingTransport` in `main.py` and `cli/onboarding.py`
+8. [ ] Verify CLI latency drops from ~5000ms to ~100ms
 
 ### Phase 2: Mobile MVP (next)
 1. [ ] Re-implement crypto primitives for mobile (PBKDF2, AES-CTR, HMAC-SHA256)
