@@ -412,18 +412,27 @@ class StagingService:
 
           Auth gate:
             ─  Specifier mismatch → REAUTH_NEEDED (unconditional, regardless of crypto)
-            ─  No local cookie / TTL expired / no remote cookie:
+            ─  No local cookie / TTL expired → REAUTH_NEEDED (unconditional —
+               per workflow spec, Step 1 always routes to Step 3 authentication
+               when TTL is expired or no cookie exists)
+            ─  No remote cookie (local TTL valid):
                3. CryptoManager valid? No → REAUTH_NEEDED
                4. Pull remote cookie → device_uuid (unreachable → OFFLINE)
                5. Same device_uuid → push local blob (authoritative, no pull)
                   Different device_uuid → pull blob → reconcile → push merged
                6. Create new device cookie (local + remote) → READY
 
-        Key invariant: **a specifier mismatch always forces REAUTH_NEEDED**,
-        regardless of whether a CryptoManager is cached. The user must
-        explicitly consent to cross-device merging. Other auth gate entries
-        (no local cookie, expired TTL, no remote cookie) only need a valid
-        master key — the session cache is sufficient.
+        Key invariants:
+
+        - **Specifier mismatch always forces REAUTH_NEEDED**, regardless of
+          whether a CryptoManager is cached. The user must explicitly consent
+          to cross-device merging.
+
+        - **TTL expired / no local cookie always forces REAUTH_NEEDED**,
+          even when a valid crypto key is cached. Per the workflow spec,
+          TTL expiry is an unconditional gate to Step 3 (authentication).
+          The session cache is insufficient because the cookie is the truth
+          for device identity, not the crypto key.
         """
         if self._remote is None:
             return SyncCheckResult.READY
@@ -450,8 +459,13 @@ class StagingService:
                     # optionally touch the local cookie (10% window check)
                     self._push_on_fast_path(local_cookie)
                     return SyncCheckResult.READY
-                # Remote cookie exists but specifiers differ — different device wrote
-                specifier_mismatch = True
+                if remote_cookie is not None:
+                    # Remote cookie parsed successfully but specifiers differ
+                    # — different device wrote, must force auth
+                    specifier_mismatch = True
+                # else: remote_cookie is None — can't parse, treat as no remote cookie.
+                # This happens when the transport returns a non-cookie blob
+                # (e.g. obfuscated staging data). Fall through to auth gate.
 
         # ------------------------------------------------------------------
         # AUTH GATE: No valid cookie pair, or specifier mismatch
@@ -462,14 +476,22 @@ class StagingService:
         if specifier_mismatch:
             return SyncCheckResult.REAUTH_NEEDED
 
-        # 3. Check if user has authenticated (valid master key).
-        #    Only reached for non-mismatch cases: no local cookie, TTL expired,
-        #    or no remote cookie. A warm CryptoManager is sufficient here.
+        # 3. TTL expired or no local cookie — always force auth.
+        #    Per the workflow (ph-view-workflow-updated.md), Step 1 TTL check
+        #    routes directly to Step 3 (authentication) when TTL is expired
+        #    or no local cookie exists. There is no crypto bypass here — the
+        #    user must explicitly enter their passphrase to re-establish the
+        #    device session, even if a valid crypto key is cached.
+        #    After auth completes, the caller invokes _reconcile_and_claim().
+        if local_cookie is None:
+            return SyncCheckResult.REAUTH_NEEDED
+
+        # 4. No remote cookie — force auth so a fresh cookie can be created.
         mk = getattr(self._crypto, "master_key", None)
         if not isinstance(mk, bytes) or len(mk) != 32:
             return SyncCheckResult.REAUTH_NEEDED
 
-        # 4. Reconcile and claim staging ownership
+        # 5. Reconcile and claim staging ownership
         return self._reconcile_and_claim(mk)
 
     # ------------------------------------------------------------------

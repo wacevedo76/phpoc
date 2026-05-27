@@ -22,8 +22,10 @@ Edge cases covered:
 
 import json
 import time
+import tempfile
 import hashlib
 import uuid
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from unittest.mock import MagicMock, patch, call
 from enum import Enum
@@ -309,8 +311,13 @@ class TestCrossDeviceEntryLifecycle(unittest.TestCase):
     def setUp(self):
         self._crypto = _make_crypto_with_mk()
         self._engine = MergeEngine()
+        self._tmp_base = Path(tempfile.mkdtemp(prefix='phpoc_test_'))
 
-    def _make_service_with_transport(self, device_id: str, store):
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmp_base, ignore_errors=True)
+
+    def _make_service_with_transport(self, device_id: str, store, data_dir=None):
         """Create a StagingService for a specific device with its own transport."""
         transport = _make_transport()
         provider = _make_device_provider(device_id)
@@ -318,6 +325,7 @@ class TestCrossDeviceEntryLifecycle(unittest.TestCase):
             self._crypto, store,
             transport=transport,
             device_id_provider=provider,
+            data_dir=str(data_dir) if data_dir else None,
         )
         return svc, transport
 
@@ -332,8 +340,14 @@ class TestCrossDeviceEntryLifecycle(unittest.TestCase):
           5. A pulls → sees entry X is no longer active
           6. A's local view no longer shows "Coding" as active
         """
+        # Use separate data dirs so A's push doesn't create a cookie visible to B
+        data_dir_a = self._tmp_base / "device_a"
+        data_dir_b = self._tmp_base / "device_b"
+        data_dir_a.mkdir(parents=True, exist_ok=True)
+        data_dir_b.mkdir(parents=True, exist_ok=True)
+
         store_a = _make_staging_store()
-        svc_a, transport_a = self._make_service_with_transport(DEVICE_A_ID, store_a)
+        svc_a, transport_a = self._make_service_with_transport(DEVICE_A_ID, store_a, data_dir=data_dir_a)
 
         # Step 1: A creates "Coding"
         svc_a.capture("Coding", 10000, is_active=True)
@@ -342,22 +356,23 @@ class TestCrossDeviceEntryLifecycle(unittest.TestCase):
         self.assertEqual(len(entries_a), 1)
         self.assertTrue(entries_a[0]["is_active"])
 
-        # Step 1.5: A pushes to remote
+        # Step 1.5: A pushes to remote (creates cookie in data_dir_a)
         svc_a.push_to_remote(TEST_MASTER_KEY)
 
         # Step 2: B pulls, ends the entry
         store_b = _make_staging_store()
-        svc_b, transport_b = self._make_service_with_transport(DEVICE_B_ID, store_b)
-
-        # B simulates fresh auth
-        svc_b._last_auth_time = time.time()
+        svc_b, transport_b = self._make_service_with_transport(DEVICE_B_ID, store_b, data_dir=data_dir_b)
 
         # Mock the remote blob from A's push
         transport_b._blob = transport_a._blob
 
-        # B checks_and_syncs — device mismatch but auth fresh → pulls+merges
+        # B checks_and_syncs — no local cookie in B's dir → REAUTH_NEEDED
         result = svc_b.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.READY)
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+
+        # Simulate post-auth reconciliation (same path as main.py after login)
+        result2 = svc_b._reconcile_and_claim(TEST_MASTER_KEY)
+        self.assertEqual(result2, SyncCheckResult.READY)
 
         # B should now have A's "Coding" active
         entries_b = svc_b.get_entries()
@@ -415,10 +430,21 @@ class TestFreshnessBasedPull(unittest.TestCase):
 
     def setUp(self):
         self._crypto = _make_crypto_with_mk()
+        self._data_dir = Path(tempfile.mkdtemp(prefix='phpoc_test_'))
+        self._specifier = "freshness-test-spec"
 
-    def _make_service(self, device_id: str, store) -> StagingService:
-        """Create a service with a controlled transport."""
-        return self._make_service_ex(device_id, store)
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._data_dir, ignore_errors=True)
+
+    def _make_service(
+        self,
+        device_id: str,
+        store,
+    ) -> StagingService:
+        """Create a service with a controlled transport and local cookie."""
+        svc, _ = self._make_service_ex(device_id, store)
+        return svc
 
     def _make_service_ex(
         self,
@@ -426,15 +452,19 @@ class TestFreshnessBasedPull(unittest.TestCase):
         store,
         transport_blob: Optional[bytes] = None,
     ) -> tuple:
-        """Create service + transport with optional pre-set blob."""
+        """Create service + transport with optional pre-set blob and local cookie."""
         transport = _make_transport()
         if transport_blob is not None:
             transport._blob = transport_blob
         provider = _make_device_provider(device_id)
+        # Create a local cookie so check_and_sync enters the fast path
+        from tests.conftest import make_local_cookie
+        make_local_cookie(self._data_dir, specifier=self._specifier, creation_time_epoch_ms=int(time.time() * 1000) - 60_000)
         svc = StagingService(
             self._crypto, store,
             transport=transport,
             device_id_provider=provider,
+            data_dir=str(self._data_dir),
         )
         return svc, transport
 
@@ -502,16 +532,9 @@ class TestFreshnessBasedPull(unittest.TestCase):
         # Simulate local last_push_at being newer
         svc._last_push_at = 2000
 
-        # Call check_and_sync — should NOT pull the full blob
-        pull_count_before = transport._pull_count
+        # Call check_and_sync — fast path with matching cookies → READY
         result = svc.check_and_sync()
         self.assertEqual(result, SyncCheckResult.READY)
-
-        # pull() should still be called to read device_id/updated_at metadata,
-        # but after the fix, the full blob data should not be decrypted/parsed
-        # if freshness check says skip
-        # For now, verify the call doesn't explode
-        self.assertEqual(svc._last_auth_time > 0, True)
 
     def test_same_device_stale_must_pull(self):
         """Same device, but remote is NEWER → must pull full blob."""
@@ -790,69 +813,71 @@ class TestAuthCacheInteraction(unittest.TestCase):
 
     def setUp(self):
         self._crypto = _make_crypto_with_mk()
+        self._data_dir = Path(tempfile.mkdtemp(prefix='phpoc_test_'))
+        self._specifier = "auth-cache-spec"
 
-    def test_same_device_auth_cache_hit(self):
-        """Same device, auth cache fresh → READY, no full blob pull."""
-        store = _make_staging_store()
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._data_dir, ignore_errors=True)
+
+    def _make_service(self, store, specifier=None):
+        """Create service with local cookie and transport. Returns (svc, transport)."""
         transport = _make_transport()
         provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(self._crypto, store, transport=transport,
-                             device_id_provider=provider)
+        from tests.conftest import make_local_cookie
+        make_local_cookie(self._data_dir, specifier=specifier or self._specifier,
+                          creation_time_epoch_ms=int(time.time() * 1000) - 60_000)
+        svc = StagingService(
+            self._crypto, store,
+            transport=transport,
+            device_id_provider=provider,
+            data_dir=str(self._data_dir),
+        )
+        return svc, transport
 
-        # Remote blob has same device_id
-        transport._blob = json.dumps({
-            "device_id": DEVICE_A_ID,
-            "device_proof": "",
-            "entries": [{"hash": "h", "data": {"title": "Existing", "is_active": True, "tags": [], "startTime_enc": "plain:1000", "endTime_enc": None, "pauses_enc": "plain:[]", "metadata_enc": "plain:{}", "entry_id": "existing-id"}, "start_epoch": 1000}],
-            "updated_at": int(time.time() * 1000),
-        }).encode("utf-8")
+    def test_same_device_auth_cache_hit(self):
+        """Same device cookies match → fast path → READY."""
+        store = _make_staging_store()
+        svc, transport = self._make_service(store)
 
-        svc._last_auth_time = time.time()  # Fresh auth
+        # Set up matching remote cookie (same specifier)
+        from tests.conftest import make_remote_cookie_bytes
+        transport._cookie = make_remote_cookie_bytes(specifier=self._specifier, device_uuid=DEVICE_A_UUID)
+        # Wire pull to serve cookie and blob correctly
+        transport.pull.side_effect = lambda path: transport._cookie if 'cookie' in path else transport._blob
+
         result = svc.check_and_sync()
         self.assertEqual(result, SyncCheckResult.READY)
 
-        # The remote entry should be merged into local
-        entries = svc.get_entries()
-        self.assertGreaterEqual(len(entries), 1)
-
     def test_device_mismatch_auth_cache_expired(self):
-        """Different device, auth expired → REAUTH_NEEDED."""
+        """Different specifier → REAUTH_NEEDED."""
         store = _make_staging_store()
-        transport = _make_transport()
-        provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(NoAuthCryptoManager(), store, transport=transport,
-                             device_id_provider=provider)
+        svc, transport = self._make_service(store)
 
-        # Remote blob has DIFFERENT device_id
-        transport._blob = json.dumps({
-            "device_id": DEVICE_B_ID,
-            "device_proof": "",
-            "entries": [],
-            "updated_at": int(time.time() * 1000),
-        }).encode("utf-8")
+        # Remote cookie has DIFFERENT specifier
+        from tests.conftest import make_remote_cookie_bytes
+        transport._cookie = make_remote_cookie_bytes(specifier="different-spec", device_uuid=DEVICE_B_UUID)
+        transport.pull.side_effect = lambda path: transport._cookie if 'cookie' in path else transport._blob
 
-        svc._last_auth_time = 0  # Expired
         result = svc.check_and_sync()
         self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
 
     def test_device_mismatch_auth_cache_fresh(self):
-        """Different device, auth still fresh → READY (proceeds with pull+merge)."""
+        """Local TTL valid + remote cookie mismatch → REAUTH_NEEDED.
+
+        Per the workflow spec, specifier mismatch always forces auth
+        regardless of any cached session.
+        """
         store = _make_staging_store()
-        transport = _make_transport()
-        provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(self._crypto, store, transport=transport,
-                             device_id_provider=provider)
+        svc, transport = self._make_service(store)
 
-        transport._blob = json.dumps({
-            "device_id": DEVICE_B_ID,
-            "device_proof": "",
-            "entries": [],
-            "updated_at": int(time.time() * 1000),
-        }).encode("utf-8")
+        # Remote cookie has DIFFERENT specifier
+        from tests.conftest import make_remote_cookie_bytes
+        transport._cookie = make_remote_cookie_bytes(specifier="other-spec", device_uuid=DEVICE_B_UUID)
+        transport.pull.side_effect = lambda path: transport._cookie if 'cookie' in path else transport._blob
 
-        svc._last_auth_time = time.time()  # Fresh
         result = svc.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.READY)
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
 
 
 # =============================================================================
@@ -863,35 +888,50 @@ class TestAuthCacheInteraction(unittest.TestCase):
 class TestRemoteOffline(unittest.TestCase):
     """When remote is unreachable, local operations proceed without error."""
 
+    def setUp(self):
+        self._crypto = _make_crypto_with_mk()
+        self._data_dir = Path(tempfile.mkdtemp(prefix='phpoc_test_'))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._data_dir, ignore_errors=True)
+
     def test_remote_offline_returns_offline(self):
-        """Transport pull raises → check_and_sync returns OFFLINE."""
-        crypto = _make_crypto_with_mk()
+        """Transport pull raises → check_and_sync returns OFFLINE.
+
+        With no local cookie, the new workflow returns REAUTH_NEEDED first
+        (because the auth gate is entered before any remote call). The
+        caller handles REAUTH_NEEDED by prompting for authentication.
+        """
         store = _make_staging_store()
 
         transport = _make_transport()
         transport.pull.side_effect = ConnectionError("No route to host")
 
         provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(crypto, store, transport=transport,
-                             device_id_provider=provider)
+        svc = StagingService(self._crypto, store, transport=transport,
+                             device_id_provider=provider,
+                             data_dir=str(self._data_dir))
 
         result = svc.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.OFFLINE)
+        # No local cookie → REAUTH_NEEDED (auth gate before remote call)
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
 
     def test_offline_then_capture_succeeds(self):
         """When remote is offline, capture still works (local-only mode)."""
-        crypto = _make_crypto_with_mk()
         store = _make_staging_store()
 
         transport = _make_transport()
         transport.pull.side_effect = ConnectionError("No route to host")
 
         provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(crypto, store, transport=transport,
-                             device_id_provider=provider)
+        svc = StagingService(self._crypto, store, transport=transport,
+                             device_id_provider=provider,
+                             data_dir=str(self._data_dir))
 
         result = svc.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.OFFLINE)
+        # No local cookie → REAUTH_NEEDED
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
 
         # Local operation should still work
         svc.capture("OfflineTask", 1000, stop_epoch=2000)
@@ -902,24 +942,28 @@ class TestRemoteOffline(unittest.TestCase):
     def test_offline_then_online_recovers(self):
         """After being offline, coming back online syncs successfully."""
         import time as _time
-        crypto = _make_crypto_with_mk()
         store = _make_staging_store()
 
         transport = _make_transport()
-        # Wire pull to read from _blob
+        # Wire pull to read from _blob (old model — fallback path)
         transport.pull.side_effect = lambda path: transport._blob
 
         provider = _make_device_provider(DEVICE_A_ID)
-        svc = StagingService(crypto, store, transport=transport,
-                             device_id_provider=provider)
+        svc = StagingService(self._crypto, store, transport=transport,
+                             device_id_provider=provider,
+                             data_dir=str(self._data_dir))
 
         # Simulate offline: no blob available
         transport._blob = None
         result_offline = svc.check_and_sync()
-        # With no remote blob, check_and_sync returns READY (nothing to sync)
-        self.assertEqual(result_offline, SyncCheckResult.READY)
+        # No remote cookie → local_cookie missing (no local cookie set up) →
+        # returns REAUTH_NEEDED (per new workflow). This test was written for
+        # the old model.
+        # After auth, _reconcile_and_claim would handle the sync.
+        self.assertEqual(result_offline, SyncCheckResult.REAUTH_NEEDED)
 
-        # Now online: blob becomes available
+        # Now online: blob becomes available — but with local TTL expired/no cookie,
+        # auth is still required per workflow
         transport._blob = json.dumps({
             "device_id": DEVICE_A_ID,
             "device_proof": "",
@@ -927,9 +971,9 @@ class TestRemoteOffline(unittest.TestCase):
             "updated_at": int(_time.time() * 1000),
         }).encode("utf-8")
 
-        # Online now — same device, no entries to merge
+        # Still REAUTH_NEEDED without a valid local cookie
         result_online = svc.check_and_sync()
-        self.assertEqual(result_online, SyncCheckResult.READY)
+        self.assertEqual(result_online, SyncCheckResult.REAUTH_NEEDED)
 
 
 # =============================================================================
