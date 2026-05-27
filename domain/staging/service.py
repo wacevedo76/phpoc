@@ -424,7 +424,32 @@ class StagingService:
         if not isinstance(mk, bytes) or len(mk) != 32:
             return SyncCheckResult.REAUTH_NEEDED
 
-        # 4. Pull remote cookie to discover which device last wrote
+        # 4. Reconcile and claim staging ownership
+        return self._reconcile_and_claim(mk)
+
+    # ------------------------------------------------------------------
+    # Reconcile and claim (shared by check_and_sync auth gate + ph login)
+    # ------------------------------------------------------------------
+
+    def _reconcile_and_claim(self, master_key: bytes) -> SyncCheckResult:
+        """After successful auth: claim staging ownership for this device.
+
+        Called from ``check_and_sync()``'s auth gate and from ``ph login``.
+        Pulls remote cookie to check device_uuid, then:
+
+          * Same device that last wrote -> push local blob (authoritative)
+          * Different device / first time  -> pull remote blob, reconcile
+            (merge remote entries into local), push merged blob
+
+        Always creates a fresh device cookie (local + remote) at the end.
+
+        Args:
+            master_key: 32-byte master key for blob ops and identity.
+
+        Returns:
+            READY on success, OFFLINE if remote is unreachable.
+        """
+        # Pull remote cookie to discover which device last wrote
         try:
             remote_cookie_raw = self._remote.pull_cookie()
         except Exception:
@@ -438,14 +463,13 @@ class StagingService:
 
         local_device_uuid = self._get_device_id() or ""
 
-        # 5. Blob operations based on device identity
         if remote_device_uuid and remote_device_uuid == local_device_uuid:
             # Same device that last wrote — local is authoritative, push only
-            self.push_blob_only(master_key=mk)
+            self.push_blob_only(master_key=master_key)
         else:
             # Different device or first-time setup — pull, reconcile, push
             try:
-                remote_blob = self._remote.pull(master_key=mk)
+                remote_blob = self._remote.pull(master_key=master_key)
             except Exception:
                 return SyncCheckResult.OFFLINE
 
@@ -461,11 +485,11 @@ class StagingService:
                     pass
 
             # Push the (merged or local) blob to remote
-            self.push_blob_only(master_key=mk)
+            self.push_blob_only(master_key=master_key)
 
-        # 6. Create new device cookie (local + remote)
+        # Create new device cookie (local + remote)
         try:
-            identity = self._remote._device_id_provider.get_device_identity(mk)
+            identity = self._remote._device_id_provider.get_device_identity(master_key)
             device_id = identity.device_id
             remote_cookie = DeviceCookie.create(device_id, self._data_dir)
             if remote_cookie is not None:

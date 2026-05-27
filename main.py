@@ -257,7 +257,15 @@ def main():
         return
 
     auth = PassphraseAuthenticator(LEDGER_PATH)
-    
+
+    # Remote transport setup (from config) — created early so login can reconcile
+    config_with_dir = dict(CONFIG.read())
+    config_with_dir["_config_dir"] = str(CONFIG_DIR)
+    global_transport = create_transport_from_config(config_with_dir)
+    global_device_id_provider = None
+    if global_transport is not None:
+        global_device_id_provider = RandomUUIDDeviceIdentityProvider(CONFIG)
+
     if args.command == "init":
         username = input("Username: ")
         email = input("Email: ")
@@ -381,10 +389,34 @@ def main():
 
     if args.command == "login":
         if auth.login():
-            # Clear stale device cookie so check_and_sync() doesn't hit
-            # specifier mismatch with old cookie on next command.
             from domain.cookie.device_cookie import DeviceCookie
             DeviceCookie.destroy_locally(CONFIG_DIR)
+
+            # Reconcile remote staging and claim ownership for this device.
+            # Without this, ph login would push a fresh cookie without pulling
+            # the remote blob — any entries written by another device would
+            # be invisible on the next ph view (fast-paths past them).
+            if global_transport is not None and global_device_id_provider is not None:
+                from security.crypto import CryptoManager
+                from storage.implementations.file_staging import FileStagingStore
+                from domain.staging.service import StagingService
+                mk = auth.get_key()
+                crypto = CryptoManager(mk)
+                staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+                login_staging = StagingService(
+                    crypto=crypto,
+                    staging_store=staging_store,
+                    transport=global_transport,
+                    device_id_provider=global_device_id_provider,
+                    cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                    data_dir=str(CONFIG_DIR),
+                )
+                result = login_staging._reconcile_and_claim(mk)
+                if result == login_staging.READY:
+                    print("\u2713 Remote staging reconciled and claimed.")
+                elif result == login_staging.OFFLINE:
+                    print("\u26a0 Remote unreachable — staging not reconciled.")
+
             print("\u2713 Authentication successful. Session cached.")
         else:
             print("Authentication failed.")
@@ -453,13 +485,9 @@ def main():
     store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
     ledger = LedgerDomain(crypto, store)
 
-    # Remote transport setup (from config)
-    config_with_dir = dict(CONFIG.read())
-    config_with_dir["_config_dir"] = str(CONFIG_DIR)
-    transport = create_transport_from_config(config_with_dir)
-    device_id_provider = None
-    if transport is not None:
-        device_id_provider = RandomUUIDDeviceIdentityProvider(CONFIG)
+    # Remote transport setup — already created globally above for login handler
+    transport = global_transport
+    device_id_provider = global_device_id_provider
 
     # New layered components
     staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
