@@ -397,9 +397,6 @@ def main():
             # the remote blob — any entries written by another device would
             # be invisible on the next ph view (fast-paths past them).
             if global_transport is not None and global_device_id_provider is not None:
-                from security.crypto import CryptoManager
-                from storage.implementations.file_staging import FileStagingStore
-                from domain.staging.service import StagingService
                 mk = auth.get_key()
                 crypto = CryptoManager(mk)
                 staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
