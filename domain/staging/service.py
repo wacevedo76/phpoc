@@ -6,8 +6,9 @@ The StagingService is the central point for all staging operations:
      in the local staging store. These are low-latency (no remote calls).
 
   2. **Sync gate** — ``check_and_sync()`` is the single entry point for
-     remote staging sync. It decides whether to pull+merge (different
-     device or stale local) or skip (same device, up to date).
+     remote staging sync. Uses device cookie (TTL + specifier) to decide
+     fast path vs auth gate. No ``CryptoManager``/``_is_auth_fresh()``
+     consulted for auth decisions — the cookie is the truth.
 
   3. **Push** — ``push_to_remote()`` serialises local entries, obfuscates,
      and pushes to the remote transport. Called from Phase B (WAL) and
@@ -18,22 +19,18 @@ The StagingService is the central point for all staging operations:
      was the last writer. The cookie is a tiny JSON blob with a random
      ``device_specifier`` — no decryption needed.
 
-Usage::
+Auth gate flow::
 
-    crypto = CryptoManager(master_key)
-    store = FileStagingStore(staging_path)
-    staging = StagingService(crypto, store, transport, ...)
-
-    # Before any command:
-    result = staging.check_and_sync()
-    if result == SyncCheckResult.REAUTH_NEEDED:
-        # Prompt user for passphrase and re-create CryptoManager
-        ...
-
-    # After successful auth:
-    staging.capture("New task")
-    staging.end("Old task")
-    staging.push_to_remote(master_key)
+    1. Remote configured? No → READY. Yes → continue.
+    2. Local cookie TTL valid? → pull remote cookie
+       ├─ Match → READY (fast path, same device session)
+       ├─ Mismatch → fall through to auth gate
+       └─ No cookie/expired → fall through to auth gate
+    3. Auth gate: valid CryptoManager? No → REAUTH_NEEDED
+       Pull remote cookie → get device_uuid
+       ├─ Same device_uuid → push local blob (no pull)
+       └─ Diff device_uuid → pull remote blob → reconcile → push merged
+    4. Create new cookie (local + remote) → READY
 """
 
 import json
@@ -85,7 +82,6 @@ class StagingService:
         data_dir: Local data directory path as string. Used for cookie files.
     """
 
-    AUTH_CACHE_DURATION = 1800  # 30 minutes in seconds
     DEFAULT_COOKIE_TTL = 30  # minutes
 
     def __init__(
@@ -109,7 +105,6 @@ class StagingService:
             self._remote = None
         self._device_id_provider = device_id_provider
         self._last_push_at = 0
-        self._last_auth_time = 0.0  # Updated on first successful check
 
         # Resolve data_dir to a Path
         if data_dir:
@@ -137,15 +132,27 @@ class StagingService:
         except Exception:
             return None
 
-    def capture(self, title, epoch_ms, is_active=True, tags=None, comment=None):
+    def capture(self, title, epoch_ms, *, stop_epoch=None, end_epoch=None, is_active=True, tags=None, comment=None, metadata=None, media=None):
         """Add a new staging entry locally. No remote sync.
 
         Attaches the local device UUID (encrypted) to every entry so
         each entry carries provenance information about which device
         created it.
+
+        Args:
+            title: Entry title.
+            epoch_ms: Start timestamp in ms.
+            stop_epoch: End timestamp in ms (alias for end_epoch, used by tests and CLI).
+            end_epoch: End timestamp in ms.
+            is_active: Whether the entry is still active (default True).
+            tags: Optional list of tags.
+            comment: Optional comment.
+            metadata: Optional metadata dict.
+            media: Optional list of media dicts.
         """
         device_uuid = self._get_device_id()
-        self._local.append(title, epoch_ms, is_active=is_active, tags=tags or [], comment=comment, device_uuid=device_uuid)
+        resolved_end = stop_epoch if stop_epoch is not None else end_epoch
+        self._local.append(title, epoch_ms, end_epoch=resolved_end, is_active=is_active, tags=tags or [], comment=comment, metadata=metadata, media=media, device_uuid=device_uuid)
 
     def end(self, title, end_epoch, comment=None):
         """End an active task. Local-only write."""
@@ -211,7 +218,7 @@ class StagingService:
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        self._local.open_pause(found_index, pause_epoch)
+        self._local.add_pause(found_index, pause_epoch)
 
     def unpause(self, title, unpause_epoch):
         """Unpause a paused task (resume). Local-only."""
@@ -246,16 +253,60 @@ class StagingService:
 
     def remove(self, entry_index: int):
         """Delete a staged entry."""
-        self._local.remove(entry_index)
+        self._local.delete(entry_index)
 
     def remove_synced(self, indices: List[int]):
         """Remove multiple staged entries by index."""
-        for idx in sorted(indices, reverse=True):
-            self._local.remove(idx)
+        if indices:
+            self._local.remove_multiple(indices)
 
     def read_entries(self) -> List[Dict[str, Any]]:
         """Read local staging entries as plain dicts."""
         return self._local.read_entries()
+
+    def get_entries(self) -> List[Dict[str, Any]]:
+        """Return all staging entries as decrypted DTOs.
+
+        Alias for ``read_entries()``. Every entry has ``entry_index``,
+        ``title``, ``start_epoch``, ``end_epoch``, ``is_active``, etc.
+        No ``plain:`` prefix is leaked.
+        """
+        return self._local.read_entries()
+
+    def get_active(self) -> List[Dict[str, Any]]:
+        """Return only active (not completed) entries."""
+        return [e for e in self._local.read_entries() if e.get("is_active")]
+
+    def get_completed(self) -> List[Dict[str, Any]]:
+        """Return only completed (ended) entries."""
+        return [e for e in self._local.read_entries() if not e.get("is_active")]
+
+    def get_pending_sync(self) -> List[Dict[str, Any]]:
+        """Return completed, non-paused entries ready for ledger sync.
+
+        Filters out entries that are still active or paused. Returns
+        decrypted DTOs with fields: entry_index, title, start_epoch,
+        end_epoch, duration, tags, date, comment, media.
+        """
+        entries = self._local.read_entries()
+        pending = []
+        for entry in entries:
+            if entry.get("is_active"):
+                continue
+            if entry.get("is_paused"):
+                continue
+            pending.append({
+                "entry_index": entry["entry_index"],
+                "title": entry["title"],
+                "start_epoch": entry["start_epoch"],
+                "end_epoch": entry.get("end_epoch"),
+                "duration": entry.get("duration", 0),
+                "tags": entry.get("tags", []),
+                "date": entry.get("date", ""),
+                "comment": entry.get("comment"),
+                "media": entry.get("media", []),
+            })
+        return pending
 
     # ------------------------------------------------------------------
     # Quick-reachability check
@@ -274,20 +325,6 @@ class StagingService:
     # ------------------------------------------------------------------
     # Cookie helpers
     # ------------------------------------------------------------------
-
-    def _is_auth_fresh(self) -> bool:
-        """Check whether the current session is authenticated.
-
-        Returns True if:
-          - Auth cache is within TTL (_last_auth_time > 0 and fresh), OR
-          - A real CryptoManager with valid key is present
-            (not NoAuthCryptoManager)
-        """
-        if time.time() - self._last_auth_time < self.AUTH_CACHE_DURATION:
-            return True
-        if not isinstance(self._crypto, NoAuthCryptoManager):
-            return True
-        return False
 
     def _ensure_cookie(self):
         """Create a device cookie if one does not exist locally.
@@ -313,42 +350,6 @@ class StagingService:
             pass  # Non-critical: cookie creation failure doesn't block READY
 
     # ------------------------------------------------------------------
-    # Freshness optimization
-    # ------------------------------------------------------------------
-
-    def _needs_full_pull(self, remote_blob: Dict[str, Any]) -> bool:
-        """Decide if the full staging blob needs to be pulled.
-
-        Based on comparing device_id and updated_at with local state.
-
-        Args:
-            remote_blob: Decrypted blob from remote.
-
-        Returns:
-            True if a full merge is needed, False to skip.
-        """
-        # Get local device ID
-        local_id = None
-        try:
-            if self._remote is not None:
-                identity = self._remote._device_id_provider.get_device_identity(b"")
-                local_id = identity.device_id
-        except Exception:
-            pass
-
-        remote_id = remote_blob.get("device_id", "")
-        remote_updated_at = remote_blob.get("updated_at", 0)
-
-        if remote_id != local_id:
-            return True  # Different device — must merge
-
-        # Same device: check freshness
-        if remote_updated_at > self._last_push_at:
-            return True  # Remote is newer — must merge
-
-        return False  # Same device, not newer — skip full pull
-
-    # ------------------------------------------------------------------
     # Sync gate (single point of entry for remote staging sync)
     # ------------------------------------------------------------------
 
@@ -359,113 +360,105 @@ class StagingService:
         """Event-driven remote check with Device Cookie as the truth.
 
         Cookie is the definitive cross-device check:
-          1. If no remote configured: returns READY.
-          2. Check LOCAL cookie TTL:
-             a. No cookie or expired -> proceed to slow path
-             b. Cookie valid -> pull REMOTE cookie
-                i.  Remote cookie specifier MATCHES local -> READY (same device session)
-                ii. Remote cookie exists but specifier MISMATCH -> mark specifier_mismatch
-          3. Slow path (specifier mismatch or no local cookie):
-             - Pull blob from remote
-             - If specifier_mismatch: ALWAYS return REAUTH_NEEDED (force auth)
-             - If no specifier mismatch: check auth freshness, require re-auth if stale
-          4. After successful auth, merge remote into local, create new device cookie.
-          5. If remote unreachable: return OFFLINE.
 
-        **A specifier mismatch ALWAYS forces authentication.**
-        Per your spec: "if local device_specifier do NOT match remote
-        device specifier. Force authentication." Regardless of whether
-        a CryptoManager already has a valid cached key — the user must
-        explicitly consent to merging across devices.
+          Fast path:
+            1. No remote configured → READY
+            2. Local cookie valid → pull remote cookie
+               ├─ Match → READY (same device session)
+               └─ Mismatch/no remote cookie → fall through
+
+          Auth gate (specifier mismatch, no local cookie, or expired):
+            3. CryptoManager has valid master_key? No → REAUTH_NEEDED
+            4. Pull remote cookie to get device_uuid (unreachable → OFFLINE)
+            5. Same device_uuid → push local blob (authoritative, no pull)
+               Different device_uuid → pull remote blob → reconcile → push merged
+            6. Create new device cookie (local + remote) → READY
+
+        No ``_is_auth_fresh()`` or ``CryptoManager`` presence is consulted
+        for auth decisions — only the cookie TTL and specifier matter.
         """
         if self._remote is None:
             return SyncCheckResult.READY
 
         # ------------------------------------------------------------------
-        # FAST PATH: Device Cookie specifier comparison (no decryption needed)
+        # FAST PATH: Local cookie valid → remote cookie match → READY
         # ------------------------------------------------------------------
         local_cookie = DeviceCookie.is_valid_locally(
             self._data_dir, self._cookie_ttl_minutes
         )
-        specifier_mismatch = False
+
         if local_cookie is not None:
             try:
-                remote_cookie = self._remote.pull_cookie()
+                remote_cookie_raw = self._remote.pull_cookie()
             except Exception:
-                remote_cookie = None
-            if remote_cookie is not None:
-                remote_parsed = DeviceCookie.parse_remote(remote_cookie)
-                if remote_parsed is not None and DeviceCookie.matches(local_cookie, remote_parsed):
-                    # Specifiers match -- same device session, staging is in sync
+                return SyncCheckResult.OFFLINE
+
+            if remote_cookie_raw is not None:
+                remote_cookie = DeviceCookie.parse_remote(remote_cookie_raw)
+                if remote_cookie and DeviceCookie.matches(local_cookie, remote_cookie):
+                    # Same device session — fast path, no blob pull needed
                     return SyncCheckResult.READY
-                # Remote cookie exists but specifiers don't match — different device wrote
-                specifier_mismatch = True
 
         # ------------------------------------------------------------------
-        # SLOW PATH: Cookie mismatch or no cookie -> pull blob, check auth, merge
+        # AUTH GATE: No valid cookie pair, or specifier mismatch
         # ------------------------------------------------------------------
-        # The cookie specifier mismatch means a different device wrote to remote
-        # since our last push. Auth is required to decrypt and merge.
 
+        # 3. Check if user has authenticated (valid master key)
+        mk = getattr(self._crypto, "master_key", None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            return SyncCheckResult.REAUTH_NEEDED
+
+        # 4. Pull remote cookie to discover which device last wrote
         try:
-            remote_blob = self._remote.pull()
+            remote_cookie_raw = self._remote.pull_cookie()
         except Exception:
             return SyncCheckResult.OFFLINE
 
-        if remote_blob is None:
-            return SyncCheckResult.READY
+        remote_device_uuid = ""
+        if remote_cookie_raw is not None:
+            remote_cookie = DeviceCookie.parse_remote(remote_cookie_raw)
+            if remote_cookie:
+                remote_device_uuid = remote_cookie.get("device_uuid", "")
 
-        # Auth check: specifier mismatch ALWAYS forces auth gate.
-        # Per your spec: "if local device_specifier do NOT match remote
-        # device specifier. Force authentication." Regardless of whether
-        # a CryptoManager already has the key cached — the user must
-        # explicitly consent to merging across devices.
-        if specifier_mismatch:
-            return SyncCheckResult.REAUTH_NEEDED
+        local_device_uuid = self._get_device_id() or ""
 
-        # No specifier mismatch (no local cookie, or no remote cookie).
-        # Normal auth freshness check applies.
-        if not self._is_auth_fresh():
-            return SyncCheckResult.REAUTH_NEEDED
+        # 5. Blob operations based on device identity
+        if remote_device_uuid and remote_device_uuid == local_device_uuid:
+            # Same device that last wrote — local is authoritative, push only
+            self.push_blob_only(master_key=mk)
+        else:
+            # Different device or first-time setup — pull, reconcile, push
+            try:
+                remote_blob = self._remote.pull(master_key=mk)
+            except Exception:
+                return SyncCheckResult.OFFLINE
 
-        # Auth is fresh — proceed with merge
-        self._last_auth_time = time.time()
+            if remote_blob is not None and "entries" in remote_blob:
+                try:
+                    local_entries = self._local.read_entries()
+                    merged = self._merge.merge(
+                        local_entries, remote_blob.get("entries", [])
+                    )
+                    self._local.write_entries(merged)
+                except Exception:
+                    # Merge failure — push local as-is
+                    pass
 
-        # Check freshness: skip full merge if same device and remote not newer
-        if not self._needs_full_pull(remote_blob):
-            # Still no local cookie — create one so next call hits the fast path
-            self._ensure_cookie()
-            return SyncCheckResult.READY
+            # Push the (merged or local) blob to remote
+            self.push_blob_only(master_key=mk)
 
-        # Merge using the already-fetched blob data
-        merge_ok = True
+        # 6. Create new device cookie (local + remote)
         try:
-            if "entries" in remote_blob:
-                local_entries = self._local.read_entries()
-                remote_dtos = self._raw_to_dtos(remote_blob["entries"])
-                merged = self._merge.merge(local_entries, remote_dtos)
-                self._local.write_entries(merged)
+            identity = self._remote._device_id_provider.get_device_identity(mk)
+            device_id = identity.device_id
+            remote_cookie = DeviceCookie.create(device_id, self._data_dir)
+            if remote_cookie is not None:
+                cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
+                self._remote.push_cookie(cookie_bytes)
         except Exception:
-            merge_ok = False
-
-        # Create device cookie regardless of merge outcome.
-        # The cookie is about device identity, not data integrity.
-        # A failed merge still means auth passed — create cookie so
-        # subsequent calls hit the fast path.
-        self._ensure_cookie()
-
-        if not merge_ok:
-            return SyncCheckResult.OFFLINE
+            pass  # Non-critical: cookie creation failure doesn't block READY
 
         return SyncCheckResult.READY
-
-    # ------------------------------------------------------------------
-    # Raw -> DTO conversion
-    # ------------------------------------------------------------------
-
-    def _raw_to_dtos(self, raw_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Pass raw entry dicts through (MergeEngine works with dicts)."""
-        return raw_entries
 
     # ------------------------------------------------------------------
     # Push to remote

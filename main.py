@@ -381,6 +381,10 @@ def main():
 
     if args.command == "login":
         if auth.login():
+            # Clear stale device cookie so check_and_sync() doesn't hit
+            # specifier mismatch with old cookie on next command.
+            from domain.cookie.device_cookie import DeviceCookie
+            DeviceCookie.destroy_locally(CONFIG_DIR)
             print("\u2713 Authentication successful. Session cached.")
         else:
             print("Authentication failed.")
@@ -659,10 +663,23 @@ def main():
                         ttl_minutes=staging_service._cookie_ttl_minutes,
                     )
                     if local:
+                        import time as _time
+                        created_epoch_ms = local.get('creation_time', 0)
+                        created_str = _time.strftime(
+                            "%Y-%m-%d %H:%M:%S",
+                            _time.localtime(created_epoch_ms / 1000),
+                        ) if created_epoch_ms else "N/A"
+                        ttl_mins = staging_service._cookie_ttl_minutes
+                        elapsed_ms = int(_time.time() * 1000) - created_epoch_ms
+                        remaining_mins = max(0, (ttl_mins * 60 * 1000 - elapsed_ms) // 60000)
+                        valid_str = f"yes ({remaining_mins}m remaining)" if remaining_mins > 0 else "no (expired)"
+
                         print()
                         print("Local Device Cookie:")
                         print(f"  device_specifier:  {local.get('device_specifier', 'N/A')}")
-                        print(f"  creation_time:     {local.get('creation_time', 'N/A')}")
+                        print(f"  created:           {created_str} (epoch ms: {created_epoch_ms})")
+                        print(f"  TTL:               {ttl_mins} minutes")
+                        print(f"  within TTL range:  {valid_str}")
                         match = local.get('device_specifier') == cookie.get('device_specifier')
                         print(f"  specifiers match:  {match}")
                     else:
