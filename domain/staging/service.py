@@ -365,17 +365,23 @@ class StagingService:
             1. No remote configured → READY
             2. Local cookie valid → pull remote cookie
                ├─ Match → READY (same device session)
-               └─ Mismatch/no remote cookie → fall through
+               └─ Mismatch → SPECIFIER_MISMATCH → fall through
+                ─  No remote cookie → fall through
 
-          Auth gate (specifier mismatch, no local cookie, or expired):
-            3. CryptoManager has valid master_key? No → REAUTH_NEEDED
-            4. Pull remote cookie to get device_uuid (unreachable → OFFLINE)
-            5. Same device_uuid → push local blob (authoritative, no pull)
-               Different device_uuid → pull remote blob → reconcile → push merged
-            6. Create new device cookie (local + remote) → READY
+          Auth gate:
+            ─  Specifier mismatch → REAUTH_NEEDED (unconditional, regardless of crypto)
+            ─  No local cookie / TTL expired / no remote cookie:
+               3. CryptoManager valid? No → REAUTH_NEEDED
+               4. Pull remote cookie → device_uuid (unreachable → OFFLINE)
+               5. Same device_uuid → push local blob (authoritative, no pull)
+                  Different device_uuid → pull blob → reconcile → push merged
+               6. Create new device cookie (local + remote) → READY
 
-        No ``_is_auth_fresh()`` or ``CryptoManager`` presence is consulted
-        for auth decisions — only the cookie TTL and specifier matter.
+        Key invariant: **a specifier mismatch always forces REAUTH_NEEDED**,
+        regardless of whether a CryptoManager is cached. The user must
+        explicitly consent to cross-device merging. Other auth gate entries
+        (no local cookie, expired TTL, no remote cookie) only need a valid
+        master key — the session cache is sufficient.
         """
         if self._remote is None:
             return SyncCheckResult.READY
@@ -387,6 +393,7 @@ class StagingService:
             self._data_dir, self._cookie_ttl_minutes
         )
 
+        specifier_mismatch = False
         if local_cookie is not None:
             try:
                 remote_cookie_raw = self._remote.pull_cookie()
@@ -398,12 +405,21 @@ class StagingService:
                 if remote_cookie and DeviceCookie.matches(local_cookie, remote_cookie):
                     # Same device session — fast path, no blob pull needed
                     return SyncCheckResult.READY
+                # Remote cookie exists but specifiers differ — different device wrote
+                specifier_mismatch = True
 
         # ------------------------------------------------------------------
         # AUTH GATE: No valid cookie pair, or specifier mismatch
         # ------------------------------------------------------------------
 
-        # 3. Check if user has authenticated (valid master key)
+        # Specifier mismatch ALWAYS forces auth, regardless of cached CryptoManager.
+        # The user must explicitly consent to merging across devices.
+        if specifier_mismatch:
+            return SyncCheckResult.REAUTH_NEEDED
+
+        # 3. Check if user has authenticated (valid master key).
+        #    Only reached for non-mismatch cases: no local cookie, TTL expired,
+        #    or no remote cookie. A warm CryptoManager is sufficient here.
         mk = getattr(self._crypto, "master_key", None)
         if not isinstance(mk, bytes) or len(mk) != 32:
             return SyncCheckResult.REAUTH_NEEDED
