@@ -505,8 +505,10 @@ def main():
     )
     cli = CLIInterface(staging_service, ledger_engine, crypto)
 
-    # Phase B: Replay any pending WAL (crash-safe deferred push) before commands
-    if transport is not None and CONFIG_DIR:
+    # Phase B: Replay any pending WAL (crash-safe deferred push) before commands.
+    # Skipped for 'dev' commands — they are diagnostic-only and must not mutate
+    # staging state (would corrupt troubleshooting information).
+    if transport is not None and CONFIG_DIR and args.command != "dev":
         from cli.wal import _replay_wal
         _replay_wal(CONFIG_DIR, staging_service)
     sync_orchestrator = SyncOrchestrator(
