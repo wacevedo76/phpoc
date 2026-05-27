@@ -684,14 +684,19 @@ def main():
                     print("Remote Device Cookie:")
                     print(f"  device_uuid:       {cookie.get('device_uuid', 'N/A')}")
                     print(f"  device_specifier:  {cookie.get('device_specifier', 'N/A')}")
-                    # Also show local cookie for comparison
-                    from domain.cookie.device_cookie import DeviceCookie
-                    local = DeviceCookie.is_valid_locally(
-                        staging_service._data_dir,
-                        ttl_minutes=staging_service._cookie_ttl_minutes,
-                    )
+                    # Read local cookie directly — read-only, no side effects.
+                    # Do NOT use DeviceCookie.is_valid_locally() as it destroys
+                    # expired cookies. This is a diagnostic command.
+                    import time as _time
+                    import json as _json
+                    local_path = staging_service._data_dir / "device_cookie.meta"
+                    local = None
+                    if local_path.exists():
+                        try:
+                            local = _json.loads(local_path.read_text())
+                        except (_json.JSONDecodeError, OSError):
+                            pass
                     if local:
-                        import time as _time
                         created_epoch_ms = local.get('creation_time', 0)
                         created_str = _time.strftime(
                             "%Y-%m-%d %H:%M:%S",
@@ -711,7 +716,8 @@ def main():
                         match = local.get('device_specifier') == cookie.get('device_specifier')
                         print(f"  specifiers match:  {match}")
                     else:
-                        print("  (no local cookie)")
+                        print()
+                        print("Local Device Cookie: (none)")
             except Exception as e:
                 print(f"Failed to fetch remote device cookie: {e}")
         else:
