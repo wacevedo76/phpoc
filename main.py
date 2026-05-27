@@ -16,7 +16,7 @@ from core.ledger import LedgerDomain
 from core.factory import LedgerFactory
 from cli.interface import CLIInterface
 from cli.trace import trace
-from domain.staging.service import StagingService
+from domain.staging.service import StagingService, SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
 from core.sync.transport import create_transport_from_config
@@ -546,6 +546,32 @@ def main():
     elif args.command == "view":
         show_tags = args.show_tags if hasattr(args, 'show_tags') else False
         show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+
+        # If auth gate detects specifier mismatch (different device wrote),
+        # auto-prompt for re-authentication instead of printing a message.
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.authenticate():
+                print("Authentication required.")
+                exit(1)
+            # Re-auth succeeded — rebuild staging service with fresh crypto
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass  # Continue with local data
+            # Recreate CLI too (view_active uses self._crypto directly)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         cli.view_active(show_tags=show_tags, show_comments=show_comments)
     elif args.command == "tags":
         _list_tags(ledger, cli)
