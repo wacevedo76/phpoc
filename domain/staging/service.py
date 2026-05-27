@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from cli.trace import trace
-from domain.cookie.device_cookie import DeviceCookie
+from domain.cookie.device_cookie import DeviceCookie, META_FILE
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
 from domain.staging.remote_sync import RemoteStagingSync
@@ -326,6 +326,48 @@ class StagingService:
     # Cookie helpers
     # ------------------------------------------------------------------
 
+    def _push_on_fast_path(self, local_cookie: dict):
+        """Push local blob and optionally touch cookie on fast path.
+
+        Called when local and remote cookie specifiers match (same device
+        session). Pushes the local staging blob to remote, then checks
+        whether to touch the local cookie's creation_time (10% window).
+
+        The cookie touch resets the TTL clock. It only happens if at least
+        10% of the TTL has elapsed since the cookie was last created. If
+        less than 10% has elapsed, the touch is skipped to avoid needless
+        writes.
+
+        The device_specifier is never regenerated — same device, same
+        specifier. The remote cookie is never pushed (it already has the
+        matching specifier).
+
+        Args:
+            local_cookie: The local cookie dict (device_specifier, creation_time).
+        """
+        # Push local staging blob to remote (full replace) if we have a key
+        mk = getattr(self._crypto, "master_key", None)
+        if isinstance(mk, bytes) and len(mk) == 32:
+            self.push_blob_only(master_key=mk)
+
+        # Check 10% window for cookie touch
+        created_ms = local_cookie.get("creation_time", 0)
+        now_ms = int(time.time() * 1000)
+        elapsed_ms = now_ms - created_ms
+        ttl_ms = self._cookie_ttl_minutes * 60 * 1000
+        ten_pct_ms = int(ttl_ms * 0.1)
+
+        if elapsed_ms >= ten_pct_ms:
+            # Touch: update creation_time, keep specifier, no remote push
+            meta_path = self._data_dir / META_FILE
+            try:
+                meta_path.write_text(json.dumps({
+                    "device_specifier": local_cookie["device_specifier"],
+                    "creation_time": now_ms,
+                }))
+            except Exception:
+                pass  # Non-critical
+
     def _ensure_cookie(self):
         """Create a device cookie if one does not exist locally.
 
@@ -364,7 +406,7 @@ class StagingService:
           Fast path:
             1. No remote configured → READY
             2. Local cookie valid → pull remote cookie
-               ├─ Match → READY (same device session)
+               ├─ Match → READY (same device session, push blob + optional touch)
                └─ Mismatch → SPECIFIER_MISMATCH → fall through
                 ─  No remote cookie → fall through
 
@@ -403,7 +445,10 @@ class StagingService:
             if remote_cookie_raw is not None:
                 remote_cookie = DeviceCookie.parse_remote(remote_cookie_raw)
                 if remote_cookie and DeviceCookie.matches(local_cookie, remote_cookie):
-                    # Same device session — fast path, no blob pull needed
+                    # Same device session — fast path
+                    # Push local staging blob to remote (full replace), then
+                    # optionally touch the local cookie (10% window check)
+                    self._push_on_fast_path(local_cookie)
                     return SyncCheckResult.READY
                 # Remote cookie exists but specifiers differ — different device wrote
                 specifier_mismatch = True
@@ -431,6 +476,71 @@ class StagingService:
     # Reconcile and claim (shared by check_and_sync auth gate + ph login)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _raw_entry_to_dto(raw_entry: dict) -> Optional[dict]:
+        """Convert a single raw staging entry (from blob) to a decrypted DTO.
+
+        Remote blob entries are stored in raw format with encrypted fields
+        (``startTime_enc``, ``endTime_enc``, etc.) and a ``data`` wrapper.
+        This converts them to the DTO format expected by the MergeEngine.
+
+        Args:
+            raw_entry: A raw entry dict with ``data``, ``hash``, ``start_epoch``.
+
+        Returns:
+            Decrypted DTO dict, or None if the entry is corrupt.
+        """
+        try:
+            data = raw_entry.get("data", {})
+
+            # Decrypt plain: prefixed fields
+            start_epoch_str = data.get("startTime_enc", "")
+            if isinstance(start_epoch_str, str) and start_epoch_str.startswith("plain:"):
+                start_epoch = int(start_epoch_str[6:])
+            else:
+                return None
+
+            end_epoch = None
+            end_epoch_str = data.get("endTime_enc")
+            if isinstance(end_epoch_str, str) and end_epoch_str.startswith("plain:"):
+                end_epoch = int(end_epoch_str[6:])
+
+            pauses_raw = data.get("pauses_enc", "plain:[]")
+            if isinstance(pauses_raw, str) and pauses_raw.startswith("plain:"):
+                pauses = json.loads(pauses_raw[6:])
+            else:
+                pauses = []
+
+            metadata_raw = data.get("metadata_enc", "plain:{}")
+            if isinstance(metadata_raw, str) and metadata_raw.startswith("plain:"):
+                metadata = json.loads(metadata_raw[6:])
+            else:
+                metadata = {}
+
+            date_str = time.strftime(
+                "%Y-%m-%d", time.gmtime(start_epoch // 1000)
+            )
+
+            return {
+                "entry_id": data.get("entry_id", ""),
+                "title": data.get("title", ""),
+                "start_epoch": start_epoch,
+                "end_epoch": end_epoch,
+                "duration": data.get("duration", 0),
+                "is_active": data.get("is_active", False),
+                "is_paused": data.get("is_paused", False),
+                "pauses": pauses,
+                "tags": data.get("tags", []),
+                "comment": data.get("comment"),
+                "media": data.get("media", []),
+                "metadata": metadata,
+                "date": date_str,
+                "source": "remote",
+                "hash": raw_entry.get("hash", ""),
+            }
+        except Exception:
+            return None
+
     def _reconcile_and_claim(self, master_key: bytes) -> SyncCheckResult:
         """After successful auth: claim staging ownership for this device.
 
@@ -438,10 +548,12 @@ class StagingService:
         Pulls remote cookie to check device_uuid, then:
 
           * Same device that last wrote -> push local blob (authoritative)
-          * Different device / first time  -> pull remote blob, reconcile
-            (merge remote entries into local), push merged blob
+            and touch the local cookie (update creation_time, keep specifier,
+            no remote cookie push) — Case A.
 
-        Always creates a fresh device cookie (local + remote) at the end.
+          * Different device / first time  -> pull remote blob, reconcile
+            (merge remote entries into local), push merged blob, then create
+            a fresh device cookie (new specifier, local + remote) — Case B.
 
         Args:
             master_key: 32-byte master key for blob ops and identity.
@@ -456,18 +568,34 @@ class StagingService:
             return SyncCheckResult.OFFLINE
 
         remote_device_uuid = ""
+        remote_cookie_specifier = ""
         if remote_cookie_raw is not None:
             remote_cookie = DeviceCookie.parse_remote(remote_cookie_raw)
             if remote_cookie:
                 remote_device_uuid = remote_cookie.get("device_uuid", "")
+                remote_cookie_specifier = remote_cookie.get("device_specifier", "")
 
         local_device_uuid = self._get_device_id() or ""
 
         if remote_device_uuid and remote_device_uuid == local_device_uuid:
-            # Same device that last wrote — local is authoritative, push only
+            # Case A — Same device that last wrote: push only, touch cookie
             self.push_blob_only(master_key=master_key)
+
+            # Touch local cookie: update creation_time, keep specifier,
+            # no remote cookie push (remote already has matching specifier).
+            # Unlike the fast path, this is unconditional (no 10% window).
+            if remote_cookie_specifier:
+                now_ms = int(time.time() * 1000)
+                meta_path = self._data_dir / META_FILE
+                try:
+                    meta_path.write_text(json.dumps({
+                        "device_specifier": remote_cookie_specifier,
+                        "creation_time": now_ms,
+                    }))
+                except Exception:
+                    pass
         else:
-            # Different device or first-time setup — pull, reconcile, push
+            # Case B — Different device or first-time setup: pull, reconcile, push
             try:
                 remote_blob = self._remote.pull(master_key=master_key)
             except Exception:
@@ -476,8 +604,14 @@ class StagingService:
             if remote_blob is not None and "entries" in remote_blob:
                 try:
                     local_entries = self._local.read_entries()
+                    # Convert remote raw entries to DTOs before merge
+                    remote_dtos = []
+                    for raw_entry in remote_blob.get("entries", []):
+                        dto = self._raw_entry_to_dto(raw_entry)
+                        if dto is not None:
+                            remote_dtos.append(dto)
                     merged = self._merge.merge(
-                        local_entries, remote_blob.get("entries", [])
+                        local_entries, remote_dtos
                     )
                     self._local.write_entries(merged)
                 except Exception:
@@ -487,16 +621,17 @@ class StagingService:
             # Push the (merged or local) blob to remote
             self.push_blob_only(master_key=master_key)
 
-        # Create new device cookie (local + remote)
-        try:
-            identity = self._remote._device_id_provider.get_device_identity(master_key)
-            device_id = identity.device_id
-            remote_cookie = DeviceCookie.create(device_id, self._data_dir)
-            if remote_cookie is not None:
-                cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
-                self._remote.push_cookie(cookie_bytes)
-        except Exception:
-            pass  # Non-critical: cookie creation failure doesn't block READY
+            # Create new device cookie (fresh specifier, local + remote)
+            try:
+                identity = self._remote._device_id_provider.get_device_identity(master_key)
+                device_id = identity.device_id
+                DeviceCookie.destroy_locally(self._data_dir)
+                remote_cookie = DeviceCookie.create(device_id, self._data_dir)
+                if remote_cookie is not None:
+                    cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
+                    self._remote.push_cookie(cookie_bytes)
+            except Exception:
+                pass  # Non-critical: cookie creation failure doesn't block READY
 
         return SyncCheckResult.READY
 

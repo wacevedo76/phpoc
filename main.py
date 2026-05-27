@@ -549,9 +549,11 @@ def main():
 
         # If auth gate detects specifier mismatch (different device wrote),
         # auto-prompt for re-authentication instead of printing a message.
+        # Use login() not authenticate() to force passphrase entry (bypass
+        # session cache) — cross-device consent requires explicit input.
         result = staging_service.check_and_sync(timeout_ms=500)
         if result == SyncCheckResult.REAUTH_NEEDED:
-            if not auth.authenticate():
+            if not auth.login():
                 print("Authentication required.")
                 exit(1)
             # Re-auth succeeded — rebuild staging service with fresh crypto
