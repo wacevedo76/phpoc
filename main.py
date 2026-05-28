@@ -425,9 +425,9 @@ def main():
                     data_dir=str(CONFIG_DIR),
                 )
                 result = login_staging._reconcile_and_claim(mk)
-                if result == login_staging.READY:
+                if result == SyncCheckResult.READY:
                     print("\u2713 Remote staging reconciled and claimed.")
-                elif result == login_staging.OFFLINE:
+                elif result == SyncCheckResult.OFFLINE:
                     print("\u26a0 Remote unreachable — staging not reconciled.")
 
             print("\u2713 Authentication successful. Session cached.")
