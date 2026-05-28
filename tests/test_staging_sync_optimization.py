@@ -1235,83 +1235,58 @@ class TestFastPath:
 
 
 # ==========================================================================
-# Test 2: Fast path — 10% window skip
+# Test 2: Fast path — unconditional cookie touch
 # ==========================================================================
 
 
-class TestFastPathTenPercentWindowSkip:
-    """Fast path eligible, but less than 10% of TTL has elapsed.
+class TestFastPathUnconditionalCookieTouch:
+    """Fast path: cookie creation_time is ALWAYS updated on every fast-path hit.
 
-    With a 30-min TTL, the 10% window is 3 minutes.
-    A cookie created 1 minute ago should trigger a SKIP on the touch.
+    The 10% window was removed — every fast-path call unconditionally touches
+    the local cookie to extend the session TTL. This means:
+      - Cookie created 1 second ago → still touched (creation_time updated)
+      - Cookie created 5 minutes ago → touched (creation_time updated)
+      - device_specifier unchanged after touch
+      - No remote cookie push (remote already has matching specifier)
     """
 
-    def test_skip_touch_when_under_10pct(self, svc_with_spy):
-        """Cookie created 1 min ago (<10% of 30 min TTL) → creation_time unchanged."""
+    def test_touch_happens_even_when_cookie_is_fresh(self, svc_with_spy):
+        """Cookie created 30 sec ago → creation_time ALWAYS updated (no 10% window)."""
         svc, spy, cookie_dir, store = svc_with_spy
 
-        specifier = "skip-touch"
+        specifier = "always-touch"
         now = int(time.time() * 1000)
-        created_ms = now - 60_000  # 1 minute ago (3.3% of 30 min)
+        created_ms = now - 30_000  # 30 seconds ago (well under old 10% threshold)
         make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
         svc.check_and_sync()
 
-        # creation_time should remain the original (not updated to ~now)
-        meta_path = cookie_dir / META_FILE
-        assert meta_path.exists()
-        local_after = json.loads(meta_path.read_text())
-        assert local_after["creation_time"] == created_ms, \
-            "Cookie touch should be skipped when <10% TTL elapsed"
-
-    def test_push_still_happens_when_touch_skipped(self, svc_with_spy):
-        """Even when touch is skipped, blob push still happens."""
-        svc, spy, cookie_dir, store = svc_with_spy
-
-        specifier = "push-still-happens"
-        now = int(time.time() * 1000)
-        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 30_000)  # 30 sec
-        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
-
-        svc.capture("TestEntry", 1000, stop_epoch=2000)
-        svc.check_and_sync()
-
-        # Blob push still happens even though cookie touch was skipped
-        assert len(spy.push_blob_calls) >= 1, "Blob push must occur even when touch is skipped"
-
-
-# ==========================================================================
-# Test 3: Fast path — 10% window hit
-# ==========================================================================
-
-
-class TestFastPathTenPercentWindowHit:
-    """Fast path eligible, more than 10% of TTL has elapsed.
-
-    With a 30-min TTL, the 10% window is 3 minutes.
-    A cookie created 5 minutes ago should trigger a touch.
-    """
-
-    def test_touch_happens_when_over_10pct(self, svc_with_spy):
-        """Cookie created 5 min ago (>10% of 30 min TTL) → creation_time updated."""
-        svc, spy, cookie_dir, store = svc_with_spy
-
-        specifier = "touch-me"
-        now = int(time.time() * 1000)
-        created_ms = now - 300_000  # 5 minutes ago (16.7% of 30 min)
-        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
-        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
-
-        svc.check_and_sync()
-
-        # creation_time should have been updated
         meta_path = cookie_dir / META_FILE
         assert meta_path.exists()
         local_after = json.loads(meta_path.read_text())
         assert local_after["creation_time"] > created_ms, \
-            "Cookie creation_time must be updated when >=10% TTL elapsed"
-        # Should be within ~1 second of now
+            "Cookie creation_time must ALWAYS be updated on fast path (no 10% window)"
+        assert abs(local_after["creation_time"] - now) < 2000, \
+            "Cookie creation_time should be updated to approximately now"
+
+    def test_touch_happens_when_cookie_is_old(self, svc_with_spy):
+        """Cookie created 5 min ago → creation_time updated (always-touch behavior)."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "old-cookie-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 300_000  # 5 minutes ago
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
+
+        svc.check_and_sync()
+
+        meta_path = cookie_dir / META_FILE
+        assert meta_path.exists()
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "Old cookie must also be touched unconditionally"
         assert abs(local_after["creation_time"] - now) < 2000, \
             "Cookie creation_time should be updated to approximately now"
 
@@ -1321,7 +1296,7 @@ class TestFastPathTenPercentWindowHit:
 
         specifier = "still-me"
         now = int(time.time() * 1000)
-        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 300_000)
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 120_000)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
         svc.check_and_sync()
@@ -1337,13 +1312,237 @@ class TestFastPathTenPercentWindowHit:
 
         specifier = "no-remote-push"
         now = int(time.time() * 1000)
-        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 300_000)
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 120_000)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
         svc.check_and_sync()
 
         assert len(spy.push_cookie_calls) == 0, \
             "Touch must not push remote cookie (specifier unchanged)"
+
+    def test_blob_push_still_happens(self, svc_with_spy):
+        """Blob push still occurs alongside the unconditional cookie touch."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "blob-push-touch"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 30_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
+
+        svc.capture("TestEntry", 1000, stop_epoch=2000)
+        svc.check_and_sync()
+
+        assert len(spy.push_blob_calls) >= 1, "Blob push must occur alongside cookie touch"
+
+
+# ==========================================================================
+# Test 3: Local CRUD commands — cookie touch
+# ==========================================================================
+
+
+class TestLocalCrudCookieTouch:
+    """Local CRUD commands (capture, end, pause, unpause, modify, remove,
+    remove_synced) must all call _touch_local_cookie() to extend the session
+    TTL with each user action.
+    """
+
+    def test_capture_touches_cookie(self, svc_with_spy):
+        """capture() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "capture-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("TestTask", 1000, stop_epoch=2000)
+
+        meta_path = cookie_dir / META_FILE
+        assert meta_path.exists()
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "capture() must touch the local cookie"
+
+    def test_end_touches_cookie(self, svc_with_spy):
+        """end() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "end-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("ActiveTask", 1000, is_active=True)
+        svc.end("ActiveTask", 5000)
+
+        meta_path = cookie_dir / META_FILE
+        assert meta_path.exists()
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "end() must touch the local cookie"
+
+    def test_pause_touches_cookie(self, svc_with_spy):
+        """pause() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "pause-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("PauseableTask", 1000, is_active=True)
+        svc.pause("PauseableTask", 3000)
+
+        meta_path = cookie_dir / META_FILE
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "pause() must result in creation_time > original (touch occurred)"
+
+    def test_unpause_touches_cookie(self, svc_with_spy):
+        """unpause() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "unpause-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("TogglableTask", 1000, is_active=True)
+        svc.pause("TogglableTask", 2000)
+        svc.unpause("TogglableTask", 4000)
+
+        meta_path = cookie_dir / META_FILE
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "unpause() must result in creation_time > original (touch occurred)"
+
+    def test_modify_touches_cookie(self, svc_with_spy):
+        """modify() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "modify-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("EditableTask", 1000, stop_epoch=2000)
+        svc.modify(0, title="RenamedTask")
+
+        meta_path = cookie_dir / META_FILE
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "modify() must result in creation_time > original (touch occurred)"
+
+    def test_remove_touches_cookie(self, svc_with_spy):
+        """remove() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "remove-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("DeletableTask", 1000, stop_epoch=2000)
+        svc.remove(0)
+
+        meta_path = cookie_dir / META_FILE
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "remove() must result in creation_time > original (touch occurred)"
+
+    def test_remove_synced_touches_cookie(self, svc_with_spy):
+        """remove_synced() updates local cookie creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "remove-synced-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 60_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc.capture("RemovableA", 1000, stop_epoch=2000)
+        svc.capture("RemovableB", 3000, stop_epoch=4000)
+        svc.remove_synced([0, 1])
+
+        meta_path = cookie_dir / META_FILE
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] > created_ms, \
+            "remove_synced() must result in creation_time > original (touch occurred)"
+
+
+# ==========================================================================
+# Test 4: _touch_local_cookie edge cases
+# ==========================================================================
+
+
+class TestTouchLocalCookieEdgeCases:
+    """Direct tests of the _touch_local_cookie() helper method.
+
+    Covers edge cases that don't require the full fast-path flow:
+      - No cookie exists → no-op (no error)
+      - Corrupted cookie file → no-op (no error)
+      - Cookie with missing specifier → no-op
+    """
+
+    def test_no_cookie_is_noop(self, svc_with_spy):
+        """_touch_local_cookie is a silent no-op when no local cookie exists."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        meta_path = cookie_dir / META_FILE
+        # Ensure no cookie file exists
+        if meta_path.exists():
+            meta_path.unlink()
+
+        # Should not raise
+        svc._touch_local_cookie()
+
+        # Verify no file was created
+        assert not meta_path.exists(), "No cookie file should be created"
+
+    def test_corrupted_cookie_is_noop(self, svc_with_spy):
+        """_touch_local_cookie is a silent no-op on corrupted cookie file."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        meta_path = cookie_dir / META_FILE
+        cookie_dir.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text("this is not valid json")
+
+        # Should not raise
+        svc._touch_local_cookie()
+
+    def test_missing_specifier_is_noop(self, svc_with_spy):
+        """_touch_local_cookie is a silent no-op when cookie has no specifier."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        meta_path = cookie_dir / META_FILE
+        cookie_dir.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps({"creation_time": 1000}))
+
+        svc._touch_local_cookie()
+
+        # File should not have been rewritten (no specifier → early return)
+        local_after = json.loads(meta_path.read_text())
+        assert local_after["creation_time"] == 1000, \
+            "Cookie without specifier must not be touched"
+
+    def test_consecutive_touches_advance_time(self, svc_with_spy):
+        """Multiple consecutive touches each advance creation_time."""
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "consecutive-touch"
+        now = int(time.time() * 1000)
+        created_ms = now - 120_000
+        make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
+
+        svc._touch_local_cookie()
+        time_A = json.loads((cookie_dir / META_FILE).read_text())["creation_time"]
+
+        import time as _time
+        _time.sleep(0.01)  # 10ms — enough to advance ms clock
+
+        svc._touch_local_cookie()
+        time_B = json.loads((cookie_dir / META_FILE).read_text())["creation_time"]
+
+        assert time_B > time_A, "Consecutive touches must each advance creation_time"
 
 
 # ==========================================================================
@@ -1951,19 +2150,18 @@ class TestFullReplace:
 
 
 class TestCookieTouchBoundary:
-    """Verify the exact 10% threshold for cookie touch.
+    """Cookie touch is UNCONDITIONAL on fast path (10% window removed).
 
-    For a 30-min TTL (10% window = 3 min = 180 sec):
-      - creation_time = now - 2 min 59 sec → <10% → skip touch
-      - creation_time = now - 3 min 0 sec → =10% → touch
-      - creation_time = now - 3 min 1 sec → >10% → touch
+    Every fast-path hit touches the cookie regardless of age:
+      - creation_time = now - 2 min 59 sec → always touch
+      - creation_time = now - 3 min 0 sec → always touch
+      - creation_time = now - 3 min 1 sec → always touch
     """
 
     TTL = 30  # minutes
-    WINDOW_SEC = 180  # 3 minutes = 10%
 
-    def _run_boundary_test(self, cookie_dir, spy, age_sec, expect_touch):
-        """Helper: create cookie at *age_sec* ago and verify touch behavior."""
+    def _run_boundary_test(self, cookie_dir, spy, age_sec):
+        """Helper: create cookie at *age_sec* ago and verify touch always occurs."""
         specifier = "boundary"
         now = int(time.time() * 1000)
         created_ms = now - (age_sec * 1000)
@@ -1988,30 +2186,25 @@ class TestCookieTouchBoundary:
         meta_path = cookie_dir / META_FILE
         local_after = json.loads(meta_path.read_text())
 
-        if expect_touch:
-            assert local_after["creation_time"] > created_ms, \
-                f"Expected TOUCH at {age_sec}s (≥10% window), but creation_time unchanged"
-        else:
-            assert local_after["creation_time"] == created_ms, \
-                f"Expected SKIP at {age_sec}s (<10% window), but creation_time changed"
+        assert local_after["creation_time"] > created_ms, \
+            f"Expected TOUCH at {age_sec}s (cookie touch is unconditional), but creation_time unchanged"
 
     def test_under_10pct(self, svc_with_spy):
-        """179 seconds (2 min 59 sec) → skip touch."""
+        """179 seconds (2 min 59 sec) → always touch (no 10% window)."""
         svc, spy, cookie_dir, store = svc_with_spy
-        self._run_boundary_test(cookie_dir, spy, 179, expect_touch=False)
+        self._run_boundary_test(cookie_dir, spy, 179)
 
     def test_at_10pct(self, cookie_dir, transport_spy):
-        """180 seconds (3 min 0 sec) → touch."""
-        # Need fresh spy per call
+        """180 seconds (3 min 0 sec) → always touch."""
         spy = transport_spy
         spy.reset()
-        self._run_boundary_test(cookie_dir, spy, 180, expect_touch=True)
+        self._run_boundary_test(cookie_dir, spy, 180)
 
     def test_over_10pct(self, cookie_dir, transport_spy):
-        """181 seconds (3 min 1 sec) → touch."""
+        """181 seconds (3 min 1 sec) → always touch."""
         spy = transport_spy
         spy.reset()
-        self._run_boundary_test(cookie_dir, spy, 181, expect_touch=True)
+        self._run_boundary_test(cookie_dir, spy, 181)
 
 
 # ==========================================================================
@@ -2020,15 +2213,17 @@ class TestCookieTouchBoundary:
 
 
 class TestCookieTTLConfig:
-    """User changes cookie.ttl_minutes in config.
+    """Cookie touch is UNCONDITIONAL regardless of TTL config (10% window removed).
 
-    10% window scales with TTL:
-      - TTL=10 min → 10% window = 1 min (60 sec)
-      - TTL=60 min → 10% window = 6 min (360 sec)
+    No matter the TTL, every fast-path hit touches the cookie:
+      - TTL=10 min, age=59 sec → always touch
+      - TTL=10 min, age=60 sec → always touch
+      - TTL=60 min, age=359 sec → always touch
+      - TTL=60 min, age=360 sec → always touch
     """
 
-    def _run_ttl_test(self, cookie_dir, spy, ttl_minutes, age_sec, expect_touch):
-        """Helper: run fast path with custom TTL and age."""
+    def _run_ttl_test(self, cookie_dir, spy, ttl_minutes, age_sec):
+        """Helper: run fast path with custom TTL and age, always expects touch."""
         specifier = "ttl-config"
         now = int(time.time() * 1000)
         created_ms = now - (age_sec * 1000)
@@ -2053,36 +2248,32 @@ class TestCookieTTLConfig:
         meta_path = cookie_dir / META_FILE
         local_after = json.loads(meta_path.read_text())
 
-        if expect_touch:
-            assert local_after["creation_time"] > created_ms, \
-                f"Expected TOUCH at TTL={ttl_minutes} age={age_sec}s"
-        else:
-            assert local_after["creation_time"] == created_ms, \
-                f"Expected SKIP at TTL={ttl_minutes} age={age_sec}s"
+        assert local_after["creation_time"] > created_ms, \
+            f"Expected TOUCH at TTL={ttl_minutes} age={age_sec}s (touch is unconditional)"
 
     def test_ttl_10min_under_10pct(self, cookie_dir, transport_spy):
-        """TTL=10 min, 10% window = 60 sec. Age 59 sec → skip."""
+        """TTL=10 min, age 59 sec → always touch (no 10% window)."""
         spy = transport_spy
         spy.reset()
-        self._run_ttl_test(cookie_dir, spy, ttl_minutes=10, age_sec=59, expect_touch=False)
+        self._run_ttl_test(cookie_dir, spy, ttl_minutes=10, age_sec=59)
 
     def test_ttl_10min_at_10pct(self, cookie_dir, transport_spy):
-        """TTL=10 min, 10% window = 60 sec. Age 60 sec → touch."""
+        """TTL=10 min, age 60 sec → always touch."""
         spy = transport_spy
         spy.reset()
-        self._run_ttl_test(cookie_dir, spy, ttl_minutes=10, age_sec=60, expect_touch=True)
+        self._run_ttl_test(cookie_dir, spy, ttl_minutes=10, age_sec=60)
 
     def test_ttl_60min_under_10pct(self, cookie_dir, transport_spy):
-        """TTL=60 min, 10% window = 360 sec. Age 359 sec → skip."""
+        """TTL=60 min, age 359 sec → always touch."""
         spy = transport_spy
         spy.reset()
-        self._run_ttl_test(cookie_dir, spy, ttl_minutes=60, age_sec=359, expect_touch=False)
+        self._run_ttl_test(cookie_dir, spy, ttl_minutes=60, age_sec=359)
 
     def test_ttl_60min_at_10pct(self, cookie_dir, transport_spy):
-        """TTL=60 min, 10% window = 360 sec. Age 360 sec → touch."""
+        """TTL=60 min, age 360 sec → always touch."""
         spy = transport_spy
         spy.reset()
-        self._run_ttl_test(cookie_dir, spy, ttl_minutes=60, age_sec=360, expect_touch=True)
+        self._run_ttl_test(cookie_dir, spy, ttl_minutes=60, age_sec=360)
 
 
 # ==========================================================================

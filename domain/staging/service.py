@@ -153,6 +153,7 @@ class StagingService:
         device_uuid = self._get_device_id()
         resolved_end = stop_epoch if stop_epoch is not None else end_epoch
         self._local.append(title, epoch_ms, end_epoch=resolved_end, is_active=is_active, tags=tags or [], comment=comment, metadata=metadata, media=media, device_uuid=device_uuid)
+        self._touch_local_cookie()
 
     def end(self, title, end_epoch, comment=None):
         """End an active task. Local-only write."""
@@ -189,6 +190,7 @@ class StagingService:
 
         if comment is not None:
             self._local.update(found_index, {"comment": comment})
+        self._touch_local_cookie()
 
     def end_at(
         self,
@@ -219,6 +221,7 @@ class StagingService:
             raise ValueError(f"No active task found for: {title}")
 
         self._local.add_pause(found_index, pause_epoch)
+        self._touch_local_cookie()
 
     def unpause(self, title, unpause_epoch):
         """Unpause a paused task (resume). Local-only."""
@@ -233,6 +236,7 @@ class StagingService:
             raise ValueError(f"No active task found for: {title}")
 
         self._local.close_pause(found_index, unpause_epoch)
+        self._touch_local_cookie()
 
     def modify(
         self,
@@ -250,15 +254,18 @@ class StagingService:
         if comment is not None:
             override["comment"] = comment
         self._local.update(entry_index, override)
+        self._touch_local_cookie()
 
     def remove(self, entry_index: int):
         """Delete a staged entry."""
         self._local.delete(entry_index)
+        self._touch_local_cookie()
 
     def remove_synced(self, indices: List[int]):
         """Remove multiple staged entries by index."""
         if indices:
             self._local.remove_multiple(indices)
+            self._touch_local_cookie()
 
     def read_entries(self) -> List[Dict[str, Any]]:
         """Read local staging entries as plain dicts."""
@@ -326,17 +333,35 @@ class StagingService:
     # Cookie helpers
     # ------------------------------------------------------------------
 
+    def _touch_local_cookie(self):
+        """Update the local cookie's creation_time to now, if it exists.
+
+        Extends the session TTL by resetting the creation clock.
+        No remote cookie is pushed. Safe to call on every command —
+        negligible cost (~1ms local file write).
+        """
+        meta_path = self._data_dir / META_FILE
+        if not meta_path.exists():
+            return
+        try:
+            local_cookie = json.loads(meta_path.read_text())
+            specifier = local_cookie.get("device_specifier")
+            if not specifier:
+                return
+            now_ms = int(time.time() * 1000)
+            meta_path.write_text(json.dumps({
+                "device_specifier": specifier,
+                "creation_time": now_ms,
+            }))
+        except Exception:
+            pass  # Non-critical
+
     def _push_on_fast_path(self, local_cookie: dict):
-        """Push local blob and optionally touch cookie on fast path.
+        """Push local blob and touch cookie on fast path.
 
         Called when local and remote cookie specifiers match (same device
-        session). Pushes the local staging blob to remote, then checks
-        whether to touch the local cookie's creation_time (10% window).
-
-        The cookie touch resets the TTL clock. It only happens if at least
-        10% of the TTL has elapsed since the cookie was last created. If
-        less than 10% has elapsed, the touch is skipped to avoid needless
-        writes.
+        session). Pushes the local staging blob to remote, then unconditionally
+        touches the local cookie to extend the session TTL.
 
         The device_specifier is never regenerated — same device, same
         specifier. The remote cookie is never pushed (it already has the
@@ -350,23 +375,8 @@ class StagingService:
         if isinstance(mk, bytes) and len(mk) == 32:
             self.push_blob_only(master_key=mk)
 
-        # Check 10% window for cookie touch
-        created_ms = local_cookie.get("creation_time", 0)
-        now_ms = int(time.time() * 1000)
-        elapsed_ms = now_ms - created_ms
-        ttl_ms = self._cookie_ttl_minutes * 60 * 1000
-        ten_pct_ms = int(ttl_ms * 0.1)
-
-        if elapsed_ms >= ten_pct_ms:
-            # Touch: update creation_time, keep specifier, no remote push
-            meta_path = self._data_dir / META_FILE
-            try:
-                meta_path.write_text(json.dumps({
-                    "device_specifier": local_cookie["device_specifier"],
-                    "creation_time": now_ms,
-                }))
-            except Exception:
-                pass  # Non-critical
+        # Touch local cookie to extend session TTL
+        self._touch_local_cookie()
 
     def _ensure_cookie(self):
         """Create a device cookie if one does not exist locally.
