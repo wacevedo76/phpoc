@@ -373,6 +373,26 @@ def main():
                 block["signature"] = crypto.sign(block[hash_key], identity_secret)
 
         LEDGER_PATH.write_text(json.dumps(ledger_data, indent=2))
+
+        # 5. Push re-chained blocks to remote (overwrite old chain)
+        if global_transport is not None:
+            from domain.ledger.remote_sync import RemoteLedgerSync
+            ledger_sync = RemoteLedgerSync(global_transport, mk)
+            try:
+                pushed = ledger_sync.push_blocks(ledger_data, force=True)
+                print(f"  \u2713 Pushed {pushed} re-chained blocks to remote.")
+                # Also try pushing the index
+                try:
+                    index_data = ledger_domain.index.get_all()
+                    if index_data:
+                        ledger_sync.push_index(index_data)
+                        print("  \u2713 Pushed updated index to remote.")
+                except Exception:
+                    print("  (Index push skipped \u2014 will sync on next 'ph sync')")
+            except Exception as exc:
+                print(f"  \u26a0 Failed to push re-chained blocks to remote: {exc}")
+                print("  Local recovery complete. Run 'ph sync' later to sync.")
+
         # Cache the recovered master key so subsequent commands can decrypt entries
         auth._cache_key(mk)
         print("Passphrase reset successful. You can now use your new passphrase.")

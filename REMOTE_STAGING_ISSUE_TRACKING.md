@@ -26,26 +26,14 @@
 | Redundant blob pull before auth gate | Cookie-only fast path → auth → blob ops |
 | `_is_auth_fresh()` / `_last_auth_time` removed | Cookie TTL is sole auth freshness check; no CryptoManager consultation |
 | `_needs_full_pull()` removed | Device UUID comparison after auth decides pull vs push-local |
+| `_deep_merge` shallow-copy bug (P0) | Deep-copy dict values instead of sharing `DEFAULTS` references |
+| `ph recover` leaves old chain on remote (Issue #14, P2) | `push_blocks(force=True)` overwrites re-chained blocks after recovery |
+| Latency: redundant `list_files()` (P4) | Share `existing_indices` between `pull_blocks()` and `push_blocks()` — saves 1 HTTP call |
+| `ph sync remote_staging` ignores check_and_sync | Routing removed — `ph sync` handles re-auth properly |
 
 ## Open
 
-### `ph sync remote_staging` ignores `check_and_sync()` result
-
-`main.py:520-522` calls `staging_service.check_and_sync()` but ignores the return value. Should route through the same auth gate as other commands, or decide that sync commands intentionally bypass auth.
-
-### `ph recover` rewrites all ledger blocks (Issue #14)
-
-After `ph recover`, all block hashes change (cascading prev_hash). `push_blocks()` skips by index, silently leaving the old chain on remote. Fix: batch push (single commit + push) + force mode for recovery.
-
-### `ph recover` generates new seed (key invalidation)
-
-Recovery generates a **new random seed** → all previous remote blobs become permanently undecryptable. Consider warning the user or offering a "same seed" option.
-
-### Latency optimization (AFI #2)
-
-- `_has_remote_refs()` called twice per command (pull + push)
-- Redis cache for ls-remote or transport-level connection pooling
-- HTTP transport already reduces ~5s→~100ms
+*(No open issues — all tracked items resolved.)*
 
 ## Device Side-quests
 

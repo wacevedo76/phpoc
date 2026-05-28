@@ -3,9 +3,11 @@
 ## Current State
 - **Branch:** `P3-Remote_Sync`
 - **Commit:** `pending`
-- **Tests:** 1267 all passing (134 pre-existing failures)
+- **Tests:** 1338 passing, 0 failures
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
+- **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
+- **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -108,19 +110,37 @@ Two push paths:
 | `cli/daemon.py` | PhDaemon lifecycle |
 | `cli/onboarding.py` | `ph onboarding` |
 | `worker/src/index.ts` | Cloudflare Worker (149 lines TypeScript) |
+| `security/config_manager.py` | Config with defaults merging + dot-notation |
+| `domain/ledger/remote_sync.py` | Ledger block push/pull + chain verification |
+| `core/sync/orchestrator.py` | Sync pipeline — staging → ledger → remote |
 
 ## Recent Commits (this session)
 ```
-d25d9b4  fix: specifier mismatch always forces auth; sync never pushes cookie
-88e7e52  fix: sync commands must not push device cookie to remote
-ee2339e  feat: add ph dev cookie command to inspect remote device cookie
-a5793fe  redesign: device cookie uses random specifier instead of HMAC
+3b0e92f  fix: resolve 54 pre-existing test failures from API drift
+17cb5fd  Remove 10% TTL window from cookie touch — unconditional touch
+fec4880  fix: TTL expiry always forces REAUTH_NEEDED; unparseable remote cookie
+48a0917  fix: force passphrase prompt on specifier mismatch in ph view
+2d4ca6a  fix: ph view auto-reconciles on specifier mismatch
+4748ad7  fix: ph dev cookie skips WAL replay — no staging state mutations
+cda3dc1  feat: ph login reconciles remote staging before claiming ownership
+75c67c4  redesign: simplified auth gate — cookie-only fast path, login clears cookie
 6240f92  feat: inline sync before commands, background push fix, config fix
-pending  redesign: simplified auth gate — cookie-only fast path, device_uuid decides pull vs push after auth
-pending  fix: ph login clears local device cookie to break auth loop
-pending  feat: ph dev cookie shows creation time, TTL, and expiry status
+pending  [this session] fix: _deep_merge shallow-copy bug, recover force-push, latency opt
 ```
 
+## This Session (2026-05-28)
+
+### P0 — `_deep_merge` shallow-copy bug
+`security/config_manager.py:_deep_merge()` assigned `result[key] = default_val` for non-overridden dict values — shared reference with `ConfigManager.DEFAULTS`. Callers could mutate the class-level defaults globally. Fixed: deep-copy dict values via recursive `_deep_merge(default_val, {})`.
+
+### P2 — `ph recover` leaves old chain on remote
+`RemoteLedgerSync.push_blocks()` added `force=True` parameter. When set, existing remote blocks are overwritten instead of skipped by index. `ph recover` in `main.py` now force-pushes all re-chained blocks after recovery.
+
+### P3 — Seed invalidation concern resolved
+`RecoveryAuthenticator` already prompts for the user's existing recovery seed. The master key is preserved identically — remote blobs remain decryptable.
+
+### P4 — Latency: redundant `list_files()` calls
+`pull_blocks()` and `push_blocks()` each independently called `_list_remote_block_indices()` (2 HTTP `list_files()` calls). Added optional `existing_indices` parameter to both. `SyncOrchestrator._sync_ledger_blocks()` now calls `list_files()` once and shares the result — saves ~100ms per sync.
+
 ## Known Issues
-- `ph sync remote_staging` calls `check_and_sync()` but ignores result
 - ETag caching stale in long-running daemon mode (not a current issue)

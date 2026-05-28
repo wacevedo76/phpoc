@@ -163,10 +163,19 @@ class SyncOrchestrator:
 
         ledger_sync = RemoteLedgerSync(self._transport, self._master_key)
 
+        # Fetch remote block indices once, share between pull and push.
+        # This avoids two redundant list_files() HTTP calls.
+        try:
+            existing_indices = ledger_sync._list_remote_block_indices()
+        except Exception:
+            existing_indices = set()
+
         # Pull remote blocks we're missing
         try:
             all_blocks = self._ledger.chain.read_all()
-            new_blocks, remote_count = ledger_sync.pull_blocks(all_blocks)
+            new_blocks, remote_count = ledger_sync.pull_blocks(
+                all_blocks, existing_indices=existing_indices,
+            )
             if new_blocks:
                 logger.info(
                     "SyncOrchestrator: pulled %d ledger block(s) from remote",
@@ -183,7 +192,9 @@ class SyncOrchestrator:
         # Push local blocks remote is missing
         try:
             all_blocks = self._ledger.chain.read_all()
-            pushed = ledger_sync.push_blocks(all_blocks)
+            pushed = ledger_sync.push_blocks(
+                all_blocks, existing_indices=existing_indices,
+            )
             if pushed:
                 logger.info(
                     "SyncOrchestrator: pushed %d ledger block(s) to remote",

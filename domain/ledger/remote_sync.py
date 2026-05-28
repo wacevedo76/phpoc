@@ -56,16 +56,33 @@ class RemoteLedgerSync:
     # Public API
     # ═══════════════════════════════════════════════════════════
 
-    def push_blocks(self, local_blocks: List[Dict[str, Any]]) -> int:
-        """Push blocks that don't exist on remote yet.
+    def push_blocks(
+        self,
+        local_blocks: List[Dict[str, Any]],
+        force: bool = False,
+        existing_indices: Optional[set] = None,
+    ) -> int:
+        """Push blocks that don't exist on remote yet (or overwrite if force=True).
+
+        After ``ph recover``, all local block hashes change (cascading prev_hash).
+        Normal push skips by index, leaving the old chain on remote. With force=True,
+        existing remote blocks are overwritten so the remote matches the local chain.
 
         Args:
             local_blocks: Full local ledger chain (list of block dicts).
+            force: If True, overwrite remote blocks at the same index even if they
+                   already exist. Use after recovery when all block hashes changed.
+            existing_indices: Pre-fetched set of remote block indices. When provided,
+                              avoids a redundant ``list_files()`` call. If omitted,
+                              fetches fresh. Used by ``SyncOrchestrator._sync_ledger_blocks()``
+                              to share one ``list_files()`` between pull and push.
 
         Returns:
             Number of blocks pushed.
         """
-        existing = self._list_remote_block_indices()
+        existing = existing_indices if existing_indices is not None else (
+            self._list_remote_block_indices() if not force else set()
+        )
         pushed = 0
 
         for i, block in enumerate(local_blocks):
@@ -73,7 +90,7 @@ class RemoteLedgerSync:
             path = self._blocks_prefix + filename
 
             if i in existing:
-                continue  # Already on remote — skip
+                continue  # Already on remote — skip (only when force=False)
 
             obfuscated = self._obfuscate_block(block)
             self._transport.push(path, obfuscated)
@@ -94,7 +111,9 @@ class RemoteLedgerSync:
         logger.info("Pushed index to remote")
 
     def pull_blocks(
-        self, local_blocks: Optional[List[Dict[str, Any]]] = None
+        self,
+        local_blocks: Optional[List[Dict[str, Any]]] = None,
+        existing_indices: Optional[set] = None,
     ) -> Tuple[Optional[List[Dict[str, Any]]], int]:
         """Pull missing blocks from remote.
 
@@ -104,13 +123,19 @@ class RemoteLedgerSync:
         Args:
             local_blocks: Existing local ledger blocks. If None or empty,
                          pulls all remote blocks (fresh clone scenario).
+            existing_indices: Pre-fetched set of remote block indices. When provided,
+                              avoids a redundant ``list_files()`` call. If omitted,
+                              fetches fresh. Used by ``SyncOrchestrator._sync_ledger_blocks()``
+                              to share one ``list_files()`` between pull and push.
 
         Returns:
             Tuple of (new_blocks_list, total_remote_block_count).
             new_blocks_list is None if nothing to pull.
             total_remote_block_count is the number of blocks on remote.
         """
-        existing = self._list_remote_block_indices()
+        existing = existing_indices if existing_indices is not None else (
+            self._list_remote_block_indices()
+        )
         if not existing:
             return None, 0
 

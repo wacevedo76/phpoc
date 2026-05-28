@@ -146,7 +146,11 @@ class ConfigManager:
                     result[key] = ConfigManager._deep_merge(default_val, override_val)
                 else:
                     result[key] = override_val
+            elif isinstance(default_val, dict):
+                # Deep-copy to prevent callers from mutating the class-level DEFAULTS
+                result[key] = ConfigManager._deep_merge(default_val, {})
             else:
+                # Immutable scalars (int, str, None, bool) — safe to share reference
                 result[key] = default_val
         # Include any extra keys from overrides not in defaults
         for key in overrides:
