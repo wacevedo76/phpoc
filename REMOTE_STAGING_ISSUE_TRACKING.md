@@ -30,6 +30,11 @@
 | `ph recover` leaves old chain on remote (Issue #14, P2) | `push_blocks(force=True)` overwrites re-chained blocks after recovery |
 | Latency: redundant `list_files()` (P4) | Share `existing_indices` between `pull_blocks()` and `push_blocks()` — saves 1 HTTP call |
 | `ph sync remote_staging` ignores check_and_sync | Routing removed — `ph sync` handles re-auth properly |
+| `ph login` runtime error (`StagingService.READY`) | Changed to `SyncCheckResult.READY` / `SyncCheckResult.OFFLINE` |
+| Stale-remote from cookie-before-blob push order | Pushed blob first, then cookie — self-healing on cookie failure |
+| Mock transport blob overwritten by cookie push | Route cookie paths to `transport._cookie`, blob paths to `transport._blob` |
+| 102 duplicate ledger entries across 15 blocks | Full dedup via `scripts/repair_ledger_dedup.py` — dedup by (title, duration), re-seal chain, rebuild index |
+| 29 stale staging entries | Cleaned — removed staging entries that matched already-committed ledger content |
 
 ## Open
 

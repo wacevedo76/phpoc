@@ -126,6 +126,10 @@ cda3dc1  feat: ph login reconciles remote staging before claiming ownership
 75c67c4  redesign: simplified auth gate — cookie-only fast path, login clears cookie
 6240f92  feat: inline sync before commands, background push fix, config fix
 pending  [this session] fix: _deep_merge shallow-copy bug, recover force-push, latency opt
+pending  [this session] fix: SyncCheckResult vs StagingService attrs in main.py
+pending  [this session] fix: blob-before-cookie push order in staging service
+pending  [this session] fix: mock transport blob/cookie separation for tests
+pending  [this session] fix: full ledger dedup — 102 duplicate entries + 29 stale staging removed
 ```
 
 ## This Session (2026-05-28)
@@ -141,6 +145,31 @@ pending  [this session] fix: _deep_merge shallow-copy bug, recover force-push, l
 
 ### P4 — Latency: redundant `list_files()` calls
 `pull_blocks()` and `push_blocks()` each independently called `_list_remote_block_indices()` (2 HTTP `list_files()` calls). Added optional `existing_indices` parameter to both. `SyncOrchestrator._sync_ledger_blocks()` now calls `list_files()` once and shares the result — saves ~100ms per sync.
+
+### `ph login` runtime error
+`main.py:428` used `login_staging.READY` / `login_staging.OFFLINE` — `StagingService` doesn't expose those enum-style attrs. Fixed to `SyncCheckResult.READY` / `SyncCheckResult.OFFLINE` (already imported). Commit: `23f510f`.
+
+### Stale-remote bug (blob-before-cookie push order)
+`domain/staging/service.py::push_to_remote()` pushed cookie before blob. If cookie push failed, local cookie lost + remote blob stale → reconcile pulled old blob → re-committed duplicates on next sync. Fix: push blob first, then cookie. Cookie failure is soft — cookie mismatch on next check triggers reconcile (self-healing). Commit: `3b67fbc`.
+
+### Mock transport test failures from reorder
+Mock `push()` in tests used `transport._blob` for both blob and cookie. Cookie push overwrote blob data. Fixed: route by path — cookie paths → `transport._cookie`, blob paths → `transport._blob`. All 1338 tests pass.
+
+### Ledger deduplication (full repair)
+Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in the chain. Used crypto-authenticated script (`scripts/repair_ledger_dedup.py`) to:
+1. Dedup by (title, duration) per date (encrypted timestamps differ across commits)
+2. Remove entire blocks where all entries were duplicates (15 blocks)
+3. Trim duplicate entries from mixed blocks (entries with unique content are preserved)
+4. Re-seal all blocks with correct `prev_hash` linkage
+5. Rebuild blind index from scratch
+6. Clean 29 stale staging entries matching already-committed ledger content
+
+**Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
+
+## Next Steps
+1. Run `ph recover` to push the cleaned ledger to remote with force
+2. Run `ph sync` to commit remaining staging entries (Working on Phpoc 110m, Walking in the woods 48m)
+3. Verify on debagent04 after sync
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
