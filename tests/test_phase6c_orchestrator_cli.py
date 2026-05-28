@@ -14,6 +14,9 @@ from unittest.mock import MagicMock, patch
 from typing import Optional, List, Dict, Any
 
 
+TEST_MASTER_KEY = b"\x01\x02\x03\x04\x05\x06\x07\x08" * 4  # 32 bytes
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Category C: SyncOrchestrator vs sync_with_strategy()
 # ════════════════════════════════════════════════════════════════════════════
@@ -453,6 +456,96 @@ class TestCLINewDepsSmoke(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["title"], "Test")
         self.assertIsNotNone(entries[0]["duration"])
+
+
+# =========================================================================
+# Test: SyncOrchestrator._sync_ledger_blocks — remote ledger block sync
+# =========================================================================
+
+class TestSyncLedgerBlocks(unittest.TestCase):
+    """Verify _sync_ledger_blocks pulls/pushes blocks and index.
+
+    The method is called at the end of sync() when transport is configured.
+    Failures should be logged but not crash the sync.
+    """
+
+    def setUp(self):
+        from domain.staging.service import StagingService
+        from domain.ledger.engine import LedgerEngine
+        from core.sync import SyncOrchestrator
+        self.svc = MagicMock(spec=StagingService)
+        self.engine = MagicMock(spec=LedgerEngine)
+        self.engine.chain = MagicMock()
+        self.engine.chain.read_all.return_value = [{"type": "day", "date": "2026-06-15"}]
+        self.engine.index = MagicMock()
+        self.engine.index.get_all.return_value = {"2026-06-15": {"test": 3600}}
+        self.transport = MagicMock()
+
+    def test_no_transport_skips(self):
+        """Without transport, _sync_ledger_blocks is a no-op."""
+        from core.sync import SyncOrchestrator
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=None,
+        )
+        orch._sync_ledger_blocks()
+        # No transport calls should be made
+        self.transport.pull.assert_not_called()
+        self.transport.push.assert_not_called()
+
+    def test_no_master_key_skips(self):
+        """Without master_key, _sync_ledger_blocks is a no-op."""
+        from core.sync import SyncOrchestrator
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            transport=self.transport,
+        )
+        orch._sync_ledger_blocks()
+        self.transport.pull.assert_not_called()
+        self.transport.push.assert_not_called()
+
+    def test_with_transport_calls_push_and_pull(self):
+        """With transport + master_key, pull_blocks and push_blocks are called."""
+        from core.sync import SyncOrchestrator
+        from domain.ledger.remote_sync import RemoteLedgerSync
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = ([], 1)
+            mock_instance.push_blocks.return_value = 1
+            mock_rls.return_value = mock_instance
+
+            orch = SyncOrchestrator(
+                staging_service=self.svc,
+                ledger_engine=self.engine,
+                master_key=TEST_MASTER_KEY,
+                transport=self.transport,
+            )
+            orch._sync_ledger_blocks()
+
+            push_blocks_called = mock_instance.push_blocks.call_args
+            self.assertIsNotNone(push_blocks_called)
+
+    def test_exception_logged_not_crashed(self):
+        """If RemoteLedgerSync raises, _sync_ledger_blocks logs but does not crash."""
+        from core.sync import SyncOrchestrator
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.push_blocks.side_effect = RuntimeError("network error")
+            mock_rls.return_value = mock_instance
+
+            orch = SyncOrchestrator(
+                staging_service=self.svc,
+                ledger_engine=self.engine,
+                master_key=TEST_MASTER_KEY,
+                transport=self.transport,
+            )
+            # Should not raise
+            orch._sync_ledger_blocks()
 
 
 if __name__ == "__main__":

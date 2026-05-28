@@ -297,7 +297,7 @@ def _background_push(data_dir_str: str):
                 "type": "auth_needed",
                 "message": (
                     "Local changes saved. Authenticate to push to remote. "
-                    "Run 'ph login' or 'ph sync remote_staging'."
+                    "Run 'ph login' or 'ph sync'."
                 ),
                 "timestamp": int(time.time() * 1000),
             })

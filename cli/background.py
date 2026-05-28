@@ -179,9 +179,9 @@ def _try_renew_aging_cookie(
     Returns:
         True if the cookie was successfully renewed, False otherwise.
     """
-    from domain.cookie.device_cookie import DeviceCookie
+    from domain.cookie.device_cookie import DeviceCookie, META_FILE
 
-    meta_path = data_dir / DeviceCookie.META_FILE
+    meta_path = data_dir / META_FILE
     if not meta_path.exists():
         return False
 
@@ -263,7 +263,7 @@ def _run_cookie_check(
                 "type": "auth_needed",
                 "message": (
                     "Cross-device sync requires authentication. "
-                    "Run 'ph sync remote_staging' to authenticate and merge."
+                    "Run 'ph sync' to authenticate and merge."
                 ),
                 "timestamp": int(time.time() * 1000),
             })
@@ -284,7 +284,7 @@ def _run_cookie_check(
                 "type": "remote_changes",
                 "message": (
                     "Remote changes detected from another device. "
-                    "Run 'ph sync remote_staging' to merge."
+                    "Run 'ph sync' to merge."
                 ),
                 "timestamp": int(time.time() * 1000),
             })

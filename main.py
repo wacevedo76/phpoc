@@ -117,13 +117,9 @@ def main():
     subparsers.add_parser("tags", help="List all unique tags ever used")
 
     # Sync command
-    sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger, or sync staging with remote")
-    sync_subparsers = sync_parser.add_subparsers(dest="sync_action")
+    sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger, push/pull ledger blocks to remote")
     sync_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
     sync_parser.add_argument("--till", help="Only sync entries up to and including this date (MM-DD or YYYY-MM-DD)")
-    sync_remote_p = sync_subparsers.add_parser("remote_staging", help="Sync local staging with remote blob (pull, merge, push) — no ledger commit")
-    sync_ledger_p = sync_subparsers.add_parser("remote_ledger", help="Sync ledger blocks with remote (push/pull append-only chain)")
-    sync_ledger_p.add_argument("--force", action="store_true", help="Force overwrite all remote blocks from local (for chain divergence recovery)")
 
     # Dev command (developer diagnostics)
     dev_parser = subparsers.add_parser("dev", help="Developer diagnostics")
@@ -516,6 +512,7 @@ def main():
         ledger_engine=ledger_engine,
         view_interface=cli._view if hasattr(cli, '_view') else None,
         master_key=auth.get_key() if hasattr(auth, 'get_key') else None,
+        transport=transport,
     )
     
     if args.command == "add":
@@ -578,120 +575,46 @@ def main():
     elif args.command == "tags":
         _list_tags(ledger, cli)
     elif args.command == "sync":
-        if getattr(args, 'sync_action', None) == "remote_staging":
-            staging_service.check_and_sync(timeout_ms=500)
-            staging_service.push_blob_only(master_key=auth.get_key())
-            print("\u2713 Remote staging synced")
-        elif getattr(args, 'sync_action', None) == "remote_ledger":
-            from domain.ledger.remote_sync import RemoteLedgerSync
-
-            if transport is None or device_id_provider is None:
-                print("Remote not configured. Set remote.git_remote_url in config.")
+        # Unified sync: handle re-auth first, then delegate to orchestrator
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
                 exit(1)
-
-            # 1. Authenticate if not already cached
-            if auth.get_key() is None:
-                print("Authenticating for remote ledger sync...")
-                if not auth.authenticate():
-                    print("Authentication required for remote ledger sync.")
-                    exit(1)
-            else:
-                print("Using cached session key.")
-            crypto = CryptoManager(auth.get_key())
-
-            # Refresh ledger components with new crypto
-            store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
-            ledger = LedgerDomain(crypto, store)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
             staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
             staging_service = StagingService(
-                crypto=crypto,
+                crypto=fresh_crypto,
                 staging_store=staging_store,
                 transport=transport,
                 device_id_provider=device_id_provider,
                 cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
                 data_dir=str(CONFIG_DIR),
             )
+            reconcile_result = staging_service._reconcile_and_claim(mk)
+            if reconcile_result == SyncCheckResult.OFFLINE:
+                print("\u26a0 Remote unreachable \u2014 continuing with local data.")
+            # Rebuild orchestrator with fresh components
             ledger_engine = LedgerEngine(
-                crypto=crypto,
+                crypto=fresh_crypto,
                 store=store,
                 index_store=store,
                 staging_store=staging_store,
                 identity_secret=None,
             )
-
-            ledger_sync = RemoteLedgerSync(
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            crypto = fresh_crypto
+            sync_orchestrator = SyncOrchestrator(
+                staging_service=staging_service,
+                ledger_engine=ledger_engine,
+                view_interface=cli._view if hasattr(cli, '_view') else None,
+                master_key=mk,
                 transport=transport,
-                master_key=auth.get_key(),
             )
 
-            # 2. Show sync summary
-            ledger_data = ledger.get_ledger_data()
-            local_count = len(ledger_data)
-            remote_count = ledger_sync.get_remote_block_count()
-
-            day_blocks_local = sum(1 for b in ledger_data if b.get("type", "day") == "day")
-            print(f"\nLocal ledger:  {local_count} blocks ({day_blocks_local} day blocks)")
-            print(f"Remote ledger: {remote_count} blocks")
-
-            if remote_count > local_count:
-                pull_count = remote_count - local_count
-                print(f"  -> Will pull {pull_count} block(s) from remote")
-            elif local_count > remote_count:
-                push_count = local_count - remote_count
-                # Show dates of blocks that will be pushed
-                push_blocks = ledger_data[remote_count:]
-                for b in push_blocks:
-                    date_str = b.get("date", "?")
-                    btype = b.get("type", "day")
-                    n_entries = len(b.get("entries", []))
-                    print(f"  -> Will push block #{remote_count + push_blocks.index(b) + 1}: "
-                          f"{date_str} ({btype}, {n_entries} entr{'y' if n_entries == 1 else 'ies'})")
-            elif args.force:
-                print(f"  -> Force push all {local_count} blocks (overwriting remote)")
-            else:
-                print("  -> Already in sync (no changes)")
-                return
-
-            # 3. Confirm
-            confirm = input("\nProceed with remote ledger sync? (y/N): ").strip().lower()
-            if confirm != "y":
-                print("Cancelled.")
-                return
-
-            # 4. Execute pull/push
-            if args.force:
-                # Force overwrite: push ALL blocks regardless of remote state
-                pushed = 0
-                for i, block in enumerate(ledger_data):
-                    filename = f"{i:06d}.json"
-                    path = f"ledger/blocks/{filename}"
-                    obfuscated = ledger_sync._obfuscate_block(block)
-                    transport.push(path, obfuscated)
-                    pushed += 1
-                print(f"\u2713 Force-pushed {pushed} block(s) to remote (overwritten)")
-            else:
-                new_blocks, _ = ledger_sync.pull_blocks(ledger_data)
-                if new_blocks:
-                    ledger_engine.chain.append_blocks(new_blocks)
-                    print(f"\u2713 Pulled {len(new_blocks)} block(s) from remote")
-
-                ledger_data = ledger.get_ledger_data()
-                pushed = ledger_sync.push_blocks(ledger_data)
-                if pushed:
-                    print(f"\u2713 Pushed {pushed} block(s) to remote")
-
-            # Sync the index
-            try:
-                index_data = json.loads(INDEX_PATH.read_text())
-                ledger_sync.push_index(index_data)
-                print("\u2713 Index synced to remote")
-            except (FileNotFoundError, json.JSONDecodeError) as exc:
-                print(f"\u26A0 Index not synced: {exc}")
-
-            print("\u2713 Remote ledger sync complete")
-        else:
-            till_date = _resolve_till_date(args.till) if args.till else None
-            sync_orchestrator.sync(till_date=till_date)
+        till_date = _resolve_till_date(args.till) if args.till else None
+        sync_orchestrator.sync(till_date=till_date)
     elif args.command == "verify":
         result = ledger.verify()
         print(result)

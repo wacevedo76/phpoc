@@ -247,6 +247,6 @@ def _switch_to_cloudflare(config, config_path: Optional[Path] = None):
     else:
         print(f"  API key: sourced from $PHPOC_CLOUDFLARE_API_KEY at runtime")
     print()
-    print("  To verify it works, run: ph sync remote_staging --pull")
+    print("  To verify it works, run: ph sync")
     print("  To deploy Worker updates: cd worker && npx wrangler deploy")
     print()

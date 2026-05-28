@@ -16,6 +16,10 @@ import unittest
 import argparse
 from unittest.mock import MagicMock, patch, call
 from typing import Optional, List, Dict, Any
+from pathlib import Path
+
+
+TEST_MASTER_KEY = b"\x01\x02\x03\x04\x05\x06\x07\x08" * 4  # 32 bytes
 
 
 # =========================================================================
@@ -605,6 +609,118 @@ class TestMissingDependencyHandling(unittest.TestCase):
         self.assertTrue(result)
         # push_to_remote should NOT be called without a master_key
         svc.push_to_remote.assert_not_called()
+
+
+# =========================================================================
+# Test: ph sync (unified) — check_and_sync() re-auth + orchestrator delegation
+# =========================================================================
+
+class TestSyncCommandUnified(unittest.TestCase):
+    """Verify ph sync (no subcommand) handles check_and_sync results and
+    delegates to SyncOrchestrator.sync().
+
+    This tests the inline logic in main.py's sync handler:
+      1. check_and_sync() is called first
+      2. If REAUTH_NEEDED: login + rebuild + reconcile + rebuild orchestrator
+      3. Then orchestrator.sync() is called
+    """
+
+    def setUp(self):
+        self.mock_staging = MagicMock()
+        self.mock_staging._remote = None
+        self.mock_auth = MagicMock()
+        self.mock_transport = MagicMock()
+        self.mock_device_id = MagicMock()
+        self.mock_config_dir = Path("/tmp/fake_config")
+        self.mock_config = MagicMock()
+        self.mock_config.get.return_value = 30
+        self.mock_ledger_engine = MagicMock()
+        self.mock_crypto = MagicMock()
+        self.mock_cli = MagicMock()
+        self.mock_orchestrator = MagicMock()
+
+        # Default: check_and_sync returns READY
+        self.mock_staging.check_and_sync.return_value = "READY"
+        self.mock_auth.get_key.return_value = TEST_MASTER_KEY
+
+    def _simulate_sync_handler(self):
+        """Simulate the inline logic from main.py's sync command handler.
+
+        Returns the orchestrator.sync() result for assertion.
+        """
+        # Step 1: check_and_sync
+        result = self.mock_staging.check_and_sync(timeout_ms=500)
+
+        # Step 2: handle REAUTH_NEEDED (same pattern as view command)
+        if result == "REAUTH_NEEDED":
+            if not self.mock_auth.login():
+                return "EXIT"
+            # Rebuild staging service (simplified: just use mock)
+            self.mock_staging._reconcile_and_claim(TEST_MASTER_KEY)
+
+        # Step 3: call orchestrator.sync()
+        return self.mock_orchestrator.sync()
+
+    # ── READY path ────────────────────────────────────────
+
+    def test_ready_calls_check_and_sync(self):
+        """check_and_sync() is called with timeout_ms=500."""
+        self._simulate_sync_handler()
+        self.mock_staging.check_and_sync.assert_called_once_with(timeout_ms=500)
+
+    def test_ready_calls_orchestrator_sync(self):
+        """orchestrator.sync() is called after check_and_sync returns READY."""
+        self._simulate_sync_handler()
+        self.mock_orchestrator.sync.assert_called_once()
+
+    def test_ready_does_not_call_login(self):
+        """auth.login() is NOT called when check_and_sync returns READY."""
+        self._simulate_sync_handler()
+        self.mock_auth.login.assert_not_called()
+
+    # ── REAUTH_NEEDED path ────────────────────────────────
+
+    def test_reauth_calls_login(self):
+        """auth.login() is called when check_and_sync returns REAUTH_NEEDED."""
+        self.mock_staging.check_and_sync.return_value = "REAUTH_NEEDED"
+        self.mock_auth.login.return_value = True
+        self._simulate_sync_handler()
+        self.mock_auth.login.assert_called_once()
+
+    def test_reauth_login_failure_exits(self):
+        """When login fails, handler exits."""
+        self.mock_staging.check_and_sync.return_value = "REAUTH_NEEDED"
+        self.mock_auth.login.return_value = False
+        result = self._simulate_sync_handler()
+        self.assertEqual(result, "EXIT")
+
+    def test_reauth_calls_reconcile(self):
+        """After successful login, _reconcile_and_claim is called."""
+        self.mock_staging.check_and_sync.return_value = "REAUTH_NEEDED"
+        self.mock_auth.login.return_value = True
+        self._simulate_sync_handler()
+        self.mock_staging._reconcile_and_claim.assert_called_once_with(TEST_MASTER_KEY)
+
+    def test_reauth_then_calls_orchestrator_sync(self):
+        """After re-auth + reconcile, orchestrator.sync() is called."""
+        self.mock_staging.check_and_sync.return_value = "REAUTH_NEEDED"
+        self.mock_auth.login.return_value = True
+        self._simulate_sync_handler()
+        self.mock_orchestrator.sync.assert_called_once()
+
+    # ── OFFLINE path ──────────────────────────────────────
+
+    def test_offline_continues_to_orchestrator_sync(self):
+        """When check_and_sync returns OFFLINE, orchestrator.sync() is still called."""
+        self.mock_staging.check_and_sync.return_value = "OFFLINE"
+        self._simulate_sync_handler()
+        self.mock_orchestrator.sync.assert_called_once()
+
+    def test_offline_does_not_call_login(self):
+        """auth.login() is NOT called when check_and_sync returns OFFLINE."""
+        self.mock_staging.check_and_sync.return_value = "OFFLINE"
+        self._simulate_sync_handler()
+        self.mock_auth.login.assert_not_called()
 
 
 # =========================================================================

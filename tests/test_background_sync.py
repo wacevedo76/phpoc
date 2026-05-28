@@ -40,7 +40,9 @@ class TestCookieRenewalThreshold(unittest.TestCase):
         self.meta_path = self.tmp / "device_cookie.meta"
         self.cookie_path = self.tmp / "device_cookie.bin"
         self.remote_sync = MagicMock()
-        self.remote_sync._device_id_provider.get_device_identity.return_value.device_id = "test-device"
+        dev_identity = MagicMock()
+        dev_identity.device_id = "test-device"
+        self.remote_sync._device_id_provider.get_device_identity.return_value = dev_identity
 
         # Write a dummy cookie file (required by DeviceCookie.create / is_valid_locally)
         self.cookie_path.write_bytes(b"\x00" * 32)
@@ -56,7 +58,7 @@ class TestCookieRenewalThreshold(unittest.TestCase):
     def _set_cookie_age(self, age_minutes: int):
         """Set the cookie meta file to simulate a cookie created *age_minutes* ago."""
         created_ms = int(time.time() * 1000) - age_minutes * 60 * 1000
-        self.meta_path.write_text(json.dumps({"created_at": created_ms}))
+        self.meta_path.write_text(json.dumps({"creation_time": created_ms}))
 
     @patch("cli.background._SESSION_FILE")
     def test_threshold_09_renews_at_90pct(self, mock_session):
@@ -149,15 +151,19 @@ class TestCookieRenewalThreshold(unittest.TestCase):
 
     @patch("cli.background._SESSION_FILE")
     def test_push_cookie_called_on_renewal(self, mock_session):
-        """Successful renewal calls remote_sync.push_cookie with 32 bytes."""
+        """Successful renewal calls remote_sync.push_cookie with JSON bytes."""
         self._set_cookie_age(28)
         with patch("cli.background._SESSION_FILE", self.session_file):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
             self.assertTrue(result)
-            # Verify push was called with 32 bytes
+            # Verify push was called with JSON-encoded cookie bytes
             self.assertTrue(self.remote_sync.push_cookie.called)
             args, _ = self.remote_sync.push_cookie.call_args
-            self.assertEqual(len(args[0]), 32, "Cookie bytes must be 32 bytes")
+            # Cookie is a JSON-encoded dict, not a fixed 32-byte blob
+            self.assertIsInstance(args[0], bytes)
+            parsed = json.loads(args[0].decode())
+            self.assertIn("device_uuid", parsed)
+            self.assertIn("device_specifier", parsed)
 
 
 class TestNotificationLifecycle(unittest.TestCase):
@@ -260,18 +266,25 @@ class TestCookieCheckFlow(unittest.TestCase):
         self.nf = self.tmp / SYNC_NOTIFICATION_FILENAME
         self.meta = self.tmp / "device_cookie.bin"
         self.remote_sync = MagicMock()
+        dev_identity = MagicMock()
+        dev_identity.device_id = "test-device"
+        self.remote_sync._device_id_provider.get_device_identity.return_value = dev_identity
 
-        # Write a local cookie (dummy)
-        self.tmp.joinpath("device_cookie.bin").write_bytes(b"\x00" * 32)
-
-        # Remote cookie matches local
-        self.remote_sync.pull_cookie.return_value = b"\x00" * 32
+        # Remote cookie: valid JSON dict
+        self._valid_remote_cookie = {
+            "device_uuid": "test-device",
+            "device_specifier": "test-specifier",
+        }
+        self.remote_sync.pull_cookie.return_value = json.dumps(self._valid_remote_cookie).encode()
 
     def _set_meta_age(self, minutes_ago: int):
-        """Set cookie age in the meta file."""
+        """Set cookie age in the meta file with matching specifier."""
         created = int(time.time() * 1000) - minutes_ago * 60 * 1000
         self.tmp.joinpath("device_cookie.meta").write_text(
-            json.dumps({"created_at": created})
+            json.dumps({
+                "device_specifier": "test-specifier",
+                "creation_time": created,
+            })
         )
 
     @patch("cli.background._SESSION_FILE")
@@ -280,6 +293,11 @@ class TestCookieCheckFlow(unittest.TestCase):
         self._set_meta_age(28)
         session_file = self.tmp / "session"
         session_file.write_bytes(b"\x01" * 32)
+
+        # Give remote_sync a proper device identity mock
+        dev_identity = MagicMock()
+        dev_identity.device_id = "test-device"
+        self.remote_sync._device_id_provider.get_device_identity.return_value = dev_identity
 
         with patch("cli.background._SESSION_FILE", session_file):
             _run_cookie_check(
@@ -357,8 +375,11 @@ class TestCookieCheckFlow(unittest.TestCase):
     def test_cookie_mismatch_writes_notification(self):
         """Remote cookie differs → remote_changes notification."""
         self._set_meta_age(5)
-        # Remote cookie different from local (local is \x00, remote is \x01)
-        self.remote_sync.pull_cookie.return_value = b"\x01" * 32
+        # Remote cookie with different specifier
+        self.remote_sync.pull_cookie.return_value = json.dumps({
+            "device_uuid": "other-device",
+            "device_specifier": "other-specifier",
+        }).encode()
 
         _run_cookie_check(
             data_dir=self.tmp,
@@ -420,11 +441,13 @@ class TestCookieCheckWithCleanup(unittest.TestCase):
         """Exception in _run_cookie_check still clears the lock."""
         # Make pull_cookie raise inside _run_cookie_check
         self.remote_sync.pull_cookie.side_effect = RuntimeError("surprise")
-        # Write local cookie and meta so we get past the is_valid_locally check
-        self.tmp.joinpath("device_cookie.bin").write_bytes(b"\x00" * 32)
+        # Write local cookie meta so we get past the is_valid_locally check
         created = int(time.time() * 1000) - 5 * 60 * 1000
         self.tmp.joinpath("device_cookie.meta").write_text(
-            json.dumps({"created_at": created})
+            json.dumps({
+                "device_specifier": "test-spec",
+                "creation_time": created,
+            })
         )
 
         _write_lock_file(self.lock)

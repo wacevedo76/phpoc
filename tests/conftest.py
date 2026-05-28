@@ -29,7 +29,29 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from unittest.mock import MagicMock
 
-import pytest
+try:
+    import pytest
+    HAS_PYTEST = True
+except ImportError:
+    HAS_PYTEST = False
+    # Provide a pytest mock so the module can still be imported
+    class _MockPytest:
+        @staticmethod
+        def mark(*a, **kw):
+            def dec(f):
+                return f
+            return dec
+        class parametrize:
+            def __init__(self, *a, **kw):
+                pass
+            def __call__(self, f):
+                return f
+        class fixture:
+            def __init__(self, *a, **kw):
+                pass
+            def __call__(self, f):
+                return f
+    pytest = _MockPytest()
 
 from domain.cookie.device_cookie import DeviceCookie, META_FILE, COOKIE_FILE
 from domain.staging.remote_sync import RemoteStagingSync, REMOTE_COOKIE_PATH

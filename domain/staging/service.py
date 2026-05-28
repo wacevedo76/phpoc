@@ -706,7 +706,7 @@ class StagingService:
         """Create a fresh device cookie and push it to remote.
 
         Only write operations that produce new staging data should call this.
-        Sync-only operations (ph sync remote_staging) must NOT push the cookie
+        Sync-only operations (ph sync) must NOT push the cookie
         — the remote cookie is the authoritative record of which device last
         wrote, and sync commands do not write.
 
@@ -721,7 +721,7 @@ class StagingService:
     def push_blob_only(self, master_key: bytes):
         """Push only the staging blob to remote, WITHOUT creating/pushing a cookie.
 
-        Used by sync commands (ph sync remote_staging) that should reconcile
+        Used by sync operations that should reconcile
         data but not claim ownership of the remote cookie. The remote cookie
         is only updated by real write operations.
 

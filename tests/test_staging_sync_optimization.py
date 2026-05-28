@@ -1003,7 +1003,29 @@ class TestRemoteOffline(unittest.TestCase):
 # No read/write distinction — all commands follow the same rules.
 # =============================================================================
 
-import pytest
+try:
+    import pytest
+    HAS_PYTEST = True
+except ImportError:
+    HAS_PYTEST = False
+    # Provide a pytest mock so the module can still be imported
+    class _MockPytest:
+        @staticmethod
+        def mark(*a, **kw):
+            def dec(f):
+                return f
+            return dec
+        class parametrize:
+            def __init__(self, *a, **kw):
+                pass
+            def __call__(self, f):
+                return f
+        class fixture:
+            def __init__(self, *a, **kw):
+                pass
+            def __call__(self, f):
+                return f
+    pytest = _MockPytest()
 
 from cli.trace import trace  # noqa: F401
 from domain.staging.service import StagingService, SyncCheckResult

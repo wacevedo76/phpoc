@@ -182,7 +182,7 @@ class CLIInterface:
     @trace
     def add_oneoff(self, title, start, stop, metadata=None, tags=None, comment=None):
         if not self._sync_before_command(require_auth=True):
-            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            print("Authentication required. Run 'ph login' or 'ph sync' first.")
             return
         self._staging.capture(title, start, stop_epoch=stop, metadata=metadata, is_active=False, tags=tags, comment=comment)
         self._defer_push()
@@ -193,7 +193,7 @@ class CLIInterface:
     @trace
     def add_start(self, title, tags=None, comment=None):
         if not self._sync_before_command(require_auth=True):
-            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            print("Authentication required. Run 'ph login' or 'ph sync' first.")
             return
         self._staging.capture(title, int(time.time()*1000), is_active=True, tags=tags, comment=comment)
         self._defer_push()
@@ -204,7 +204,7 @@ class CLIInterface:
     @trace
     def add_end(self, title, comment=None):
         if not self._sync_before_command(require_auth=True):
-            print("Authentication required. Run 'ph login' or 'ph sync remote_staging' first.")
+            print("Authentication required. Run 'ph login' or 'ph sync' first.")
             return
         resolved = self._resolve_title(title)
         self._staging.end(resolved, int(time.time()*1000), comment=comment)
