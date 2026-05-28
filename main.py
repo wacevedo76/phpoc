@@ -649,8 +649,8 @@ def main():
                 if raw is None:
                     print("No remote device cookie found.")
                 else:
-                    import json
-                    cookie = json.loads(raw.decode("utf-8"))
+                    import json as _json
+                    cookie = _json.loads(raw.decode("utf-8"))
                     print("Remote Device Cookie:")
                     print(f"  device_uuid:       {cookie.get('device_uuid', 'N/A')}")
                     print(f"  device_specifier:  {cookie.get('device_specifier', 'N/A')}")
@@ -658,7 +658,6 @@ def main():
                     # Do NOT use DeviceCookie.is_valid_locally() as it destroys
                     # expired cookies. This is a diagnostic command.
                     import time as _time
-                    import json as _json
                     local_path = staging_service._data_dir / "device_cookie.meta"
                     local = None
                     if local_path.exists():
