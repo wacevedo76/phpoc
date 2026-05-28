@@ -204,14 +204,20 @@ def _make_transport(freshness_tracker: Optional[dict] = None):
     """
     transport = MagicMock()
     transport._blob = None
+    transport._cookie = None
     transport._pull_count = 0
 
     def pull_side_effect(path):
         transport._pull_count += 1
+        if path and "cookie" in str(path):
+            return transport._cookie
         return transport._blob
 
     def push_side_effect(path, data):
-        transport._blob = data
+        if path and "cookie" in str(path):
+            transport._cookie = data
+        else:
+            transport._blob = data
 
     transport.pull.side_effect = pull_side_effect
     transport.push.side_effect = push_side_effect

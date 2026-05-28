@@ -143,10 +143,13 @@ def mock_staging_store(initial_entries=None):
 def mock_transport(available=True):
     transport = MagicMock()
     transport._blob = None
+    transport._cookie = None
     transport._available = available
-    transport.pull.side_effect = lambda path=None: transport._blob
+    transport.pull.side_effect = lambda path=None: (
+        transport._blob if "cookie" not in str(path) else transport._cookie
+    )
     transport.push.side_effect = lambda path, data: setattr(
-        transport, "_blob", data
+        transport, "_cookie" if "cookie" in str(path) else "_blob", data
     )
     return transport
 
@@ -414,7 +417,7 @@ class TestAuthCache(unittest.TestCase):
 
             # Push a matching remote cookie
             local_cookie = DeviceCookie.is_valid_locally(data_dir, 30)
-            transport._blob = json.dumps(local_cookie).encode()
+            transport._cookie = json.dumps(local_cookie).encode()
 
             # Within window: same device, fast path — READY
             result = svc.check_and_sync(timeout_ms=500)

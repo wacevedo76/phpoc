@@ -695,11 +695,29 @@ class StagingService:
 
         device_id = identity.device_id if identity else "unknown"
 
-        # Push device cookie FIRST (tiny file, fast), then stage blob.
-        DeviceCookie.destroy_locally(self._data_dir)
-        self._push_cookie(device_id)
-
+        # Push the staging blob FIRST, then the device cookie.
+        # Order matters: if the blob push fails, the cookie is unchanged and
+        # the next check_and_sync will find matching cookies and retry the
+        # blob push (fast path). If the cookie push fails after the blob
+        # succeeds, the cookie mismatch triggers reconcile which pulls the
+        # correct (updated) blob — self-healing.
+        #
+        # The old order (cookie first) caused a bug where a failed cookie push
+        # destroyed the local cookie but left the remote blob stale. The next
+        # check_and_sync would see a cookie mismatch, trigger _reconcile_and_claim,
+        # pull the old remote blob, and restore entries that had already been
+        # committed to the ledger — producing ledger duplicates.
         self._remote.push(raw, device_id, master_key=master_key)
+
+        try:
+            DeviceCookie.destroy_locally(self._data_dir)
+            self._push_cookie(device_id)
+        except Exception as exc:
+            # Cookie failure is non-critical. Next check_and_sync will
+            # trigger a cookie mismatch → reconcile, which pulls the
+            # updated blob and creates a fresh cookie.
+            logger.warning("Device cookie push failed: %s", exc)
+
         self._last_push_at = int(time.time() * 1000)
 
     def _push_cookie(self, device_id: str):
