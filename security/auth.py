@@ -46,7 +46,7 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         self._key: Optional[bytes] = None
 
     def authenticate(self) -> bool:
-        # 1. Check RAM cache
+        # 1. Check cached session
         if self.SESSION_FILE.exists():
             try:
                 self._key = self.SESSION_FILE.read_bytes()
@@ -67,9 +67,10 @@ class PassphraseAuthenticator(AbstractAuthenticator):
                 return False
         if not passphrase:
             return False
-        
+
+        # Derive PDK with current iteration count (600K)
         pdk = hashlib.pbkdf2_hmac('sha256', passphrase.encode(), b"session-salt", 600000, 32)
-        
+
         # 3. Read Ledger to find encrypted seed
         if not self.ledger_path.exists():
             # If no ledger exists, we use the PDK as a temporary key (for init)
@@ -81,12 +82,24 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             ledger_data = json.loads(self.ledger_path.read_text())
             genesis = ledger_data[0]
             enc_seed = genesis["identity"]["recovery_seed_enc"]
-            
-            # 4. Decrypt Sovereign Seed
-            seed = RecoveryManager.decrypt_seed(enc_seed, pdk)
+
+            # 4. Decrypt Sovereign Seed — try current (600K) first, then
+            #    legacy (100K) for pre-R3 genesis blocks
+            seed = None
+            for candidate_pdk in [pdk, hashlib.pbkdf2_hmac('sha256', passphrase.encode(), b"session-salt", 100000, 32)]:
+                try:
+                    seed = RecoveryManager.decrypt_seed(enc_seed, candidate_pdk)
+                    break
+                except Exception:
+                    continue
+
+            if seed is None:
+                print("Authentication Error: Wrong passphrase.")
+                return False
+
             self._key = RecoveryManager.seed_to_key(seed)
-            
-            # 5. Cache in RAM
+
+            # 5. Cache in session
             self._cache_key(self._key)
             return True
         except Exception as e:

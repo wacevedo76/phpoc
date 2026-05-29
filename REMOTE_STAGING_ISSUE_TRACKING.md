@@ -41,7 +41,7 @@
 
 | Issue | Status |
 |-------|--------|
-| Wrong session key `00fb89ef...` cached on both machines after `ph login` | 🔴 Critical — PDK, not master key; `authenticate()` returns True despite wrong passphrase |
+| ~~Wrong session key `00fb89ef...`~~ | ✅ **Misdiagnosis** — key IS correct master key (see SESSION_HANDOFF.md) |
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | 🔴 Critical — treats deobfuscation failure as "no remote data" and pushes empty blob |
 | Deduped 63-block ledger not pushed to remote | 🟡 R2 still has 85-block chain |
 | Remote blob permanently garbled (wrong key) | 🟡 R2 blob garbage; need correct master key to read, then push clean blob |
@@ -60,7 +60,7 @@
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | When blob deobfuscation fails (wrong master key), `pull()` returns `None` → treated as "no remote data" → pushes empty local blob → overwrites real data on R2. Should signal OFFLINE or abort. |
 | Deduped 63-block ledger not pushed to remote | Remote R2 still has old 85-block chain. Need `ph sync` on x13 to push deduped chain. |
 | Scripts unshippable from chat (multi-line inline Python) | `scripts/check_staging.sh`, `scripts/check_remote_blob.sh`, `scripts/check_remote_ledger.sh` — runnable directly on x13 |
-| Wrong session key `00fb89ef...` cached despite fresh `ph login` | Both machines have same PDK in session; `authenticate()` returns True but seed decryption fails. Investigate `authenticate()` code path in `security/auth.py`. |
+| ~~Wrong session key `00fb89ef...` cached despite fresh `ph login`~~ | ✅ **Resolved — Misdiagnosis.** `00fb89ef...` IS the correct master key. The handoff was testing `CryptoManager(mk).decrypt(enc_seed)` which was the wrong test — master key doesn't decrypt the seed, PDK does. |
 
 ## Device Side-quests
 

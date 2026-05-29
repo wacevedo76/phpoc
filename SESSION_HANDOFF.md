@@ -229,56 +229,38 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 2. Fix `ph login` / `_reconcile_and_claim` to detect wrong-key-on-blob as OFFLINE not success
 3. Verify cross-device handoff with running tasks
 
-## Critical Open Issue: Wrong Session Key on Both Machines
+## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
-**Symptom:** Both machines (x13 and debagent04) cache session key
+**Status:** Resolved 2026-05-29. There is NO wrong-session-key bug.
+
+**Background:** Both machines cached session key
 `00fb89ef9116b5e0899bd8b1d3fc4763efc9a2345e85c5f0651e578905a6794d`
-after `ph login`. This key is a PDK (passphrase-derived key) that **cannot
-decrypt the Sovereign Seed** in the ledger, yet `authenticate()` returns
-`True` and caches it.
+after `ph login`. This key was initially diagnosed as a "PDK that cannot
+decrypt the Sovereign Seed" because `CryptoManager(key).decrypt(enc_seed)`
+failed.
 
-**Key facts discovered:**
-- `00fb89ef...` is NOT the empty-passphrase PDK (`01ccca13...`)
-- `00fb89ef...` is NOT the "test" PDK (`369a7dec...`)
-- The cached key is identical on both machines after fresh `ph login`
-- `RecoveryManager.decrypt_seed(enc_seed, pdk)` throws an exception with
-  this PDK — confirming the passphrase does not match
-- `identity_secret_enc_fallback` exists in the ledger genesis block
-  (starts with `e6f1aa66...`)
+**Root cause of misdiagnosis:** The master key is NOT supposed to decrypt
 
-**Troubleshooting needed:**
-1. **Instrument `authenticate()` in `security/auth.py`** — add temporary
-   debug prints to confirm which branch executes: does the `except` block
-   actually fire, or is there a code path that bypasses seed decryption?
-2. **Check `RecoveryManager.decrypt_seed`** — verify it throws for
-   wrong PDK, and that `RecoveryManager.seed_to_key` returns the correct
-   master key for the correct PDK
-3. **Check for a stale session file** — maybe `ph login`'s `clear_session()`
-   is being called before the SESSION_FILE path is resolved (if
-   `/dev/shm/phpoc_session` vs `/tmp/phpoc_session` differs between
-   `PassphraseAuthenticator` instances)
-4. **Test with a fresh debug script:**
-   ```python
-   from security.auth import PassphraseAuthenticator
-   from security.recovery import RecoveryManager
-   import hashlib
-   pdk = hashlib.pbkdf2_hmac('sha256', b'ACTUAL_PASSPHRASE', b'session-salt', 600000, 32)
-   print('PDK:', pdk.hex())
-   # Try to decrypt seed
-   ledger_data = json.load(open('/home/pi/.local/share/phpoc/ledger.json'))
-   seed = RecoveryManager.decrypt_seed(ledger_data[0]['identity']['recovery_seed_enc'], pdk)
-   mk = RecoveryManager.seed_to_key(seed)
-   print('MK:', mk.hex())
-   ```
-5. **Check if `recovery_seed_enc` was written with a different passphrase**
-   than what either user remembers. The passphrase history includes a
-   retired passphrase `m0r3m0n3y` (security incident 2026-05-22).
+the seed. The PDK (passphrase-derived key) decrypts the seed, and the
+seed's decoded bytes ARE the master key. Testing `CryptoManager(mk).decrypt(enc_seed)`
+was the wrong test — it expected the master key to decrypt the seed, but
+that's not the protocol.
 
-**Hypothesis:** The passphrase being entered does not match the one used
-when the ledger was created on debagent04 during onboarding. The
-Sovereign Seed was encrypted with one passphrase, but both users remember
-a different passphrase. `ph recover` on either machine with the correct
-Recovery Seed would fix this.
+**Verification (2026-05-29):**
+1. `ph login` with the correct passphrase produced PDK `ce08b69f...`
+2. The 600K PDK successfully decrypted `recovery_seed_enc`
+3. `RecoveryManager.seed_to_key(seed)` returned `00fb89ef...`
+4. The master key `00fb89ef...` correctly decrypts ledger entries,
+   staging blob, and identity secret
+
+**Lesson:** `authenticate()` was working correctly all along. The session
+handoff's debug script tested the wrong thing. The cached key WAS the
+correct master key — it was never supposed to decrypt the seed.
+
+**Improvement made:** Added 100K PBKDF2 fallback in `authenticate()` for
+ledgers created before commit `e25a26c` (2026-04-28), which bumped
+iterations from 100,000 to 600,000. Without this fallback, pre-R3 genesis
+blocks would fail to decrypt despite the correct passphrase.
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
