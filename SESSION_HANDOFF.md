@@ -2,12 +2,13 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `4508503`
-- **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4)
-- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
+- **Commit:** `f54ed3f`
+- **Tests:** 1128 passing (28 suites), 1 pre-existing hang in phase4 (skipped)
+- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 86 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
 - **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
+- **Cross-device sync:** Verified working — x13 ↔ debagent04 both sync via R2
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -88,12 +89,14 @@ Two push paths:
 | | x13 (laptop) | debagent04 (pi) |
 |---|---|---|
 | Device ID | `dc1da321-2c80-4815-a808-11295b8c59f9` | `bbb3badc-6365-49ea-b43c-53869ca0195f` |
-| Passphrase | ✅ Updated | ✅ Updated |
+| Passphrase | ✅ Working | ✅ Working |
 | Transport | HTTP → Cloudflare Worker | HTTP (same URL) |
 | API key | ✅ Set | ✅ Set |
-| Cookie | Created (last write from x13) | Present (mismatch with remote) |
-| Session key | `00fb89ef...` (PDK, **wrong**) | `00fb89ef...` (PDK, **wrong**) |
-| Ledger blocks | 85 (pre-dedup, from remote) | 85 (same) |
+| Cookie | ✅ Created (last write from x13) | ✅ Created after `ph login` |
+| Session key | `00fb89ef...` (master key, correct) | `00fb89ef...` (master key, correct) |
+| Ledger blocks | 86 (in sync with remote) | 86 (same) |
+| Remote blob | ✅ Readable, 1 entry | ✅ Readable (same blob) |
+| Cross-device | Verified `ph view` works | Verified `ph view` works |
 
 ## Key Files
 
@@ -121,16 +124,16 @@ Two push paths:
 
 ## Recent Commits
 ```
+f54ed3f  docs: update issue tracking — ledger sync resolved, blob mismatch fix committed
+1dacf40  fix: protect remote blob from overwrite on key mismatch
+3002952  fix: wrong-session-key misdiagnosis resolved — 00fb89ef is correct master key
+450b29e  docs: document wrong-session-key issue, update devices table and next steps
+10a262d  scripts: add diagnostic scripts for staging/blob/ledger remote inspection
+c32e50c  docs: document dev push-status, session handoff updates, open issues
 4508503  fix: empty-ledger robustness, Ctrl+C protection, NoAuth read commands
 da4ac16  fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
 bc7078e  docs: update session handoff with stale-remote fix and sync confirmation
 45ae00d  fix: stale-remote overwrite only needed block instead of force-pushing all
-06fd058  fix: bare import json inside main() shadows top-level import
-e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
-3b67fbc  fix: push staging blob before device cookie to prevent stale-remote bug
-23f510f  fix: ph login uses SyncCheckResult enum instead of StagingService attrs
-01d4f24  fix: resolve tracked issues P0-P4
-3b0e92f  fix: resolve 54 pre-existing test failures from API drift
 ```
 
 ## This Session (2026-05-28)
@@ -224,10 +227,41 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
+## Session 2026-05-29 fixes
+
+### 100K PBKDF2 fallback
+`security/auth.py`: Added backward-compatible fallback in `authenticate()` —
+tries current 600K iterations first, then legacy 100K for genesis blocks
+created before commit `e25a26c` (2026-04-28).
+
+### BLOB_KEY_MISMATCH sentinel
+`domain/staging/remote_sync.py`: `pull()` now returns `BLOB_KEY_MISMATCH`
+sentinel when raw bytes exist but cannot be decrypted (wrong key or
+corruption), distinct from `None` (no blob). `_reconcile_and_claim()`
+returns `OFFLINE` instead of silently overwriting the remote blob.
+Commit: `1dacf40`.
+
+### Wrong-session-key misdiagnosis
+`SESSION_HANDOFF.md`: Corrected the "wrong session key" entry — `00fb89ef...`
+IS the correct master key. The earlier diagnosis tested
+`CryptoManager(mk).decrypt(enc_seed)` which was wrong: the master key
+doesn't decrypt the seed, the PDK does. Commit: `3002952`.
+
+### Ledger sync verified
+`ph sync --yes` pushed all blocks. Both sides (x13 and remote) now have
+86 blocks — in sync. Verified on debagent04: `ph login` + `ph view` works.
+Commit: `f54ed3f`.
+
+### Cross-device handoff confirmed
+Both machines sync correctly via R2. Handoff flow:
+1. x13 runs `ph add` → WAL push → remote blob updated
+2. debagent04 runs `ph login` → auth → pull remote blob → reconcile → new cookie
+3. `ph view` shows same active tasks on both machines
+
 ## Next Steps
-1. Push deduped 63-block ledger from x13 to remote (remote still has 85-block chain)
-2. Fix `ph login` / `_reconcile_and_claim` to detect wrong-key-on-blob as OFFLINE not success
-3. Verify cross-device handoff with running tasks
+1. Run full test suite on debagent04 after pulling latest commits
+2. Consider investigating the pre-existing Phase 4 test hang
+3. ETag caching in long-running daemon mode (low priority)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -263,6 +297,5 @@ iterations from 100,000 to 600,000. Without this fallback, pre-R3 genesis
 blocks would fail to decrypt despite the correct passphrase.
 
 ## Known Issues
-- ETag caching stale in long-running daemon mode (not a current issue)
 - `test_sync_calls_check_and_sync_first` in `test_phase4_staging_interaction_flow.py` hangs (pre-existing, likely integration/networking)
-- `_reconcile_and_claim` treats blob deobfuscation failure (wrong master key) as "no remote data" — pushes empty local blob, overwriting remote data on R2
+- ETag caching stale in long-running daemon mode (low priority, not a current issue)

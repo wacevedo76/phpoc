@@ -39,12 +39,21 @@
 
 ## Open
 
+_All previously tracked issues resolved._
+
 | Issue | Status |
 |-------|--------|
-| ~~Wrong session key `00fb89ef...`~~ | ✅ **Misdiagnosis** — key IS correct master key (see SESSION_HANDOFF.md) |
-| `_reconcile_and_claim` overwrites remote blob on key mismatch | ✅ **Fixed** — `BLOB_KEY_MISMATCH` sentinel prevents overwrite (commit 1dacf40) |
-| ~~Deduped 63-block ledger not pushed to remote~~ | ✅ **Superseded** — ledger regrew to 86 blocks; both sides now in sync |
-| Remote blob permanently garbled (wrong key) | 🟡 Need to verify current blob is readable with correct key |
+| No open issues | ✅ All resolved |
+
+## Resolved (Session 2026-05-29)
+
+| Issue | Resolution |
+|-------|-----------|
+| ~~Wrong session key `00fb89ef...`~~ | **Misdiagnosis** — key IS correct master key. Authentication was working correctly all along. |
+| `_reconcile_and_claim` overwrites remote blob on key mismatch | `BLOB_KEY_MISMATCH` sentinel in `pull()` prevents silent overwrite — returns `OFFLINE` instead. Commit `1dacf40`. |
+| ~~Deduped 63-block ledger not pushed to remote~~ | **Superseded** — ledger regrew to 86 blocks; `ph sync --yes` pushed and both sides in sync. |
+| Remote blob garbled (wrong key) | **Not garbled** — blob is readable and decrypts correctly with the master key. |
+| Cross-device handoff | Verified on both machines — `ph login` + `ph view` works on x13 and debagent04. |
 
 ## Session 2026-05-29 fixes
 
@@ -57,8 +66,9 @@
 | `ph view` / `ph list` require passphrase for read-only access | Split auth: read commands use cached session or `NoAuthCryptoManager`; undecryptable entries skipped gracefully |
 | `view_active()` crashes on undecryptable timestamps with NoAuth | try/except around `decrypt()` — skips entry instead of crashing |
 | No diagnostic for push/remote state | Added `ph dev push-status` — shows WAL pending state, remote blob listing, blob path |
-| `_reconcile_and_claim` overwrites remote blob on key mismatch | When blob deobfuscation fails (wrong master key), `pull()` returns `None` → treated as "no remote data" → pushes empty local blob → overwrites real data on R2. Should signal OFFLINE or abort. |
-| Deduped 63-block ledger not pushed to remote | Remote R2 still has old 85-block chain. Need `ph sync` on x13 to push deduped chain. |
+| 100K PBKDF2 fallback for pre-R3 genesis blocks | `authenticate()` tries 600K then 100K iterations for backward compatibility (commit `3002952`). |
+| `_reconcile_and_claim` overwrites remote blob on key mismatch | ✅ **Fixed** — `BLOB_KEY_MISMATCH` sentinel prevents overwrite (commit `1dacf40`). |
+| Deduped 63-block ledger not pushed to remote | ✅ **Superseded** — ledger regrew to 86 blocks; `ph sync` pushed and both sides match (commit `f54ed3f`). |
 | Scripts unshippable from chat (multi-line inline Python) | `scripts/check_staging.sh`, `scripts/check_remote_blob.sh`, `scripts/check_remote_ledger.sh` — runnable directly on x13 |
 | ~~Wrong session key `00fb89ef...` cached despite fresh `ph login`~~ | ✅ **Resolved — Misdiagnosis.** `00fb89ef...` IS the correct master key. |
 | ~~Deduped 63-block ledger not pushed to remote~~ | ✅ **Superseded** — ledger regrew to 86 blocks; `ph sync` pushed and both sides match. |
