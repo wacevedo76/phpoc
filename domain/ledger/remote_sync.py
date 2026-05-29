@@ -61,6 +61,7 @@ class RemoteLedgerSync:
         local_blocks: List[Dict[str, Any]],
         force: bool = False,
         existing_indices: Optional[set] = None,
+        overwrite_indices: Optional[set] = None,
     ) -> int:
         """Push blocks that don't exist on remote yet (or overwrite if force=True).
 
@@ -68,14 +69,22 @@ class RemoteLedgerSync:
         Normal push skips by index, leaving the old chain on remote. With force=True,
         existing remote blocks are overwritten so the remote matches the local chain.
 
+        ``overwrite_indices`` is a targeted alternative to ``force``: specific indices
+        are always pushed even if they already exist on remote. This is useful when
+        the remote has stale blocks at certain indices from an incompatible chain
+        (e.g. after recovery on a different device). `pull_blocks()` detects these
+        by divergence reporting — the caller then passes those indices here.
+
         Args:
             local_blocks: Full local ledger chain (list of block dicts).
-            force: If True, overwrite remote blocks at the same index even if they
-                   already exist. Use after recovery when all block hashes changed.
+            force: If True, overwrite ALL remote blocks. Used after recovery.
             existing_indices: Pre-fetched set of remote block indices. When provided,
                               avoids a redundant ``list_files()`` call. If omitted,
-                              fetches fresh. Used by ``SyncOrchestrator._sync_ledger_blocks()``
-                              to share one ``list_files()`` between pull and push.
+                              fetches fresh.
+            overwrite_indices: Set of specific indices to overwrite even if they
+                               exist on remote. Independent of ``force`` — only the
+                               given indices are overwritten. Must be provided with
+                               ``existing_indices`` to know which are stale.
 
         Returns:
             Number of blocks pushed.
@@ -90,7 +99,9 @@ class RemoteLedgerSync:
             path = self._blocks_prefix + filename
 
             if i in existing:
-                continue  # Already on remote — skip (only when force=False)
+                # Skip unless this index is explicitly marked for overwrite
+                if overwrite_indices is None or i not in overwrite_indices:
+                    continue
 
             obfuscated = self._obfuscate_block(block)
             self._transport.push(path, obfuscated)

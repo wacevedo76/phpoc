@@ -634,7 +634,11 @@ def main():
             )
 
         till_date = _resolve_till_date(args.till) if args.till else None
-        sync_orchestrator.sync(till_date=till_date)
+        skip_confirmation = getattr(args, 'yes', False)
+        sync_orchestrator.sync(
+            till_date=till_date,
+            skip_confirmation=skip_confirmation,
+        )
     elif args.command == "verify":
         result = ledger.verify()
         print(result)

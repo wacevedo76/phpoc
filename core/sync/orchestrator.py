@@ -25,6 +25,8 @@ from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from domain.interfaces.view import ViewInterface
 from core.sync.transport import AbstractStagingTransport
+from core.sync.decision import SyncDecision
+
 
 logger = logging.getLogger(__name__)
 
@@ -62,22 +64,31 @@ class SyncOrchestrator:
     # Main sync flow
     # ------------------------------------------------------------------
 
-    def sync(self, till_date: Optional[str] = None) -> bool:
+    def sync(
+        self,
+        till_date: Optional[str] = None,
+        skip_confirmation: bool = False,
+    ) -> bool:
         """Run the full sync pipeline.
 
         1. check_and_sync() — pull remote staging, merge local
         2. Get pending (completed) entries from staging
         3. If till_date set: filter pending to entries with date <= till_date
-        4. Commit to ledger
-        5. Verify chain integrity
-        6. If verify OK: remove synced from staging, push to remote
-        7. If verify fails: revert the commit
-        8. If remote transport configured: sync ledger blocks
+        4. User confirmation (unless ``skip_confirmation=True``):
+           - InteractiveCLIStrategy shows overview, allows edits and removals
+           - Returns SyncDecision with selected indices, overrides, removals
+        5. Commit to ledger
+        6. Verify chain integrity
+        7. If verify OK: remove synced from staging, push to remote
+        8. If verify fails: revert the commit
+        9. If remote transport configured: sync ledger blocks
            (pull missing, push new, push index)
 
         Args:
             till_date: Optional date string (YYYY-MM-DD). Only entries with
                        date <= till_date will be synced.
+            skip_confirmation: If True, sync all pending entries without prompt.
+                               Use --yes flag or headless mode.
 
         Returns:
             True on success, False if verify fails (commit reverted).
@@ -114,7 +125,42 @@ class SyncOrchestrator:
                 self._sync_ledger_blocks()
                 return True
 
-        # Step 4: commit to ledger
+        # Step 4: user confirmation
+        sync_decision: Optional[SyncDecision] = None
+        if not skip_confirmation and pending and self._view is not None:
+            from cli.strategies import InteractiveCLIStrategy
+            strategy = InteractiveCLIStrategy()
+            sync_decision = strategy.decide(pending, self._view)
+            if sync_decision.cancelled:
+                logger.info("SyncOrchestrator: sync cancelled by user")
+                return False
+
+            # Filter pending to only selected entries
+            pending = [
+                p for p in pending
+                if p["entry_index"] in sync_decision.selected_indices
+            ]
+            if not pending:
+                logger.info("SyncOrchestrator: no entries selected after confirmation")
+                self._sync_ledger_blocks()
+                return True
+
+            # Apply overrides (end time, comment)
+            for p in pending:
+                idx = p["entry_index"]
+                if idx in sync_decision.overrides:
+                    ov = sync_decision.overrides[idx]
+                    if "end_epoch" in ov:
+                        p["end_epoch"] = ov["end_epoch"]
+                        p["duration"] = ov["end_epoch"] - p["start_epoch"]
+                    if "comment" in ov:
+                        p["comment"] = ov["comment"]
+
+        if skip_confirmation or self._view is None:
+            # Auto-sync all pending entries
+            pass
+
+        # Step 5: commit to ledger
         logger.info(
             "SyncOrchestrator: committing %d entries to ledger",
             len(pending),
@@ -125,24 +171,28 @@ class SyncOrchestrator:
             logger.warning("SyncOrchestrator: commit returned None")
             return False
 
-        # Step 5: verify chain integrity
+        # Step 6: verify chain integrity
         if not self._ledger.verify():
             logger.error("SyncOrchestrator: ledger verify failed — reverting")
             self._ledger.revert(1)
             return False
 
-        # Step 6: remove synced entries from staging
+        # Step 7: remove synced entries from staging
         indices_to_remove = [e["entry_index"] for e in pending]
         self._staging.remove_synced(indices_to_remove)
 
-        # Step 7: push to remote if master_key is set
+        # Handle removal entries (entries the user explicitly marked for removal)
+        if sync_decision is not None and sync_decision.has_removals:
+            self._staging.remove_synced(list(sync_decision.removal_indices))
+
+        # Step 8: push to remote if master_key is set
         if self._master_key is not None:
             self._staging.push_to_remote(self._master_key)
 
-        # Step 8: sync ledger blocks to/from remote
+        # Step 9: sync ledger blocks to/from remote
         self._sync_ledger_blocks()
 
-        # Step 9: notify view
+        # Step 10: notify view
         if self._view is not None:
             self._view.notify(
                 f"Synced {len(pending)} entries to ledger"
@@ -155,6 +205,14 @@ class SyncOrchestrator:
 
         Only runs when a transport and master_key are available.
         Failures are logged but not fatal — local ledger always takes priority.
+
+        Handles stale-remote recovery:
+          If the remote has blocks from an incompatible chain (e.g. after
+          ``ph recover`` force-pushed a shorter chain, leaving old blocks
+          from another device at higher indices), pull_blocks detects the
+          divergence and returns nothing. This method then force-pushes the
+          local chain to overwrite stale indices and purges the remaining
+          stale blocks with empty placeholders.
         """
         if self._transport is None or self._master_key is None:
             return
@@ -171,6 +229,8 @@ class SyncOrchestrator:
             existing_indices = set()
 
         # Pull remote blocks we're missing
+        new_blocks = None
+        remote_count = 0
         try:
             all_blocks = self._ledger.chain.read_all()
             new_blocks, remote_count = ledger_sync.pull_blocks(
@@ -192,14 +252,49 @@ class SyncOrchestrator:
         # Push local blocks remote is missing
         try:
             all_blocks = self._ledger.chain.read_all()
-            pushed = ledger_sync.push_blocks(
-                all_blocks, existing_indices=existing_indices,
+            local_count = len(all_blocks)
+
+            # Check for stale remote blocks (from an incompatible chain)
+            has_stale_remote = (
+                new_blocks is None
+                and remote_count > local_count
+                and local_count > 0
             )
-            if pushed:
-                logger.info(
-                    "SyncOrchestrator: pushed %d ledger block(s) to remote",
-                    pushed,
+
+            if has_stale_remote:
+                # Remote has stale blocks from an incompatible chain.
+                # The last local block (index N-1) exists on remote as stale
+                # content from a different chain. Overwrite just that one
+                # block to keep remote consistent. Blocks >= N (from the
+                # other device) remain on remote but are ignored by pull
+                # (divergence detection skips them).
+                logger.warning(
+                    "SyncOrchestrator: remote has %d stale block(s) from "
+                    "an incompatible chain. Overwriting block %d.",
+                    remote_count - local_count,
+                    local_count - 1,
                 )
+                overwrite_indices = {local_count - 1}
+                pushed = ledger_sync.push_blocks(
+                    all_blocks,
+                    existing_indices=existing_indices,
+                    overwrite_indices=overwrite_indices,
+                )
+                if pushed:
+                    logger.info(
+                        "SyncOrchestrator: pushed block %d (overwrote stale)",
+                        local_count - 1,
+                    )
+            else:
+                # Normal path: push only blocks remote doesn't have
+                pushed = ledger_sync.push_blocks(
+                    all_blocks, existing_indices=existing_indices,
+                )
+                if pushed:
+                    logger.info(
+                        "SyncOrchestrator: pushed %d ledger block(s) to remote",
+                        pushed,
+                    )
         except Exception as exc:
             logger.warning(
                 "SyncOrchestrator: failed to push local ledger blocks: %s",
