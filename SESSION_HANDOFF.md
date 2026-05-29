@@ -113,6 +113,9 @@ Two push paths:
 | `security/config_manager.py` | Config with defaults merging + dot-notation |
 | `domain/ledger/remote_sync.py` | Ledger block push/pull + chain verification |
 | `core/sync/orchestrator.py` | Sync pipeline — staging → ledger → remote |
+| `scripts/check_staging.sh` | List local staging entries with active status |
+| `scripts/check_remote_blob.sh` | Deobfuscate and list remote staging blob entries |
+| `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
 
 ## Recent Commits
 ```

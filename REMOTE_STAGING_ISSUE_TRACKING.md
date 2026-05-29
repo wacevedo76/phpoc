@@ -54,6 +54,7 @@
 | No diagnostic for push/remote state | Added `ph dev push-status` — shows WAL pending state, remote blob listing, blob path |
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | When blob deobfuscation fails (wrong master key), `pull()` returns `None` → treated as "no remote data" → pushes empty local blob → overwrites real data on R2. Should signal OFFLINE or abort. |
 | Deduped 63-block ledger not pushed to remote | Remote R2 still has old 85-block chain. Need `ph sync` on x13 to push deduped chain. |
+| Scripts unshippable from chat (multi-line inline Python) | `scripts/check_staging.sh`, `scripts/check_remote_blob.sh`, `scripts/check_remote_ledger.sh` — runnable directly on x13 |
 
 ## Device Side-quests
 
