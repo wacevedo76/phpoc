@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `da4ac16`
+- **Commit:** `4508503`
 - **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
@@ -116,6 +116,8 @@ Two push paths:
 
 ## Recent Commits
 ```
+4508503  fix: empty-ledger robustness, Ctrl+C protection, NoAuth read commands
+da4ac16  fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
 bc7078e  docs: update session handoff with stale-remote fix and sync confirmation
 45ae00d  fix: stale-remote overwrite only needed block instead of force-pushing all
 06fd058  fix: bare import json inside main() shadows top-level import
@@ -124,14 +126,17 @@ e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
 23f510f  fix: ph login uses SyncCheckResult enum instead of StagingService attrs
 01d4f24  fix: resolve tracked issues P0-P4
 3b0e92f  fix: resolve 54 pre-existing test failures from API drift
-17cb5fd  Remove 10% TTL window from cookie touch — unconditional touch
-d967675  Add POSSIBLE_PROOF_OF_EXISTANCE.md
-f5aeda3  [this session] fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
 ```
 
 ## This Session (2026-05-28)
 
 ### Docs & UX fixes (2026-05-29)
+
+### `ph dev push-status` subcommand
+`main.py`: Added `ph dev push-status` diagnostic command showing:
+- WAL state (pending or clear)
+- Remote blobs found via `list_files()`
+- Staging blob path
 
 ### Ctrl+C protection on passphrase/seed prompts
 `security/auth.py`: Wrapped `getpass.getpass()` and `input()` calls in both
@@ -215,8 +220,11 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. Verify on debagent04: pull, run `ph view` to test cross-device handoff flow
+1. Push deduped 63-block ledger from x13 to remote (remote still has 85-block chain)
+2. Fix `ph login` / `_reconcile_and_claim` to detect wrong-key-on-blob as OFFLINE not success
+3. Verify cross-device handoff with running tasks
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
 - `test_sync_calls_check_and_sync_first` in `test_phase4_staging_interaction_flow.py` hangs (pre-existing, likely integration/networking)
+- `_reconcile_and_claim` treats blob deobfuscation failure (wrong master key) as "no remote data" — pushes empty local blob, overwriting remote data on R2

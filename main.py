@@ -126,6 +126,7 @@ def main():
     dev_parser = subparsers.add_parser("dev", help="Developer diagnostics")
     dev_sub = dev_parser.add_subparsers(dest="dev_action")
     dev_cookie_p = dev_sub.add_parser("cookie", help="Display the remote device cookie (from R2)")
+    dev_push_p = dev_sub.add_parser("push-status", help="Show last push status and WAL state")
 
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
@@ -707,8 +708,41 @@ def main():
                         print("Local Device Cookie: (none)")
             except Exception as e:
                 print(f"Failed to fetch remote device cookie: {e}")
+        elif dev_action == "push-status":
+            import json as _json
+            from cli.wal import _wal_path
+            wal_path = _wal_path(CONFIG_DIR)
+            print("=== Push Status ===")
+            if wal_path.exists():
+                try:
+                    wal = _json.loads(wal_path.read_text())
+                    ts = wal.get("timestamp", 0)
+                    print(f"  WAL:               pending (queued at {ts})" if ts else "  WAL:               pending")
+                    print(f"  staging_hash:      {wal.get('staging_hash', 'N/A')[:16]}...")
+                    print(f"  device_id:         {wal.get('device_id', 'N/A')}")
+                except Exception:
+                    print(f"  WAL:               present (unparseable)")
+            else:
+                print(f"  WAL:               clear (no pending push)")
+            
+            # Check remote blob via transport list
+            rsync = getattr(staging_service, '_remote', None)
+            if rsync is not None:
+                transport_obj = getattr(rsync, '_transport', None)
+                if transport_obj is not None and hasattr(transport_obj, 'list_files'):
+                    try:
+                        blobs = transport_obj.list_files(prefix="staging/blobs/")
+                        print(f"  Remote blobs:      {blobs}")
+                        blob_path = getattr(rsync, '_blob_path', 'N/A')
+                        print(f"  Blob path:         {blob_path}")
+                    except Exception as e:
+                        print(f"  Remote blobs:      error: {e}")
+                else:
+                    print(f"  Remote transport:  not accessible")
+            else:
+                print(f"  Remote transport:  not configured")
         else:
-            print("Unknown dev command. Available: ph dev cookie")
+            print("Unknown dev command. Available: ph dev cookie, ph dev push-status")
     elif args.command == "rep":
         from_str, to_str = CLIInterface._resolve_date_filters(
             days=args.days,

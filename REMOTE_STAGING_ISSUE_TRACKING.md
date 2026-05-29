@@ -51,6 +51,9 @@
 | `LedgerEngine._commit_day()` silently drops first-ever sync | Builds genesis day block with `"0"*64` prev_hash when `prev_block is None` |
 | `ph view` / `ph list` require passphrase for read-only access | Split auth: read commands use cached session or `NoAuthCryptoManager`; undecryptable entries skipped gracefully |
 | `view_active()` crashes on undecryptable timestamps with NoAuth | try/except around `decrypt()` — skips entry instead of crashing |
+| No diagnostic for push/remote state | Added `ph dev push-status` — shows WAL pending state, remote blob listing, blob path |
+| `_reconcile_and_claim` overwrites remote blob on key mismatch | When blob deobfuscation fails (wrong master key), `pull()` returns `None` → treated as "no remote data" → pushes empty local blob → overwrites real data on R2. Should signal OFFLINE or abort. |
+| Deduped 63-block ledger not pushed to remote | Remote R2 still has old 85-block chain. Need `ph sync` on x13 to push deduped chain. |
 
 ## Device Side-quests
 
