@@ -148,6 +148,11 @@ def _pull_staging(transport, master_key, data_dir: Path, crypto) -> Optional[dic
         print("  No staging blob found on remote.")
         return None
     
+    from domain.staging.remote_sync import BLOB_KEY_MISMATCH
+    if blob_data is BLOB_KEY_MISMATCH:
+        print("  Remote staging blob exists but cannot be decrypted with this key.")
+        return None
+    
     entries = blob_data.get("entries", [])
     print(f"  Pulled staging blob with {len(entries)} entry/entries.")
     return blob_data

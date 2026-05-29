@@ -49,6 +49,11 @@ class SyncCheckResult(Enum):
     REAUTH_NEEDED = "reauth"  # Device mismatch, passphrase required
 
 
+# Sentinel returned by pull() when a remote blob exists but cannot be decrypted
+# (wrong master key). This is distinct from None (no blob on remote).
+BLOB_KEY_MISMATCH = object()
+
+
 class RemoteStagingSync:
     """Handles device identity, transport, and blob obfuscation for remote staging.
 
@@ -242,7 +247,9 @@ class RemoteStagingSync:
 
         Returns:
             Parsed blob dict with ``entries``, ``device_id``, etc.,
-            or None if no blob exists or decryption fails.
+            None if no blob exists on remote,
+            or ``BLOB_KEY_MISMATCH`` if a blob exists but cannot be
+            decrypted (wrong master key or corrupted data).
         """
         raw_bytes = self._transport.pull(self._blob_path)
         if raw_bytes is None:
@@ -270,7 +277,8 @@ class RemoteStagingSync:
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
 
-        return None
+        # Raw bytes exist but we can't decrypt — key mismatch or corruption
+        return BLOB_KEY_MISMATCH
 
     @trace
     def push(self, entries: List[Dict[str, Any]], device_id: str, master_key: Optional[bytes] = None):
@@ -312,7 +320,7 @@ class RemoteStagingSync:
             False if device mismatch (re-auth may be needed).
         """
         blob = self.pull(master_key=master_key)
-        if blob is None:
+        if blob is None or blob is BLOB_KEY_MISMATCH:
             return True  # No remote blob — nothing to conflict with
         remote_id = blob.get("device_id")
         if not remote_id:
@@ -330,7 +338,7 @@ class RemoteStagingSync:
             Device ID string, or None if no blob exists.
         """
         blob = self.pull(master_key=master_key)
-        if blob is None:
+        if blob is None or blob is BLOB_KEY_MISMATCH:
             return None
         return blob.get("device_id")
 

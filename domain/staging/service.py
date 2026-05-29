@@ -43,7 +43,7 @@ from cli.trace import trace
 from domain.cookie.device_cookie import DeviceCookie, META_FILE
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
-from domain.staging.remote_sync import RemoteStagingSync
+from domain.staging.remote_sync import RemoteStagingSync, BLOB_KEY_MISMATCH
 from security.crypto import (
     AbstractCryptoManager,
     NoAuthCryptoManager,
@@ -631,6 +631,15 @@ class StagingService:
             try:
                 remote_blob = self._remote.pull(master_key=master_key)
             except Exception:
+                return SyncCheckResult.OFFLINE
+
+            # If remote blob exists but can't be decrypted (wrong master key),
+            # DON'T overwrite it — abort and signal OFFLINE.
+            if remote_blob is BLOB_KEY_MISMATCH:
+                logger.warning(
+                    "Remote staging blob exists but cannot be decrypted "
+                    "(wrong master key). Aborting to avoid data loss."
+                )
                 return SyncCheckResult.OFFLINE
 
             if remote_blob is not None and "entries" in remote_blob:
