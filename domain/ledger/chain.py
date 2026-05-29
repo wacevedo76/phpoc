@@ -56,6 +56,8 @@ class LedgerChain:
     def _make_read_blocks_fallback(self):  # pragma: no cover
         def read_blocks(start=0, end=None):
             ledger = self.store.read_ledger()
+            if ledger is None:
+                ledger = []
             total = len(ledger)
             if start < 0:
                 start = max(0, total + start)
@@ -85,11 +87,13 @@ class LedgerChain:
         return truncate
 
     def _make_get_block_count_fallback(self):  # pragma: no cover
-        return lambda: len(self.store.read_ledger())
+        return lambda: len(self.store.read_ledger()) if self.store.read_ledger() is not None else 0
 
     def _make_get_last_block_fallback(self):  # pragma: no cover
         def get_last_block():
             ledger = self.store.read_ledger()
+            if not ledger:
+                return None
             return ledger[-1] if ledger else None
         return get_last_block
 

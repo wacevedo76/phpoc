@@ -60,7 +60,11 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         if passphrase:
             print("Using PHPOC_PASSPHRASE from environment.")
         else:
-            passphrase = getpass.getpass("Passphrase: ")
+            try:
+                passphrase = getpass.getpass("Passphrase: ")
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return False
         if not passphrase:
             return False
         
@@ -122,7 +126,11 @@ class RecoveryAuthenticator(AbstractAuthenticator):
         self._key: Optional[bytes] = None
 
     def authenticate(self) -> bool:
-        seed = input("Enter Recovery Seed: ").strip()
+        try:
+            seed = input("Enter Recovery Seed: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return False
         if not seed:
             return False
         try:

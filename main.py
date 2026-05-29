@@ -477,9 +477,13 @@ def main():
 
     # --- Lazy Authentication Logic ---
     
-    # List of commands that REQUIRE a valid passphrase
-    # (Reading the ledger, verifying history, or performing a sync)
-    require_auth = ["sync", "verify", "rep", "list", "view", "tags", "modify", "review", "add"]
+    # Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
+    # These modify the ledger or perform irreversible operations.
+    require_auth = ["sync", "verify", "rep", "modify", "review", "add"]
+    
+    # Read-only commands that SHOULD use a cached session if available
+    # but can proceed without one (cookie-based auth handles remote access).
+    read_commands = ["list", "view", "tags"]
     
     crypto = None
     if args.command in require_auth:
@@ -487,13 +491,22 @@ def main():
             print("Passphrase required for this operation.")
             exit(1)
         crypto = CryptoManager(auth.get_key())
-    else:
-        # Check if we happen to have a session already
+    elif args.command in read_commands:
+        # Check if we have a cached session first — no prompt if cached.
         cached_key = auth.get_key()
         if cached_key:
             crypto = CryptoManager(cached_key)
         else:
-            # Add/Start/End commands can use NoAuth mode (Stage in plain-text)
+            # Use NoAuth for read-only display; encrypted entries will be
+            # skipped by the try/except in view_active/list_habits.
+            crypto = NoAuthCryptoManager()
+    else:
+        # Write commands (add/start/end/pause/unpause): check cached session,
+        # fall back to NoAuth for plain-text staging.
+        cached_key = auth.get_key()
+        if cached_key:
+            crypto = CryptoManager(cached_key)
+        else:
             crypto = NoAuthCryptoManager()
 
     store = LedgerStore(CONFIG_DIR / "staging.json", LEDGER_PATH, INDEX_PATH)
@@ -1480,4 +1493,11 @@ def _resolve_till_date(date_str: str) -> str:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print()
+        exit(130)
+    except EOFError:
+        print()
+        exit(130)

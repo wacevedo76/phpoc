@@ -41,6 +41,17 @@
 
 *(No open issues — all tracked items resolved.)*
 
+## Session 2026-05-29 fixes
+
+| Issue | Resolution |
+|-------|-----------|
+| Ctrl+C during passphrase/seed prompt breaks terminal | `KeyboardInterrupt`/`EOFError` caught in both authenticators — print newline, return `False` |
+| KeyboardInterrupt at top level dumps traceback | `main()` wrapped in try/except — clean exit code 130 |
+| `LedgerChain` crashes when `read_ledger()` returns `None` | Added `None` guards in all three fallback adapters |
+| `LedgerEngine._commit_day()` silently drops first-ever sync | Builds genesis day block with `"0"*64` prev_hash when `prev_block is None` |
+| `ph view` / `ph list` require passphrase for read-only access | Split auth: read commands use cached session or `NoAuthCryptoManager`; undecryptable entries skipped gracefully |
+| `view_active()` crashes on undecryptable timestamps with NoAuth | try/except around `decrypt()` — skips entry instead of crashing |
+
 ## Device Side-quests
 
 ### Hand-off flow (now working)

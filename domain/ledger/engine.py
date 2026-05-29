@@ -212,6 +212,18 @@ class LedgerEngine:
         # Get the last block from the actual store for boundary checks
         prev_block = self.chain.get_last_block()
         if prev_block is None:
+            # No ledger at all (e.g. after ledger.json was deleted).
+            # Use a nil prev_hash for the first-ever day block.
+            prev_hash = "0" * 64
+            day_block = self.chain.build_day_block(
+                day_entries, prev_hash, date_str
+            )
+            self.chain.append(day_block)
+            # Update index
+            for entry in day_entries:
+                title = entry["data"]["title"]
+                duration = entry["data"].get("duration", 0)
+                self.index.update(date_str, title, duration)
             return
 
         # Insert summary blocks if needed

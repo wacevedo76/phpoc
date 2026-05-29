@@ -2,8 +2,8 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `bc7078e`
-- **Tests:** 1338 passing, 0 failures
+- **Commit:** `da4ac16`
+- **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -131,6 +131,42 @@ f5aeda3  [this session] fix: CLIView wiring — ph sync shows interactive modify
 
 ## This Session (2026-05-28)
 
+### Docs & UX fixes (2026-05-29)
+
+### Ctrl+C protection on passphrase/seed prompts
+`security/auth.py`: Wrapped `getpass.getpass()` and `input()` calls in both
+`PassphraseAuthenticator` and `RecoveryAuthenticator` with try/except for
+`(KeyboardInterrupt, EOFError)` — prints a newline and returns `False`
+cleanly instead of mangling terminal echo on Ctrl+C/Ctrl+D.
+
+### Clean exit on KeyboardInterrupt at top level
+`main.py`: Wrapped `main()` call in `if __name__ == "__main__"` with
+try/except for `KeyboardInterrupt` and `EOFError` — prints newline and
+exits with code 130 instead of dumping a traceback.
+
+### Empty-ledger robustness
+`domain/ledger/chain.py`: Added `None` guards in fallback adapters
+(`_make_read_blocks_fallback`, `_make_get_block_count_fallback`,
+`_make_get_last_block_fallback`) so `LedgerChain` doesn't crash when
+`read_ledger()` returns `None` (no ledger.json yet).
+
+`domain/ledger/engine.py`: `_commit_day()` now handles the first-ever
+sync when `prev_block is None` — builds a day block with `"0"*64` as
+prev_hash and appends it, instead of silently returning.
+
+`storage/file_store.py`: `read_ledger()` kept returning `None` (not `[]`)
+so callers can distinguish "empty ledger" from "ledger not yet created."
+
+### NoAuth read commands
+`main.py`: Split auth requirements into three tiers:
+- `require_auth` (must prompt): `sync`, `verify`, `rep`, `modify`, `review`, `add`
+- `read_commands` (cached session or NoAuth): `list`, `view`, `tags`
+- Everything else (cached session or NoAuth): `add start/end/pause/unpause`
+
+`cli/interface.py::view_active()`: Wrapped `self._crypto.decrypt(start_val)`
+in try/except — skips entries with undecryptable timestamps instead of
+crashing, enabling `ph view` / `ph list active` without a passphrase.
+
 ### P0 — `_deep_merge` shallow-copy bug
 `security/config_manager.py:_deep_merge()` assigned `result[key] = default_val` for non-overridden dict values — shared reference with `ConfigManager.DEFAULTS`. Callers could mutate the class-level defaults globally. Fixed: deep-copy dict values via recursive `_deep_merge(default_val, {})`.
 
@@ -179,8 +215,8 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. Push this commit to remote: `git push origin P3-Remote_Sync`
-2. Verify on debagent04: pull, run `ph view` to test cross-device handoff flow
+1. Verify on debagent04: pull, run `ph view` to test cross-device handoff flow
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
+- `test_sync_calls_check_and_sync_first` in `test_phase4_staging_interaction_flow.py` hangs (pre-existing, likely integration/networking)

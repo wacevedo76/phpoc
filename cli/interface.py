@@ -259,7 +259,10 @@ class CLIInterface:
             if start_val.startswith("plain:"):
                 start_epoch = int(start_val[6:])
             else:
-                start_epoch = int(self._crypto.decrypt(start_val))
+                try:
+                    start_epoch = int(self._crypto.decrypt(start_val))
+                except Exception:
+                    continue  # Skip entries with undecryptable timestamps
             active_entries.append({"id": i, "entry": entry, "start_epoch": start_epoch})
 
         for ae in active_entries:
