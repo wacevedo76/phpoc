@@ -35,6 +35,7 @@
 | Mock transport blob overwritten by cookie push | Route cookie paths to `transport._cookie`, blob paths to `transport._blob` |
 | 102 duplicate ledger entries across 15 blocks | Full dedup via `scripts/repair_ledger_dedup.py` — dedup by (title, duration), re-seal chain, rebuild index |
 | 29 stale staging entries | Cleaned — removed staging entries that matched already-committed ledger content |
+| `ph sync` interactive workflow silently skipped (CLIView wiring) | `CLIView(ledger)` passed to `SyncOrchestrator` instead of `cli._view` (which doesn't exist on `CLIInterface`) — `InteractiveCLIStrategy.decide()` now invoked on `ph sync` without `--yes` |
 
 ## Open
 

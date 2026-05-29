@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `pending`
+- **Commit:** `bc7078e`
 - **Tests:** 1338 passing, 0 failures
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
@@ -114,24 +114,19 @@ Two push paths:
 | `domain/ledger/remote_sync.py` | Ledger block push/pull + chain verification |
 | `core/sync/orchestrator.py` | Sync pipeline — staging → ledger → remote |
 
-## Recent Commits (this session)
+## Recent Commits
 ```
+bc7078e  docs: update session handoff with stale-remote fix and sync confirmation
+45ae00d  fix: stale-remote overwrite only needed block instead of force-pushing all
+06fd058  fix: bare import json inside main() shadows top-level import
+e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
+3b67fbc  fix: push staging blob before device cookie to prevent stale-remote bug
+23f510f  fix: ph login uses SyncCheckResult enum instead of StagingService attrs
+01d4f24  fix: resolve tracked issues P0-P4
 3b0e92f  fix: resolve 54 pre-existing test failures from API drift
 17cb5fd  Remove 10% TTL window from cookie touch — unconditional touch
-fec4880  fix: TTL expiry always forces REAUTH_NEEDED; unparseable remote cookie
-48a0917  fix: force passphrase prompt on specifier mismatch in ph view
-2d4ca6a  fix: ph view auto-reconciles on specifier mismatch
-4748ad7  fix: ph dev cookie skips WAL replay — no staging state mutations
-cda3dc1  feat: ph login reconciles remote staging before claiming ownership
-75c67c4  redesign: simplified auth gate — cookie-only fast path, login clears cookie
-6240f92  feat: inline sync before commands, background push fix, config fix
-pending  [this session] fix: _deep_merge shallow-copy bug, recover force-push, latency opt
-pending  [this session] fix: SyncCheckResult vs StagingService attrs in main.py
-pending  [this session] fix: blob-before-cookie push order in staging service
-pending  [this session] fix: mock transport blob/cookie separation for tests
-pending  [this session] fix: full ledger dedup — 102 duplicate entries + 29 stale staging removed
-pending  [this session] fix: stale-remote overwrite only needed block (not all 64)
-pending  [this session] fix: InteractiveCLIStrategy wired into sync flow
+d967675  Add POSSIBLE_PROOF_OF_EXISTANCE.md
+f5aeda3  [this session] fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
 ```
 
 ## This Session (2026-05-28)
@@ -157,6 +152,21 @@ pending  [this session] fix: InteractiveCLIStrategy wired into sync flow
 ### Mock transport test failures from reorder
 Mock `push()` in tests used `transport._blob` for both blob and cookie. Cookie push overwrote blob data. Fixed: route by path — cookie paths → `transport._cookie`, blob paths → `transport._blob`. All 1338 tests pass.
 
+### CLIView wiring — `ph sync` interactive workflow missing
+`SyncOrchestrator` was constructed with `view_interface=cli._view if hasattr(cli, '_view') else None` at both construction sites in `main.py`. `CLIInterface` has no `_view` attribute, so `view_interface` was always `None` → `InteractiveCLIStrategy.decide()` was never called → the edit/remove/confirm workflow was silently skipped on every `ph sync`, even without `--yes`.
+
+**Fix:** Replaced with `view_interface=CLIView(ledger)` at both sites. Now `ph sync` (without `--yes`) shows the full interactive workflow:
+
+```
+--- Pending Sync ---
+  #0: Coding Practice | 2026-05-28 | 09:00-11:00 | 120m
+  #1: Walking | 2026-05-28 | 14:00-14:48 | 48m
+
+[S]ync now, [E]dit, [R]emove, [C]ancel, [?] help?
+```
+
+`ph sync --yes` still skips straight to commit.
+
 ### Ledger deduplication (full repair)
 Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in the chain. Used crypto-authenticated script (`scripts/repair_ledger_dedup.py`) to:
 1. Dedup by (title, duration) per date (encrypted timestamps differ across commits)
@@ -169,9 +179,8 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. Run `ph recover` to push the cleaned ledger to remote with force
-2. Run `ph sync` to commit remaining staging entries (Working on Phpoc 110m, Walking in the woods 48m)
-3. Verify on debagent04 after sync
+1. Push this commit to remote: `git push origin P3-Remote_Sync`
+2. Verify on debagent04: pull, run `ph view` to test cross-device handoff flow
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)

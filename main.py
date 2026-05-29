@@ -15,6 +15,7 @@ from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 from core.factory import LedgerFactory
 from cli.interface import CLIInterface
+from cli.cli_view import CLIView
 from cli.trace import trace
 from domain.staging.service import StagingService, SyncCheckResult
 from domain.ledger.engine import LedgerEngine
@@ -530,7 +531,7 @@ def main():
     sync_orchestrator = SyncOrchestrator(
         staging_service=staging_service,
         ledger_engine=ledger_engine,
-        view_interface=cli._view if hasattr(cli, '_view') else None,
+        view_interface=CLIView(ledger),
         master_key=auth.get_key() if hasattr(auth, 'get_key') else None,
         transport=transport,
     )
@@ -628,7 +629,7 @@ def main():
             sync_orchestrator = SyncOrchestrator(
                 staging_service=staging_service,
                 ledger_engine=ledger_engine,
-                view_interface=cli._view if hasattr(cli, '_view') else None,
+                view_interface=CLIView(ledger),
                 master_key=mk,
                 transport=transport,
             )
