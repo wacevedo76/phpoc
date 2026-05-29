@@ -92,6 +92,8 @@ Two push paths:
 | Transport | HTTP → Cloudflare Worker | HTTP (same URL) |
 | API key | ✅ Set | ✅ Set |
 | Cookie | Created (last write from x13) | Present (mismatch with remote) |
+| Session key | `00fb89ef...` (PDK, **wrong**) | `00fb89ef...` (PDK, **wrong**) |
+| Ledger blocks | 85 (pre-dedup, from remote) | 85 (same) |
 
 ## Key Files
 
@@ -226,6 +228,57 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 1. Push deduped 63-block ledger from x13 to remote (remote still has 85-block chain)
 2. Fix `ph login` / `_reconcile_and_claim` to detect wrong-key-on-blob as OFFLINE not success
 3. Verify cross-device handoff with running tasks
+
+## Critical Open Issue: Wrong Session Key on Both Machines
+
+**Symptom:** Both machines (x13 and debagent04) cache session key
+`00fb89ef9116b5e0899bd8b1d3fc4763efc9a2345e85c5f0651e578905a6794d`
+after `ph login`. This key is a PDK (passphrase-derived key) that **cannot
+decrypt the Sovereign Seed** in the ledger, yet `authenticate()` returns
+`True` and caches it.
+
+**Key facts discovered:**
+- `00fb89ef...` is NOT the empty-passphrase PDK (`01ccca13...`)
+- `00fb89ef...` is NOT the "test" PDK (`369a7dec...`)
+- The cached key is identical on both machines after fresh `ph login`
+- `RecoveryManager.decrypt_seed(enc_seed, pdk)` throws an exception with
+  this PDK — confirming the passphrase does not match
+- `identity_secret_enc_fallback` exists in the ledger genesis block
+  (starts with `e6f1aa66...`)
+
+**Troubleshooting needed:**
+1. **Instrument `authenticate()` in `security/auth.py`** — add temporary
+   debug prints to confirm which branch executes: does the `except` block
+   actually fire, or is there a code path that bypasses seed decryption?
+2. **Check `RecoveryManager.decrypt_seed`** — verify it throws for
+   wrong PDK, and that `RecoveryManager.seed_to_key` returns the correct
+   master key for the correct PDK
+3. **Check for a stale session file** — maybe `ph login`'s `clear_session()`
+   is being called before the SESSION_FILE path is resolved (if
+   `/dev/shm/phpoc_session` vs `/tmp/phpoc_session` differs between
+   `PassphraseAuthenticator` instances)
+4. **Test with a fresh debug script:**
+   ```python
+   from security.auth import PassphraseAuthenticator
+   from security.recovery import RecoveryManager
+   import hashlib
+   pdk = hashlib.pbkdf2_hmac('sha256', b'ACTUAL_PASSPHRASE', b'session-salt', 600000, 32)
+   print('PDK:', pdk.hex())
+   # Try to decrypt seed
+   ledger_data = json.load(open('/home/pi/.local/share/phpoc/ledger.json'))
+   seed = RecoveryManager.decrypt_seed(ledger_data[0]['identity']['recovery_seed_enc'], pdk)
+   mk = RecoveryManager.seed_to_key(seed)
+   print('MK:', mk.hex())
+   ```
+5. **Check if `recovery_seed_enc` was written with a different passphrase**
+   than what either user remembers. The passphrase history includes a
+   retired passphrase `m0r3m0n3y` (security incident 2026-05-22).
+
+**Hypothesis:** The passphrase being entered does not match the one used
+when the ledger was created on debagent04 during onboarding. The
+Sovereign Seed was encrypted with one passphrase, but both users remember
+a different passphrase. `ph recover` on either machine with the correct
+Recovery Seed would fix this.
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
