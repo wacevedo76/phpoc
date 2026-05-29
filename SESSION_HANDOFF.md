@@ -130,6 +130,8 @@ pending  [this session] fix: SyncCheckResult vs StagingService attrs in main.py
 pending  [this session] fix: blob-before-cookie push order in staging service
 pending  [this session] fix: mock transport blob/cookie separation for tests
 pending  [this session] fix: full ledger dedup — 102 duplicate entries + 29 stale staging removed
+pending  [this session] fix: stale-remote overwrite only needed block (not all 64)
+pending  [this session] fix: InteractiveCLIStrategy wired into sync flow
 ```
 
 ## This Session (2026-05-28)
