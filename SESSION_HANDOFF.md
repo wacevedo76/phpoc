@@ -2,8 +2,8 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `4508503`
-- **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4)
+- **Commit:** `f54ed3f`
+- **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4; **7 new CPU-lock tests identified** in phase4 — see 2026-05-30 session)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -133,6 +133,41 @@ e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
 3b0e92f  fix: resolve 54 pre-existing test failures from API drift
 ```
 
+## This Session (2026-05-30) — CPU-Lock Bug: MagicMock View Causes Infinite Loop
+
+### Discovery
+Running `test_phase4_staging_interaction_flow.py` on debagent04 (2-core Pi, 3.8GB RAM)
+locked the machine 3 times, requiring hard reset each time. Isolated 7 tests that
+spin at 100% CPU indefinitely.
+
+### Root Cause
+
+`InteractiveCLIStrategy.decide()` enters a `while True` loop calling
+`view.prompt_choice()`. When the view is a plain `MagicMock()` (not configured to
+return a specific value), `prompt_choice()` returns another `MagicMock` object —
+truthy but not equal to any of `"S"`, `"C"`, `"E"`, `"R"`. The loop never matches
+a condition and spins at 100% CPU forever.
+
+### Hanging tests
+
+| Class | Method | Lines |
+|-------|--------|-------|
+| `TestSyncOrchestratorFullFlow` | All 6 tests calling `sync()` | setUp at line 503 creates `self.view = MagicMock()` |
+| `TestSyncOrchestratorEdgeCases` | `test_sync_notifies_view_on_completion` | Line 1073 creates inline `view = MagicMock()` |
+
+### Fix options (pick one)
+
+1. **Fix the tests** — Configure `view.prompt_choice.side_effect` to return `"S"` (sync all)
+2. **Fix the orchestrator** — Add `skip_confirmation=True` when testing via constructor param
+3. **Fix the strategy** — Guard against unexpected mock return values, default to `"S"` or `"C"`
+
+### Safe test results (60/69 phase4 tests, no hangs)
+
+```
+60 passed, 9 deselected in 0.25s
+```
+The 7 hanging tests + 2 abstract-contract tests (non-instantiable classes) were deselected.
+
 ## This Session (2026-05-28)
 
 ### Docs & UX fixes (2026-05-29)
@@ -225,8 +260,8 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. Push deduped 63-block ledger from x13 to remote (remote still has 85-block chain)
-2. Fix `ph login` / `_reconcile_and_claim` to detect wrong-key-on-blob as OFFLINE not success
+1. Fix 7 CPU-lock phase4 tests: `TestSyncOrchestratorFullFlow` (6 tests) and `test_sync_notifies_view_on_completion` — see 2026-05-30 session below
+2. Run remaining test batches: phase5-7, feature tests (WAL, daemon, sync, tags, pause, recovery)
 3. Verify cross-device handoff with running tasks
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
@@ -264,5 +299,5 @@ blocks would fail to decrypt despite the correct passphrase.
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
-- `test_sync_calls_check_and_sync_first` in `test_phase4_staging_interaction_flow.py` hangs (pre-existing, likely integration/networking)
+- `TestSyncOrchestratorFullFlow` (6 tests) + `test_sync_notifies_view_on_completion` **CPU-lock** — see 2026-05-30 session
 - `_reconcile_and_claim` treats blob deobfuscation failure (wrong master key) as "no remote data" — pushes empty local blob, overwriting remote data on R2

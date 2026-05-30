@@ -4,6 +4,8 @@
 
 | Issue | Resolution |
 |-------|-----------|
+| MagicMock view causes infinite CPU loop in 7 phase4 tests (2026-05-30) | Root cause found: `InteractiveCLIStrategy.decide()` `while True` loop never matches MagicMock return. Fix options: (1) configure mock side_effect, (2) add `skip_confirmation=True`, (3) guard strategy against unknown values. See SESSION_HANDOFF.md.
+|-------|-----------|
 | Specifier mismatch didn't force auth (Issue #23) | `specifier_mismatch` flag bypasses `_is_auth_fresh()` unconditionally |
 | Sync pushed device cookie (Issue #19) | `push_blob_only()` extracted; sync uses it |
 | Cookie redesign (HMAC→random specifier) | String comparison is definitive across shared-key devices |
@@ -45,6 +47,7 @@
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | ✅ **Fixed** — `BLOB_KEY_MISMATCH` sentinel prevents overwrite (commit 1dacf40) |
 | ~~Deduped 63-block ledger not pushed to remote~~ | ✅ **Superseded** — ledger regrew to 86 blocks; both sides now in sync |
 | Remote blob permanently garbled (wrong key) | 🟡 Need to verify current blob is readable with correct key |
+| 7 phase4 tests spin CPU at 100% (MagicMock view infinite loop) | 🟡 Root cause identified — `InteractiveCLIStrategy.decide()` `while True` + MagicMock. Fix pending.
 
 ## Session 2026-05-29 fixes
 
