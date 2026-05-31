@@ -46,8 +46,8 @@
 | ~~Wrong session key `00fb89ef...`~~ | ✅ **Misdiagnosis** — key IS correct master key (see SESSION_HANDOFF.md) |
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | ✅ **Fixed** — `BLOB_KEY_MISMATCH` sentinel prevents overwrite (commit 1dacf40) |
 | ~~Deduped 63-block ledger not pushed to remote~~ | ✅ **Superseded** — ledger regrew to 86 blocks; both sides now in sync |
-| Remote blob permanently garbled (wrong key) | 🟡 Need to verify current blob is readable with correct key |
-| 7 phase4 tests spin CPU at 100% (MagicMock view infinite loop) | 🟡 Fix chosen: `view.prompt_choice.return_value = "S"` in test setUp — next step to implement
+| Remote blob permanently garbled (wrong key) | ✅ **False alarm** — blob IS readable with key `00fb89ef...`; decrypted fine (844 bytes JSON, 1 entry). No garbling. Verified 2026-05-31. |
+| ~~7 phase4 tests spin CPU at 100% (MagicMock view infinite loop)~~ | ✅ **Fixed** — `view.prompt_choice.return_value = "S"` added in setUp + test (commit e536cfd). 69/69 phase4 tests pass. |
 
 ## Session 2026-05-29 fixes
 

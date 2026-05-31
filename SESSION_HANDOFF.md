@@ -2,12 +2,14 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `f54ed3f`
-- **Tests:** 1269 passing, 0 failures (1 pre-existing hang in phase4; **7 new CPU-lock tests identified** in phase4 — see 2026-05-30 session)
+- **Commit:** `0ac3621`
+- **Tests:** 1338 passing, 0 failures
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
 - **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
+- **Remote blob:** ✅ **Verified readable** — decrypted with master key `00fb89ef...`, 844 bytes JSON, 1 entry (device `bc315840...`). NOT garbled.
+- **Timeouts:** ✅ Per-phase timeouts via pytest-timeout plugin (10s phase tests, 30s transport tests)
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -166,6 +168,31 @@ a condition and spins at 100% CPU forever.
 ```
 The 7 hanging tests + 2 abstract-contract tests (non-instantiable classes) were deselected.
 
+### Fix applied (commit `e536cfd`, 2026-05-31)
+
+`view.prompt_choice.return_value = "S"` added to both `TestSyncOrchestratorFullFlow.setUp()` and `test_sync_notifies_view_on_completion`. All 69 phase4 tests now pass in ~0.30s, no hangs.
+
+## This Session (2026-05-31) — Remote Blob Verification
+
+### Remote blob IS readable
+
+The "Remote blob permanently garbled (wrong key)" issue was a **false alarm**. The blob on R2 was decrypted successfully with master key `00fb89ef...`:
+- **Salt:** `1ba4e5d0...`, **Nonce:** `8c580e51...`
+- **HMAC tag:** ✅ matches (integrity check passed)
+- **Plaintext:** 844 bytes of valid JSON
+- **Entries:** 1 active entry ("Working on Phpoc", device `bc315840-6975-4fb5-af5d-e907a8600557`)
+- **Updated at:** epoch 1780255104003 (May 2026)
+
+### Per-phase test timeouts
+
+Added `pytest-timeout` plugin with per-file timeout configuration via `pytest_collection_modifyitems` hook in `conftest.py`:
+- Phase 1-7: 10s each
+- Feature tests (WAL, daemon, tags, etc.): 10s
+- HTTP/git transport tests: 30s
+- Global fallback: 30s (from `pytest.ini`)
+
+This prevents any CPU-lock hang from locking a test runner indefinitely.
+
 ## This Session (2026-05-28)
 
 ### Docs & UX fixes (2026-05-29)
@@ -258,10 +285,13 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. ✓ Root cause identified (2026-05-30)
-2. ⬜ Implement fix: add `view.prompt_choice.return_value = "S"` to `TestSyncOrchestratorFullFlow.setUp()` and `test_sync_notifies_view_on_completion`
-3. ⬜ Run remaining test batches: phase5-7, feature tests (WAL, daemon, sync, tags, pause, recovery)
-4. ⬜ Verify cross-device handoff with running tasks
+1. ✅ Root cause identified (2026-05-30)
+2. ✅ Fix implemented: `view.prompt_choice.return_value = "S"` (commit `e536cfd`) — 69/69 phase4 tests pass
+3. ✅ All test batches run: 1338 tests pass
+4. ✅ Per-phase timeouts added (pytest-timeout, commit `0ac3621`)
+5. ✅ Remote blob verification: **not garbled** — decrypts fine with master key `00fb89ef...`
+6. ⬜ Verify cross-device handoff with running tasks
+7. ⬜ Push deduped 63-block ledger to remote (if not already synced)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -298,5 +328,4 @@ blocks would fail to decrypt despite the correct passphrase.
 
 ## Known Issues
 - ETag caching stale in long-running daemon mode (not a current issue)
-- `TestSyncOrchestratorFullFlow` (6 tests) + `test_sync_notifies_view_on_completion` **CPU-lock** — see 2026-05-30 session
-- `_reconcile_and_claim` treats blob deobfuscation failure (wrong master key) as "no remote data" — pushes empty local blob, overwriting remote data on R2
+- `_reconcile_and_claim` blob overwrite protection (`BLOB_KEY_MISMATCH` sentinel) — resolved in commit `1dacf40`
