@@ -47,7 +47,7 @@
 | `_reconcile_and_claim` overwrites remote blob on key mismatch | ✅ **Fixed** — `BLOB_KEY_MISMATCH` sentinel prevents overwrite (commit 1dacf40) |
 | ~~Deduped 63-block ledger not pushed to remote~~ | ✅ **Superseded** — ledger regrew to 86 blocks; both sides now in sync |
 | Remote blob permanently garbled (wrong key) | 🟡 Need to verify current blob is readable with correct key |
-| 7 phase4 tests spin CPU at 100% (MagicMock view infinite loop) | 🟡 Root cause identified — `InteractiveCLIStrategy.decide()` `while True` + MagicMock. Fix pending.
+| 7 phase4 tests spin CPU at 100% (MagicMock view infinite loop) | 🟡 Fix chosen: `view.prompt_choice.return_value = "S"` in test setUp — next step to implement
 
 ## Session 2026-05-29 fixes
 

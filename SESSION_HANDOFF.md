@@ -155,11 +155,9 @@ a condition and spins at 100% CPU forever.
 | `TestSyncOrchestratorFullFlow` | All 6 tests calling `sync()` | setUp at line 503 creates `self.view = MagicMock()` |
 | `TestSyncOrchestratorEdgeCases` | `test_sync_notifies_view_on_completion` | Line 1073 creates inline `view = MagicMock()` |
 
-### Fix options (pick one)
+### Fix chosen (option 1)
 
-1. **Fix the tests** — Configure `view.prompt_choice.side_effect` to return `"S"` (sync all)
-2. **Fix the orchestrator** — Add `skip_confirmation=True` when testing via constructor param
-3. **Fix the strategy** — Guard against unexpected mock return values, default to `"S"` or `"C"`
+**Fix the tests** — Configure `view.prompt_choice.return_value = "S"` on MagicMock views passed to `SyncOrchestrator`. This makes `InteractiveCLIStrategy.decide()` exit the loop with "sync all", exercising the real strategy flow without hanging.
 
 ### Safe test results (60/69 phase4 tests, no hangs)
 
@@ -260,9 +258,10 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
 ## Next Steps
-1. Fix 7 CPU-lock phase4 tests: `TestSyncOrchestratorFullFlow` (6 tests) and `test_sync_notifies_view_on_completion` — see 2026-05-30 session below
-2. Run remaining test batches: phase5-7, feature tests (WAL, daemon, sync, tags, pause, recovery)
-3. Verify cross-device handoff with running tasks
+1. ✓ Root cause identified (2026-05-30)
+2. ⬜ Implement fix: add `view.prompt_choice.return_value = "S"` to `TestSyncOrchestratorFullFlow.setUp()` and `test_sync_notifies_view_on_completion`
+3. ⬜ Run remaining test batches: phase5-7, feature tests (WAL, daemon, sync, tags, pause, recovery)
+4. ⬜ Verify cross-device handoff with running tasks
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
