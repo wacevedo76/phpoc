@@ -247,3 +247,65 @@ def make_staging_blob_bytes(
         "updated_at": updated_at,
     }
     return json.dumps(blob).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Per-file test timeouts (pytest-timeout plugin)
+# ---------------------------------------------------------------------------
+
+# Measured runtimes on 2-core Pi / 3.8GB RAM:
+#   Phase 1-7 unit tests:  0.04s - 0.30s
+#   Feature tests (WAL, tags, etc.):  0.05s - 0.55s
+#   HTTP transport:  ~2.5s
+#   Git transport:   ~5.5s
+#   Mixed (date_filters, modular, staging_sync):  ~11s
+#
+# Timeout values are generous to accommodate slower CI/ARM runners.
+# pytest.ini sets a global 30s fallback.
+
+def pytest_collection_modifyitems(config, items):
+    """Set per-file timeouts via the pytest-timeout marker."""
+    # Map file name patterns to timeout in seconds
+    timeout_map = {
+        # Phase 1-7: fast unit tests
+        "test_phase1": 10,
+        "test_phase2": 10,
+        "test_phase3": 10,
+        "test_phase4": 10,
+        "test_phase5": 10,
+        "test_phase6": 10,
+        "test_phase7": 10,
+        # Feature tests
+        "test_wal": 10,
+        "test_daemon": 10,
+        "test_tags": 10,
+        "test_pause": 10,
+        "test_recovery": 10,
+        "test_background": 10,
+        "test_remote_config": 10,
+        "test_date_filters": 10,
+        "test_sync_confirmation": 10,
+        "test_sync_confirmation_refactor": 10,
+        "test_sync_confirmation_strategy": 10,
+        # Transport tests (make actual network/hardware calls)
+        "test_http_transport": 30,
+        "test_git_transport": 30,
+        "test_staging_sync_optimization": 30,
+        "test_hierarchy": 10,
+        "test_modular": 30,
+    }
+
+    for item in items:
+        # Get the test file name (without path or extension)
+        fspath = getattr(item, "fspath", None)
+        if fspath is None:
+            continue
+        fname = fspath.purebasename
+
+        for pattern, timeout in timeout_map.items():
+            if fname.startswith(pattern):
+                # Only set timeout if one isn't already explicitly configured
+                existing = item.get_closest_marker("timeout")
+                if existing is None:
+                    item.add_marker(pytest.mark.timeout(timeout))
+                break
