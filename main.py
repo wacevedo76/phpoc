@@ -480,7 +480,7 @@ def main():
     
     # Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
     # These modify the ledger or perform irreversible operations.
-    require_auth = ["sync", "verify", "rep", "modify", "review", "add"]
+    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert"]
     
     # Read-only commands that SHOULD use a cached session if available
     # but can proceed without one (cookie-based auth handles remote access).
@@ -551,6 +551,38 @@ def main():
     )
     
     if args.command == "add":
+        # Re-auth: if cookie mismatch or TTL expired, prompt for authentication
+        # before modifying staging (prevents the "held by different device" message
+        # from _sync_before_command inside the method).
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass  # Continue with local data
+            # Rebuild ledger_engine + cli with fresh crypto
+            ledger_engine = LedgerEngine(
+                crypto=fresh_crypto,
+                store=store,
+                index_store=store,
+                staging_store=staging_store,
+                identity_secret=None,
+            )
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         if args.subcommand == "oneoff":
             title = args.title
             if not title:
@@ -608,6 +640,38 @@ def main():
 
         cli.view_active(show_tags=show_tags, show_comments=show_comments)
     elif args.command == "tags":
+        # Re-auth: if cookie mismatch or TTL expired, prompt for authentication
+        # before reading staging (same pattern as ph list).
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass  # Continue with local data
+            # Rebuild ledger + ledger_engine + cli with fresh crypto
+            ledger = LedgerDomain(fresh_crypto, store)
+            ledger_engine = LedgerEngine(
+                crypto=fresh_crypto,
+                store=store,
+                index_store=store,
+                staging_store=staging_store,
+                identity_secret=None,
+            )
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         _list_tags(ledger, cli)
     elif args.command == "sync":
         # Unified sync: handle re-auth first, then delegate to orchestrator
@@ -758,6 +822,28 @@ def main():
         if args.source == "active":
             show_tags = args.show_tags if hasattr(args, 'show_tags') else False
             show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+            # Re-auth handling: if cookie mismatch or TTL expired, prompt for
+            # authentication before displaying data (same as ph view).
+            result = staging_service.check_and_sync(timeout_ms=500)
+            if result == SyncCheckResult.REAUTH_NEEDED:
+                if not auth.login():
+                    print("Authentication required.")
+                    exit(1)
+                mk = auth.get_key()
+                fresh_crypto = CryptoManager(mk)
+                staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+                staging_service = StagingService(
+                    crypto=fresh_crypto,
+                    staging_store=staging_store,
+                    transport=transport,
+                    device_id_provider=device_id_provider,
+                    cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                    data_dir=str(CONFIG_DIR),
+                )
+                result = staging_service._reconcile_and_claim(mk)
+                if result == SyncCheckResult.OFFLINE:
+                    pass  # Continue with local data
+                cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
             cli.view_active(show_tags=show_tags, show_comments=show_comments)
         else:
             show_comments = args.show_comments if hasattr(args, 'show_comments') else False
@@ -771,15 +857,155 @@ def main():
                 to_date=args.to_date,
             )
             show_tags = args.show_tags if hasattr(args, 'show_tags') else False
+            # Re-auth handling: if cookie mismatch or TTL expired, prompt for
+            # authentication before displaying data (same as ph view).
+            result = staging_service.check_and_sync(timeout_ms=500)
+            if result == SyncCheckResult.REAUTH_NEEDED:
+                if not auth.login():
+                    print("Authentication required.")
+                    exit(1)
+                mk = auth.get_key()
+                fresh_crypto = CryptoManager(mk)
+                staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+                staging_service = StagingService(
+                    crypto=fresh_crypto,
+                    staging_store=staging_store,
+                    transport=transport,
+                    device_id_provider=device_id_provider,
+                    cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                    data_dir=str(CONFIG_DIR),
+                )
+                result = staging_service._reconcile_and_claim(mk)
+                if result == SyncCheckResult.OFFLINE:
+                    pass  # Continue with local data
+                # Rebuild ledger_engine + cli with fresh crypto
+                ledger_engine = LedgerEngine(
+                    crypto=fresh_crypto,
+                    store=store,
+                    index_store=store,
+                    staging_store=staging_store,
+                    identity_secret=None,
+                )
+                cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
             cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str,
                             show_comments=show_comments, show_tags=show_tags)
     elif args.command == "modify":
+        # Re-auth: sync remote staging before modifying local staging.
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass
+            # Rebuild ledger + cli with fresh crypto
+            ledger = LedgerDomain(fresh_crypto, store)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         _handle_modify(ledger, args.index)
     elif args.command == "remove":
+        # Re-auth: sync remote staging before removing local staging.
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass
+            # Rebuild ledger + cli with fresh crypto
+            ledger = LedgerDomain(fresh_crypto, store)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         _handle_remove(ledger, args.index, args.yes)
     elif args.command == "review":
+        # Re-auth: sync remote staging before reviewing staged data.
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass
+            # Rebuild ledger + cli with fresh crypto
+            ledger = LedgerDomain(fresh_crypto, store)
+            ledger_engine = LedgerEngine(
+                crypto=fresh_crypto,
+                store=store,
+                index_store=store,
+                staging_store=staging_store,
+                identity_secret=None,
+            )
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         _handle_review(ledger, cli)
     elif args.command == "revert":
+        # Re-auth: sync remote staging before reverting (restores entries to staging).
+        result = staging_service.check_and_sync(timeout_ms=500)
+        if result == SyncCheckResult.REAUTH_NEEDED:
+            if not auth.login():
+                print("Authentication required.")
+                exit(1)
+            mk = auth.get_key()
+            fresh_crypto = CryptoManager(mk)
+            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
+            staging_service = StagingService(
+                crypto=fresh_crypto,
+                staging_store=staging_store,
+                transport=transport,
+                device_id_provider=device_id_provider,
+                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
+                data_dir=str(CONFIG_DIR),
+            )
+            result = staging_service._reconcile_and_claim(mk)
+            if result == SyncCheckResult.OFFLINE:
+                pass
+            # Rebuild ledger + cli with fresh crypto
+            ledger = LedgerDomain(fresh_crypto, store)
+            ledger_engine = LedgerEngine(
+                crypto=fresh_crypto,
+                store=store,
+                index_store=store,
+                staging_store=staging_store,
+                identity_secret=None,
+            )
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+
         if args.list:
             print("\n=== Ledger Summary ===")
             ledger_data = ledger.get_ledger_data()

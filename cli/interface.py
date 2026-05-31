@@ -214,6 +214,9 @@ class CLIInterface:
 
     @trace
     def add_pause(self, title):
+        if not self._sync_before_command(require_auth=True):
+            print("Authentication required. Run 'ph login' or 'ph sync' first.")
+            return
         resolved = self._resolve_title(title)
         self._staging.pause(resolved, int(time.time()*1000))
         self._defer_push()
@@ -221,6 +224,9 @@ class CLIInterface:
 
     @trace
     def add_unpause(self, title):
+        if not self._sync_before_command(require_auth=True):
+            print("Authentication required. Run 'ph login' or 'ph sync' first.")
+            return
         resolved = self._resolve_title(title)
         self._staging.unpause(resolved, int(time.time()*1000))
         self._defer_push()
