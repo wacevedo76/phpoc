@@ -524,6 +524,7 @@ class TestSyncOrchestratorFullFlow(unittest.TestCase):
 
         self.engine = mock_ledger_engine()
         self.view = MagicMock()
+        self.view.prompt_choice.return_value = "S"
         self.orch = SyncOrchestrator(
             staging_service=self.svc,
             ledger_engine=self.engine,
@@ -1075,6 +1076,7 @@ class TestSyncOrchestratorEdgeCases(unittest.TestCase):
         svc = StagingService(mock_crypto(), mock_staging_store())
         svc.capture("T", 1000, stop_epoch=2000, is_active=False)
         view = MagicMock()
+        view.prompt_choice.return_value = "S"
         orch = SyncOrchestrator(
             staging_service=svc,
             ledger_engine=mock_ledger_engine(),
