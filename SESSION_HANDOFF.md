@@ -265,15 +265,33 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
-## Next Steps (Mobile Roadmap)
+## Next Steps — Mobile App (Chosen Direction)
 
-All CLI reference implementation features are complete. The next milestone is the
-mobile app. See `MOBILE_ROADMAP.md` and `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md`
-for the full architectural plan.
+All CLI reference implementation features are complete. The project is now moving to a
+mobile app. The chosen architectural direction (per `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md`) is:
 
-**Architecture decision (2026-06-01):** Smart Client + Dumb Worker.
-The existing 149-line Worker handles everything — no REST API layer needed.
-See `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` for the full rationale.
+### Chosen Direction: Rust Crypto Core + React Web First
+
+| Phase | What | Est. Effort |
+|-------|------|-------------|
+| 0 | Rust crypto library (`phpoc-crypto-core`) — PBKDF2, AES-CTR, HMAC, SHA-256, blob obfuscation, compiled to WASM + .a/.so | 1-2 weeks |
+| 1 | React web app — uses Rust → WASM crypto, same Worker backend as CLI | 2-4 weeks |
+| 2 | React Native app — uses Rust → .a/.so crypto, shares UI design from Phase 1 | 2-4 weeks |
+| 3 | Optional: Flutter — uses same Rust crypto via FFI | 2-4 weeks |
+
+### Why This Direction
+
+- **Crypto written once.** The Rust library is compiled to all targets: WASM (web), .a (iOS), .so (Android). One implementation to audit, test, and maintain.
+- **Web app ships first.** React + Rust WASM runs on a laptop with `npm start`. Full workflow (start task, sync, view history) works day one.
+- **Worker stays dumb.** The existing 149-line Worker handles everything — no REST API layer, no session tokens, no server-side sync endpoint.
+- **CLI compatibility is automatic.** The mobile app uses the same wire protocol, storage paths, and crypto as the CLI. Verified by a shared `crypto_test_vectors.json` suite.
+
+### First Steps
+
+1. Extract `crypto_test_vectors.json` from the CLI's existing test suite
+2. Scaffold the `phpoc-crypto-core` Rust crate with `ring` bindings
+3. Compile to WASM and verify against test vectors in a browser console
+4. Build the React web UI
 
 ### CLI Reference — Maintenance Mode
 - ✅ All 1341 tests pass

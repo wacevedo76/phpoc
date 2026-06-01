@@ -13,7 +13,7 @@
 2. [Minimal Worker Architecture](#2-minimal-worker-architecture)
 3. [The Crypto Problem](#3-the-crypto-problem)
 4. [Platform Strategy: Three Options](#4-platform-strategy)
-5. [Platform Recommendation](#5-recommendation)
+5. [Chosen Direction](#5-chosen-direction)
 6. [Crypto Library: The Cross-Platform Core](#6-crypto-library)
 7. [Layering SaaS Features](#7-layering-saas-features)
 8. [Key Design Principles](#8-key-design-principles)
@@ -208,9 +208,15 @@ crypto_test_vectors.json
 
 ---
 
-## 5. Recommendation
+## 5. Chosen Direction
 
-### Primary recommendation: Rust crypto core + React web first
+**Decision (2026-06-01): Rust crypto core + React web first.**
+The team has committed to building a portable Rust crypto library (`phpoc-crypto-core`)
+compiled to WASM (web) and static libraries (iOS, Android), with a React web app as the
+first UI target. Crypto is written once, verified against the test vector suite, and reused
+across all platforms. See the phased plan below.
+
+### Chosen approach: Rust crypto core + React web first
 
 ```
          ┌──────────────────────────┐
@@ -243,9 +249,10 @@ crypto_test_vectors.json
 
 4. **Contract testing is trivial.** Because every platform uses the same Rust binary, `crypto_test_vectors.json` tests the Rust library once. The platform-specific test is: "does the HTTP client send/receive bytes correctly?" — a much simpler test.
 
-### Alternative: Swift first (if Rust ecosystem is unfamiliar)
+### Deferred alternative: Swift first (if Rust ecosystem proves unfamiliar)
 
-If the team has no Rust experience and the WASM/FFI build chain is a concern, Swift-first is a pragmatic alternative:
+If the team has no Rust experience and the WASM/FFI build chain proves impractical,
+Swift-first remains a viable fallback:
 
 | Phase | Platform | Time Estimate |
 |---|---|---|
