@@ -4,16 +4,18 @@
 - **Branch:** `main` (P3-Remote_Sync merged)
 - **Commit:** `11f3b1a`
 - **Tests:** 1341 passing, 0 failures
-- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 86 ledger blocks + index)
+- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
 - **Re-auth prompting:** All staging-interacting commands now auto-prompt (view, list, tags, add, modify, remove, review, revert, sync)
 - **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
-- **Remote blob:** ✅ **Verified readable** — decrypted with master key `00fb89ef...`, 844 bytes JSON, 1 entry. NOT garbled.
+- **Remote blob:** ✅ 0 entries (empty staging)
+- **Remote ledger:** 93 blocks (1 genesis + 90 day + 2 month_summary), 184 entries, Apr 23 → Jun 1
+- **Both devices:** x13 (HTTP) and tpx270 (was git, now HTTP) — unified on HTTP
 - **Timeouts:** ✅ Per-phase timeouts via pytest-timeout plugin (10s phase tests, 30s transport tests)
 - **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive cross-platform plan (web, Flutter, React Native contingency)
-- **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs (including `REMOTE_STAGING_ISSUE_TRACKING.md`)
-- **CLI complete:** All commands have auto-re-auth prompting; CLI is a first-class cross-platform target alongside web and mobile
+- **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
+- **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -91,17 +93,17 @@ Two push paths:
 
 ## Two Machines
 
-| | x13 (laptop) | debagent04 (pi) |
+| | x13 (laptop) | tpx270 (was pi/debagent04) |
 |---|---|---|
-| Device ID | `dc1da321-2c80-4815-a808-11295b8c59f9` | `bbb3badc-6365-49ea-b43c-53869ca0195f` |
+| Device ID | `dc1da321-2c80-4815-a808-11295b8c59f9` | `42ef9447-4676-494b-8241-6154059d5226` |
 | Passphrase | ✅ Updated | ✅ Updated |
-| Transport | HTTP → Cloudflare Worker | HTTP (same URL) |
+| Transport | HTTP → Cloudflare Worker | HTTP → Cloudflare Worker (was git → GitHub) |
 | API key | ✅ Set | ✅ Set |
-| Cookie | ✅ Created (last write from x13) | ✅ Created after `ph login` |
-| Master key | `00fb89ef...` (correct) | `00fb89ef...` (correct) |
-| Ledger blocks | 86 (in sync with remote) | 86 (same) |
-| Remote blob | ✅ Readable, 1 entry | ✅ Readable (same blob) |
-| Cross-device | Verified `ph view` works | Verified `ph view` works |
+| Cookie | ✅ Created | ✅ Created |
+| Master key | same | same (shared seed) |
+| Ledger blocks | 93 (in sync with remote) | 93 (pulled from remote via hotfix) |
+| Remote blob | ✅ 0 entries (empty) | ✅ 0 entries (empty) |
+| Remote ledger | 93 blocks, 184 entries, Apr 23 → Jun 1 | ✅ Exact hash match with remote |
 
 ## Key Files
 
@@ -132,6 +134,7 @@ Two push paths:
 | `scripts/check_staging.sh` | List local staging entries with active status |
 | `scripts/check_remote_blob.sh` | Deobfuscate and list remote staging blob entries |
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
+| `scripts/pull_remote_ledger.py` | **HOTFIX** — pull all remote blocks directly, bypassing onboarding |
 
 ### Documentation
 | File | Purpose |
@@ -339,6 +342,48 @@ blocks would fail to decrypt despite the correct passphrase.
 - ETag caching stale in long-running daemon mode (low priority, not a current issue)
 - 100K PBKDF2 fallback for pre-R3 genesis blocks — added in commit `3002952` for backward compatibility
 - Pre-R3 ledgers created before commit `e25a26c` (2026-04-28) use 100K iterations instead of 600K
+
+## Hotfix: `ph onboarding` Fails to Pull Remote Ledger — Direct Pull Script
+
+**Issue:** On tpx270, after deleting the local ledger and running `ph onboarding`,
+the local ledger was NOT replaced with the remote chain. The old 90-block divergent
+chain persisted. Root cause: onboarding either encountered an auth failure (wrong seed)
+or the "Overwrite? (y/N)" prompt was answered "n".
+
+**Root cause of divergence:** tpx270 was originally configured with **git transport**
+(`git@github.com:wacevedo76/phpoc-staging.git`) while x13 used **HTTP transport**
+(Cloudflare Worker). The two backends received different data. After switching tpx270
+to HTTP transport, the chains had already diverged at block 19 (2026-05-02). The remote
+chain has an extra empty genesis block at index 0, creating a 1-index offset: remote
+blocks 1-89 = local blocks 0-88 (matching content), but the chains split at block 19
+where remote has 0 entries vs local has 1 entry.
+
+**Resolution:** A direct pull script (`scripts/pull_remote_ledger.py`) was created to
+bypass onboarding and pull all remote blocks directly using the cached session key.
+
+**Steps if this happens again:**
+
+```bash
+# 1. Ensure authenticated session
+ph login
+
+# 2. Run the direct pull script (bypasses onboarding entirely)
+python3 scripts/pull_remote_ledger.py
+
+# 3. Fix staging format (remote blob is dict, local store expects list)
+echo '[]' > ~/.local/share/phpoc/staging.json
+
+# 4. Verify
+ph verify          # Should be True
+ph list synced     # Should show data through Jun 1
+ph sync --yes      # Clean sync (no pending entries)
+```
+
+**Long-term fix needed:** `ph onboarding` should be hardened to:
+1. Better handle the "Overwrite?" prompt (default to yes if no ledger exists)
+2. Show progress during block pull
+3. Fall back gracefully when chains diverge (force-pull from remote)
+4. `scripts/pull_remote_ledger.py` should be merged into onboarding as `ph onboarding --force`
 
 ---
 
