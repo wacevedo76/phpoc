@@ -2,14 +2,18 @@
 
 ## Current State
 - **Branch:** `P3-Remote_Sync`
-- **Commit:** `0ac3621`
-- **Tests:** 1338 passing, 0 failures
-- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
+- **Commit:** `87a9f8d`
+- **Tests:** 1341 passing, 0 failures
+- **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 86 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
+- **Re-auth prompting:** All staging-interacting commands now auto-prompt (view, list, tags, add, modify, remove, review, revert, sync)
 - **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
-- **Remote blob:** ✅ **Verified readable** — decrypted with master key `00fb89ef...`, 844 bytes JSON, 1 entry (device `bc315840...`). NOT garbled.
+- **Remote blob:** ✅ **Verified readable** — decrypted with master key `00fb89ef...`, 844 bytes JSON, 1 entry. NOT garbled.
 - **Timeouts:** ✅ Per-phase timeouts via pytest-timeout plugin (10s phase tests, 30s transport tests)
+- **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive plan for iOS/Android app
+- **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs (including `REMOTE_STAGING_ISSUE_TRACKING.md`)
+- **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -93,36 +97,68 @@ Two push paths:
 | Passphrase | ✅ Updated | ✅ Updated |
 | Transport | HTTP → Cloudflare Worker | HTTP (same URL) |
 | API key | ✅ Set | ✅ Set |
-| Cookie | Created (last write from x13) | Present (mismatch with remote) |
-| Session key | `00fb89ef...` (PDK, **wrong**) | `00fb89ef...` (PDK, **wrong**) |
-| Ledger blocks | 85 (pre-dedup, from remote) | 85 (same) |
+| Cookie | ✅ Created (last write from x13) | ✅ Created after `ph login` |
+| Master key | `00fb89ef...` (correct) | `00fb89ef...` (correct) |
+| Ledger blocks | 86 (in sync with remote) | 86 (same) |
+| Remote blob | ✅ Readable, 1 entry | ✅ Readable (same blob) |
+| Cross-device | Verified `ph view` works | Verified `ph view` works |
 
 ## Key Files
 
+### Source Code
 | File | Purpose |
 |------|---------|
-| `core/sync/http_transport.py` | HTTP GET/PUT/LIST + ETag caching |
-| `core/sync/transport.py` | Transport factory from config |
-| `domain/staging/service.py` | `check_and_sync()` — the sync gate |
-| `domain/staging/remote_sync.py` | Blob obfuscation, pull/push, cookie pull/push |
-| `domain/cookie/device_cookie.py` | Random-specifier cookie |
-| `domain/staging/local_cache.py` | CRUD, plain: prefix convention |
-| `domain/staging/merge_engine.py` | Dedup by entry_id |
-| `cli/interface.py` | `view_active()`, `_sync_before_command()` |
-| `cli/background.py` | Phase A instant reads |
+| `main.py` | CLI entry — argparse, auth tiers, staging + orchestrator wiring with re-auth for all commands |
+| `cli/interface.py` | `view_active()`, `list_habits()`, `_sync_before_command()` — one sync gate for all commands |
+| `cli/strategies.py` | `InteractiveCLIStrategy` — sync confirmation UI |
+| `cli/background.py` | Phase A instant reads, background sync check |
 | `cli/wal.py` | WAL lifecycle + background push |
 | `cli/daemon.py` | PhDaemon lifecycle |
 | `cli/onboarding.py` | `ph onboarding` |
-| `worker/src/index.ts` | Cloudflare Worker (149 lines TypeScript) |
-| `security/config_manager.py` | Config with defaults merging + dot-notation |
-| `domain/ledger/remote_sync.py` | Ledger block push/pull + chain verification |
 | `core/sync/orchestrator.py` | Sync pipeline — staging → ledger → remote |
+| `core/sync/http_transport.py` | HTTP GET/PUT/LIST + ETag caching |
+| `core/sync/transport.py` | Transport factory from config |
+| `domain/staging/service.py` | `check_and_sync()` — the sync gate, device cookie auth |
+| `domain/staging/remote_sync.py` | Blob obfuscation, pull/push, cookie pull/push |
+| `domain/staging/local_cache.py` | CRUD, plain: prefix convention |
+| `domain/staging/merge_engine.py` | Dedup by entry_id |
+| `domain/cookie/device_cookie.py` | Random-specifier cookie |
+| `domain/ledger/remote_sync.py` | Ledger block push/pull + chain verification |
+| `domain/ledger/engine.py` | `LedgerEngine` — commit, revert, blind index |
+| `security/auth.py` | `PassphraseAuthenticator`, `RecoveryAuthenticator` |
+| `security/crypto.py` | `CryptoManager`, `NoAuthCryptoManager` |
+| `security/config_manager.py` | Config with defaults merging + dot-notation |
+| `worker/src/index.ts` | Cloudflare Worker (149 lines TypeScript) — dumb blob store |
 | `scripts/check_staging.sh` | List local staging entries with active status |
 | `scripts/check_remote_blob.sh` | Deobfuscate and list remote staging blob entries |
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
 
+### Documentation
+| File | Purpose |
+|------|---------|
+| `SESSION_HANDOFF.md` | This file — current state, auth gate design, known issues |
+| `MOBILE_ROADMAP.md` | **NEW** — comprehensive mobile app roadmap (iOS/Android) |
+| `PHPSPEC.md` | Format spec — crypto, block structure, key derivation |
+| `MAP.md` | File inventory with HOT/COLD annotations |
+| `ROADMAP.md` | Project roadmap |
+| `CHANGELOG.md` | Release changelog |
+| `docs/design/ARCHITECTURAL_DECISIONS.md` | Architectural decisions and rationale |
+| `docs/design/DESIGN_GOALS.md` | Design goals and principles |
+| `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session design |
+| `docs/design/PH-VIEW-Workflow.md` | ph view workflow diagrams |
+| `archive/REMOTE_STAGING_ISSUE_TRACKING.md` | Resolved issue tracking (archived) |
+| `archive/ARCHITECTURAL_MIGRATION_STRATEGY.md` | Archived migration strategy |
+
 ## Recent Commits
 ```
+87a9f8d  chore: move architectural and design docs into docs/design/
+8e5e7df  chore: reorganize root directory — archive retired docs, add mobile roadmap
+d04bd79  docs: mark cross-device handoff verified (item #6) and ledger push superseded (item #7)
+f10e9e1  fix: auto-prompt for re-auth on all staging-interacting commands
+5651625  Merge branch 'P3-Remote_Sync' of github.com:wacevedo76/phpoc
+f54ed3f  docs: update issue tracking — ledger sync resolved, blob mismatch fix committed
+1dacf40  fix: protect remote blob from overwrite on key mismatch
+3002952  fix: wrong-session-key misdiagnosis resolved — 00fb89ef is correct master key
 4508503  fix: empty-ledger robustness, Ctrl+C protection, NoAuth read commands
 da4ac16  fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
 bc7078e  docs: update session handoff with stale-remote fix and sync confirmation
@@ -133,65 +169,20 @@ e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
 23f510f  fix: ph login uses SyncCheckResult enum instead of StagingService attrs
 01d4f24  fix: resolve tracked issues P0-P4
 3b0e92f  fix: resolve 54 pre-existing test failures from API drift
+e536cfd  fix: prevent infinite CPU loop in phase4 tests
+0ac3621  tests: add per-phase test timeouts via pytest-timeout
 ```
 
-## This Session (2026-05-30) — CPU-Lock Bug: MagicMock View Causes Infinite Loop
+## Resolved Issues
 
-### Discovery
-Running `test_phase4_staging_interaction_flow.py` on debagent04 (2-core Pi, 3.8GB RAM)
-locked the machine 3 times, requiring hard reset each time. Isolated 7 tests that
-spin at 100% CPU indefinitely.
+### CPU-Lock Bug: MagicMock View Causes Infinite Loop (2026-05-30)
+- **Root cause:** `InteractiveCLIStrategy.decide()` enters `while True` calling `view.prompt_choice()`. A plain `MagicMock()` returns another `MagicMock()` — truthy but matching no exit condition → 100% CPU.
+- **Fix:** `view.prompt_choice.return_value = "S"` on MagicMock views in 7 tests (commit `e536cfd`).
+- **Result:** All 69 phase4 tests pass in ~0.30s.
 
-### Root Cause
-
-`InteractiveCLIStrategy.decide()` enters a `while True` loop calling
-`view.prompt_choice()`. When the view is a plain `MagicMock()` (not configured to
-return a specific value), `prompt_choice()` returns another `MagicMock` object —
-truthy but not equal to any of `"S"`, `"C"`, `"E"`, `"R"`. The loop never matches
-a condition and spins at 100% CPU forever.
-
-### Hanging tests
-
-| Class | Method | Lines |
-|-------|--------|-------|
-| `TestSyncOrchestratorFullFlow` | All 6 tests calling `sync()` | setUp at line 503 creates `self.view = MagicMock()` |
-| `TestSyncOrchestratorEdgeCases` | `test_sync_notifies_view_on_completion` | Line 1073 creates inline `view = MagicMock()` |
-
-### Fix chosen (option 1)
-
-**Fix the tests** — Configure `view.prompt_choice.return_value = "S"` on MagicMock views passed to `SyncOrchestrator`. This makes `InteractiveCLIStrategy.decide()` exit the loop with "sync all", exercising the real strategy flow without hanging.
-
-### Safe test results (60/69 phase4 tests, no hangs)
-
-```
-60 passed, 9 deselected in 0.25s
-```
-The 7 hanging tests + 2 abstract-contract tests (non-instantiable classes) were deselected.
-
-### Fix applied (commit `e536cfd`, 2026-05-31)
-
-`view.prompt_choice.return_value = "S"` added to both `TestSyncOrchestratorFullFlow.setUp()` and `test_sync_notifies_view_on_completion`. All 69 phase4 tests now pass in ~0.30s, no hangs.
-
-## This Session (2026-05-31) — Remote Blob Verification
-
-### Remote blob IS readable
-
-The "Remote blob permanently garbled (wrong key)" issue was a **false alarm**. The blob on R2 was decrypted successfully with master key `00fb89ef...`:
-- **Salt:** `1ba4e5d0...`, **Nonce:** `8c580e51...`
-- **HMAC tag:** ✅ matches (integrity check passed)
-- **Plaintext:** 844 bytes of valid JSON
-- **Entries:** 1 active entry ("Working on Phpoc", device `bc315840-6975-4fb5-af5d-e907a8600557`)
-- **Updated at:** epoch 1780255104003 (May 2026)
-
-### Per-phase test timeouts
-
-Added `pytest-timeout` plugin with per-file timeout configuration via `pytest_collection_modifyitems` hook in `conftest.py`:
-- Phase 1-7: 10s each
-- Feature tests (WAL, daemon, tags, etc.): 10s
-- HTTP/git transport tests: 30s
-- Global fallback: 30s (from `pytest.ini`)
-
-This prevents any CPU-lock hang from locking a test runner indefinitely.
+### Remote Blob Verification (2026-05-31)
+- "Remote blob permanently garbled" was a **false alarm**. Decrypted with master key `00fb89ef...`: valid JSON, 844 bytes, 1 entry.
+- Per-phase test timeouts added via `pytest-timeout` (10s/30s tiers) — prevents any future CPU-lock hang.
 
 ## This Session (2026-05-28)
 
@@ -284,18 +275,34 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
-## Next Steps
-1. ✅ Root cause identified (2026-05-30)
-2. ✅ Fix implemented: `view.prompt_choice.return_value = "S"` (commit `e536cfd`) — 69/69 phase4 tests pass
-3. ✅ All test batches run: 1338 tests pass
-4. ✅ Per-phase timeouts added (pytest-timeout, commit `0ac3621`)
-5. ✅ Remote blob verification: **not garbled** — decrypts fine with master key `00fb89ef...`
-6. ✅ Cross-device handoff verified — 3 end-to-end round-trip tests:
-   - `test_full_cross_device_round_trip` (A→B→A, cookie lifecycle, entry IDs)
-   - `test_cross_device_with_running_task` (active task survives handoff)
-   - `test_cross_device_concurrent_adds_no_data_loss` (offline merge, no loss)
-   All 1341 tests pass.
-7. ✅ Superseded — ledger regrew to 86 blocks; both sides in sync.
+## Next Steps (Mobile Roadmap)
+
+All CLI reference implementation features are complete. The next milestone is the
+mobile app. See `MOBILE_ROADMAP.md` for full details.
+
+### 🔴 Phase 1 — Foundation (Prerequisites for Mobile)
+| # | Item | Est. Effort |
+|---|------|-------------|
+| 1 | REST API spec (OpenAPI 3.0) — structured JSON endpoints extending the dumb-blob Worker | 1-2 days |
+| 2 | API Worker implementation — Cloudflare Worker with Hono router + auth tokens | 1-2 weeks |
+| 3 | HTTP ledger transport (Python SDK) — `HttpLedgerTransport` reusable package | 3-5 days |
+| 4 | Auth token flow (login/logout/sessions) — mobile-friendly auth | 3-5 days |
+| 5 | Native crypto SDK (Swift) — PBKDF2, AES-CTR, HMAC, SHA-256 per PHPSPEC.md | 1-2 weeks |
+| 6 | Native crypto SDK (Kotlin) — same primitives for Android | 1-2 weeks |
+| 7 | Device identity (mobile) — persistent UUID4, HMAC proof, keychain storage | 1-2 days |
+
+### Architecture Decision Pending
+See `MOBILE_ROADMAP.md` § Architectural Options — recommendation is **Option C (Hybrid)**:
+mobile does crypto locally, lightweight API layer provides structured endpoints
+but never sees plaintext.
+
+### CLI Reference — Maintenance Mode
+- ✅ All 1341 tests pass
+- ✅ Auth gate with re-auth prompting for all commands
+- ✅ Cross-device handoff verified (3 end-to-end tests)
+- ✅ Per-phase test timeouts prevent hangs
+- ✅ Docs reorganized: `docs/design/` for design docs, `archive/` for retired docs
+- 🔄 ETag caching in long-running daemon mode (low priority)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -331,5 +338,6 @@ iterations from 100,000 to 600,000. Without this fallback, pre-R3 genesis
 blocks would fail to decrypt despite the correct passphrase.
 
 ## Known Issues
-- ETag caching stale in long-running daemon mode (not a current issue)
-- `_reconcile_and_claim` blob overwrite protection (`BLOB_KEY_MISMATCH` sentinel) — resolved in commit `1dacf40`
+- ETag caching stale in long-running daemon mode (low priority, not a current issue)
+- 100K PBKDF2 fallback for pre-R3 genesis blocks — added in commit `3002952` for backward compatibility
+- Pre-R3 ledgers created before commit `e25a26c` (2026-04-28) use 100K iterations instead of 600K
