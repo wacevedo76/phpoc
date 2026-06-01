@@ -2395,5 +2395,359 @@ class TestNoRemote:
         assert len(spy.push_cookie_calls) == 0
 
 
+# ==========================================================================
+# Test 14: End-to-end full round-trip cross-device handoff
+# ==========================================================================
+
+class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
+    """Full round-trip: Device A → Device B → Device A → verify.
+
+    Tests the complete cross-device workflow:
+      1. Device A adds entries, pushes (blob + cookie)
+      2. Device B has no local cookie → check_and_sync → REAUTH_NEEDED
+      3. Device B authenticates → reconcile_and_claim → pulls remote blob,
+         merges with local entries, pushes merged blob, creates new cookie
+      4. Device A returns (stale cookie) → check_and_sync → specifier
+         mismatch → REAUTH_NEEDED
+      5. Device A authenticates → reconcile_and_claim → sees different
+         device_uuid → pulls merged blob from B, reconciles, pushes
+      6. Verify: both sides have all entries merged, cookies are fresh
+    """
+
+    def setUp(self):
+        self._tmp_base = Path(tempfile.mkdtemp(prefix="phpoc_cross_device_"))
+        self._crypto = _make_crypto_with_mk(TEST_MASTER_KEY)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmp_base, ignore_errors=True)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_service(self, device_id: str, data_dir: Path):
+        """Create a StagingService for *device_id* with an isolated TransportSpy."""
+        spy = TransportSpy()
+        provider = _make_device_provider(device_id)
+        store = _make_staging_store()
+        svc = StagingService(
+            crypto=self._crypto,
+            staging_store=store,
+            transport=spy,
+            device_id_provider=provider,
+            data_dir=str(data_dir),
+            cookie_ttl_minutes=30,
+        )
+        return svc, spy, store
+
+    def _simulate_reconcile(self, svc: StagingService):
+        """Simulate what main.py does after ph login: call _reconcile_and_claim."""
+        result = svc._reconcile_and_claim(TEST_MASTER_KEY)
+        return result
+
+    # ------------------------------------------------------------------
+    # The full round-trip
+    # ------------------------------------------------------------------
+
+    def test_full_cross_device_round_trip(self):
+        """Device A → B → A: full round trip with cookie lifecycle."""
+        data_dir_a = self._tmp_base / "device_a"
+        data_dir_b = self._tmp_base / "device_b"
+        data_dir_a.mkdir(parents=True, exist_ok=True)
+        data_dir_b.mkdir(parents=True, exist_ok=True)
+
+        # ==============================================================
+        # STEP 1: Device A creates entries and pushes
+        # ==============================================================
+        svc_a, spy_a, store_a = self._make_service(DEVICE_A_UUID, data_dir_a)
+
+        # A has two entries
+        svc_a.capture("Meeting", 1_700_000_000_000, stop_epoch=1_700_3600_000)
+        svc_a.capture("Coding", 1_700_3600_000, is_active=True)
+
+        entries_a = svc_a.get_entries()
+        self.assertEqual(len(entries_a), 2)
+        meeting_id = entries_a[0]["entry_id"]
+        coding_id = entries_a[1]["entry_id"]
+
+        # A pushes to remote (blob + cookie)
+        svc_a.push_to_remote(TEST_MASTER_KEY)
+
+        # Verify blob and cookie were both pushed
+        self.assertGreaterEqual(len(spy_a.push_blob_calls), 1)
+        self.assertGreaterEqual(len(spy_a.push_cookie_calls), 1)
+
+        # Local cookie exists for A
+        meta_path_a = data_dir_a / META_FILE
+        self.assertTrue(meta_path_a.exists())
+
+        # ==============================================================
+        # STEP 2: Device B arrives — no local cookie → REAUTH_NEEDED
+        # ==============================================================
+        svc_b, spy_b, store_b = self._make_service(DEVICE_B_UUID, data_dir_b)
+
+        # Wire B's transport to point at A's remote (shared transport data)
+        spy_b._blobs = dict(spy_a._blobs)  # Copy all remote data (blob + cookie)
+
+        # B checks without any local cookie
+        result = svc_b.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED,
+                         "No local cookie → must re-auth")
+
+        # No local cookie → check_and_sync returns REAUTH_NEEDED
+        # immediately without pulling remote cookie (by design — wasted
+        # network call when auth is required anyway). The blob is also
+        # never pulled before auth.
+        self.assertEqual(spy_b.pull_cookie_calls, 0,
+                         "No local cookie → no remote cookie pull")
+        self.assertEqual(spy_b.pull_blob_calls, 0,
+                         "B must NOT pull blob before auth")
+
+        # ==============================================================
+        # STEP 3: Device B authenticates → reconcile_and_claim
+        # ==============================================================
+        result = self._simulate_reconcile(svc_b)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # B should now have A's entries merged in
+        entries_b = svc_b.get_entries()
+        titles_b = {e["title"] for e in entries_b}
+        self.assertIn("Meeting", titles_b, "B must see A's 'Meeting' entry")
+        self.assertIn("Coding", titles_b, "B must see A's 'Coding' entry")
+
+        # B adds its own entry
+        svc_b.capture("Review", 1_700_7200_000, stop_epoch=1_701_0000_000)
+        entries_b = svc_b.get_entries()
+        self.assertEqual(len(entries_b), 3)
+
+        # B pushes with _reconcile_and_claim having already pushed the blob.
+        # After reconcile, the merged blob is on remote. Now B pushes again
+        # so the remote has all 3 entries (A's 2 + B's 1).
+        svc_b.push_to_remote(TEST_MASTER_KEY)
+
+        # Verify B's new entry is on remote
+        self.assertGreaterEqual(len(spy_b.push_blob_calls), 1,
+                                "B must push blob after adding entry")
+
+        # ==============================================================
+        # STEP 4: Device A returns — stale cookie → specifier mismatch
+        # ==============================================================
+        svc_a2, spy_a2, store_a2 = self._make_service(DEVICE_A_UUID, data_dir_a)
+
+        # Point A2's transport at B's remote state
+        spy_a2._blobs = dict(spy_b._blobs)
+
+        # A's local cookie still exists (from step 1) but the remote cookie
+        # now has B's specifier → mismatch → REAUTH_NEEDED
+        result = svc_a2.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED,
+                         "Specifier mismatch must trigger re-auth")
+
+        # ==============================================================
+        # STEP 5: Device A authenticates → pulls merged blob
+        # ==============================================================
+        result = self._simulate_reconcile(svc_a2)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # A should now have ALL 3 entries (A's 2 + B's 1)
+        entries_a2 = svc_a2.get_entries()
+        titles_a2 = {e["title"] for e in entries_a2}
+        self.assertIn("Meeting", titles_a2, "A must still have 'Meeting'")
+        self.assertIn("Coding", titles_a2, "A must still have 'Coding'")
+        self.assertIn("Review", titles_a2, "A must have B's 'Review'")
+        self.assertEqual(len(entries_a2), 3)
+
+        # ==============================================================
+        # STEP 6: Verify both sides have fresh cookies, no duplicates
+        # ==============================================================
+
+        # Both devices should have local cookies
+        meta_a2 = data_dir_a / META_FILE
+        meta_b = data_dir_b / META_FILE
+        self.assertTrue(meta_a2.exists(), "A must have a local cookie after reconcile")
+        self.assertTrue(meta_b.exists(), "B must have a local cookie")
+
+        # Each device should have a different specifier (independent sessions)
+        cookie_a = json.loads(meta_a2.read_text())
+        cookie_b = json.loads(meta_b.read_text())
+        self.assertNotEqual(cookie_a["device_specifier"], cookie_b["device_specifier"],
+                            "Each device must have a unique specifier")
+
+        # Verify entry_ids are unique (no duplicates)
+        entry_ids_a2 = [e["entry_id"] for e in entries_a2]
+        self.assertEqual(len(entry_ids_a2), len(set(entry_ids_a2)),
+                         "No duplicate entry_ids after merge")
+
+        # Verify the original entry_ids are preserved
+        self.assertIn(coding_id, entry_ids_a2, "Original coding entry_id must survive")
+        self.assertIn(meeting_id, entry_ids_a2, "Original meeting entry_id must survive")
+
+    def test_cross_device_with_running_task(self):
+        """Running (active) task survives cross-device handoff.
+
+        Scenario:
+          1. Device A starts a task (active, running)
+          2. A pushes to remote
+          3. Device B authenticates, pulls, sees A's active task
+          4. B ends the task
+          5. B pushes
+          6. Device A comes back, pulls → sees task as ended
+        """
+        data_dir_a = self._tmp_base / "device_a_active"
+        data_dir_b = self._tmp_base / "device_b_active"
+        data_dir_a.mkdir(parents=True, exist_ok=True)
+        data_dir_b.mkdir(parents=True, exist_ok=True)
+
+        # Device A: start a running task
+        svc_a, spy_a, _ = self._make_service(DEVICE_A_UUID, data_dir_a)
+        svc_a.capture("Deep Work", 1_800_000_000_000, is_active=True)  # Running
+        entries_a = svc_a.get_entries()
+        work_entry_id = entries_a[0]["entry_id"]
+        self.assertTrue(entries_a[0]["is_active"])
+
+        # A pushes (active task goes to remote as active)
+        svc_a.push_to_remote(TEST_MASTER_KEY)
+
+        # Device B: comes along
+        svc_b, spy_b, _ = self._make_service(DEVICE_B_UUID, data_dir_b)
+        spy_b._blobs = dict(spy_a._blobs)
+
+        # B has no local cookie → REAUTH_NEEDED
+        result = svc_b.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+
+        # B authenticates
+        result = self._simulate_reconcile(svc_b)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # B should see A's active task
+        entries_b = svc_b.get_entries()
+        self.assertEqual(len(entries_b), 1)
+        self.assertEqual(entries_b[0]["title"], "Deep Work")
+        self.assertTrue(entries_b[0]["is_active"],
+                        "Active task must remain active after pull")
+
+        # B ends the task
+        svc_b.end("Deep Work", 1_800_3600_000)
+        entries_b = svc_b.get_entries()
+        self.assertFalse(entries_b[0]["is_active"],
+                         "Task must be ended on B")
+        self.assertIsNotNone(entries_b[0].get("end_epoch"))
+
+        # B pushes the ended task to remote
+        svc_b.push_to_remote(TEST_MASTER_KEY)
+
+        # Device A comes back
+        svc_a2, spy_a2, _ = self._make_service(DEVICE_A_UUID, data_dir_a)
+        spy_a2._blobs = dict(spy_b._blobs)
+
+        # A has stale cookie → mismatch → REAUTH_NEEDED
+        result = svc_a2.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+
+        # A authenticates
+        result = self._simulate_reconcile(svc_a2)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # A should see the task as ended (no longer active)
+        entries_a2 = svc_a2.get_entries()
+        self.assertEqual(len(entries_a2), 1)
+        self.assertEqual(entries_a2[0]["entry_id"], work_entry_id,
+                         "Entry ID must be preserved across devices")
+        self.assertFalse(entries_a2[0]["is_active"],
+                         "Task must appear ended on A after pulling B's update")
+        self.assertIsNotNone(entries_a2[0].get("end_epoch"),
+                             "end_epoch must be present after pull")
+
+    def test_cross_device_concurrent_adds_no_data_loss(self):
+        """Both devices add entries independently; no data loss on merge.
+
+        Scenario:
+          1. Device A: starts task A1. Push.
+          2. Device B: no cookie, auths, pulls A1, adds B1 and B2. Push.
+          3. Device A (OFFLINE): adds A2 (no push).
+          4. Device A comes online: stale cookie → auths → pulls B's merged
+             set → merges A2 with (A1, B1, B2) → pushes all 4.
+          5. Device B: pulls → sees all 4 entries.
+        """
+        data_dir_a = self._tmp_base / "device_a_concurrent"
+        data_dir_b = self._tmp_base / "device_b_concurrent"
+        data_dir_a.mkdir(parents=True, exist_ok=True)
+        data_dir_b.mkdir(parents=True, exist_ok=True)
+
+        # --- Phase 1: A pushes A1 ---
+        svc_a, spy_a, _ = self._make_service(DEVICE_A_UUID, data_dir_a)
+        svc_a.capture("A1", 1_000_000, stop_epoch=2_000_000)
+        svc_a.push_to_remote(TEST_MASTER_KEY)
+
+        # --- Phase 2: B auths, pulls A1, adds B1+B2, pushes ---
+        svc_b, spy_b, _ = self._make_service(DEVICE_B_UUID, data_dir_b)
+        spy_b._blobs = dict(spy_a._blobs)
+
+        svc_b.check_and_sync()  # REAUTH_NEEDED
+        self._simulate_reconcile(svc_b)
+
+        # B adds two entries independently
+        svc_b.capture("B1", 3_000_000, stop_epoch=4_000_000)
+        svc_b.capture("B2", 5_000_000, stop_epoch=6_000_000)
+
+        # B pushes (has A1 + B1 + B2 now)
+        svc_b.push_to_remote(TEST_MASTER_KEY)
+
+        # --- Phase 3: A (offline) adds A2 locally, no push ---
+        # Simulate offline: A doesn't sync, just adds locally
+        svc_a.capture("A2", 7_000_000, stop_epoch=8_000_000)
+
+        # A should have A1 and A2 (local only)
+        entries_a = svc_a.get_entries()
+        self.assertEqual(len(entries_a), 2)
+
+        # --- Phase 4: A comes online, auths, merges with remote ---
+        # Point A at B's remote (which has A1+B1+B2, but NOT A2)
+        spy_a._blobs = dict(spy_b._blobs)
+
+        result = svc_a.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+
+        result = self._simulate_reconcile(svc_a)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # A should have ALL 4 entries: A1, A2, B1, B2
+        entries_a_final = svc_a.get_entries()
+        titles_a = {e["title"] for e in entries_a_final}
+        self.assertEqual(len(entries_a_final), 4,
+                         f"Expected 4 entries after merge, got {len(entries_a_final)}")
+        self.assertIn("A1", titles_a)
+        self.assertIn("A2", titles_a, "A2 must survive offline period")
+        self.assertIn("B1", titles_a, "B1 must be merged in")
+        self.assertIn("B2", titles_a, "B2 must be merged in")
+
+        # The remote blob pushed by A should contain all 4
+        self.assertGreaterEqual(len(spy_a.push_blob_calls), 1)
+
+        # --- Phase 5: B comes back and sees A2 ---
+        spy_b2 = TransportSpy()
+        spy_b2._blobs = dict(spy_a._blobs)
+
+        svc_b2, _, _ = self._make_service(DEVICE_B_UUID, data_dir_b)
+        svc_b2._remote._transport = spy_b2
+
+        # B has its own local cookie from phase 2 (now stale because
+        # A overwrote remote cookie). But B's local TTL might still be
+        # valid. The specifier won't match → REAUTH_NEEDED.
+        result = svc_b2.check_and_sync()
+        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+
+        result = self._simulate_reconcile(svc_b2)
+        self.assertEqual(result, SyncCheckResult.READY)
+
+        # B should now see A2
+        entries_b_final = svc_b2.get_entries()
+        titles_b = {e["title"] for e in entries_b_final}
+        self.assertIn("A2", titles_b, "B must see A2 after pulling A's merged blob")
+        self.assertEqual(len(entries_b_final), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
