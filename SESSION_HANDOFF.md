@@ -290,8 +290,12 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 3. ✅ All test batches run: 1338 tests pass
 4. ✅ Per-phase timeouts added (pytest-timeout, commit `0ac3621`)
 5. ✅ Remote blob verification: **not garbled** — decrypts fine with master key `00fb89ef...`
-6. ⬜ Verify cross-device handoff with running tasks
-7. ⬜ Push deduped 63-block ledger to remote (if not already synced)
+6. ✅ Cross-device handoff verified — 3 end-to-end round-trip tests:
+   - `test_full_cross_device_round_trip` (A→B→A, cookie lifecycle, entry IDs)
+   - `test_cross_device_with_running_task` (active task survives handoff)
+   - `test_cross_device_concurrent_adds_no_data_loss` (offline merge, no loss)
+   All 1341 tests pass.
+7. ✅ Superseded — ledger regrew to 86 blocks; both sides in sync.
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
