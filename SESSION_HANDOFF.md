@@ -11,9 +11,9 @@
 - **Recovery:** `ph recover` preserves user's seed (same master key), force-pushes re-chained blocks to remote
 - **Remote blob:** ✅ **Verified readable** — decrypted with master key `00fb89ef...`, 844 bytes JSON, 1 entry. NOT garbled.
 - **Timeouts:** ✅ Per-phase timeouts via pytest-timeout plugin (10s phase tests, 30s transport tests)
-- **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive plan for iOS/Android app
+- **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive cross-platform plan (web, Flutter, React Native contingency)
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs (including `REMOTE_STAGING_ISSUE_TRACKING.md`)
-- **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
+- **CLI complete:** All commands have auto-re-auth prompting; CLI is a first-class cross-platform target alongside web and mobile
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -265,41 +265,42 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
-## Next Steps — Mobile App (Chosen Direction)
+## Next Steps — Cross-Platform Expansion
 
-All CLI reference implementation features are complete. The project is now moving to a
-mobile app. The chosen architectural direction (per `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md`) is:
+The CLI reference implementation is complete at 1341 tests and serves as the anchor platform. The project is now expanding to web and mobile, with the CLI remaining a first-class target alongside them — all platforms share the same wire protocol, crypto, and Worker backend.
 
-### Chosen Direction: Rust Crypto Core + React Web First
+### Chosen Direction: Rust Crypto Core, Web Prototype, Flutter Primary
 
-| Phase | What | Est. Effort |
-|-------|------|-------------|
-| 0 | Rust crypto library (`phpoc-crypto-core`) — PBKDF2, AES-CTR, HMAC, SHA-256, blob obfuscation, compiled to WASM + .a/.so | 1-2 weeks |
-| 1 | React web app — uses Rust → WASM crypto, same Worker backend as CLI | 2-4 weeks |
-| 2 | React Native app — uses Rust → .a/.so crypto, shares UI design from Phase 1 | 2-4 weeks |
-| 3 | Optional: Flutter — uses same Rust crypto via FFI | 2-4 weeks |
+| Phase | Platform | Framework | Crypto Integration | Purpose |
+|-------|----------|-----------|-------------------|---------|
+| 0 | **All** | Rust crate (`phpoc-crypto-core`) | `ring` (BoringSSL), compiled to WASM + `.a` + `.so` | Implement all crypto primitives once. Validate against `crypto_test_vectors.json`. |
+| 1 | **Web** | React (familiarity choice — any WASM-compatible framework works) | Rust → WASM | Prove the interaction model, sync algorithm, and full workflow in a browser. Fastest iteration cycle. |
+| 2 | **Mobile (primary)** | **Flutter** | Rust → `.a`/`.so` via `flutter_rust_bridge` (auto-generated Dart bindings, zero hand-written FFI) | Native mobile experience. Biometrics, background sync, platform storage. |
+| 3 | **Mobile (contingency)** | React Native | Rust → `.a`/`.so` via TurboModules (hand-written ObjC + Kotlin wrappers, ~50 lines each) | Only if Flutter proves problematic. View layer is a rewrite; model layer (crypto, sync, wire protocol) is shared. |
 
 ### Why This Direction
 
-- **Crypto written once.** The Rust library is compiled to all targets: WASM (web), .a (iOS), .so (Android). One implementation to audit, test, and maintain.
-- **Web app ships first.** React + Rust WASM runs on a laptop with `npm start`. Full workflow (start task, sync, view history) works day one.
+- **Crypto written once.** The Rust library is compiled to every target — WASM (web), `.a` (iOS), `.so` (Android). One implementation to audit, test, and maintain.
+- **Web prototype ships first.** The web app runs on a laptop with `npm start`, proving the full workflow (start task, sync, view history) in days, not weeks. Framework choice is pragmatic (React for familiarity) — any WASM-compatible web framework works.
+- **Flutter has the cleanest Rust integration.** `flutter_rust_bridge` auto-generates all Dart bindings from the Rust crate — zero hand-written FFI glue. Direct C ABI calls avoid the JS↔Native bridge overhead of React Native.
+- **React Native is a contingency, not a commitment.** If Flutter proves problematic, the Rust crypto is already compiled to `.a`/`.so` and ready for RN via TurboModules. The decision to switch requires a documented finding that Flutter blocks a specific feature.
 - **Worker stays dumb.** The existing 149-line Worker handles everything — no REST API layer, no session tokens, no server-side sync endpoint.
-- **CLI compatibility is automatic.** The mobile app uses the same wire protocol, storage paths, and crypto as the CLI. Verified by a shared `crypto_test_vectors.json` suite.
+- **CLI compatibility is automatic.** Every client uses the same wire protocol, storage paths, and crypto as the CLI. Verified by a shared `crypto_test_vectors.json` suite.
 
 ### First Steps
 
 1. Extract `crypto_test_vectors.json` from the CLI's existing test suite
-2. Scaffold the `phpoc-crypto-core` Rust crate with `ring` bindings
+2. Scaffold `phpoc-crypto-core` Rust crate with `ring` bindings
 3. Compile to WASM and verify against test vectors in a browser console
 4. Build the React web UI
 
-### CLI Reference — Maintenance Mode
+### CLI — Active Cross-Platform Target
 - ✅ All 1341 tests pass
 - ✅ Auth gate with re-auth prompting for all commands
 - ✅ Cross-device handoff verified (3 end-to-end tests)
-- ✅ Per-phase test timeouts prevent hangs
+- ✅ Per-phase timeouts prevent hangs
 - ✅ Docs reorganized: `docs/design/` for design docs, `archive/` for retired docs
-- 🔄 ETag caching in long-running daemon mode (low priority)
+- 🔄 ETag caching in long-running daemon mode (lower priority, not blocking mobile)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -338,3 +339,47 @@ blocks would fail to decrypt despite the correct passphrase.
 - ETag caching stale in long-running daemon mode (low priority, not a current issue)
 - 100K PBKDF2 fallback for pre-R3 genesis blocks — added in commit `3002952` for backward compatibility
 - Pre-R3 ledgers created before commit `e25a26c` (2026-04-28) use 100K iterations instead of 600K
+
+---
+
+## Context Loading Reference (`/new`)
+
+When starting a fresh context with `/new`, the following files should be loaded in order. The document you're reading (`SESSION_HANDOFF.md`) is always the entry point — it captures the current state, direction, and key decisions.
+
+### Always Load (core context)
+
+| Order | File | Purpose |
+|-------|------|---------|
+| 1 | `SESSION_HANDOFF.md` | **This file.** Current state, auth gate design, cross-platform direction, recent fixes. Always load first. |
+| 2 | `PHPSPEC.md` | Format specification — crypto primitives, block structure, key derivation, blob obfuscation. Required for any crypto, sync, or wire protocol work. |
+| 3 | `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` | Full architectural rationale for the Rust crypto core, dumb Worker, and cross-platform strategy. |
+| 4 | `MOBILE_ROADMAP.md` | Detailed phased plan: Web (React) → Flutter (primary mobile) → React Native (contingency). Prerequisites, build targets, platform-specific features. |
+| 5 | `VISION.md` | Project vision and philosophy — "know thyself," zero-knowledge, platform independence. Read for design alignment. |
+
+### Load When Relevant
+
+| File | When to Read |
+|------|--------------|
+| `MAP.md` | Navigating source code — file inventory with HOT/COLD annotations. Read when you need to find where something lives. |
+| `docs/design/DESIGN_GOALS.md` | Making design decisions that affect the ledger, sync, or user experience. Clarifies principles and non-goals. |
+| `docs/design/ARCHITECTURAL_DECISIONS.md` | Original architectural decisions (pre-dates the cross-platform pivot). Read for historical context on CLI-era choices. |
+| `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session design details. Read when working on device cookie, auth gate, or cross-device reconciliation. |
+| `ROADMAP.md` | High-level project roadmap. Read for milestone awareness. |
+| `CHANGELOG.md` | Release history. Read to understand what changed and when. |
+| `BACKLOG.md` | Project backlog. Read if picking up a new task or checking what's planned. |
+| `docs/design/PH-VIEW-Workflow.md` / `ph-view-workflow-updated.md` | Workflow diagrams for the CLI view command. Read when working on UI equivalents. |
+
+### Source Files by Layer (read when modifying)
+
+| Layer | Key Files | What They Do |
+|-------|-----------|--------------|
+| CLI entry | `main.py` | Argparse, auth tiers, command wiring. Only modify if adding CLI commands. |
+| Sync algorithm | `domain/staging/service.py` | `check_and_sync()` — the auth gate, blob pull/push, reconcile. Ported to every platform. |
+| Wire protocol | `core/sync/http_transport.py` | HTTP GET/PUT/LIST + ETag. Reference for all client implementations. |
+| Staging blob | `domain/staging/remote_sync.py` | Blob obfuscation, device cookie, push/pull. |
+| Ledger chain | `domain/ledger/chain.py` | Block chain building, sealing, verification. |
+| Ledger sync | `domain/ledger/remote_sync.py` | Ledger block push/pull, path constants. |
+| Cookie | `domain/cookie/device_cookie.py` | Device specifier format, TTL. |
+| Merge engine | `domain/staging/merge_engine.py` | Cross-device dedup by `entry_id`. |
+| Crypto | `security/crypto.py` | `CryptoManager`, encrypt/decrypt wrappers. The Rust `phpoc-crypto-core` replaces this for non-CLI platforms. |
+| Worker | `worker/src/index.ts` | Cloudflare Worker (149-line dumb blob store). Extend with caution — keep it dumb. |

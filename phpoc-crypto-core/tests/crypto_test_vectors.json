@@ -1,0 +1,36 @@
+{
+  "pbkdf2": [
+    {
+      "passphrase": "test-passphrase",
+      "iterations": 600000,
+      "expected_hex": "TODO: extract from Python CLI test suite"
+    }
+  ],
+  "aes_ctr": [
+    {
+      "master_key_hex": "abababababababababababababababababababababababababababababababab",
+      "plaintext": "Hello, PHPOC!",
+      "note": "Roundtrip test only — ciphertext is non-deterministic"
+    }
+  ],
+  "hmac_sha256": [
+    {
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "data_hex": "48656c6c6f",
+      "expected_hex": "TODO: extract from Python CLI test suite"
+    }
+  ],
+  "sha256": [
+    {
+      "data_hex": "48656c6c6f",
+      "expected_hex": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969"
+    }
+  ],
+  "blob_obfuscation": [
+    {
+      "master_key_hex": "abababababababababababababababababababababababababababababababab",
+      "plaintext": "{\"device_id\":\"abc\",\"entries\":[]}",
+      "note": "Roundtrip test only — obfuscation is non-deterministic"
+    }
+  ]
+}

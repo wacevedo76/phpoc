@@ -1,6 +1,6 @@
-# PHPOC — Mobile Roadmap
+# PH Ledger — Mobile Roadmap
 
-> **Goal:** A native mobile app (iOS/Android) that reads and writes a PHPOC ledger,
+> **Goal:** A cross-platform app (web, iOS, Android) that reads and writes PH Ledger data,
 > interoperating with the existing CLI reference implementation through the remote
 > sync infrastructure (HTTP → Cloudflare Worker → R2).
 
@@ -42,9 +42,33 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 
 ---
 
-## What a Mobile App Needs
+---
 
-### 🔴 Phase 1 — Foundation (Must Have)
+## Platform Phasing
+
+The Rust crypto core (`phpoc-crypto-core`) decouples crypto from the UI framework entirely. The phased approach below targets platforms in order of iteration speed and risk reduction, not by framework loyalty.
+
+| Phase | Platform | Framework | Crypto Integration | Purpose |
+|-------|----------|-----------|-------------------|---------|
+| **1** | **Web** | React (chosen for familiarity — any WASM-compatible framework works) | Rust → WASM | Prove the interaction model, sync algorithm, and full workflow in a browser. Fastest iteration. |
+| **2** | **Mobile (primary)** | **Flutter** | Rust → `.a`/`.so` via `flutter_rust_bridge` (auto-generated Dart bindings, zero hand-written FFI) | Native mobile experience. Biometrics, background sync, platform storage. |
+| **3** | **Mobile (contingency)** | React Native | Rust → `.a`/`.so` via TurboModules (hand-written ObjC + Kotlin wrappers, ~50 lines each) | Only if Flutter proves problematic. Shares UI patterns from Phase 1, but view layer is a rewrite. |
+
+**Why Flutter over React Native as the primary mobile target:**
+- `flutter_rust_bridge` auto-generates all Dart bindings from the Rust crate — **zero lines of hand-written FFI glue** vs. ~50 lines each in ObjC and Kotlin for TurboModules
+- Direct C ABI FFI calls avoid the JS↔Native bridge overhead on every crypto operation
+- If Flutter doesn't work out for any reason (performance, platform API gaps, team preference), the Rust crypto core makes the React Native fallback straightforward — the crypto is already compiled to `.a`/`.so`
+
+**Why React Web:**
+- Fastest feedback loop for the hardest problems (crypto correctness, sync algorithm, interaction design)
+- Framework choice is pragmatic, not architectural — React is used because of familiarity. Any web framework can consume the same Rust→WASM module
+- The web app is a prototype for the interaction model; the insights transfer to any mobile framework
+
+---
+
+## What Each Platform Needs
+
+### 🔴 Phase 1 — Web Prototype (Must Have)
 
 #### 1. Minimal Worker Additions (~20 lines)
 
@@ -58,15 +82,15 @@ The current Worker needs three small additions for mobile compatibility:
 
 That's the entire delta. The Worker stays under 200 lines, stateless, and domain-ignorant.
 
-**The mobile app does not need:**
+**No client platform needs:**
 - Session tokens (the passphrase is the auth mechanism — it never leaves the device)
 - A server-side sync endpoint (sync runs client-side, just like the CLI)
-- CRUD endpoints for staging (the mobile app manipulates its local cache, then pushes the full blob)
+- CRUD endpoints for staging (each client manipulates its local cache, then pushes the full blob)
 - An OpenAPI spec (the protocol is three HTTP verbs, fully defined by `core/sync/http_transport.py`)
 
 #### 2. Wire Protocol — Already Defined (No New Work)
 
-The mobile app implements the same three-operation protocol that the CLI's `HttpStagingTransport` uses:
+Every client implements the same three-operation protocol that the CLI's `HttpStagingTransport` uses:
 
 ```
 GET  /{path}                    → bytes | None (404)
@@ -74,7 +98,7 @@ PUT  /{path}  (body: bytes)     → None
 GET  ?prefix={prefix}           → List[str]
 ```
 
-The storage paths are constants from the CLI reference — the mobile app uses the exact same strings:
+The storage paths are constants from the CLI reference — every client uses the exact same strings:
 
 | Data | R2 Path (CLI constant) | Defined In |
 |------|------------------------|------------|
@@ -83,37 +107,48 @@ The storage paths are constants from the CLI reference — the mobile app uses t
 | Ledger blocks | `ledger/blocks/{seq}.json` | `domain/ledger/remote_sync.py:39` |
 | Ledger index | `ledger/index.json` | `domain/ledger/remote_sync.py:40` |
 
-ETag caching (conditional GETs with `If-None-Match` / `304 Not Modified`) is strongly recommended for the mobile app to minimize data transfer on slow cellular connections.
+ETag caching (conditional GETs with `If-None-Match` / `304 Not Modified`) is strongly recommended for all clients to minimize data transfer, especially on cellular connections.
 
-#### 3. Native Crypto SDK (Swift / Kotlin)
+#### 3. Portable Crypto Library (`phpoc-crypto-core`)
 
-A mobile app can't shell out to Python. Needed reimplementations:
+Crypto is the gating factor — one wrong byte and the client can't read blobs written by the CLI. Instead of reimplementing crypto per platform, the project uses a **shared Rust library compiled to every target**.
 
-| Primitive | Used For | iOS API | Android API |
-|-----------|----------|---------|-------------|
-| PBKDF2-HMAC-SHA256 (600K iter) | Passphrase → PDK | `CryptoKit.PBKDF2` | `SecretKeyFactory("PBKDF2WithHmacSHA256")` |
-| AES-CTR encrypt/decrypt | Field-level encryption | `CryptoKit.AES` (CTR mode) | `Cipher("AES/CTR/NoPadding")` |
-| HMAC-SHA256 | Block seals, auth tags, blob obfuscation | `CryptoKit.HMAC` | `Mac("HmacSHA256")` |
-| SHA-256 | Content hashing, entry hashing | `CryptoKit.SHA256` | `MessageDigest("SHA-256")` |
-| Random 32 bytes | Entry IDs, device specifiers | `SecRandomCopyBytes` | `SecureRandom` |
-| Blob obfuscation (4-tier pad + HMAC sub-key) | Remote staging transport | Custom per PHPSPEC | Custom per PHPSPEC |
+**`phpoc-crypto-core`** is a Rust crate (using `ring` — BoringSSL bindings, FIPS 140-2 validated) that implements all cryptographic primitives once:
 
-The format spec (`PHPSPEC.md`) defines all of these precisely. This is a port, not a design task.
+| Primitive | Used For |
+|-----------|----------|
+| PBKDF2-HMAC-SHA256 (600K + 100K fallback) | Passphrase → PDK |
+| AES-256-CTR encrypt/decrypt | Field-level encryption |
+| HMAC-SHA256 | Block seals, auth tags, blob obfuscation |
+| SHA-256 | Content hashing, entry hashing |
+| Secure random bytes | Entry IDs, device specifiers |
+| Blob obfuscation (4-tier pad + HMAC sub-key) | Remote staging transport (per PHPSPEC.md) |
+| Key derivation | Master key → sub-keys |
 
-**Test vector suite**: Create a shared JSON file (`crypto_test_vectors.json`) with known inputs and expected outputs for every primitive. Both the Swift and Kotlin implementations must pass these vectors before any UI work begins. This prevents subtle cross-platform crypto bugs and ensures CLI ↔ mobile compatibility.
+**Compiled per target:**
 
-#### 4. Device Identity (Mobile)
+| Target | Output | Used By | Integration |
+|--------|--------|---------|-------------|
+| `wasm32-unknown-unknown` | `.wasm` | Web (any framework — React, Svelte, vanilla JS, etc.) | ~10 lines JS (`npm install phpoc-crypto-core` + async import) |
+| `aarch64-apple-ios` | `.a` static lib | Flutter (Phase 2, primary), React Native (Phase 3, contingency), Swift native (optional) | `flutter_rust_bridge` (auto-generated, 0 FFI lines) or TurboModule (~50 lines ObjC) |
+| `aarch64-linux-android` | `.so` shared lib | Flutter (Phase 2, primary), React Native (Phase 3, contingency), Kotlin native (optional) | `flutter_rust_bridge` (auto-generated, 0 FFI lines) or TurboModule (~50 lines Kotlin) |
 
-Each mobile device needs:
-- A persistent UUID4 (stored in Keychain / EncryptedSharedPreferences)
-- HMAC-SHA256 proof derived from the master key
+**Test vector suite**: A shared `crypto_test_vectors.json` with known inputs and expected outputs for every primitive. The Rust library is validated against this suite once — every platform inherits correctness. The only platform-specific test is: "does the HTTP client send/receive bytes correctly?"
+
+This is the approach chosen in `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` — crypto is written once, audited once, maintained once.
+
+#### 4. Device Identity
+
+Each client device (web or mobile) needs:
+- A persistent UUID4 (stored in platform secure storage — Keychain, EncryptedSharedPreferences, or IndexedDB)
+- HMAC-SHA256 proof derived from the master key (via `phpoc-crypto-core`)
 - `device_label` for user-friendly identification in the sync UI
 
-The existing `security/device_identity.py` is the reference. The mobile implementation mirrors it.
+The existing `security/device_identity.py` is the reference. All client implementations mirror it.
 
 #### 5. Sync Algorithm — Port, Don't Re-invent
 
-The mobile app must replicate the CLI's `check_and_sync()` logic from `domain/staging/service.py`. It's ~50 lines of branching — not an SDK dependency:
+Every client must replicate the CLI's `check_and_sync()` logic from `domain/staging/service.py`. It's ~50 lines of branching — not an SDK dependency:
 
 ```
 1. No remote configured? → READY (local only)
@@ -129,7 +164,9 @@ The mobile app must replicate the CLI's `check_and_sync()` logic from `domain/st
 
 The cookie format, merge engine (dedup by `entry_id`), and blob obfuscation are all specified in the CLI reference. This is a faithful port, not a redesign.
 
-### 🟡 Phase 2 — Core Mobile UX (Should Have)
+### 🟡 Phase 2 — Flutter Mobile App (Should Have)
+
+With the Rust crypto core already compiled to `.a`/`.so` and `flutter_rust_bridge` auto-generating Dart bindings, the Flutter app imports the crypto layer as a compiled binary with zero hand-written FFI glue.
 
 #### 6. Mobile Staging CRUD
 
@@ -160,7 +197,7 @@ All local-first: writes hit local storage first, sync to remote in background.
 
 ```
 1. First launch → prompt for passphrase
-2. PBKDF2-600K locally → derive master key → cache in memory
+2. PBKDF2-600K locally (via Rust `.a`/`.so`) → derive master key → cache in memory
 3. Store encrypted master key in Keychain / EncryptedSharedPreferences
 4. Enable biometric unlock for subsequent launches
 5. Derive device identity → create/update device cookie on remote
@@ -172,7 +209,7 @@ All local-first: writes hit local storage first, sync to remote in background.
    - Cookie specifier mismatch? → show which device → offer "Sync Now"
 ```
 
-**Note:** PBKDF2-600K takes ~500ms on desktop, likely 2-3s on mobile. Run it on a background thread with a spinner — never block the main thread.
+**Note:** PBKDF2-600K takes ~500ms on desktop, likely 2-3s on mobile. Run it on a background thread with a spinner — never block the main thread. The Rust→`.a`/`.so` call is direct C ABI FFI — no JS↔Native bridge overhead.
 
 #### 8. Background Sync
 
@@ -183,7 +220,7 @@ All local-first: writes hit local storage first, sync to remote in background.
 - **Optimistic UI**: writes appear immediately; a subtle "pending" indicator shows un-synced changes
 - **Sync badge**: visual indicator of pending changes (like `ph dev push-status`)
 
-### 🟢 Phase 3 — Parity (Nice to Have)
+### 🟢 Phase 3 — Parity & Contingency (Nice to Have)
 
 #### 9. Ledger Sync (Commit)
 
@@ -204,6 +241,15 @@ All local-first: writes hit local storage first, sync to remote in background.
 - Portable export (`--range` block-level export)
 - Tag-signed manifest for sharing on social platforms
 - Read-only view URLs (if API server supports it)
+
+#### 12. React Native (Contingency)
+
+If Flutter proves problematic (performance, platform API gaps, team preference, or ecosystem maturity concerns), the Rust crypto core is already compiled to `.a`/`.so` and ready for React Native via TurboModules. The view layer is a rewrite (React DOM → React Native components), but the model layer — crypto, sync algorithm, wire protocol — is shared.
+
+The decision to switch to React Native should only be made after:
+- A clear, documented finding that Flutter is blocking a specific feature
+- The same feature is achievable in React Native without equivalent tradeoffs
+- The rewrite cost is justified by the specific problem being solved
 
 ---
 
@@ -280,9 +326,9 @@ This is the same philosophy as the current design: the server is a dumb store; c
 |---|------|-------------|------------|
 | 1 | Worker: CORS headers + optional bearer token | 1 day | Current Worker |
 | 2 | Crypto test vector suite (JSON) | 1 day | PHPSPEC.md |
-| 3 | Native crypto SDK (Swift) | 1-2 weeks | Test vectors + PHPSPEC.md |
-| 4 | Native crypto SDK (Kotlin) | 1-2 weeks | Test vectors + PHPSPEC.md |
-| 5 | Device identity (mobile) | 1-2 days | Native crypto SDK |
+| 3 | Rust crypto library (`phpoc-crypto-core`) | 1-2 weeks | Test vectors + PHPSPEC.md |
+| 4 | WASM + `.a`/`.so` build targets | 2-3 days | Rust crypto library |
+| 5 | Device identity | 1-2 days | Rust crypto library |
 
 ---
 
@@ -293,8 +339,8 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | **API Worker: extend or separate?** | Extend the existing Worker with ~20 lines. No separate service needed. |
 | **Auth: API key vs session tokens?** | API key (shared secret) is sufficient. The passphrase is the real auth mechanism — it never leaves the device. No session tokens, no OAuth. |
 | **Stateless or stateful API?** | Stateless. The Worker has no session state. Mobile handles cookies and auth locally. |
-| **Which mobile platform first?** | **iOS (Swift)** — CryptoKit has all primitives built-in (PBKDF2, AES-CTR, HMAC, SHA-256) with no FFI needed. Fewer device targets. Port to Android (Kotlin) after iOS is working. Cross-platform (Flutter/React Native) is not recommended due to native crypto FFI complexity. |
-| **Shared Python SDK?** | Not needed. The mobile app ports the sync algorithm natively — it's ~100 lines of branching + crypto calls. A Python SDK would only be useful if you build a server-side component, which the architecture explicitly avoids. |
+| **Which platform first?** | **Web (React)** — uses Rust → WASM crypto, ships with `npm start`. Fastest iteration cycle for UI and sync algorithm. **Flutter** follows in Phase 2 (uses Rust → `.a`/`.so` via `flutter_rust_bridge`, zero hand-written FFI). React Native is Phase 3 contingency — only if Flutter proves problematic. Swift/Kotlin native apps remain optional but are not a priority. |
+| **Shared Python SDK?** | Not needed. Every client ports the sync algorithm natively — it's ~100 lines of branching + crypto calls. A Python SDK would only be useful if you build a server-side component, which the architecture explicitly avoids. |
 | **OpenAPI spec?** | Not needed. The wire protocol is three HTTP verbs, fully defined by `core/sync/http_transport.py`. The paths are constants in `remote_sync.py`. |
 | **`POST /sync` endpoint?** | Not needed. Sync runs client-side (commit staging → ledger). The server is not involved. |
 
