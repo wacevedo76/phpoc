@@ -51,11 +51,11 @@ Key test files:
 | `ROADMAP.md` | Feature roadmap |
 | `BACKLOG.md` | Task-level tracking |
 | `VISION.md` | Protocol philosophy, use cases |
-| `DESIGN_GOALS.md` | Architectural mandates |
-| `ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
-| `PH-VIEW-Workflow.md` | Auth gate workflow (original design) |
-| `ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
-| `DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
+| `docs/design/DESIGN_GOALS.md` | Architectural mandates |
+| `docs/design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
+| `docs/design/PH-VIEW-Workflow.md` | Auth gate workflow (original design) |
+| `docs/design/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)

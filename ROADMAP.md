@@ -1,7 +1,7 @@
 # Roadmap — Personal History Protocol (PHPOC)
 
 PH Ledger (phpoc) — planned features organized by protocol layer.
-See [VISION.md](VISION.md) for the full protocol pitch, [DESIGN_GOALS.md](DESIGN_GOALS.md) for architectural mandates,
+See [VISION.md](VISION.md) for the full protocol pitch, [docs/design/DESIGN_GOALS.md](docs/design/DESIGN_GOALS.md) for architectural mandates,
 [archive/ROADMAP-BLOCKS.md](archive/ROADMAP-BLOCKS.md) for blocker history, and [BACKLOG.md](BACKLOG.md) for detailed task tracking.
 
 ## Legend
@@ -18,9 +18,9 @@ The top-level goal for PHPOC: establish it as an **open data format** for portab
 | Item | Status | Priority | Notes |
 |---|---|---|---|
 | **VISION.md** — Protocol pitch written | ✅ | — | Captures the "why" and the social use cases |
-| **Format Specification** (`PHPSPEC.md`) — Document the block structure, encryption scheme, chain validation, content hash algorithm, blind index, and staging area as a standalone spec | ✅ | — | Enables anyone to implement a reader/writer without reverse-engineering Python. Cross-refs: [DESIGN_GOALS §1](DESIGN_GOALS.md#1-cryptographic-integrity--immutability), [BACKLOG P1](BACKLOG.md#p1-format-specification-phpspecmd). Includes `format_version` field in genesis (§4.1), explicit versioning policy (§9.3), and one-time migration script (`scripts/migrate_format_version.py`). |
+| **Format Specification** (`PHPSPEC.md`) — Document the block structure, encryption scheme, chain validation, content hash algorithm, blind index, and staging area as a standalone spec | ✅ | — | Enables anyone to implement a reader/writer without reverse-engineering Python. Cross-refs: [DESIGN_GOALS §1](docs/design/DESIGN_GOALS.md#1-cryptographic-integrity--immutability), [BACKLOG P1](BACKLOG.md#p1-format-specification-phpspecmd). Includes `format_version` field in genesis (§4.1), explicit versioning policy (§9.3), and one-time migration script (`scripts/migrate_format_version.py`). |
 | **Portable Export** — Two sub-commands: `--range` (block-level chain segment via chain splitting) + `--tag` (entry-level signed manifest for social sharing) | ⏸️ Deferred | **Highest** | File export unknowns (verification format, encrypted field treatment) need real-world context. Design session complete. See SESSION_HANDOFF §P2 Design Session. |
-| **Remote Sync (git-based)** — `GitStagingTransport` implementation, `init --git-create`, blob obfuscation | 🔜 | **High** | Staging blob only (not ledger). Shell-out to git CLI. Config-driven. See SESSION_HANDOFF §P3 Design Session. Cross-refs: [DESIGN_GOALS §3](DESIGN_GOALS.md#3-scalability--durability), [BACKLOG P3](BACKLOG.md#p3-remote-sync-git-based) |
+| **Remote Sync (git-based)** — `GitStagingTransport` implementation, `init --git-create`, blob obfuscation | 🔜 | **High** | Staging blob only (not ledger). Shell-out to git CLI. Config-driven. See SESSION_HANDOFF §P3 Design Session. Cross-refs: [DESIGN_GOALS §3](docs/design/DESIGN_GOALS.md#3-scalability--durability), [BACKLOG P3](BACKLOG.md#p3-remote-sync-git-based) |
 | **Laptop reference implementation polish** — CLI kinks, UX improvements, reliability | 🔜 | **High** | The CLI is the first-class reference. Must be solid before downstream porting. Cross-refs: [BACKLOG P4](BACKLOG.md#p4-cli-kinks--ux-polish) |
 | **Mobile POC** (Swift/Kotlin) — Minimal ledger reader/ writer | 🔮 | Medium | Proves the format works cross-platform. Blind index writes (no full decryption) for wearable. |
 | **Wearable POC** (watchOS/WearOS) — Blind index writes only | 🔮 | Medium | Minimal footprint: log duration + activity type, no full decryption needed |
