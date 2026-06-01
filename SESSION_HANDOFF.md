@@ -1,9 +1,9 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `P3-Remote_Sync`
-- **Commit:** `0ac3621`
-- **Tests:** 1338 passing, 0 failures
+- **Branch:** `main` (P3-Remote_Sync merged)
+- **Commit:** `87a9f8d`
+- **Tests:** 1341 passing, 0 failures
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 56 ledger blocks + index migrated)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -123,16 +123,16 @@ Two push paths:
 
 ## Recent Commits
 ```
-4508503  fix: empty-ledger robustness, Ctrl+C protection, NoAuth read commands
-da4ac16  fix: CLIView wiring — ph sync shows interactive modify/remove/confirm workflow
-bc7078e  docs: update session handoff with stale-remote fix and sync confirmation
-45ae00d  fix: stale-remote overwrite only needed block instead of force-pushing all
-06fd058  fix: bare import json inside main() shadows top-level import
-e76bbeb  fix: remove 102 duplicate ledger entries + 29 stale staging entries
-3b67fbc  fix: push staging blob before device cookie to prevent stale-remote bug
-23f510f  fix: ph login uses SyncCheckResult enum instead of StagingService attrs
-01d4f24  fix: resolve tracked issues P0-P4
-3b0e92f  fix: resolve 54 pre-existing test failures from API drift
+87a9f8d  chore: move architectural and design docs into docs/design/
+8e5e7df  chore: reorganize root directory — archive retired docs, add mobile roadmap
+d04bd79  docs: mark cross-device handoff verified (item #6) and ledger push superseded (item #7)
+de06b5e  test: verify cross-device handoff with 3 end-to-end round-trip tests
+a4e2b1d  docs: remote blob verified readable; update issue tracking and check script
+0ac3621  fix: add per-phase test timeouts via pytest-timeout plugin
+5651625  Merge branch 'P3-Remote_Sync' of github.com:wacevedo76/phpoc into P3-Remote_Sync
+f10e9e1  fix: auto-prompt for re-auth on all staging-interacting commands
+e536cfd  fix: prevent infinite CPU loop in phase4 tests — configure MagicMock prompt_choice return value
+94f1c1d  docs: update next step — implement option 1 (mock return_value) for phase4 CPU-lock fix
 ```
 
 ## This Session (2026-05-30) — CPU-Lock Bug: MagicMock View Causes Infinite Loop
@@ -284,18 +284,111 @@ Removed **102 duplicate entries** from 15 entirely-duplicate blocks embedded in 
 
 **Result**: 63 blocks (down from 83), zero duplicate entries, valid chain linkage. Backups: `ledger.json.bak`, `.bak2`, `.bak3`, `staging.json.bak`.
 
-## Next Steps
-1. ✅ Root cause identified (2026-05-30)
-2. ✅ Fix implemented: `view.prompt_choice.return_value = "S"` (commit `e536cfd`) — 69/69 phase4 tests pass
-3. ✅ All test batches run: 1338 tests pass
-4. ✅ Per-phase timeouts added (pytest-timeout, commit `0ac3621`)
-5. ✅ Remote blob verification: **not garbled** — decrypts fine with master key `00fb89ef...`
-6. ✅ Cross-device handoff verified — 3 end-to-end round-trip tests:
-   - `test_full_cross_device_round_trip` (A→B→A, cookie lifecycle, entry IDs)
-   - `test_cross_device_with_running_task` (active task survives handoff)
-   - `test_cross_device_concurrent_adds_no_data_loss` (offline merge, no loss)
-   All 1341 tests pass.
-7. ✅ Superseded — ledger regrew to 86 blocks; both sides in sync.
+## Design Docs Reorganization (2026-06-01)
+
+Architectural and design documents moved to `docs/design/` to reduce root directory clutter:
+- `MOBILE_ROADMAP.md` — Mobile implementation plan (kept at root for visibility)
+- `PHPSPEC.md` — Format specification (kept at root, referenced by mobile SDK)
+- `ARCHITECTURE.md` → `docs/design/ARCHITECTURE.md`
+- `SYNC_FLOW.md` → `docs/design/SYNC_FLOW.md`
+- `REPUTATION_SPEC.md` → `docs/design/REPUTATION_SPEC.md`
+- `KEY_DERIVATION.md` → `docs/design/KEY_DERIVATION.md`
+- `WORKER_ARCHITECTURE.md` → `docs/design/WORKER_ARCHITECTURE.md`
+- Retired docs (`SYNC_STATUS.md`, `RECOVERY_PLAN.md`, `AUTH_GATE_PLAN.md`) archived in `docs/archived/`
+
+## Next Phase: Mobile PoC
+
+All CLI remote-sync work is complete. The project now shifts to implementing a **mobile proof of concept** (per `MOBILE_ROADMAP.md`). The remote sync infrastructure and format spec are the foundation — mobile will reuse the existing Worker + R2 backend.
+
+### Prerequisites (in priority order)
+
+#### P1 — REST API Worker (extend existing Worker → structured API)
+
+The current Worker (`worker/src/index.ts`, 149 lines) is a dumb blob store. Mobile needs a structured JSON API. Plan:
+- Extend the existing Cloudflare Worker with a [Hono](https://hono.dev/) router
+- Add endpoints: `/api/v1/auth/login`, `/api/v1/staging`, `/api/v1/cookie`, `/api/v1/sync`, `/api/v1/ledger/blocks`, `/api/v1/reputation`
+- Auth: session tokens via Durable Objects or KV (replacing shared API key for mobile)
+- Keep zero-knowledge: crypto stays on device, Worker never sees plaintext
+- Response body limit (128KB) and CPU timeout (30s) constraints to design around
+
+#### P2 — REST API Spec (OpenAPI 3.0)
+
+- Formal spec covering all 15+ endpoints from MOBILE_ROADMAP.md §1
+- Request/response schemas for staging entries, ledger blocks, cookies, auth
+- Generated from or co-located with the Worker implementation
+
+#### P3 — HTTP Ledger Transport (Python SDK)
+
+- `HttpLedgerTransport` class (analogous to `HttpStagingTransport`)
+- Ledger block push/pull with chain verification
+- Shared ETag caching pattern (reuse from staging transport)
+- Package as `phpoc-sdk` for reuse by CLI and potential mobile backend
+
+#### P4 — Auth Token Flow
+
+- `POST /api/v1/auth/login` — passphrase → signed challenge → session token (TTL via cookie pattern)
+- `POST /api/v1/auth/logout` — revoke session
+- API key retained for CLI; session tokens for mobile
+- State store decision: Durable Objects vs KV vs Worker-local
+
+#### P5 — Native Crypto SDK (Swift — first platform)
+
+Per MOBILE_ROADMAP.md recommendation, iOS first (fewer targets, CryptoKit built-in):
+| Primitive | Purpose |
+|-----------|---------|
+| PBKDF2-HMAC-SHA256 (600K iter) | Passphrase → PDK |
+| AES-CTR encrypt/decrypt | Field-level encryption |
+| HMAC-SHA256 | Block seals, auth tags, blob obfuscation |
+| SHA-256 | Content/entry hashing |
+| Random 32 bytes | Entry IDs, device specifiers |
+| Blob obfuscation (4-tier pad + HMAC sub-key) | Remote staging transport |
+
+Reference: `PHPSPEC.md` §4 (Crypto Primitives), §6 (Key Derivation), §7 (Blob Format)
+
+#### P6 — Device Identity (Mobile)
+
+- Persistent UUID4 stored in Keychain / EncryptedSharedPreferences
+- HMAC-SHA256 proof derived from master key
+- `device_label` for user-friendly identification
+- Reference: `security/device_identity.py`
+
+### Architectural Decision: Option C (Hybrid)
+
+Per MOBILE_ROADMAP.md, the recommended architecture is:
+```
+[Mobile App (crypto)] ←→ [Lightweight API] ←→ [Worker] ←→ [R2]
+```
+- Mobile does all crypto locally (Swift CryptoKit)
+- API layer provides structured endpoints but never sees plaintext
+- Worker remains the dumb blob store for R2
+- Shared Python SDK (`phpoc-sdk`) for CLI + backend reuse
+
+### Architectural Options Considered
+
+| Option | Crypto Location | API Complexity | Zero-Knowledge | Effort |
+|--------|:---------------:|:--------------:|:--------------:|:-----:|
+| **A — Thin client + Thick API** | Server | High | ❌ Lost | Medium |
+| **B — Thick client + Dumb Worker** | Device | None | ✅ Preserved | High (full native crypto) |
+| **C — Hybrid** ✅ | Device | Medium | ✅ Preserved | Medium-High |
+
+### Platform Decision
+
+**iOS (Swift) first** — initial PoC target:
+- Fewer device targets for testing
+- `CryptoKit` has PBKDF2, AES-CTR, HMAC, SHA-256 built-in (no FFI)
+- Keychain for secure storage (device identity, session cache)
+- Android (Kotlin) follow once iOS PoC validates the approach
+
+### Mobile PoC Definition of Done
+
+1. ✅ REST API Worker deployed and serving structured endpoints
+2. ✅ OpenAPI 3.0 spec published in `docs/design/`
+3. ✅ HTTP ledger transport in `phpoc-sdk` package
+4. ✅ Auth token flow working (login → session → authenticated requests)
+5. ✅ Swift crypto SDK ported: PBKDF2, AES-CTR, HMAC, SHA-256, blob obfuscation
+6. ✅ Device identity provisioned (UUID4 + HMAC proof)
+7. ✅ One end-to-end mobile test: login → pull staging → decrypt → display entries
+8. ✅ Cross-device: CLI writes entry → mobile reads it via remote sync
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
