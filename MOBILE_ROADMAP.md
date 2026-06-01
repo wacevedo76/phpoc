@@ -6,6 +6,28 @@
 
 ---
 
+## Architecture Decision (2026-06-01)
+
+**After architectural review, the recommendation has shifted from "Hybrid (Option C)" to a clear "Smart Client + Dumb Worker" model.**
+
+The existing 149-line Cloudflare Worker already handles everything the mobile app needs — GET/PUT/LIST of opaque bytes by path. The mobile app is a **port of the CLI's remote sync layer**, not an integration with a new API server. The Worker stays:
+
+- **Stateless** — no Durable Objects, no KV for sessions
+- **Dumb** — cannot decrypt anything, knows nothing about the data model
+- **Tiny** — ~170 lines including CORS and optional token check
+
+**No REST API layer is needed between the mobile app and the Worker.** The protocol is three HTTP verbs:
+
+| Operation | Worker Request | Worker Response |
+|-----------|---------------|-----------------|
+| Read blob | `GET /{path}` | 200 + bytes, 304 (ETag match), or 404 |
+| Write blob | `PUT /{path}` | 200 |
+| List blobs | `GET ?prefix={prefix}` | JSON array of keys |
+
+The mobile app sends the same `X-Api-Key` header and uses the same path constants as the CLI. The Worker doesn't know or care which client is talking to it.
+
+---
+
 ## Status
 
 | Layer | CLI (Reference) | Mobile |
@@ -24,63 +46,61 @@
 
 ### 🔴 Phase 1 — Foundation (Must Have)
 
-#### 1. Structured REST API
+#### 1. Minimal Worker Additions (~20 lines)
 
-The current Cloudflare Worker (`worker/src/index.ts`) is a **dumb blob store** — GET/PUT/LIST of opaque bytes. A mobile app needs a structured API that speaks JSON, not opaque blobs. This is the single largest gap.
+The current Worker needs three small additions for mobile compatibility:
 
-**Proposed endpoints:**
+| Addition | Lines | Why |
+|----------|-------|-----|
+| CORS headers | ~5 | Mobile fetch requests from dev builds, WebView, or arbitrary origins |
+| Optional bearer token check | ~5 | Per-device auth (separate from the shared API key) — a simple KV lookup, not a session system |
+| Structured JSON wrapper (optional) | ~10 | Thin JSON coat on GET/PUT responses for mobile convenience (e.g., `{"data": "<base64>", "etag": "..."}`) |
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `POST` | `/api/v1/auth/login` | Passphrase → session token |
-| `POST` | `/api/v1/auth/logout` | Clear session |
-| `GET` | `/api/v1/staging` | List staging entries |
-| `POST` | `/api/v1/staging` | Add a staging entry |
-| `PUT` | `/api/v1/staging/:id/end` | End a task |
-| `PUT` | `/api/v1/staging/:id/pause` | Pause/resume |
-| `PUT` | `/api/v1/staging/:id` | Modify entry |
-| `DELETE` | `/api/v1/staging/:id` | Remove entry |
-| `GET` | `/api/v1/staging/blob` | Get obfuscated blob bytes |
-| `PUT` | `/api/v1/staging/blob` | Replace blob bytes |
-| `GET` | `/api/v1/cookie` | Get device cookie state |
-| `PUT` | `/api/v1/cookie` | Update device cookie |
-| `POST` | `/api/v1/sync` | Commit staging → ledger |
-| `GET` | `/api/v1/ledger/blocks` | List ledger block indices |
-| `GET` | `/api/v1/ledger/blocks/:index` | Get a ledger block |
-| `PUT` | `/api/v1/ledger/blocks/:index` | Push a ledger block |
-| `GET` | `/api/v1/ledger/verify` | Check chain integrity |
-| `GET` | `/api/v1/reputation` | Blind index queries |
+That's the entire delta. The Worker stays under 200 lines, stateless, and domain-ignorant.
 
-**Design decisions to make:**
-- **Stateless or stateful API?** Stateless (current dumb Worker) keeps crypto on the client. Stateful API could handle auth tokens, session management, and push notifications but requires a stateful server.
-- **API versioning** (`/api/v1/...`) for future evolution.
-- **Auth model:** API key (current) vs session tokens vs OAuth. Mobile needs session tokens — the API key is a shared secret, not per-user.
+**The mobile app does not need:**
+- Session tokens (the passphrase is the auth mechanism — it never leaves the device)
+- A server-side sync endpoint (sync runs client-side, just like the CLI)
+- CRUD endpoints for staging (the mobile app manipulates its local cache, then pushes the full blob)
+- An OpenAPI spec (the protocol is three HTTP verbs, fully defined by `core/sync/http_transport.py`)
 
-#### 2. HTTP Ledger Sync Client (Python SDK)
+#### 2. Wire Protocol — Already Defined (No New Work)
 
-The existing `RemoteLedgerSync` in `domain/ledger/remote_sync.py` is wired only for CLI use. Need:
+The mobile app implements the same three-operation protocol that the CLI's `HttpStagingTransport` uses:
 
-- HTTP endpoints for ledger block push/pull with chain verification
-- An `HttpLedgerTransport` analogous to `HttpStagingTransport`
-- Sync orchestrator that coordinates staging + ledger over HTTP
-- ETag caching for ledger blocks (same pattern as staging)
+```
+GET  /{path}                    → bytes | None (404)
+PUT  /{path}  (body: bytes)     → None
+GET  ?prefix={prefix}           → List[str]
+```
 
-This could be built as a shared Python package (`phpoc-sdk`) that both the CLI and a future mobile backend could use.
+The storage paths are constants from the CLI reference — the mobile app uses the exact same strings:
+
+| Data | R2 Path (CLI constant) | Defined In |
+|------|------------------------|------------|
+| Staging blob | `staging/blobs/current.json` | `domain/staging/remote_sync.py:77` |
+| Device cookie | `staging/blobs/device_cookie.bin` | `domain/staging/remote_sync.py:42` |
+| Ledger blocks | `ledger/blocks/{seq}.json` | `domain/ledger/remote_sync.py:39` |
+| Ledger index | `ledger/index.json` | `domain/ledger/remote_sync.py:40` |
+
+ETag caching (conditional GETs with `If-None-Match` / `304 Not Modified`) is strongly recommended for the mobile app to minimize data transfer on slow cellular connections.
 
 #### 3. Native Crypto SDK (Swift / Kotlin)
 
 A mobile app can't shell out to Python. Needed reimplementations:
 
-| Primitive | Used For | Mobile API |
-|-----------|----------|------------|
-| PBKDF2-HMAC-SHA256 (600K iter) | Passphrase → PDK | `CryptoKit.PBKDF2` / `SecretKeyFactory` |
-| AES-CTR encrypt/decrypt | Field-level encryption | `CryptoKit.AES` / `Cipher` |
-| HMAC-SHA256 | Block seals, auth tags, blob obfuscation | `CryptoKit.HMAC` / `Mac` |
-| SHA-256 | Content hashing, entry hashing | `CryptoKit.SHA256` / `MessageDigest` |
-| Random 32 bytes | Entry IDs, device specifiers | `SecRandomCopyBytes` / `SecureRandom` |
-| Blob obfuscation (4-tier pad + HMAC sub-key) | Remote staging transport | Custom implementation per spec |
+| Primitive | Used For | iOS API | Android API |
+|-----------|----------|---------|-------------|
+| PBKDF2-HMAC-SHA256 (600K iter) | Passphrase → PDK | `CryptoKit.PBKDF2` | `SecretKeyFactory("PBKDF2WithHmacSHA256")` |
+| AES-CTR encrypt/decrypt | Field-level encryption | `CryptoKit.AES` (CTR mode) | `Cipher("AES/CTR/NoPadding")` |
+| HMAC-SHA256 | Block seals, auth tags, blob obfuscation | `CryptoKit.HMAC` | `Mac("HmacSHA256")` |
+| SHA-256 | Content hashing, entry hashing | `CryptoKit.SHA256` | `MessageDigest("SHA-256")` |
+| Random 32 bytes | Entry IDs, device specifiers | `SecRandomCopyBytes` | `SecureRandom` |
+| Blob obfuscation (4-tier pad + HMAC sub-key) | Remote staging transport | Custom per PHPSPEC | Custom per PHPSPEC |
 
 The format spec (`PHPSPEC.md`) defines all of these precisely. This is a port, not a design task.
+
+**Test vector suite**: Create a shared JSON file (`crypto_test_vectors.json`) with known inputs and expected outputs for every primitive. Both the Swift and Kotlin implementations must pass these vectors before any UI work begins. This prevents subtle cross-platform crypto bugs and ensures CLI ↔ mobile compatibility.
 
 #### 4. Device Identity (Mobile)
 
@@ -91,9 +111,27 @@ Each mobile device needs:
 
 The existing `security/device_identity.py` is the reference. The mobile implementation mirrors it.
 
+#### 5. Sync Algorithm — Port, Don't Re-invent
+
+The mobile app must replicate the CLI's `check_and_sync()` logic from `domain/staging/service.py`. It's ~50 lines of branching — not an SDK dependency:
+
+```
+1. No remote configured? → READY (local only)
+2. Local cookie expired/missing? → AUTH GATE
+3. Remote cookie reachable?
+   - Same specifier? → READY (no-op)
+   - Mismatch? → AUTH GATE
+   - Unreachable? → OFFLINE (proceed locally)
+4. Auth Gate: decrypt blob
+   - Same device UUID? → push local (local authoritative)
+   - Different UUID? → pull remote → merge → push merged
+```
+
+The cookie format, merge engine (dedup by `entry_id`), and blob obfuscation are all specified in the CLI reference. This is a faithful port, not a redesign.
+
 ### 🟡 Phase 2 — Core Mobile UX (Should Have)
 
-#### 5. Mobile Staging CRUD
+#### 6. Mobile Staging CRUD
 
 The core workflow for a mobile time tracker:
 
@@ -106,43 +144,62 @@ The core workflow for a mobile time tracker:
 
 All local-first: writes hit local storage first, sync to remote in background.
 
-#### 6. Auth Flow (Mobile)
+**CLI → screen mapping:**
+
+| CLI Command | Mobile Screen |
+|-------------|---------------|
+| `ph add` | New Task screen (title, tag picker, start timer) |
+| `ph view` | Dashboard/Home with active tasks + elapsed timers |
+| `ph list` | History screen with filter/sort |
+| `ph sync` | Pull-to-refresh + background sync indicator |
+| `ph tags` | Tag management screen |
+| `ph verify` | Settings → Chain Verification |
+| `ph recover` | Settings → Advanced → Recover from Seed |
+
+#### 7. Auth Flow (Mobile)
 
 ```
 1. First launch → prompt for passphrase
 2. PBKDF2-600K locally → derive master key → cache in memory
-3. Derive device identity → create/update device cookie on remote
-4. Pull remote staging blob → decrypt locally → merge into local
-5. On subsequent launches: check cookie TTL → fast path if valid
-   → otherwise re-prompt for passphrase
+3. Store encrypted master key in Keychain / EncryptedSharedPreferences
+4. Enable biometric unlock for subsequent launches
+5. Derive device identity → create/update device cookie on remote
+6. Pull remote staging blob → decrypt locally → merge into local
+7. On subsequent launches:
+   - Master key in memory? → fast path (proceed)
+   - Master key in Keychain? → biometric prompt → decrypt → proceed
+   - Cookie TTL expired? → re-prompt for passphrase
+   - Cookie specifier mismatch? → show which device → offer "Sync Now"
 ```
 
-Biometric unlock (FaceID / fingerprint) as a convenience for the in-memory cache.
+**Note:** PBKDF2-600K takes ~500ms on desktop, likely 2-3s on mobile. Run it on a background thread with a spinner — never block the main thread.
 
-#### 7. Background Sync
+#### 8. Background Sync
 
 - WAL-based: queue writes locally, push on connectivity
-- Daemon-like periodic check (Phase C equivalent)
+- Daemon-like periodic check via BGTaskScheduler (iOS) / WorkManager (Android)
 - Conflict resolution via existing `MergeEngine` (dedup by `entry_id`)
 - Cookie management: touch local cookie on writes, reconcile on specifier mismatch
+- **Optimistic UI**: writes appear immediately; a subtle "pending" indicator shows un-synced changes
+- **Sync badge**: visual indicator of pending changes (like `ph dev push-status`)
 
 ### 🟢 Phase 3 — Parity (Nice to Have)
 
-#### 8. Ledger Sync (Commit)
+#### 9. Ledger Sync (Commit)
 
 - `ph sync` equivalent: commit staged entries to the ledger chain
 - Chain verification on device
 - Push new blocks to remote
 - Pull remote blocks and verify chain linkage
 
-#### 9. History & Reputation
+#### 10. History & Reputation
 
 - Browse committed ledger history by day / month / year
 - Blind index queries (reputation with date range)
 - Chain verification display
 - Search / filter by tags
 
-#### 10. Export & Share
+#### 11. Export & Share
 
 - Portable export (`--range` block-level export)
 - Tag-signed manifest for sharing on social platforms
@@ -150,45 +207,70 @@ Biometric unlock (FaceID / fingerprint) as a convenience for the in-memory cache
 
 ---
 
-## Architectural Options
+## What the CLI Needs to Change
 
-### Option A: Thin Client + Thick API Server
+**Nothing. The CLI is already mobile-compatible.**
 
+The protocol (three HTTP verbs), the storage paths, the crypto primitives, the cookie format, the blob obfuscation, and the sync algorithm are all fully defined by the CLI reference. The mobile app ports these. Both are independent clients of the same dumb Worker.
+
+The only potential CLI-adjacent change: if you add per-device bearer tokens to the Worker (separate from the shared API key), the CLI would need a new config field for its token. But even this is optional — the shared API key works fine for both platforms.
+
+---
+
+## Layering SaaS Features (Forward-Looking)
+
+The minimal architecture doesn't prevent multi-user, sharing, dashboards, or social features — it constrains *where* they live. Every SaaS feature can be layered on top by having the client **publish structured data alongside the encrypted blobs**.
+
+### Multi-User Isolation
+
+The Worker already handles arbitrary paths. User isolation is a path prefix:
 ```
-[Mobile App] ←→ [API Server] ←→ [Worker] ←→ [R2]
+/users/{user_id}/staging/blobs/current.json
+/users/{user_id}/ledger/blocks/{seq}.json
 ```
+No Worker change needed — the path is just longer. User registration is a separate service (KV for user ID → API key mapping) that sits alongside the data plane but never touches encrypted data.
 
-- API server handles auth, session management, crypto
-- Mobile app is thin: sends/receives plaintext JSON, no local crypto
-- Pro: simpler mobile app, faster to build
-- Con: server sees decrypted data (defeats zero-knowledge goal)
+### Sharing
 
-### Option B: Thick Client + Dumb Worker (Current Model)
+1. User A's client wraps a copy of the shared data with User B's public key
+2. Writes to a shared path: `/shares/{share_id}/data.bin`
+3. Sends User B the share ID + wrapping key (out of band)
+4. User B's client pulls the blob and decrypts
 
+The server stores opaque bytes. Sharing is a key-exchange protocol between clients, not a server feature.
+
+### Team Dashboards
+
+Two approaches:
+
+**Client-side aggregation** (small teams, 2-10 people): Each client fetches all team members' encrypted blobs, decrypts locally, renders charts. Feasible because each blob is small (<100KB).
+
+**Opt-in plaintext summaries** (scales to any team size): The client pushes daily aggregate summaries alongside the encrypted blob:
 ```
-[Mobile App (crypto)] ←→ [Worker] ←→ [R2]
+/summaries/2026/06/01/user_abc.json
 ```
+Format: `{"tag_hours": {"coding": 4.5, "reading": 1.2}, "hmac": "..."}` — plaintext but HMAC-signed with a derivation of the master key. The server or a dashboard frontend reads these for team-level charts without ever decrypting the private ledger.
 
-- Mobile app does all crypto locally (Swift CryptoKit / Android Keystore)
-- Worker remains dumb: GET/PUT opaque bytes
-- Pro: zero-knowledge preserved, reuses existing Worker
-- Con: full crypto SDK needed for mobile, heavier app
+### Notifications
 
-### Option C: Hybrid
+A separate Cron Trigger Worker (independent of the data plane):
+1. Lists paths under `/users/{user_id}/staging/`
+2. Checks for stale active tasks (detectable from blob size or a tiny metadata flag the client writes alongside the blob)
+3. Fires APNs / FCM
 
-```
-[Mobile App (crypto)]  ←→  [Lightweight API] ←→ [Worker] ←→ [R2]
-```
+No data decryption needed. The notification Worker doesn't know *what* task is active, only *that* one is.
 
-- Mobile app does crypto locally
-- API layer provides structured endpoints but never sees plaintext
-- API handles: auth tokens, push notifications, multi-device coordination
-- Pro: best of both worlds
-- Con: most infrastructure to build
+### Social Features (Signed Proofs)
 
-**Recommendation:** Option C. The existing Worker is already deployed and battle-tested.
-Add a lightweight API layer (Cloudflare Workers with a Router, or a separate small service)
-that understands the data model but doesn't handle plaintext. Mobile does crypto locally.
+"Tracked 500 hours of guitar practice" → the client generates a signed block export (the block is already HMAC-sealed) and posts it to a public path. Anyone can verify the HMAC against the user's public identity key.
+
+### The Design Principle
+
+**The client always pushes what the server needs to know, in a form the server can use — but the client chooses what that is.**
+
+The user's private ledger stays encrypted. If they want dashboards, their client pushes plaintext summaries. If they want sharing, their client wraps data for the recipient. If they want streaks, their client pushes a presence flag. Every SaaS feature is an *opt-in data publication*, not a *server-side breach* of the encrypted store.
+
+This is the same philosophy as the current design: the server is a dumb store; clients are the smart layer. SaaS just adds more clients (team members, dashboards, notification services) that the user's client explicitly authorizes.
 
 ---
 
@@ -196,46 +278,34 @@ that understands the data model but doesn't handle plaintext. Mobile does crypto
 
 | # | Item | Est. Effort | Depends On |
 |---|------|-------------|------------|
-| 1 | REST API spec (OpenAPI 3.0) | 1-2 days | Current Worker + PHPSPEC.md |
-| 2 | API Worker implementation | 1-2 weeks | Spec |
-| 3 | HTTP ledger transport (Python SDK) | 3-5 days | API endpoints |
-| 4 | Auth token flow (login/logout/sessions) | 3-5 days | API Worker |
-| 5 | Native crypto SDK (Swift) | 1-2 weeks | PHPSPEC.md |
-| 6 | Native crypto SDK (Kotlin) | 1-2 weeks | PHPSPEC.md |
-| 7 | Device identity (mobile) | 1-2 days | Native crypto SDK |
+| 1 | Worker: CORS headers + optional bearer token | 1 day | Current Worker |
+| 2 | Crypto test vector suite (JSON) | 1 day | PHPSPEC.md |
+| 3 | Native crypto SDK (Swift) | 1-2 weeks | Test vectors + PHPSPEC.md |
+| 4 | Native crypto SDK (Kotlin) | 1-2 weeks | Test vectors + PHPSPEC.md |
+| 5 | Device identity (mobile) | 1-2 days | Native crypto SDK |
 
 ---
 
-## Questions to Resolve
+## Answered Decisions
 
-1. **API Worker: extend the existing Worker or build a separate service?**
-   - Extend: simpler ops (one deploy target), but the Worker's 128KB response body limit and 30s CPU time may constrain
-   - Separate: more infra, but can use any stack (FastAPI, etc.)
-   - Middle ground: Cloudflare Workers with [Hono](https://hono.dev/) router for structured API, keep R2 access
-
-2. **Auth: API key (current) vs session tokens?**
-   - Current API key is a single shared secret — fine for CLI, wrong for mobile (no per-user isolation)
-   - Session tokens require a state store (Durable Objects, SQLite, or KV)
-   - Could the passphrase itself be the auth mechanism? (Mobile derives key, signs a challenge)
-
-3. **Which mobile platform first?**
-   - iOS (Swift) — fewer device targets, CryptoKit has PBKDF2/AES/HMAC built-in
-   - Android (Kotlin) — wider audience, but more fragmentation
-   - Cross-platform (Flutter / React Native) — single codebase, but native crypto requires FFI
-
-4. **Do we build a shared SDK package first?**
-   - A `phpoc-sdk` Python package with `HttpStagingTransport`, `HttpLedgerTransport`,
-     `RemoteLedgerSync`, and `DeviceIdentityProvider` would decouple the API client
-     from the CLI tool. The mobile backend (if any) could reuse it.
+| Question | Answer |
+|----------|--------|
+| **API Worker: extend or separate?** | Extend the existing Worker with ~20 lines. No separate service needed. |
+| **Auth: API key vs session tokens?** | API key (shared secret) is sufficient. The passphrase is the real auth mechanism — it never leaves the device. No session tokens, no OAuth. |
+| **Stateless or stateful API?** | Stateless. The Worker has no session state. Mobile handles cookies and auth locally. |
+| **Which mobile platform first?** | **iOS (Swift)** — CryptoKit has all primitives built-in (PBKDF2, AES-CTR, HMAC, SHA-256) with no FFI needed. Fewer device targets. Port to Android (Kotlin) after iOS is working. Cross-platform (Flutter/React Native) is not recommended due to native crypto FFI complexity. |
+| **Shared Python SDK?** | Not needed. The mobile app ports the sync algorithm natively — it's ~100 lines of branching + crypto calls. A Python SDK would only be useful if you build a server-side component, which the architecture explicitly avoids. |
+| **OpenAPI spec?** | Not needed. The wire protocol is three HTTP verbs, fully defined by `core/sync/http_transport.py`. The paths are constants in `remote_sync.py`. |
+| **`POST /sync` endpoint?** | Not needed. Sync runs client-side (commit staging → ledger). The server is not involved. |
 
 ---
 
 ## References
 
 - `worker/src/index.ts` — Current Cloudflare Worker (149 lines, dumb blob store)
-- `core/sync/http_transport.py` — Python HTTP transport client
-- `domain/ledger/remote_sync.py` — Ledger block sync via HTTP
-- `domain/staging/remote_sync.py` — Staging blob sync + device cookie
-- `domain/staging/service.py` — Auth gate, `check_and_sync()`, `_reconcile_and_claim()`
+- `core/sync/http_transport.py` — Python HTTP transport client (wire protocol reference)
+- `domain/ledger/remote_sync.py` — Ledger block sync via HTTP (path constants, push/pull logic)
+- `domain/staging/remote_sync.py` — Staging blob sync + device cookie (blob obfuscation, cookie format)
+- `domain/staging/service.py` — Auth gate, `check_and_sync()`, `_reconcile_and_claim()` (sync algorithm reference)
 - `PHPSPEC.md` — Format specification (crypto, block structure, key derivation)
 - `SESSION_HANDOFF.md` — Current state of the CLI reference implementation
