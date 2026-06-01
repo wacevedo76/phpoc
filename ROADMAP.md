@@ -2,7 +2,7 @@
 
 PH Ledger (phpoc) — planned features organized by protocol layer.
 See [VISION.md](VISION.md) for the full protocol pitch, [DESIGN_GOALS.md](DESIGN_GOALS.md) for architectural mandates,
-[ROADMAP-BLOCKS.md](ROADMAP-BLOCKS.md) for blocker history, and [BACKLOG.md](BACKLOG.md) for detailed task tracking.
+[archive/ROADMAP-BLOCKS.md](archive/ROADMAP-BLOCKS.md) for blocker history, and [BACKLOG.md](BACKLOG.md) for detailed task tracking.
 
 ## Legend
 - ✅ = Completed
@@ -42,10 +42,10 @@ None. No new roadblocks identified. All historical blockers (R1–R4) resolved.
 | Block signing with Ed25519-proxy (HMAC-SHA256) | ✅ | — | Every block signed |
 | Verify command | ✅ | — | Full chain + entry hash + content_hash verification |
 | Tamper detection | ✅ | — | Any modification breaks downstream chain |
-| Encrypt-then-MAC auth tag (HMAC-SHA256) | ✅ | — | Added per [R1 resolution](ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag) |
-| Plaintext content hash per entry (content_hash) | ✅ | — | Added per [R4 resolution](ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation) |
-| Identity fallback in genesis | ✅ | — | Added per [R2 resolution](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
-| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep. [No block](ROADMAP-BLOCKS.md) |
+| Encrypt-then-MAC auth tag (HMAC-SHA256) | ✅ | — | Added per [R1 resolution](archive/ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag) |
+| Plaintext content hash per entry (content_hash) | ✅ | — | Added per [R4 resolution](archive/ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation) |
+| Identity fallback in genesis | ✅ | — | Added per [R2 resolution](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
+| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep. [No block](archive/ROADMAP-BLOCKS.md) |
 | **Hardware-backed identity (TPM/SE)** | 🔮 | Low | Future-proofing for mobile/embedded |
 
 ### Blocked By
@@ -59,9 +59,9 @@ None.
 |---|---|---|---|
 | Partitionable chain design | ✅ | — | Each block independently sealed |
 | Year/Month summary blocks | ✅ | — | I/O optimization for partial traversals |
-| PBKDF2 600K iterations (OWASP 2026) | ✅ | — | Per [R3 resolution](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards) |
+| PBKDF2 600K iterations (OWASP 2026) | ✅ | — | Per [R3 resolution](archive/ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards) |
 | **Remote Sync (git-based)** | 🔜 | **High** | Listed above in §0. ✅ All blockers resolved. |
-| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. [No block](ROADMAP-BLOCKS.md) |
+| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. [No block](archive/ROADMAP-BLOCKS.md) |
 | **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks. ✅ All blockers resolved. |
 | **Database backend** (SQLite, etc.) | 🔮 | Low | Via AbstractLedgerStore |
 | **Multi-device sync** (CRDT-based) | 🔮 | Low | Conflict-free merging across devices |
@@ -79,8 +79,8 @@ None — all historical blockers (R1, R2, R3, R4) resolved.
 | Encrypted metadata | ✅ | — | metadata_enc in every entry |
 | Blind duration index (index.json) | ✅ | — | Reputation queries without decryption |
 | Recovery Seed with encryption (PDK) | ✅ | — | Seed encrypted with passphrase-derived key |
-| **Media Witness linkage** | 🔜 | Medium | Content hashes linked to activities. [No block](ROADMAP-BLOCKS.md) |
-| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. [No block](ROADMAP-BLOCKS.md) |
+| **Media Witness linkage** | 🔜 | Medium | Content hashes linked to activities. [No block](archive/ROADMAP-BLOCKS.md) |
+| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. [No block](archive/ROADMAP-BLOCKS.md) |
 
 ### Blocked By
 None.
@@ -115,7 +115,7 @@ None.
 | Passphrase-based seed unlock | ✅ | — | PBKDF2(passphrase) → AES decrypt seed |
 | `phpoc recover` command | ✅ | — | Seed → new passphrase → re-seal Genesis |
 | Identity file (identity.json) | ✅ | — | Encrypted secret + pub key |
-| Identity fallback in genesis block | ✅ | — | Per [R2 resolution](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
+| Identity fallback in genesis block | ✅ | — | Per [R2 resolution](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
 | **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability |
 | **Multi-identity support** (aliases/permissions) | 🔮 | Low | Multiple signing keys per ledger |
 | **AI-agent verifiable reports** | 🔮 | Low | Signed third-party verification of habits |

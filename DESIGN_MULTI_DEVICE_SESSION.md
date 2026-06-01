@@ -4,7 +4,7 @@
 > Updated 2026-05-13 — Phase 2 (StagingService + DeviceIdentityProvider + MergeEngine) + Phase 3 (LedgerEngine) + Phase 4 (Sync Orchestrator) complete.
 >
 > **Status:** Phase 2, Phase 3, and Phase 4 implementation complete. `domain/staging/`, `security/device_identity.py`,
-> and `domain/ledger/` are all implemented. See [ARCHITECTURAL_MIGRATION_STRATEGY.md](./ARCHITECTURAL_MIGRATION_STRATEGY.md) for full status.
+> and `domain/ledger/` are all implemented. See [archive/ARCHITECTURAL_MIGRATION_STRATEGY.md](./archive/ARCHITECTURAL_MIGRATION_STRATEGY.md) for full status.
 > The sections below describe the *target* design — some fields (device_id_enc, transitions_enc, blob obfuscation)
 > are implemented in Phase 4 (Staging Interaction Flow + Sync Orchestrator, `core/sync/` package).
 

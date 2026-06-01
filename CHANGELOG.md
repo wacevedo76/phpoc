@@ -147,7 +147,7 @@ All 7 phases of the architectural migration from monolithic `core/ledger.py` to 
 - `cli/interface.py`: `list_habits()` now splits into `{all, synced, staged}` subcommands with date filtering
 - `cli/interface.py`: `show_rep()` extracted from duplicate code into standalone method
 - `tests/test_modular.py`: Added tests for `list all`, `list synced`, `list staged`, and date filtering
-- `IMPLEMENTATION_GUIDE.md`: Complete rewrite — organized by DESIGN_GOALS.md design principles with full command reference, auth model, file structure, and troubleshooting
+- `archive/IMPLEMENTATION_GUIDE.md`: Complete rewrite — organized by DESIGN_GOALS.md design principles with full command reference, auth model, file structure, and troubleshooting
 
 ---
 

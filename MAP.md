@@ -4,75 +4,72 @@
 Each file annotated **[HOT]** (active dev area — re-read if in scope)
 or **[COLD]** (stable — skip unless handoff says otherwise).
 
-### Source (18 files, ~3,500 lines)
+### Source (core Python packages)
 
-| File | Lines | Temp | Key contents |
-|---|---|---|---|
-| `main.py` | 472 | HOT | CLI entry — argparse dispatch to all commands, `_handle_config_command`, `_config_generate_template` — wired `--show-comments`/`-c` to view/list commands |
-| `cli/interface.py` | 435 | HOT | Display: `view_active`, `show_rep`, `list_habits`, `_print_entry`, `_resolve_date_filters` — added `--show-comments`/`-c` support |
-| `cli/strategies.py` | ~150 | COLD | View-based InteractiveCLIStrategy (new, co-exists with `core/sync_confirmation.py` shim) |
-| `core/ledger.py` | 855 | COLD | Domain: `capture_habit`, `end_habit`, `pause/unpause`, `sync_day_with_selection`, `sync_with_strategy`, `verify` (try-both extensible+legacy content hash), `revert_entries` — thin backward-compat wrapper over engine |
-| `core/sync/__init__.py` | 9 | COLD | Package — re-exports SyncDecision, SyncStrategy, SyncOrchestrator, AbstractStagingTransport |
-| `core/sync/decision.py` | 93 | COLD | SyncDecision dataclass + SyncStrategy abstract base |
-| `core/sync/transport.py` | 45 | COLD | AbstractStagingTransport interface (pull/push) |
-| `core/sync/orchestrator.py` | 209 | COLD | SyncOrchestrator — sync lifecycle coordinator |
-| `core/sync_confirmation.py` | 530 | COLD | Deprecated shim preserving old InteractiveCLIStrategy for test compat |
-| `core/factory.py` | 69 | COLD | `LedgerFactory.initialize()` — creates genesis + identity |
-| `security/crypto.py` | 204 | HOT | Pure AES-CTR + HMAC-SHA256. `CryptoManager`, `NoAuthCryptoManager` — decrypt() fallback-to-legacy fix for identity secret encrypted pre-R1 |
-| `security/auth.py` | 119 | COLD | `PassphraseAuthenticator` (PBKDF2 600K → decrypt seed → `/dev/shm` cache) |
-| `security/recovery.py` | 33 | COLD | Seed gen (32B urandom→base64), `seed_to_key`, encrypt/decrypt_seed |
-| `security/config_manager.py` | 130 | COLD | `ConfigManager` — dot-notation get/set, defaults merging, nested write |
-| `storage/file_store.py` | 49 | COLD | JSON file I/O: staging, ledger, index, identity |
-| `storage/interface.py` | 36 | COLD | `AbstractLedgerStore` ABC |
-| `storage/config_store.py` | 33 | COLD | `AbstractConfigStore` ABC |
-| `storage/implementations/file_config.py` | 105 | COLD | `FileConfigStore`, `_resolve_config_path()`, `_resolve_data_dir()` |
-| `domain/ledger/engine.py` | ~400 | COLD | `LedgerEngine` — new layered ledger operations (commit, verify, revert) |
-| `domain/ledger/chain.py` | ~450 | HOT | Chain building, sealing, verification logic — legacy content_hash fallback fixed to decrypt _enc fields |
-| `domain/ledger/index_manager.py` | ~200 | COLD | Blind index update, rebuild, date-key cleanup |
-| `domain/staging/service.py` | ~300 | COLD | `StagingService` — staging CRUD with crypto |
-| `domain/staging/merge_engine.py` | ~150 | COLD | Multi-device merge logic (skeleton) |
-
-### Tests (16 files, ~10,000 lines)
-
-| File | Lines | Scope |
+| File | Temp | Key contents |
 |---|---|---|
-| `tests/test_modular.py` | 271 | Main integration test — init, add, sync, verify lifecycle |
-| `tests/test_sync_confirmation.py` | 902 | Sync strategy unit tests |
-| `tests/test_sync_confirmation_refactor.py` | 970 | Sync strategy refactor tests |
-| `tests/test_sync_confirmation_strategy.py` | 818 | Strategy-specific tests |
-| `tests/test_pause.py` | 688 | Pause/unpause cascades |
-| `tests/test_tags.py` | 790 | Tag normalization & listing |
-| `tests/test_recovery.py` | 96 | Recovery flow |
-| `tests/test_hierarchy.py` | 100 | Year/month transition blocks |
-| `tests/test_phase1_storage_interfaces.py` | ~600 | Phase 1: Storage abstract interfaces + implementations |
-| `tests/test_phase1b_view_interface.py` | ~500 | Phase 1b: View interface implementations |
-| `tests/test_phase2_staging_service.py` | ~800 | Phase 2: StagingService, device identity |
-| `tests/test_phase3_ledger_engine.py` | ~1200 | Phase 3: LedgerEngine, chain, index manager |
-| `tests/test_phase4_staging_interaction_flow.py` | 1288 | Phase 4: 69 tests — SyncDecision, SyncOrchestrator, sync lifecycle |
-| `tests/test_phase5_main_wiring.py` | ~500 | Phase 5: main.py wiring, CI strategies |
-| `tests/test_phase6a_staging_equivalence.py` | ~200 | Phase 6: Staging equivalence tests |
-| `tests/test_phase6b_ledger_equivalence.py` | ~200 | Phase 6: Ledger equivalence tests |
-| `tests/test_phase6c_orchestrator_cli.py` | ~400 | Phase 6: Orchestrator + CLI interaction |
-| `tests/test_phase7_config_integration.py` | ~500 | Phase 7: 34 tests — config path resolution, CLI config commands, template generation |
+| `main.py` | HOT | CLI entry — argparse, auth tiers, staging + orchestrator wiring |
+| `cli/interface.py` | HOT | Display: `view_active`, `show_rep`, `list_habits` |
+| `cli/strategies.py` | COLD | `InteractiveCLIStrategy` — sync confirmation UI |
+| `cli/background.py` | COLD | Phase A instant reads, background sync check |
+| `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
+| `cli/wal.py` | COLD | Write-ahead log, background push |
+| `cli/onboarding.py` | COLD | `ph onboarding` |
+| `cli/trace.py` | COLD | Trace/debug logging |
+| `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
+| `core/sync/orchestrator.py` | COLD | `SyncOrchestrator` — sync lifecycle coordinator |
+| `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
+| `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
+| `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
+| `security/auth.py` | COLD | Passphrase + Recovery authenticators |
+| `security/device_identity.py` | COLD | `DeviceIdentity`, `AbstractDeviceIdentityProvider` |
+| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification, `RemoteLedgerSync` |
+| `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
+| `domain/staging/remote_sync.py` | COLD | Blob obfuscation, pull/push, device cookie |
+| `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id` |
+| `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
+| `worker/src/index.ts` | COLD | Cloudflare Worker (149 lines, dumb blob store) |
 
-### Scripts (2 files, 480 lines)
+*(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-| File | Lines | Purpose |
-|---|---|---|
-| `scripts/migrate_format_version.py` | 616 | Format migration v0.2.0→v0.3.0 + v0.3.0→v0.4.0 |
-| `scripts/repair_staging.py` | 113 | Convert hex-encrypted staging fields to plain: format |
+### Tests (30 files, ~13,000 lines, 1341 tests)
 
-### Key docs
-| File | Lines | Use when... |
-|---|---|---|
-| `PHPSPEC.md` | 1,529 | Need block structure, encryption format, chain validation spec, content hash (extensible + legacy) |
-| `VISION.md` | ~200 | Protocol philosophy, use cases |
-| `SESSION_HANDOFF.md` | ~250 | Detailed session history, full crypto checklist |
-| `BACKLOG.md` | ~430 | Task-level tracking |
-| `ROADMAP.md` | ~250 | Feature roadmap |
-| `DESIGN_MULTI_DEVICE_SESSION.md` | ~120 | Multi-device session & staging architecture design exploration (D2) |
-| `ARCHITECTURAL_DECISIONS.md` | ~580 | Formal ADR document — ADR-001 through ADR-018 |
-| `ARCHITECTURAL_MIGRATION_STRATEGY.md` | ~2,000 | Multi-phase refactoring from monolithic to layered architecture |
+Key test files:
+- `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
+- `tests/test_http_transport.py` — 68 tests, HTTP + ETag
+- `tests/test_wal.py` — WAL lifecycle
+- `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
+- `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
+
+### Active docs
+
+| File | Use when... |
+|---|---|
+| `PHPSPEC.md` | Block structure, encryption, chain validation spec |
+| `MOBILE_ROADMAP.md` | Planning mobile app |
+| `SESSION_HANDOFF.md` | Session history, current state |
+| `ROADMAP.md` | Feature roadmap |
+| `BACKLOG.md` | Task-level tracking |
+| `VISION.md` | Protocol philosophy, use cases |
+| `DESIGN_GOALS.md` | Architectural mandates |
+| `ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
+| `PH-VIEW-Workflow.md` | Auth gate workflow (original design) |
+| `ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
+| `MAP.md` | This file — project map |
+
+### Archive (`archive/` — retired docs kept for reference)
+
+| File | What it was |
+|---|---|
+| `REMOTE_STAGING_ISSUE_TRACKING.md` | P3 issue tracker (all resolved) |
+| `ARCHITECTURAL_MIGRATION_STRATEGY.md` | Refactoring plan (complete) |
+| `IMPLEMENTATION_GUIDE.md` | Implementation guide (stale) |
+| `_Operational-Git_Staging_Remote_process.md` | P3 design doc (merged) |
+| `POSSIBLE_PROOF_OF_EXISTANCE.md` | External anchoring (speculative) |
+| `ROADMAP-BLOCKS.md` | Blocker tracking (all resolved) |
+| `verify_phase5.py` | Phase 5 one-time verification |
+| `verify_phase6.py` | Phase 6 one-time verification |
 
 ---
 
@@ -95,10 +92,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | Action | Command |
 |---|---|
 | Run CLI | `PYTHONPATH=. python3 main.py <command>` |
-| Run all tests | `PYTHONPATH=. python3 -m unittest discover -s tests` |
-| Run single test file | `PYTHONPATH=. python3 -m unittest tests.test_<name>` |
-| Run single test | `PYTHONPATH=. python3 -m unittest tests.test_<name>.TestClass.test_method` |
-| Test count | 941/941 passing |
+| Run all tests | `python3 -m pytest` |
+| Run single test file | `python3 -m pytest tests/test_<name>.py -v` |
+| Run single test | `python3 -m pytest tests/test_<name>.py::TestClass::test_method -v` |
+| Run with warnings | `python3 -m pytest -W ignore::DeprecationWarning` |
+| Test count | 1341 passing |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands

@@ -2,7 +2,7 @@
 
 This document outlines the vision and core architectural mandates for the Personal History Protocol (PHPOC).
 Each goal cross-references the [Roadmap](ROADMAP.md) for planned features and
-[Roadmap Blocks](ROADMAP-BLOCKS.md) for unresolved issues that block or impact that goal.
+[Roadmap Blocks](archive/ROADMAP-BLOCKS.md) for unresolved issues that block or impact that goal.
 
 See [VISION.md](VISION.md) for the full protocol pitch.
 
@@ -57,8 +57,8 @@ PHPOC exists as a **reference implementation** (CLI tool in pure Python, zero ex
 ### Blocked By
 | Block ID | Issue | Impacts |
 |---|---|---|
-| ~~[R1](ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved — encrypt-then-MAC added |
-| ~~[R2](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved — genesis fallback embedded |
+| ~~[R1](archive/ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved — encrypt-then-MAC added |
+| ~~[R2](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved — genesis fallback embedded |
 
 ---
 
@@ -73,7 +73,7 @@ PHPOC exists as a **reference implementation** (CLI tool in pure Python, zero ex
 ### Blocked By
 | Block ID | Issue | Impacts |
 |---|---|---|
-| ~~[R1](ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved — encrypt-then-MAC added |
+| ~~[R1](archive/ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved — encrypt-then-MAC added |
 
 ---
 
@@ -82,14 +82,14 @@ PHPOC exists as a **reference implementation** (CLI tool in pure Python, zero ex
 - **Partitionable Ledger:** Supports truncation and archiving (e.g., archiving 2024 to a separate file) without breaking the cryptographic thread.
 - **I/O Optimization:** Hierarchical summary hashes prevent the need to traverse the entire history for single-day verification.
 - **Data Sovereignty:** The ledger is "Data-Reconstructible." If the file is lost but activity blocks are found, history can be reconstructed assuming the user has the Passphrase and Genesis root.
-- **Remote Sync (planned):** Git-backed encrypted backup of the ledger, enabling cross-device access. ⚠️ [All blockers resolved](ROADMAP-BLOCKS.md#summary).
+- **Remote Sync (planned):** Git-backed encrypted backup of the ledger, enabling cross-device access. ⚠️ [All blockers resolved](archive/ROADMAP-BLOCKS.md#summary).
 
 ### Blocked By
 | Block ID | Issue | Impacts |
 |---|---|---|
-| ~~[R1](ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved |
-| ~~[R2](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved |
-| ~~[R3](ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards)~~ | ~~PBKDF2 iteration count below standards~~ | ✅ Resolved |
+| ~~[R1](archive/ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag)~~ | ~~AES-CTR malleability (no auth tag)~~ | ✅ Resolved |
+| ~~[R2](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved |
+| ~~[R3](archive/ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards)~~ | ~~PBKDF2 iteration count below standards~~ | ✅ Resolved |
 
 ---
 
@@ -120,7 +120,7 @@ None.
 ### Blocked By
 | Block ID | Issue | Impacts |
 |---|---|---|
-| ~~[R2](ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved — genesis fallback embedded |
+| ~~[R2](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback)~~ | ~~Identity file has no in-ledger fallback~~ | ✅ Resolved — genesis fallback embedded |
 
 ---
 
