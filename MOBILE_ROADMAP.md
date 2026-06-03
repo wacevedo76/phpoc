@@ -14,7 +14,7 @@ The existing 149-line Cloudflare Worker already handles everything the mobile ap
 
 - **Stateless** — no Durable Objects, no KV for sessions
 - **Dumb** — cannot decrypt anything, knows nothing about the data model
-- **Tiny** — ~170 lines including CORS and optional token check
+- **Tiny** — ~195 lines including CORS and optional token check
 
 **No REST API layer is needed between the mobile app and the Worker.** The protocol is three HTTP verbs:
 
@@ -30,14 +30,20 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 
 ## Status
 
-| Layer | CLI (Reference) | Mobile |
-|-------|:---------------:|:------:|
+| Layer | CLI (Reference) | Mobile PoC |
+|-------|:---------------:|:----------:|
+| Rust crypto core (`phpoc-crypto-core`) | ✅ | ✅ 7 modules, 61 tests |
+| WASM bindings (21 exports to JS) | N/A | ✅ `wasm.rs` module |
+| WASM build target | N/A | ✅ 132K `.wasm` + JS glue + TS types |
+| Device identity | ✅ | ✅ `device.rs` module |
+| Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
+| Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
 | Core engine (chain, crypto, storage) | ✅ | ❌ |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
-| Remote staging sync | ✅ | ❌ |
-| Auth gate (device cookies) | ✅ | ❌ |
-| Cross-device handoff | ✅ | ❌ |
-| Ledger block sync | ✅ | ❌ |
+| Remote staging sync (port to JS) | ✅ | ❌ |
+| Auth gate (device cookies port) | ✅ | ❌ |
+| Cross-device handoff (port) | ✅ | ❌ |
+| Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
 ---
@@ -74,13 +80,13 @@ The Rust crypto core (`phpoc-crypto-core`) decouples crypto from the UI framewor
 
 The current Worker needs three small additions for mobile compatibility:
 
-| Addition | Lines | Why |
-|----------|-------|-----|
-| CORS headers | ~5 | Mobile fetch requests from dev builds, WebView, or arbitrary origins |
-| Optional bearer token check | ~5 | Per-device auth (separate from the shared API key) — a simple KV lookup, not a session system |
-| Structured JSON wrapper (optional) | ~10 | Thin JSON coat on GET/PUT responses for mobile convenience (e.g., `{"data": "<base64>", "etag": "..."}`) |
+| Addition | Lines | Status | Why |
+|----------|-------|--------|-----|
+| CORS headers | ~5 | ✅ Done (`14f8c8f`) | Mobile fetch requests from dev builds, WebView, or arbitrary origins |
+| Optional bearer token check | ~5 | ❌ Not yet | Per-device auth (separate from the shared API key) — a simple KV lookup, not a session system |
+| Structured JSON wrapper (optional) | ~10 | ❌ Not yet | Thin JSON coat on GET/PUT responses for mobile convenience (e.g., `{"data": "<base64>", "etag": "..."}`) |
 
-That's the entire delta. The Worker stays under 200 lines, stateless, and domain-ignorant.
+That's the entire delta. The Worker stays under 200 lines (~195), stateless, and domain-ignorant.
 
 **No client platform needs:**
 - Session tokens (the passphrase is the auth mechanism — it never leaves the device)
@@ -163,6 +169,18 @@ Every client must replicate the CLI's `check_and_sync()` logic from `domain/stag
 ```
 
 The cookie format, merge engine (dedup by `entry_id`), and blob obfuscation are all specified in the CLI reference. This is a faithful port, not a redesign.
+
+## Build Targets
+
+The Rust crate is compiled per target:
+
+| Target | Output | Used By | Status |
+|--------|--------|---------|--------|
+| `wasm32-unknown-unknown` | `.wasm` (132K) + JS glue + TS types | Web prototype | ✅ `wasm-bindgen` generates `pkg/` |
+| `aarch64-apple-ios` | `.a` static lib | Flutter (Phase 2) | ❌ Not yet |
+| `aarch64-linux-android` | `.so` shared lib | Flutter (Phase 2) | ❌ Not yet |
+
+---
 
 ### 🟡 Phase 2 — Flutter Mobile App (Should Have)
 
@@ -320,15 +338,15 @@ This is the same philosophy as the current design: the server is a dumb store; c
 
 ---
 
-## Prerequisites (Must Exist Before Mobile Sprint Starts)
+## Prerequisites — Status
 
-| # | Item | Est. Effort | Depends On |
-|---|------|-------------|------------|
-| 1 | Worker: CORS headers + optional bearer token | 1 day | Current Worker |
-| 2 | Crypto test vector suite (JSON) | 1 day | PHPSPEC.md |
-| 3 | Rust crypto library (`phpoc-crypto-core`) | 1-2 weeks | Test vectors + PHPSPEC.md |
-| 4 | WASM + `.a`/`.so` build targets | 2-3 days | Rust crypto library |
-| 5 | Device identity | 1-2 days | Rust crypto library |
+| # | Item | Est. Effort | Status | Completed In |
+|---|------|-------------|--------|-------------|
+| 1 | Worker: CORS headers | 1 day | ✅ Done | `14f8c8f` (mobile-poc) |
+| 2 | Crypto test vector suite (JSON) | 1 day | ✅ Done | `f7f2cfd` (mobile-poc) |
+| 3 | Rust crypto library (`phpoc-crypto-core`) | 1-2 weeks | ✅ Done — 7 modules, 61 tests | `f199a81` (mobile-poc) |
+| 4 | WASM build target + bindings | 2-3 days | ✅ Done — 21 JS exports, 132K `.wasm` | `f199a81` (mobile-poc) |
+| 5 | Device identity | 1-2 days | ✅ Done — `device.rs` module | `f199a81` (mobile-poc) |
 
 ---
 

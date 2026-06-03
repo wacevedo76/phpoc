@@ -1,9 +1,10 @@
 # PH Ledger — Session Handoff
 
 ## Current State
-- **Branch:** `main` (P3-Remote_Sync merged)
-- **Commit:** `11f3b1a`
-- **Tests:** 1341 passing, 0 failures
+- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
+- **Commit (main):** `1c08002`
+- **Commit (mobile-poc):** `14f8c8f`
+- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -14,6 +15,11 @@
 - **Both devices:** x13 (HTTP) and tpx270 (was git, now HTTP) — unified on HTTP
 - **Timeouts:** ✅ Per-phase timeouts via pytest-timeout plugin (10s phase tests, 30s transport tests)
 - **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive cross-platform plan (web, Flutter, React Native contingency)
+- **Mobile PoC progress:**
+  - ✅ `phpoc-crypto-core` Rust crate — 7 modules, 61 tests, compiles clean
+  - ✅ WASM bindings module (`wasm.rs`) — 21 functions exported to JS
+  - ✅ WASM build target — 132K `.wasm` binary + JS glue + TypeScript declarations
+  - ✅ Worker CORS headers — all responses wrapped, OPTIONS preflight handled
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -130,7 +136,7 @@ Two push paths:
 | `security/auth.py` | `PassphraseAuthenticator`, `RecoveryAuthenticator` |
 | `security/crypto.py` | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/config_manager.py` | Config with defaults merging + dot-notation |
-| `worker/src/index.ts` | Cloudflare Worker (149 lines TypeScript) — dumb blob store |
+| `worker/src/index.ts` | Cloudflare Worker (~195 lines TypeScript) — dumb blob store + CORS |
 | `scripts/check_staging.sh` | List local staging entries with active status |
 | `scripts/check_remote_blob.sh` | Deobfuscate and list remote staging blob entries |
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
@@ -290,12 +296,13 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - **Worker stays dumb.** The existing 149-line Worker handles everything — no REST API layer, no session tokens, no server-side sync endpoint.
 - **CLI compatibility is automatic.** Every client uses the same wire protocol, storage paths, and crypto as the CLI. Verified by a shared `crypto_test_vectors.json` suite.
 
-### First Steps
+### Completed Steps
 
-1. Extract `crypto_test_vectors.json` from the CLI's existing test suite
-2. Scaffold `phpoc-crypto-core` Rust crate with `ring` bindings
-3. Compile to WASM and verify against test vectors in a browser console
-4. Build the React web UI
+1. ✅ Extract `crypto_test_vectors.json` from the CLI's existing test suite
+2. ✅ Scaffold `phpoc-crypto-core` Rust crate with `ring` bindings — 7 modules, 61 tests
+3. ✅ Compile to WASM — 21 functions exported via `wasm.rs` bindings module
+4. ✅ Worker CORS headers — all responses wrapped, OPTIONS preflight
+5. 🔄 Build the React web UI (in progress)
 
 ### CLI — Active Cross-Platform Target
 - ✅ All 1341 tests pass
@@ -304,6 +311,13 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Per-phase timeouts prevent hangs
 - ✅ Docs reorganized: `docs/design/` for design docs, `archive/` for retired docs
 - 🔄 ETag caching in long-running daemon mode (lower priority, not blocking mobile)
+
+### Mobile PoC — Progress (2026-06-03)
+- ✅ Phase 0 complete: `phpoc-crypto-core` Rust crate with all 7 modules, 61 tests
+- ✅ WASM bindings: `src/wasm.rs` — 21 `#[wasm_bindgen]` functions exported
+- ✅ WASM build: 132K `.wasm` binary, JS glue, TypeScript declarations in `pkg/`
+- ✅ Worker CORS: OPTIONS preflight + CORS headers on all responses (~45 lines added)
+- 🔄 Next: Scaffold React web app (`phpoc-web/`) and wire WASM module
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
