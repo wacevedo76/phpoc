@@ -20,6 +20,10 @@ pub mod random;
 pub mod blob;
 pub mod device;
 
+/// WASM bindings — only compiled when targeting WebAssembly.
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 /// Result type alias for crate operations.
 pub type Result<T> = std::result::Result<T, CryptoError>;
 
