@@ -10,14 +10,42 @@
  * never changes.
  *
  * Endpoints:
- *   GET /{path}               → 200 + body + ETag, or 404
+ *   OPTIONS /{path}          → 204 (CORS preflight)
+ *   GET /{path}              → 200 + body + ETag, or 404
  *   GET /{path} (If-None-Match) → 304 if ETag matches
- *   PUT /{path}               → 200 (store body), or 413
- *   GET /?prefix={prefix}     → 200 + JSON array of keys
+ *   PUT /{path}              → 200 (store body), or 413
+ *   GET /?prefix={prefix}    → 200 + JSON array of keys
  *
- * Auth: X-Api-Key header must match PHPOC_API_KEY secret.
- * Method: Only GET and PUT are allowed; others return 405.
+ * Auth:
+ *   - X-Api-Key header (shared secret) — required if PHPOC_API_KEY is set
+ *   - CORS headers on all responses — enables browser-based clients
+ *
+ * Methods: OPTIONS, GET, and PUT are allowed; others return 405.
  */
+
+// ── CORS headers ────────────────────────────────────────────────────────────
+// Applied to every response so browser-based clients (web app, Flutter
+// WebView) can make cross-origin requests during development and in production.
+//
+// - Allow-Origin: * — any dev server (localhost:3000, etc.)
+// - Allow-Methods: GET, PUT, OPTIONS — matches the Worker's route table
+// - Allow-Headers: headers the Worker actually reads
+// - Max-Age: 86400 — cache preflight for 24h to reduce latency
+
+const CORS_HEADERS: Record<string, string> = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+	'Access-Control-Allow-Headers': 'X-Api-Key, Content-Type, If-None-Match',
+	'Access-Control-Max-Age': '86400',
+};
+
+/** Wrap a Response with CORS headers. */
+function withCors(response: Response): Response {
+	for (const [key, value] of Object.entries(CORS_HEADERS)) {
+		response.headers.set(key, value);
+	}
+	return response;
+}
 
 export interface Env {
 	PHPOC_BUCKET: R2Bucket;
@@ -27,31 +55,36 @@ export interface Env {
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		const url = new URL(request.url);
+		const path = url.pathname === '/' ? '' : url.pathname.slice(1);
+
+		// ── CORS preflight ───────────────────────────────────────────
+		if (request.method === 'OPTIONS') {
+			return withCors(new Response(null, { status: 204 }));
+		}
+
 		// ── Auth ─────────────────────────────────────────────────────
 		const apiKey = env.PHPOC_API_KEY;
 		if (apiKey) {
 			const provided = request.headers.get('X-Api-Key');
 			if (!provided || provided !== apiKey) {
-				return new Response('Unauthorized', { status: 403 });
+				return withCors(new Response('Unauthorized', { status: 403 }));
 			}
 		}
-
-		const url = new URL(request.url);
-		const path = url.pathname === '/' ? '' : url.pathname.slice(1);
 
 		// ── Route ────────────────────────────────────────────────────
 		switch (request.method) {
 			case 'GET':
 				if (url.searchParams.has('prefix')) {
-					return handleList(request, env, url.searchParams.get('prefix')!);
+					return withCors(await handleList(request, env, url.searchParams.get('prefix')!));
 				}
-				return handleGet(request, env, path);
+				return withCors(await handleGet(request, env, path));
 
 			case 'PUT':
-				return handlePut(request, env, path);
+				return withCors(await handlePut(request, env, path));
 
 			default:
-				return new Response('Method Not Allowed', { status: 405 });
+				return withCors(new Response('Method Not Allowed', { status: 405 }));
 		}
 	},
 };
