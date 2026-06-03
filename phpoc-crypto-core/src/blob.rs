@@ -12,7 +12,7 @@ use ctr::Ctr64BE;
 
 use crate::key_derivation::derive_blob_key;
 use crate::random::random_bytes;
-use crate::{CryptoError, Result, BLOB_TIERS, TIER_64K, TIER_128K, TIER_256K, TIER_512K};
+use crate::{CryptoError, Result, BLOB_TIERS, TIER_512K};
 
 /// AES-128-CTR cipher type for blob encryption.
 type Aes128Ctr = Ctr64BE<aes::Aes128>;
@@ -73,12 +73,27 @@ pub fn obfuscate_blob(plaintext: &[u8], master_key: &[u8; 32]) -> Result<Vec<u8>
     let salt: [u8; 16] = random_bytes(16).try_into().expect("16 bytes");
     let nonce: [u8; 8] = random_bytes(8).try_into().expect("8 bytes");
 
-    // Derive encryption key from salt using blob sub-key
-    let enc_key = crate::key_derivation::derive_sub_key_16(&blob_key, &salt);
+    // Derive encryption key from salt using blob sub-key (per remote_sync.py)
+    // enc_key = HMAC-SHA256(blob_key, salt)[:16]
+    let enc_key = {
+        use ring::hmac;
+        let bk = hmac::Key::new(hmac::HMAC_SHA256, &blob_key);
+        let sig = hmac::sign(&bk, &salt);
+        let bytes = sig.as_ref();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes[..16]);
+        k
+    };
     let integrity_key = {
+        use ring::hmac;
         let mut int_salt = salt.to_vec();
         int_salt.extend_from_slice(crate::INTEGRITY_DOMAIN_SEPARATOR);
-        crate::key_derivation::derive_sub_key_32(&blob_key, &int_salt)
+        let bk = hmac::Key::new(hmac::HMAC_SHA256, &blob_key);
+        let sig = hmac::sign(&bk, &int_salt);
+        let bytes = sig.as_ref();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes[..16]);
+        k
     };
 
     // AES-CTR encrypt
@@ -131,13 +146,27 @@ pub fn deobfuscate_blob(obfuscated: &[u8], master_key: &[u8; 32]) -> Option<Vec<
     let ciphertext = &obfuscated[24..obfuscated.len() - 32];
     let stored_tag = &obfuscated[obfuscated.len() - 32..];
 
-    // Derive keys
+    // Derive keys (per remote_sync.py — HMAC with 16-byte blob key directly)
     let blob_key = derive_blob_key(master_key);
-    let enc_key = crate::key_derivation::derive_sub_key_16(&blob_key, &salt);
+    let enc_key = {
+        use ring::hmac;
+        let bk = hmac::Key::new(hmac::HMAC_SHA256, &blob_key);
+        let sig = hmac::sign(&bk, &salt);
+        let bytes = sig.as_ref();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes[..16]);
+        k
+    };
     let integrity_key = {
+        use ring::hmac;
         let mut int_salt = salt.to_vec();
         int_salt.extend_from_slice(crate::INTEGRITY_DOMAIN_SEPARATOR);
-        crate::key_derivation::derive_sub_key_32(&blob_key, &int_salt)
+        let bk = hmac::Key::new(hmac::HMAC_SHA256, &blob_key);
+        let sig = hmac::sign(&bk, &int_salt);
+        let bytes = sig.as_ref();
+        let mut k = [0u8; 16];
+        k.copy_from_slice(&bytes[..16]);
+        k
     };
 
     // Verify auth tag
@@ -185,6 +214,7 @@ fn build_blob_iv(nonce: &[u8; 8]) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{TIER_64K, TIER_128K};
 
     #[test]
     fn test_select_tier() {
@@ -252,8 +282,8 @@ mod tests {
     #[test]
     fn test_blob_tier_128k() {
         let mk = [0xABu8; 32];
-        // Create data that exceeds 64K
-        let large_data = vec![b'A'; 65_000];
+        // Create data that exceeds 64K (65,536) to trigger 128K tier
+        let large_data = vec![b'A'; 66_000];
         let obfuscated = obfuscate_blob(&large_data, &mk).unwrap();
         assert!(obfuscated.len() >= TIER_128K);
 

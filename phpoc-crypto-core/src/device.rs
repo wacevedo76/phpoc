@@ -45,12 +45,6 @@ pub fn verify_device_proof(
     proof: &str,
     master_key: &[u8; 32],
 ) -> bool {
-    let expected = device_proof(master_key, device_id);
-    // Constant-time comparison
-    let expected_bytes = match hex::decode(&expected) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
     let proof_bytes = match hex::decode(proof) {
         Ok(b) => b,
         Err(_) => return false,

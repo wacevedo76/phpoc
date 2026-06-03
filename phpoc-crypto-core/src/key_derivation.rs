@@ -7,7 +7,6 @@
 
 use ring::pbkdf2;
 use ring::hmac;
-use ring::digest;
 
 use crate::{Result, CryptoError, PDK_SALT, PBKDF2_ITERATIONS, PBKDF2_ITERATIONS_LEGACY};
 
@@ -190,9 +189,11 @@ mod tests {
     #[test]
     fn test_derive_master_key() {
         // 32 bytes base64-encoded = 44 chars with padding
-        let seed = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="; // "ABCDEFGHIJKLMNOPQRSTUVWXYZ" base64
+        let seed = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
         let mk = derive_master_key(seed).unwrap();
         assert_eq!(mk.len(), 32);
+        // All bytes should be 0x42
+        assert!(mk.iter().all(|&b| b == 0x42));
     }
 
     #[test]

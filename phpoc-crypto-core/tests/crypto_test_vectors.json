@@ -3,34 +3,108 @@
     {
       "passphrase": "test-passphrase",
       "iterations": 600000,
-      "expected_hex": "TODO: extract from Python CLI test suite"
+      "expected_hex": "c7c1008377a4e2eb35f6bfef8fa8e755f7dfa8472fd9a2e38405b38ea26564b5"
+    },
+    {
+      "passphrase": "test-passphrase",
+      "iterations": 100000,
+      "expected_hex": "30965bba26e8b805958356688774e5f50f98339585ddcf564c70be22b386a449"
+    },
+    {
+      "passphrase": "",
+      "iterations": 600000,
+      "expected_hex": "01ccca13936a03972990956697c5884b783186d36ac1ee2110ec60c50e55ed3b"
+    },
+    {
+      "passphrase": "My Super Secure Passphrase! \ud83d\udd10",
+      "iterations": 600000,
+      "expected_hex": "2e6b37ab986c89eb98768039e4ea25bc1f72773954b74a077ca64db589dd0780"
+    },
+    {
+      "passphrase": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "iterations": 600000,
+      "expected_hex": "7e4311237752e5782019cf05badb3bf219dc556462cb7e5f4f49ef247e1f53a4"
     }
   ],
   "aes_ctr": [
     {
       "master_key_hex": "abababababababababababababababababababababababababababababababab",
       "plaintext": "Hello, PHPOC!",
-      "note": "Roundtrip test only — ciphertext is non-deterministic"
+      "note": "Roundtrip test \u2014 ciphertext is non-deterministic due to random salt/nonce"
+    },
+    {
+      "master_key_hex": "abababababababababababababababababababababababababababababababab",
+      "plaintext": "",
+      "note": "Roundtrip test \u2014 ciphertext is non-deterministic due to random salt/nonce"
+    },
+    {
+      "master_key_hex": "abababababababababababababababababababababababababababababababab",
+      "plaintext": "\u65e5\u672c\u8a9e Espa\u00f1ol \ud83d\udd10",
+      "note": "Roundtrip test \u2014 ciphertext is non-deterministic due to random salt/nonce"
+    },
+    {
+      "master_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "plaintext": "All zeros key",
+      "note": "Roundtrip test \u2014 ciphertext is non-deterministic due to random salt/nonce"
+    },
+    {
+      "master_key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "plaintext": "All ones key",
+      "note": "Roundtrip test \u2014 ciphertext is non-deterministic due to random salt/nonce"
     }
   ],
   "hmac_sha256": [
     {
-      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
       "data_hex": "48656c6c6f",
-      "expected_hex": "TODO: extract from Python CLI test suite"
+      "expected_hex": "b4d6720e5dbca77f5108a6e2e9c4d0a77a732f64244bdfdf01a3ede8ff933e00",
+      "note": "HMAC of 'Hello'"
+    },
+    {
+      "key_hex": "abababababababababababababababababababababababababababababababab",
+      "data_hex": "54657374",
+      "expected_hex": "39f05b4ae76e4c19652d7fb7073f368402786e650fb779dccc77828dc557fcec",
+      "note": "HMAC of 'Test'"
+    },
+    {
+      "key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "data_hex": "",
+      "expected_hex": "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad",
+      "note": "HMAC of empty string"
     }
   ],
   "sha256": [
     {
       "data_hex": "48656c6c6f",
-      "expected_hex": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969"
+      "expected_hex": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+      "note": "SHA-256 of 'Hello'"
+    },
+    {
+      "data_hex": "",
+      "expected_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "SHA-256 of empty string"
+    },
+    {
+      "data_hex": "54686520717569636b2062726f776e20666f78",
+      "expected_hex": "5cac4f980fedc3d3f1f99b4be3472c9b30d56523e632d151237ec9309048bda9",
+      "note": "SHA-256 of 'The quick brown fox'"
     }
   ],
   "blob_obfuscation": [
     {
       "master_key_hex": "abababababababababababababababababababababababababababababababab",
       "plaintext": "{\"device_id\":\"abc\",\"entries\":[]}",
-      "note": "Roundtrip test only — obfuscation is non-deterministic"
+      "note": "Roundtrip test \u2014 obfuscation is non-deterministic"
+    },
+    {
+      "master_key_hex": "abababababababababababababababababababababababababababababababab",
+      "plaintext": "{\"device_id\":\"abc\",\"entries\":[],\"version\":1}",
+      "note": "Roundtrip test \u2014 obfuscation is non-deterministic"
+    },
+    {
+      "master_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "plaintext": "{}",
+      "note": "Roundtrip test \u2014 obfuscation is non-deterministic"
     }
   ]
 }

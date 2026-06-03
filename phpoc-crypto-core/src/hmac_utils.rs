@@ -9,7 +9,6 @@
 use ring::hmac;
 
 use crate::key_derivation::derive_seal_key;
-use crate::{CryptoError, Result};
 
 /// Compute an HMAC-SHA256 seal over data using the Master Key.
 ///
@@ -40,12 +39,7 @@ pub fn seal(data: &str, master_key: &[u8; 32]) -> String {
 /// # Returns
 /// `true` if the seal matches, `false` otherwise.
 pub fn verify_seal(data: &str, expected_seal: &str, master_key: &[u8; 32]) -> bool {
-    let computed = seal(data, master_key);
     // Constant-time comparison via ring's hmac
-    let computed_bytes = match hex::decode(&computed) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
     let expected_bytes = match hex::decode(expected_seal) {
         Ok(b) => b,
         Err(_) => return false,
@@ -87,11 +81,6 @@ pub fn sign(data: &str, identity_secret: &[u8; 32]) -> String {
 /// # Returns
 /// `true` if the signature matches, `false` otherwise.
 pub fn verify_signature(data: &str, signature: &str, identity_secret: &[u8; 32]) -> bool {
-    let expected = sign(data, identity_secret);
-    let expected_bytes = match hex::decode(&expected) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
     let sig_bytes = match hex::decode(signature) {
         Ok(b) => b,
         Err(_) => return false,
