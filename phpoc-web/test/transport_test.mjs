@@ -77,7 +77,14 @@ function createMockFetch() {
           has(name) { return responseHeaders.has(name.toLowerCase()); },
         },
         async arrayBuffer() {
-          return new TextEncoder().encode(body).buffer;
+          // Preserve Latin-1 byte values (TextEncoder would UTF-8 encode
+          // bytes > 127, corrupting binary data in tests).
+          const buf = new ArrayBuffer(body.length);
+          const view = new Uint8Array(buf);
+          for (let i = 0; i < body.length; i++) {
+            view[i] = body.charCodeAt(i);
+          }
+          return buf;
         },
         async text() { return body; },
         async json() { return JSON.parse(body); },
@@ -629,7 +636,9 @@ await testBehavior('leading slash on path is normalized', async () => {
     const t = new HttpTransport({ baseUrl: 'https://example.com' });
     await t.pull('/staging/blobs/x.json');
     const reqUrl = fetchMock.requests[0]?.url || '';
-    assert(!reqUrl.includes('//'), 'no double slash in URL');
+    // Check path portion only (protocol always contains // but that's fine)
+    const pathPortion = reqUrl.replace(/^https?:\/\//, '');
+    assert(!pathPortion.includes('//'), 'no double slash in URL path');
   } finally {
     delete globalThis.fetch;
   }

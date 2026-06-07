@@ -40,10 +40,10 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Device identity | ✅ | ✅ `device.rs` module |
 | Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
 | Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
-| HTTP Transport test suite (38 tests) | N/A | 🔴 RED — `phpoc-web/test/transport_test.mjs` (skeleton, 27 fail / 13 pass) |
+| HTTP Transport implementation + test suite (49 tests) | N/A | ✅ GREEN — `phpoc-web/src/sync/transport.js` (full fetch()-based impl with ETag caching) — `phpoc-web/test/transport_test.mjs` (49 tests, all passing) |
 | Core engine (chain, crypto, storage) | ✅ | ❌ |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
-| Remote staging sync (port to JS) | ✅ | 🔴 TDD RED — test suite written, implementation in progress |
+| Remote staging sync (port to JS) | ✅ | 🔴 TDD RED — test suite skeleton written, implementation pending. SyncService owns async orchestration (local-first writes, retry queue, backoff). Error sanitization lives here — transport errors never exposed raw to UI. |
 | Auth gate (device cookies port) | ✅ | ❌ |
 | Cross-device handoff (port) | ✅ | ❌ |
 | Ledger block sync (port) | ✅ | ❌ |
@@ -241,6 +241,16 @@ All local-first: writes hit local storage first, sync to remote in background.
 - **Optimistic UI**: writes appear immediately; a subtle "pending" indicator shows un-synced changes
 - **Sync badge**: visual indicator of pending changes (like `ph dev push-status`)
 
+#### Transport Porting Notes (Flutter)
+
+When porting `HttpTransport` from JS to Dart during Phase 2, two issues from the JS review carry forward with higher severity in Flutter:
+
+1. **Unbounded ETag cache** — The JS `Map` has no eviction; page reloads reset it so it's tolerable in the web app. In Flutter, sessions can last days or weeks (the app stays in memory). Implement LRU eviction (e.g., max 100 entries) when porting the transport layer. Simpler option: skip ETag caching entirely in Flutter and rely on `Cache-Control` headers — the Worker already sets them, and HTTP clients on mobile handle caching natively.
+
+2. **No HTTPS certificate validation control** — The JS transport delegates to the browser/Node.js trust store, which is fine for standard public CAs. Flutter's `http` package also uses the platform trust store, so this is acceptable for standard deployments. If enterprise deployment requires custom CAs (MITM proxies, internal PKI), Flutter supports `SecurityContext` for pinned certificates or custom roots via `dart:io`'s `HttpClient`. No change needed at the protocol level — just a Flutter configuration detail.
+
+---
+
 ### 🟢 Phase 3 — Parity & Contingency (Nice to Have)
 
 #### 9. Ledger Sync (Commit)
@@ -352,7 +362,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 5 | Device identity | 1-2 days | ✅ Done — `device.rs` module | `f199a81` (mobile-poc) |
 | 6 | WASM integration test (JS) | 1 day | ✅ Done — 74 tests, all 20 functions vs test vectors | `8f2a9e2` (mobile-poc) |
 | 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
-| 8 | HTTP Transport test suite (JS) | 1 day | 🔴 RED — 38 tests, skeleton throws on all methods | `this commit` |
+| 8 | HTTP Transport implementation (JS) | 1 day | ✅ GREEN — 49 tests, full fetch()-based HttpTransport with ETag caching, all passing | `this commit` |
 
 ---
 

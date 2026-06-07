@@ -3,7 +3,7 @@
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
-- **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite)
+- **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite, with GREEN implementation)
 - **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
@@ -23,7 +23,7 @@
   - ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions exercised against test vectors + round-trip
   - ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton with async init, in-memory key cache, ready-guards, all 20 functions in camelCase
   - ✅ CryptoService smoke test — `phpoc-web/test/crypto_service_smoke.mjs` — 22 tests, singleton lifecycle, key cache, cached-key convenience wrappers, guard
-  - 🔴 Transport test suite (TDD RED) — `phpoc-web/test/transport_test.mjs` — 38 tests, skeleton only: 27 fail (behavior), 13 pass (error cases)
+  - ✅ Transport implementation + test suite (TDD GREEN) — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching, 49 tests all passing
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -146,10 +146,10 @@ Two push paths:
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
 | `scripts/pull_remote_ledger.py` | **HOTFIX** — pull all remote blocks directly, bypassing onboarding |
 | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton wrapper for all 20 WASM exports, key caching, ready-guards |
-| `phpoc-web/src/sync/transport.js` | **NEW** — HttpTransport skeleton (all methods throw, pending implementation) |
+| `phpoc-web/src/sync/transport.js` | **NEW** — HttpTransport implementation — fetch()-based pull/push/listFiles with ETag caching, `arrayBuffer()` for binary-safe body reads (49 tests). See Step 1 review notes for remaining grooming items. |
 | `phpoc-web/test/wasm_integration.mjs` | 74-test integration — all 20 WASM functions, test vectors, round-trips, error cases |
 | `phpoc-web/test/crypto_service_smoke.mjs` | 22-test smoke — CryptoService lifecycle, key cache, convenience wrappers |
-| `phpoc-web/test/transport_test.mjs` | **NEW** — 38-test transport suite (TDD RED: 27 fail, 13 pass) |
+| `phpoc-web/test/transport_test.mjs` | **NEW** — 49-test transport suite (TDD GREEN: all passing, pull/push/listFiles/ETag/headers/URL/error cases) |
 
 ### Documentation
 | File | Purpose |
@@ -318,7 +318,8 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 4. ✅ Worker CORS headers — all responses wrapped, OPTIONS preflight
 5. ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
 6. ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton, key cache, ready-guards, camelCase API
-7. 🔄 Build the React web UI — next: HTTP transport wrapper, then sync algorithm port
+7. ✅ HTTP Transport wrapper — `phpoc-web/src/sync/transport.js` — fetch()-based pull/push/listFiles with ETag caching, 49 test suite passing
+8. 🔄 Build the React web UI — next: sync algorithm port, then UI scaffolding
 
 ### CLI — Active Cross-Platform Target
 - ✅ All 1341 tests pass
@@ -335,8 +336,8 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Worker CORS: OPTIONS preflight + CORS headers on all responses (~45 lines added)
 - ✅ WASM integration test: `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
 - ✅ CryptoService wrapper: `phpoc-web/src/crypto/index.js` — singleton, in-memory key cache, ready-guards, 20 camelCase methods + 5 cached-key convenience wrappers
-- 🔴 Transport test suite (TDD RED) — `phpoc-web/test/transport_test.mjs` — 38 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction. Skeleton throws: 27 fail (behavior), 13 pass (error cases).
-- 🔄 Next: implement HttpTransport methods (pull, push, listFiles, resetCache), then sync algorithm port (`check_and_sync()`)
+- ✅ Transport implementation + test suite — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching. `phpoc-web/test/transport_test.mjs` — 49 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction, cache reset. All passing (TDD GREEN).
+- 🔄 Next: sync algorithm port (`check_and_sync()`), then React web UI
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -453,15 +454,25 @@ When starting a fresh context with `/new`, the following files should be loaded 
 
 The crypto layer is complete and verified. The next work is the web platform layer:
 
-### Step 1: HTTP Transport Wrapper
+### Step 1: HTTP Transport Wrapper ✅
 
 Port `core/sync/http_transport.py` to JS:
 - `fetch()`-based `pull(path)`, `push(path, data)`, `listFiles(prefix)`
-- ETag caching (conditional GET with `If-None-Match`)
+- ETag caching (conditional GET with `If-None-Match`, 304 returns cached body, push clears path cache)
 - CORS-compatible (Worker already has CORS headers)
+- Constructor validates baseUrl (non-empty, http/https scheme), normalizes trailing slash
+- `X-Api-Key` header on all requests when configured
+- Binary-safe body reading via `response.arrayBuffer()` → `new Uint8Array()` — preserves encrypted/obfuscated bytes exactly, no UTF-8 decode risk
+- URL construction handles base URLs with sub-paths
 - File: `phpoc-web/src/sync/transport.js`
+- Tests: `phpoc-web/test/transport_test.mjs` — 49 tests, all passing
 - Refs: `core/sync/http_transport.py`, `domain/staging/remote_sync.py` (path constants)
-- **Status:** 🔴 TDD RED — test suite written, skeleton throws on every method. 27 behavior tests failing, 13 error-case tests passing. Implement next.
+- **Status:** ✅ DONE — 49/49 tests passing. Ready for sync algorithm port.
+
+**Review notes (grooming):**
+- `timeoutMs` parameter is accepted but unused. Async orchestration in SyncService prevents UI blocking, but transport should still wire `AbortSignal.timeout(ms)` as a circuit breaker for background retry loops (prevents stalled socket leaks).
+- Error messages include raw `err.message` from fetch (can leak internal IPs in `ECONNREFUSED`). Not a transport concern — error sanitization belongs at SyncService → UI boundary.
+- ✅ **Resolved:** `text()`+`charCodeAt` O(n) loop → `response.arrayBuffer()`. Body reading now uses native binary API with zero JS loop. See commit notes.
 
 ### Step 2: Sync Algorithm Port (`check_and_sync()`)
 
@@ -470,6 +481,10 @@ Port the auth gate logic from `domain/staging/service.py`:
 - Auth gate: pull remote blob → deobfuscate (via CryptoService) → merge → push
 - Cookie creation + push
 - Error states: OFFLINE, REAUTH_NEEDED, READY
+- File: `phpoc-web/src/sync/check_and_sync.js`
+- Refs: `domain/staging/service.py`, `domain/cookie/device_cookie.py`, `domain/staging/merge_engine.py`
+- **Prerequisite:** CryptoService (✅ done), HttpTransport (✅ done)
+- **Design notes:** SyncService owns async orchestration (local-first writes, WAL queue, retry with backoff). Transport errors sanitized here before surfacing to UI — raw `err.message` never reaches React components. `AbortSignal.timeout(10000)` wired here for background retry circuit-breaking.
 - File: `phpoc-web/src/sync/check_and_sync.js`
 - Refs: `domain/staging/service.py`, `domain/cookie/device_cookie.py`, `domain/staging/merge_engine.py`
 
@@ -495,5 +510,5 @@ Scaffold React app and implement screens:
 | Crypto | `security/crypto.py` | `CryptoManager`, encrypt/decrypt wrappers. The Rust `phpoc-crypto-core` replaces this for non-CLI platforms. |
 | Worker | `worker/src/index.ts` | Cloudflare Worker (149-line dumb blob store). Extend with caution — keep it dumb. |
 | **Web: Crypto** | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper, key cache, 20 methods + 5 cached-key convenience wrappers. |
-| **Web: Transport** | `phpoc-web/src/sync/transport.js` | **(NEXT)** `fetch()`-based HTTP transport with ETag caching. |
-| **Web: Sync** | `phpoc-web/src/sync/check_and_sync.js` | **(NEXT)** Port of `check_and_sync()` auth gate + reconcile. |
+| **Web: Transport** | `phpoc-web/src/sync/transport.js` | ✅ `fetch()`-based HTTP transport with ETag caching. 49 tests passing. |
+| **Web: Sync** | `phpoc-web/src/sync/check_and_sync.js` | 🔄 **(NEXT)** Port of `check_and_sync()` auth gate + reconcile. Prerequisites: CryptoService + HttpTransport (both ✅). |
