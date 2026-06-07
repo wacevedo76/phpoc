@@ -1,0 +1,15 @@
+{
+  "name": "phpoc-web",
+  "version": "1.0.0",
+  "description": "PH Ledger web prototype",
+  "type": "module",
+  "scripts": {
+    "test": "echo 'Run: node test/<name>.mjs'"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "idb-keyval": "^6.2.5"
+  }
+}

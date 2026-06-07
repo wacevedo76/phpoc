@@ -1,0 +1,725 @@
+/**
+ * SyncService — unified sync gate + local I/O for staging entries.
+ *
+ * Port of domain/staging/service.py to JS.
+ *
+ * The SyncService is the central point for all staging operations:
+ *
+ *   1. Local CRUD — capture/end/pause/unpause/modify/remove entries
+ *      in the local staging cache. Low-latency (no remote calls).
+ *
+ *   2. Sync gate — checkAndSync() is the single entry point for remote
+ *      staging sync. Uses device cookie (TTL + specifier) to decide
+ *      fast path vs auth gate. No crypto key consulted for auth
+ *      decisions — the cookie is the truth.
+ *
+ *   3. Push — pushToRemote() serialises local entries, obfuscates via
+ *      CryptoService, and pushes to the remote transport.
+ *
+ *   4. Device Cookie — checkAndSync() uses a fast-path cookie check to
+ *      avoid pulling the full staging blob when the same device session
+ *      was the last writer.
+ *
+ * Auth gate flow:
+ *     1. No remote? → READY
+ *     2. Local cookie TTL valid? → pull remote cookie
+ *        ├─ Match → READY (push blob + optional touch)
+ *        ├─ Mismatch → REAUTH_NEEDED
+ *        └─ No remote cookie → continue
+ *     3. No local cookie / expired → REAUTH_NEEDED
+ *     4. No remote cookie (local valid, have master key):
+ *        → _reconcileAndClaim()
+ *          ├─ Same device_uuid → push blob (no pull)
+ *          └─ Different → pull blob → reconcile → push merged
+ *        → Create new cookie → READY
+ *
+ * SyncCheckResult:
+ *   'READY'           — remote synced, proceed
+ *   'OFFLINE'         — remote unreachable, local only
+ *   'REAUTH_NEEDED'   — device mismatch, passphrase required
+ */
+
+import { DeviceCookie } from './cookie.js';
+import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
+import { mergeEntries } from './merge_engine.js';
+import { LocalCache } from './local_cache.js';
+
+/** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'} SyncCheckResult */
+
+export const SyncResult = Object.freeze({
+  READY: 'READY',
+  OFFLINE: 'OFFLINE',
+  REAUTH_NEEDED: 'REAUTH_NEEDED',
+});
+
+const DEFAULT_COOKIE_TTL = 30; // minutes
+
+export class SyncService {
+  /**
+   * @param {import('./storage.js').StorageBackend} storage - Storage backend.
+   * @param {import('../crypto/index.js').CryptoService} crypto - WASM CryptoService.
+   * @param {import('./transport.js').HttpTransport} [transport] - HTTP transport.
+   *        Null/undefined disables remote operations.
+   * @param {object} [options]
+   * @param {number} [options.cookieTtlMinutes=30]
+   */
+  constructor(storage, crypto, transport, options = {}) {
+    /** @private */
+    this._storage = storage;
+    /** @private */
+    this._crypto = crypto;
+    /** @private */
+    this._transport = transport || null;
+    /** @private */
+    this._cookieTtlMinutes = options.cookieTtlMinutes ?? DEFAULT_COOKIE_TTL;
+
+    // Build sub-modules
+    /** @private */
+    this._local = new LocalCache(storage, crypto);
+    /** @private */
+    this._remote = transport
+      ? new RemoteSync(transport, crypto)
+      : null;
+
+    /** @private ms timestamp of last push (for diagnostics) */
+    this._lastPushAt = 0;
+  }
+
+  // ------------------------------------------------------------------
+  // Local staging CRUD (no remote calls)
+  // ------------------------------------------------------------------
+
+  /**
+   * Resolve the local device UUID from the cached master key.
+   * @returns {string|null}
+   * @private
+   */
+  _getDeviceId() {
+    const mk = this._crypto.getMasterKey();
+    if (!mk) return null;
+    try {
+      return this._crypto.getDeviceId(mk);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Add a new staging entry locally. No remote sync.
+   *
+   * @param {object} params
+   * @param {string} params.title
+   * @param {number} params.startEpoch
+   * @param {number} [params.endEpoch]
+   * @param {boolean} [params.isActive=true]
+   * @param {string[]} [params.tags]
+   * @param {string} [params.comment]
+   * @returns {Promise<string>} Entry hash prefix.
+   */
+  async capture(params) {
+    const deviceUuid = this._getDeviceId() || '';
+    const hash = await this._local.append({ ...params, deviceUuid });
+    await this._touchLocalCookie();
+    return hash;
+  }
+
+  /**
+   * End an active task. Local-only write.
+   *
+   * @param {string} title
+   * @param {number} endEpoch - ms timestamp.
+   * @param {string} [comment]
+   * @throws {Error} If no active task found with that title.
+   */
+  async end(title, endEpoch, comment) {
+    const entries = await this._local.readEntries();
+    const foundIndex = entries.findIndex(
+      (e) => e.title === title && e.is_active
+    );
+    if (foundIndex === -1) {
+      throw new Error(`No active task found for: ${title}`);
+    }
+
+    const entry = entries[foundIndex];
+
+    // Auto-unpause if currently paused
+    if (entry.is_paused) {
+      await this._local.closePause(foundIndex, endEpoch);
+    }
+
+    const endDeviceUuid = this._getDeviceId() || '';
+    await this._local.update(foundIndex, {
+      end_epoch: endEpoch,
+      is_active: false,
+      end_device_uuid: endDeviceUuid,
+    });
+
+    // Recompute duration
+    const updated = await this._local.readEntries();
+    const e = updated[foundIndex];
+    const duration = LocalCache.computeDuration(
+      e.start_epoch,
+      endEpoch,
+      e.pauses
+    );
+    await this._local.update(foundIndex, { duration });
+
+    if (comment != null) {
+      await this._local.update(foundIndex, { comment });
+    }
+
+    await this._touchLocalCookie();
+  }
+
+  /**
+   * Pause an active task.
+   *
+   * @param {string} title
+   * @param {number} pauseEpoch - ms timestamp.
+   * @throws {Error} If no active task found with that title.
+   */
+  async pause(title, pauseEpoch) {
+    const entries = await this._local.readEntries();
+    const foundIndex = entries.findIndex(
+      (e) => e.title === title && e.is_active
+    );
+    if (foundIndex === -1) {
+      throw new Error(`No active task found for: ${title}`);
+    }
+    await this._local.addPause(foundIndex, pauseEpoch);
+    await this._touchLocalCookie();
+  }
+
+  /**
+   * Unpause a paused task (resume).
+   *
+   * @param {string} title
+   * @param {number} unpauseEpoch - ms timestamp.
+   * @throws {Error} If no active task found with that title.
+   */
+  async unpause(title, unpauseEpoch) {
+    const entries = await this._local.readEntries();
+    const foundIndex = entries.findIndex(
+      (e) => e.title === title && e.is_active
+    );
+    if (foundIndex === -1) {
+      throw new Error(`No active task found for: ${title}`);
+    }
+    await this._local.closePause(foundIndex, unpauseEpoch);
+    await this._touchLocalCookie();
+  }
+
+  /**
+   * Modify a staged entry's fields in-place.
+   *
+   * @param {number} entryIndex
+   * @param {object} fields - {title?, tags?, comment?}
+   */
+  async modify(entryIndex, fields) {
+    await this._local.update(entryIndex, fields);
+    await this._touchLocalCookie();
+  }
+
+  /**
+   * Delete a staged entry.
+   *
+   * @param {number} entryIndex
+   */
+  async remove(entryIndex) {
+    await this._local.delete(entryIndex);
+    await this._touchLocalCookie();
+  }
+
+  /**
+   * Remove multiple staged entries by index.
+   *
+   * @param {number[]} indices
+   */
+  async removeSynced(indices) {
+    if (indices && indices.length > 0) {
+      await this._local.removeMultiple(indices);
+      await this._touchLocalCookie();
+    }
+  }
+
+  /**
+   * Read all staging entries as decrypted DTOs.
+   * @returns {Promise<import('./local_cache.js').StagingEntry[]>}
+   */
+  async readEntries() {
+    return this._local.readEntries();
+  }
+
+  /**
+   * Return only active (not completed) entries.
+   * @returns {Promise<import('./local_cache.js').StagingEntry[]>}
+   */
+  async getActive() {
+    const entries = await this._local.readEntries();
+    return entries.filter((e) => e.is_active);
+  }
+
+  /**
+   * Return only completed (ended) entries.
+   * @returns {Promise<import('./local_cache.js').StagingEntry[]>}
+   */
+  async getCompleted() {
+    const entries = await this._local.readEntries();
+    return entries.filter((e) => !e.is_active);
+  }
+
+  /**
+   * Return completed, non-paused entries ready for ledger sync.
+   * @returns {Promise<import('./local_cache.js').StagingEntry[]>}
+   */
+  async getPendingSync() {
+    const entries = await this._local.readEntries();
+    return entries.filter((e) => !e.is_active && !e.is_paused);
+  }
+
+  // ------------------------------------------------------------------
+  // Cookie helpers
+  // ------------------------------------------------------------------
+
+  /**
+   * Update the local cookie's creation_time to now, extending TTL.
+   * No remote cookie is pushed. Safe to call on every command.
+   * @private
+   */
+  async _touchLocalCookie() {
+    try {
+      const localCookie = await this._storage.get('cookie');
+      if (!localCookie?.device_specifier) return;
+      await this._storage.set('cookie', {
+        device_specifier: localCookie.device_specifier,
+        creation_time: Date.now(),
+      });
+    } catch {
+      // Non-critical
+    }
+  }
+
+  /**
+   * Push local blob and touch cookie on fast path.
+   *
+   * Called when local and remote cookie specifiers match (same device
+   * session). Pushes the local staging blob to remote, then touches
+   * the local cookie to extend TTL. The device_specifier is never
+   * regenerated — same device, same specifier. The remote cookie is
+   * never pushed (it already has the matching specifier).
+   *
+   * @param {object} localCookie
+   * @private
+   */
+  async _pushOnFastPath(localCookie) {
+    const mk = this._crypto.getMasterKey();
+    if (mk) {
+      await this.pushBlobOnly(mk);
+    }
+    await this._touchLocalCookie();
+  }
+
+  // ------------------------------------------------------------------
+  // Sync gate (single point of entry for remote staging sync)
+  // ------------------------------------------------------------------
+
+  /**
+   * Event-driven remote check with Device Cookie as the truth.
+   *
+   * @param {number} [timeoutMs=500] - Unused in this port; the
+   *   underlying transport handles timeouts.
+   * @returns {Promise<SyncCheckResult>}
+   */
+  async checkAndSync(timeoutMs = 500) {
+    if (!this._remote) {
+      return SyncResult.READY;
+    }
+
+    // ------------------------------------------------------------------
+    // FAST PATH: Local cookie valid → remote cookie match → READY
+    // ------------------------------------------------------------------
+    const localCookie = await DeviceCookie.isValidLocally(
+      this._storage,
+      this._cookieTtlMinutes
+    );
+
+    let specifierMismatch = false;
+
+    if (localCookie) {
+      let remoteCookieRaw;
+      try {
+        remoteCookieRaw = await this._remote.pullCookie();
+      } catch {
+        return SyncResult.OFFLINE;
+      }
+
+      if (remoteCookieRaw) {
+        const remoteCookie = DeviceCookie.parseRemote(remoteCookieRaw);
+        if (remoteCookie && DeviceCookie.matches(localCookie, remoteCookie)) {
+          // Same device session — fast path
+          await this._pushOnFastPath(localCookie);
+          return SyncResult.READY;
+        }
+        if (remoteCookie) {
+          // Remote cookie parsed but specifiers differ
+          specifierMismatch = true;
+        }
+        // else: remote cookie can't parse — treat as no remote cookie,
+        // fall through to auth gate
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // AUTH GATE
+    // ------------------------------------------------------------------
+
+    // Specifier mismatch ALWAYS forces auth, regardless of cached crypto key.
+    if (specifierMismatch) {
+      return SyncResult.REAUTH_NEEDED;
+    }
+
+    // TTL expired or no local cookie — always force auth.
+    // Per workflow spec, TTL expiry is an unconditional gate to auth.
+    // The user must explicitly enter their passphrase to re-establish
+    // the device session, even if a valid crypto key is cached.
+    if (!localCookie) {
+      return SyncResult.REAUTH_NEEDED;
+    }
+
+    // No remote cookie — proceed with reconcile if we have a master key
+    const mk = this._crypto.getMasterKey();
+    if (!mk) {
+      return SyncResult.REAUTH_NEEDED;
+    }
+
+    // Reconcile and claim staging ownership
+    return this._reconcileAndClaim(mk);
+  }
+
+  // ------------------------------------------------------------------
+  // Reconcile and claim
+  // ------------------------------------------------------------------
+
+  /**
+   * After successful auth: claim staging ownership for this device.
+   *
+   * Called from checkAndSync()'s auth gate. Pulls remote cookie to
+   * check device_uuid, then:
+   *
+   *   Same device that last wrote → push local blob (authoritative)
+   *     and touch local cookie (update creation_time, keep specifier,
+   *     no remote cookie push).
+   *
+   *   Different device / first time → pull remote blob, reconcile
+   *     (merge remote entries into local), push merged blob, then
+   *     create a fresh device cookie (new specifier, local + remote).
+   *
+   * @param {string} masterKeyHex - 64-char hex master key.
+   * @returns {Promise<SyncCheckResult>}
+   * @private
+   */
+  async _reconcileAndClaim(masterKeyHex) {
+    // Pull remote cookie to discover which device last wrote
+    let remoteCookieRaw;
+    try {
+      remoteCookieRaw = await this._remote.pullCookie();
+    } catch {
+      return SyncResult.OFFLINE;
+    }
+
+    let remoteDeviceUuid = '';
+    let remoteCookieSpecifier = '';
+
+    if (remoteCookieRaw) {
+      const remoteCookie = DeviceCookie.parseRemote(remoteCookieRaw);
+      if (remoteCookie) {
+        remoteDeviceUuid = remoteCookie.device_uuid || '';
+        remoteCookieSpecifier = remoteCookie.device_specifier || '';
+      }
+    }
+
+    const localDeviceUuid = this._getDeviceId() || '';
+
+    if (remoteDeviceUuid && remoteDeviceUuid === localDeviceUuid) {
+      // Case A — Same device that last wrote: push only, touch cookie
+      await this.pushBlobOnly(masterKeyHex);
+
+      // Touch local cookie: update creation_time, keep specifier,
+      // no remote cookie push (remote already has matching specifier).
+      if (remoteCookieSpecifier) {
+        try {
+          await this._storage.set('cookie', {
+            device_specifier: remoteCookieSpecifier,
+            creation_time: Date.now(),
+          });
+        } catch {
+          // Non-critical
+        }
+      }
+    } else {
+      // Case B — Different device or first-time setup: pull, reconcile, push
+      let remoteBlob;
+      try {
+        remoteBlob = await this._remote.pullBlob(masterKeyHex);
+      } catch {
+        return SyncResult.OFFLINE;
+      }
+
+      // If remote blob exists but can't be decrypted (wrong master key),
+      // DON'T overwrite it — abort and signal OFFLINE.
+      if (remoteBlob === BLOB_KEY_MISMATCH) {
+        console.warn(
+          'Remote staging blob exists but cannot be decrypted ' +
+          '(wrong master key). Aborting to avoid data loss.'
+        );
+        return SyncResult.OFFLINE;
+      }
+
+      if (remoteBlob && Array.isArray(remoteBlob.entries)) {
+        try {
+          const localEntries = await this._local.readEntries();
+          // Convert remote raw entries to DTOs before merge
+          const remoteDTOs = remoteBlob.entries
+            .map((raw) => this._rawEntryToDTO(raw))
+            .filter(Boolean);
+          const merged = mergeEntries(localEntries, remoteDTOs);
+          await this._local.writeEntries(merged);
+        } catch (err) {
+          // Merge failure — push local as-is
+          console.warn('Merge failed, pushing local blob:', err.message);
+        }
+      }
+
+      // Push the (merged or local) blob to remote
+      await this.pushBlobOnly(masterKeyHex);
+
+      // Create new device cookie (fresh specifier, local + remote)
+      try {
+        const deviceId = this._crypto.getDeviceId(masterKeyHex);
+        await DeviceCookie.destroyLocally(this._storage);
+        const remoteCookie = await DeviceCookie.create(
+          deviceId,
+          this._storage,
+          this._crypto
+        );
+        if (remoteCookie) {
+          const cookieBytes = new TextEncoder().encode(
+            JSON.stringify(remoteCookie)
+          );
+          await this._remote.pushCookie(cookieBytes);
+        }
+      } catch {
+        // Non-critical: cookie creation failure doesn't block READY
+      }
+    }
+
+    return SyncResult.READY;
+  }
+
+  // ------------------------------------------------------------------
+  // Raw entry → DTO conversion
+  // ------------------------------------------------------------------
+
+  /**
+   * Convert a single raw staging entry (from remote blob) to a DTO.
+   *
+   * Remote blob entries are stored in raw format with encrypted fields.
+   * Since the deobfuscated blob is plain JSON (decrypted), the fields
+   * are already plain text (the `plain:` prefix convention from the CLI).
+   *
+   * @param {object} rawEntry - Raw entry dict with `data`, `hash`, etc.
+   * @returns {object|null} Decrypted DTO, or null if corrupt.
+   * @private
+   */
+  _rawEntryToDTO(rawEntry) {
+    try {
+      const data = rawEntry.data || {};
+
+      // Parse timestamps from plain: prefix format
+      const startEpochStr = data.startTime_enc || '';
+      const startEpoch = this._parsePlainInt(startEpochStr);
+      if (startEpoch == null) return null;
+
+      const endEpochStr = data.endTime_enc;
+      const endEpoch = endEpochStr ? this._parsePlainInt(endEpochStr) : null;
+
+      const pausesRaw = data.pauses_enc || 'plain:[]';
+      const pauses = this._parsePlainJSON(pausesRaw) || [];
+
+      const metadataRaw = data.metadata_enc || 'plain:{}';
+      const metadata = this._parsePlainJSON(metadataRaw) || {};
+
+      const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
+
+      return {
+        entry_id: data.entry_id || '',
+        title: data.title || '',
+        start_epoch: startEpoch,
+        end_epoch: endEpoch,
+        duration: data.duration || 0,
+        is_active: data.is_active || false,
+        is_paused: data.is_paused || false,
+        pauses,
+        tags: data.tags || [],
+        comment: data.comment || null,
+        media: data.media || [],
+        metadata,
+        date: dateStr,
+        source: 'remote',
+        hash: rawEntry.hash || '',
+        device_uuid: data.device_uuid || '',
+        end_device_uuid: data.end_device_uuid || '',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse a `plain:` prefixed string as an integer.
+   * @param {string} str - e.g. "plain:1714000000000"
+   * @returns {number|null}
+   * @private
+   */
+  _parsePlainInt(str) {
+    if (!str || typeof str !== 'string') return null;
+    if (str.startsWith('plain:')) {
+      return parseInt(str.slice(6), 10);
+    }
+    // Could be an already-decrypted value (just a number string)
+    return parseInt(str, 10);
+  }
+
+  /**
+   * Parse a `plain:` prefixed string as JSON.
+   * @param {string} str - e.g. 'plain:[{"pause_start":...}]'
+   * @returns {any|null}
+   * @private
+   */
+  _parsePlainJSON(str) {
+    if (!str || typeof str !== 'string') return null;
+    if (str.startsWith('plain:')) {
+      try {
+        return JSON.parse(str.slice(6));
+      } catch {
+        return null;
+      }
+    }
+    try {
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Push to remote
+  // ------------------------------------------------------------------
+
+  /**
+   * Serialize local staging, push via transport, and create device cookie.
+   *
+   * Pushes the staging blob FIRST, then the device cookie. Order matters:
+   * if the blob push fails, the cookie is unchanged and the next
+   * checkAndSync will find matching cookies and retry the blob push.
+   * If the cookie push fails after the blob succeeds, the cookie mismatch
+   * triggers reconcile which pulls the correct (updated) blob.
+   *
+   * @param {string} masterKeyHex - 64-char hex master key.
+   */
+  async pushToRemote(masterKeyHex) {
+    if (!this._remote) return;
+
+    const entries = await this._local.readEntries();
+    const deviceId = this._getDeviceId() || 'unknown';
+
+    // Push blob FIRST
+    await this._remote.pushBlob(entries, deviceId, masterKeyHex);
+
+    // Push cookie SECOND (soft failure)
+    try {
+      await DeviceCookie.destroyLocally(this._storage);
+      await this._pushCookie(deviceId);
+    } catch (err) {
+      console.warn('Device cookie push failed:', err.message);
+    }
+
+    this._lastPushAt = Date.now();
+  }
+
+  /**
+   * Create a fresh device cookie and push it to remote.
+   *
+   * Only write operations that produce new staging data should call this.
+   * Sync-only operations must NOT push the cookie — the remote cookie is
+   * the authoritative record of which device last wrote.
+   *
+   * @param {string} deviceId
+   * @private
+   */
+  async _pushCookie(deviceId) {
+    const remoteCookie = await DeviceCookie.create(
+      deviceId,
+      this._storage,
+      this._crypto
+    );
+    if (remoteCookie) {
+      const cookieBytes = new TextEncoder().encode(
+        JSON.stringify(remoteCookie)
+      );
+      await this._remote.pushCookie(cookieBytes);
+    }
+  }
+
+  /**
+   * Push only the staging blob to remote, WITHOUT creating/pushing a cookie.
+   *
+   * Used by sync operations that should reconcile data but not claim
+   * ownership of the remote cookie. The remote cookie is only updated
+   * by real write operations.
+   *
+   * @param {string} masterKeyHex - 64-char hex master key.
+   */
+  async pushBlobOnly(masterKeyHex) {
+    if (!this._remote) return;
+
+    const entries = await this._local.readEntries();
+    const deviceId = this._getDeviceId() || 'unknown';
+    await this._remote.pushBlob(entries, deviceId, masterKeyHex);
+    this._lastPushAt = Date.now();
+  }
+
+  // ------------------------------------------------------------------
+  // Diagnostics
+  // ------------------------------------------------------------------
+
+  /**
+   * Quick reachability check.
+   * @returns {Promise<boolean>}
+   */
+  async checkRemotePing(timeoutMs = 500) {
+    if (!this._remote) return false;
+    try {
+      await this._remote.pullCookie();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether remote transport is configured.
+   * @returns {boolean}
+   */
+  get isRemoteAvailable() {
+    return this._remote !== null;
+  }
+
+  /**
+   * Timestamp of the last push (ms epoch).
+   * @returns {number}
+   */
+  get lastPushAt() {
+    return this._lastPushAt;
+  }
+}

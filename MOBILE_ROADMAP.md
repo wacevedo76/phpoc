@@ -43,9 +43,14 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | HTTP Transport implementation + test suite (49 tests) | N/A | ✅ GREEN — `phpoc-web/src/sync/transport.js` (full fetch()-based impl with ETag caching) — `phpoc-web/test/transport_test.mjs` (49 tests, all passing) |
 | Core engine (chain, crypto, storage) | ✅ | ❌ |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
-| Remote staging sync (port to JS) | ✅ | 🔴 TDD RED — test suite skeleton written, implementation pending. SyncService owns async orchestration (local-first writes, retry queue, backoff). Error sanitization lives here — transport errors never exposed raw to UI. |
-| Auth gate (device cookies port) | ✅ | ❌ |
-| Cross-device handoff (port) | ✅ | ❌ |
+| Remote staging sync (port to JS) | ✅ | ✅ FULL — `phpoc-web/src/sync/sync.js` — SyncService with `checkAndSync()`, `_reconcileAndClaim()`, `pushToRemote()`, `pushBlobOnly()`. Full auth gate flow with cookie fast path. 60-test suite. |
+| Auth gate (device cookies port) | ✅ | ✅ FULL — `phpoc-web/src/sync/cookie.js` — DeviceCookie (create, validate TTL, parse remote, match specifiers, destroy). 14-test suite. |
+| Cross-device handoff (port) | ✅ | ✅ INFERRED — `merge_engine.js` + `_reconcileAndClaim()` handles device_uuid comparison, pull+merge+push for different devices. |
+| Sync modules (storage abstraction) | N/A | ✅ — `storage.js` (StorageBackend interface + MemoryBackend), `indexeddb_storage.js` (IndexedDBBackend via idb-keyval) |
+| Sync modules (local cache) | ✅ | ✅ — `local_cache.js` — LocalCache (staging CRUD, pause management, tag normalization, SHA-256 via WASM) |
+| Sync modules (merge engine) | ✅ | ✅ — `merge_engine.js` — mergeEntries() pure function (dedup by entry_id) |
+| Sync modules (remote blob) | ✅ | ✅ — `remote_sync.js` — RemoteSync (pull/push with CryptoService obfuscation, cookie pull/push) |
+| Sync test suite | N/A | ✅ — `test/sync_test.mjs` — 60 tests covering all 4 layers + edge cases |
 | Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
@@ -363,6 +368,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 6 | WASM integration test (JS) | 1 day | ✅ Done — 74 tests, all 20 functions vs test vectors | `8f2a9e2` (mobile-poc) |
 | 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
 | 8 | HTTP Transport implementation (JS) | 1 day | ✅ GREEN — 49 tests, full fetch()-based HttpTransport with ETag caching, all passing | `this commit` |
+| 9 | Sync Algorithm Port (JS) — StorageBackend, IndexedDBBackend, DeviceCookie, RemoteSync, LocalCache, MergeEngine, SyncService | 2-3 days | ✅ DONE — 9 modules, 60-test suite, full auth gate + staging CRUD + blob sync | `this commit` |
 
 ---
 

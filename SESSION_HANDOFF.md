@@ -4,7 +4,7 @@
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
 - **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite, with GREEN implementation)
-- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core)
+- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core); 205 passing, 0 failures (web: 74 WASM + 22 CryptoService + 49 transport + 60 sync)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -24,6 +24,7 @@
   - ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton with async init, in-memory key cache, ready-guards, all 20 functions in camelCase
   - ✅ CryptoService smoke test — `phpoc-web/test/crypto_service_smoke.mjs` — 22 tests, singleton lifecycle, key cache, cached-key convenience wrappers, guard
   - ✅ Transport implementation + test suite (TDD GREEN) — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching, 49 tests all passing
+  - ✅ **Sync algorithm port** — `phpoc-web/src/sync/` — full auth gate (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote blob sync, localStorage abstraction (StorageBackend + IndexedDBBackend). 60-test suite all passing.
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -319,7 +320,8 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 5. ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
 6. ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton, key cache, ready-guards, camelCase API
 7. ✅ HTTP Transport wrapper — `phpoc-web/src/sync/transport.js` — fetch()-based pull/push/listFiles with ETag caching, 49 test suite passing
-8. 🔄 Build the React web UI — next: sync algorithm port, then UI scaffolding
+8. ✅ Sync Algorithm Port — full auth gate (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote sync, storage abstraction. 9 modules, 60-test suite.
+9. 🔄 Build the React web UI — next: auth screen, dashboard, new task, history
 
 ### CLI — Active Cross-Platform Target
 - ✅ All 1341 tests pass
@@ -337,7 +339,8 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ WASM integration test: `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
 - ✅ CryptoService wrapper: `phpoc-web/src/crypto/index.js` — singleton, in-memory key cache, ready-guards, 20 camelCase methods + 5 cached-key convenience wrappers
 - ✅ Transport implementation + test suite — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching. `phpoc-web/test/transport_test.mjs` — 49 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction, cache reset. All passing (TDD GREEN).
-- 🔄 Next: sync algorithm port (`check_and_sync()`), then React web UI
+- ✅ Sync algorithm port — `phpoc-web/src/sync/` — 9 modules (storage abstraction, IndexedDB backend, device cookie, merge engine, remote sync, local cache, SyncService, barrel export). Full `checkAndSync()` auth gate with fast path, specifier mismatch, TTL expiry, reconcile-and-claim. 60-test suite all passing.
+- 🔄 Next: React web UI (auth screen, dashboard, new task, history)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -474,19 +477,55 @@ Port `core/sync/http_transport.py` to JS:
 - Error messages include raw `err.message` from fetch (can leak internal IPs in `ECONNREFUSED`). Not a transport concern — error sanitization belongs at SyncService → UI boundary.
 - ✅ **Resolved:** `text()`+`charCodeAt` O(n) loop → `response.arrayBuffer()`. Body reading now uses native binary API with zero JS loop. See commit notes.
 
-### Step 2: Sync Algorithm Port (`check_and_sync()`)
+### Step 2: Sync Algorithm Port (`check_and_sync()`) ✅
 
-Port the auth gate logic from `domain/staging/service.py`:
-- Local cookie TTL check → remote cookie pull → specifier comparison
-- Auth gate: pull remote blob → deobfuscate (via CryptoService) → merge → push
-- Cookie creation + push
-- Error states: OFFLINE, REAUTH_NEEDED, READY
-- File: `phpoc-web/src/sync/check_and_sync.js`
-- Refs: `domain/staging/service.py`, `domain/cookie/device_cookie.py`, `domain/staging/merge_engine.py`
-- **Prerequisite:** CryptoService (✅ done), HttpTransport (✅ done)
-- **Design notes:** SyncService owns async orchestration (local-first writes, WAL queue, retry with backoff). Transport errors sanitized here before surfacing to UI — raw `err.message` never reaches React components. `AbortSignal.timeout(10000)` wired here for background retry circuit-breaking.
-- File: `phpoc-web/src/sync/check_and_sync.js`
-- Refs: `domain/staging/service.py`, `domain/cookie/device_cookie.py`, `domain/staging/merge_engine.py`
+Port the auth gate logic from `domain/staging/service.py` to JS. Full implementation with 60-test suite, all passing.
+
+**Files created (9 modules):**
+- `phpoc-web/src/sync/storage.js` — `StorageBackend` interface + `MemoryBackend` for testing
+- `phpoc-web/src/sync/indexeddb_storage.js` — `IndexedDBBackend` via `idb-keyval` (browser production storage)
+- `phpoc-web/src/sync/cookie.js` — `DeviceCookie` static methods (create, validate TTL, parse remote, match specifiers, destroy)
+- `phpoc-web/src/sync/merge_engine.js` — `mergeEntries()` pure function (dedup by `entry_id` or fallback `(title, start_epoch)`)
+- `phpoc-web/src/sync/remote_sync.js` — `RemoteSync` (blob pull/push with CryptoService obfuscation, cookie pull/push, reachability check)
+- `phpoc-web/src/sync/local_cache.js` — `LocalCache` (staging CRUD, pause management, tag normalization, SHA-256 hashing via WASM)
+- `phpoc-web/src/sync/sync.js` — `SyncService` with full `checkAndSync()` auth gate, `_reconcileAndClaim()`, `pushToRemote()`, `pushBlobOnly()`, plus all local CRUD methods (capture/end/pause/unpause/modify/remove)
+- `phpoc-web/src/sync/index.js` — barrel export
+- `phpoc-web/test/sync_test.mjs` — 60 tests: 14 merge, 14 cookie, 22 local cache, 10 remote sync
+
+**Architecture:**
+```
+SyncService
+  ├── LocalCache         → StorageBackend (IndexedDBBackend / MemoryBackend)
+  ├── RemoteSync         → HttpTransport + CryptoService
+  ├── DeviceCookie       → StorageBackend + CryptoService
+  └── mergeEntries()     → pure function
+```
+
+**Auth gate flow (ported faithfully from CLI reference):**
+```
+checkAndSync():
+  ├─ No remote?                    → READY
+  ├─ Local cookie valid?
+  │   ├─ Pull remote cookie
+  │   │   ├─ Match specifier      → push blob + touch cookie → READY
+  │   │   ├─ Mismatch             → REAUTH_NEEDED
+  │   │   └─ No cookie/unparseable → continue
+  │   └─ Unreachable              → OFFLINE
+  ├─ No local cookie / expired    → REAUTH_NEEDED
+  ├─ No remote cookie (have MK)   → _reconcileAndClaim()
+  │   ├─ Same device_uuid         → push blob, touch cookie → READY
+  │   └─ Different / first time   → pull blob → deobfuscate → merge → push → new cookie → READY
+  └─ No remote cookie (no MK)     → REAUTH_NEEDED
+```
+
+**Key design decisions:**
+- Storage abstraction via `StorageBackend` — SyncService never touches IndexedDB directly. Flutter implements same `get/set/remove/clear` contract.
+- Blob obfuscation delegated to `CryptoService` (Rust WASM) — not reimplemented in JS.
+- No `plain:` prefix convention — entries stored as plain JS objects. Encryption only at the remote boundary.
+- WASM-free test path — `MemoryBackend` + `MockCrypto` allow full CI without WASM binary.
+- `idb-keyval` dependency added (npm) for IndexedDB wrapper.
+
+**Status:** ✅ DONE — 60/60 tests passing. Ready for React UI.
 
 ### Step 3: React Web UI
 
@@ -511,4 +550,4 @@ Scaffold React app and implement screens:
 | Worker | `worker/src/index.ts` | Cloudflare Worker (149-line dumb blob store). Extend with caution — keep it dumb. |
 | **Web: Crypto** | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper, key cache, 20 methods + 5 cached-key convenience wrappers. |
 | **Web: Transport** | `phpoc-web/src/sync/transport.js` | ✅ `fetch()`-based HTTP transport with ETag caching. 49 tests passing. |
-| **Web: Sync** | `phpoc-web/src/sync/check_and_sync.js` | 🔄 **(NEXT)** Port of `check_and_sync()` auth gate + reconcile. Prerequisites: CryptoService + HttpTransport (both ✅). |
+| **Web: Sync (9 modules)** | `phpoc-web/src/sync/` — `sync.js`, `cookie.js`, `remote_sync.js`, `merge_engine.js`, `local_cache.js`, `storage.js`, `indexeddb_storage.js`, `index.js` | ✅ **DONE** — Full auth gate port (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote sync. 60 tests all passing. Prerequisites: CryptoService + HttpTransport (both ✅). |
