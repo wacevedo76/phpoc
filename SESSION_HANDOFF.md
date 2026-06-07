@@ -3,7 +3,7 @@
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
-- **Commit (mobile-poc):** `784c1d0`
+- **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite)
 - **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
@@ -23,6 +23,7 @@
   - ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions exercised against test vectors + round-trip
   - ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton with async init, in-memory key cache, ready-guards, all 20 functions in camelCase
   - ✅ CryptoService smoke test — `phpoc-web/test/crypto_service_smoke.mjs` — 22 tests, singleton lifecycle, key cache, cached-key convenience wrappers, guard
+  - 🔴 Transport test suite (TDD RED) — `phpoc-web/test/transport_test.mjs` — 38 tests, skeleton only: 27 fail (behavior), 13 pass (error cases)
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -145,8 +146,10 @@ Two push paths:
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
 | `scripts/pull_remote_ledger.py` | **HOTFIX** — pull all remote blocks directly, bypassing onboarding |
 | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton wrapper for all 20 WASM exports, key caching, ready-guards |
+| `phpoc-web/src/sync/transport.js` | **NEW** — HttpTransport skeleton (all methods throw, pending implementation) |
 | `phpoc-web/test/wasm_integration.mjs` | 74-test integration — all 20 WASM functions, test vectors, round-trips, error cases |
 | `phpoc-web/test/crypto_service_smoke.mjs` | 22-test smoke — CryptoService lifecycle, key cache, convenience wrappers |
+| `phpoc-web/test/transport_test.mjs` | **NEW** — 38-test transport suite (TDD RED: 27 fail, 13 pass) |
 
 ### Documentation
 | File | Purpose |
@@ -332,7 +335,8 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Worker CORS: OPTIONS preflight + CORS headers on all responses (~45 lines added)
 - ✅ WASM integration test: `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
 - ✅ CryptoService wrapper: `phpoc-web/src/crypto/index.js` — singleton, in-memory key cache, ready-guards, 20 camelCase methods + 5 cached-key convenience wrappers
-- 🔄 Next: HTTP transport wrapper (fetch-based, ETag caching), then sync algorithm port (`check_and_sync()`)
+- 🔴 Transport test suite (TDD RED) — `phpoc-web/test/transport_test.mjs` — 38 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction. Skeleton throws: 27 fail (behavior), 13 pass (error cases).
+- 🔄 Next: implement HttpTransport methods (pull, push, listFiles, resetCache), then sync algorithm port (`check_and_sync()`)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -457,6 +461,7 @@ Port `core/sync/http_transport.py` to JS:
 - CORS-compatible (Worker already has CORS headers)
 - File: `phpoc-web/src/sync/transport.js`
 - Refs: `core/sync/http_transport.py`, `domain/staging/remote_sync.py` (path constants)
+- **Status:** 🔴 TDD RED — test suite written, skeleton throws on every method. 27 behavior tests failing, 13 error-case tests passing. Implement next.
 
 ### Step 2: Sync Algorithm Port (`check_and_sync()`)
 

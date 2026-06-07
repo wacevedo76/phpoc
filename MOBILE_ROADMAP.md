@@ -40,9 +40,10 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Device identity | ✅ | ✅ `device.rs` module |
 | Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
 | Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
+| HTTP Transport test suite (38 tests) | N/A | 🔴 RED — `phpoc-web/test/transport_test.mjs` (skeleton, 27 fail / 13 pass) |
 | Core engine (chain, crypto, storage) | ✅ | ❌ |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
-| Remote staging sync (port to JS) | ✅ | ❌ |
+| Remote staging sync (port to JS) | ✅ | 🔴 TDD RED — test suite written, implementation in progress |
 | Auth gate (device cookies port) | ✅ | ❌ |
 | Cross-device handoff (port) | ✅ | ❌ |
 | Ledger block sync (port) | ✅ | ❌ |
@@ -351,6 +352,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 5 | Device identity | 1-2 days | ✅ Done — `device.rs` module | `f199a81` (mobile-poc) |
 | 6 | WASM integration test (JS) | 1 day | ✅ Done — 74 tests, all 20 functions vs test vectors | `8f2a9e2` (mobile-poc) |
 | 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
+| 8 | HTTP Transport test suite (JS) | 1 day | 🔴 RED — 38 tests, skeleton throws on all methods | `this commit` |
 
 ---
 
