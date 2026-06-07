@@ -33,8 +33,10 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Layer | CLI (Reference) | Mobile PoC |
 |-------|:---------------:|:----------:|
 | Rust crypto core (`phpoc-crypto-core`) | ✅ | ✅ 7 modules, 61 tests |
-| WASM bindings (21 exports to JS) | N/A | ✅ `wasm.rs` module |
-| WASM build target | N/A | ✅ 132K `.wasm` + JS glue + TS types |
+| WASM bindings (20 exports to JS) | N/A | ✅ `wasm.rs` module |
+| WASM build target | N/A | ✅ 134K `.wasm` + JS glue + TS types |
+| WASM integration test (74 tests) | N/A | ✅ `phpoc-web/test/wasm_integration.mjs` |
+| CryptoService wrapper (20 functions) | N/A | ✅ `phpoc-web/src/crypto/index.js` |
 | Device identity | ✅ | ✅ `device.rs` module |
 | Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
 | Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
@@ -345,8 +347,10 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 1 | Worker: CORS headers | 1 day | ✅ Done | `14f8c8f` (mobile-poc) |
 | 2 | Crypto test vector suite (JSON) | 1 day | ✅ Done | `f7f2cfd` (mobile-poc) |
 | 3 | Rust crypto library (`phpoc-crypto-core`) | 1-2 weeks | ✅ Done — 7 modules, 61 tests | `f199a81` (mobile-poc) |
-| 4 | WASM build target + bindings | 2-3 days | ✅ Done — 21 JS exports, 132K `.wasm` | `f199a81` (mobile-poc) |
+| 4 | WASM build target + bindings | 2-3 days | ✅ Done — 20 JS exports, 134K `.wasm` | `f199a81` (mobile-poc) |
 | 5 | Device identity | 1-2 days | ✅ Done — `device.rs` module | `f199a81` (mobile-poc) |
+| 6 | WASM integration test (JS) | 1 day | ✅ Done — 74 tests, all 20 functions vs test vectors | `8f2a9e2` (mobile-poc) |
+| 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
 
 ---
 
@@ -373,3 +377,6 @@ This is the same philosophy as the current design: the server is a dumb store; c
 - `domain/staging/service.py` — Auth gate, `check_and_sync()`, `_reconcile_and_claim()` (sync algorithm reference)
 - `PHPSPEC.md` — Format specification (crypto, block structure, key derivation)
 - `SESSION_HANDOFF.md` — Current state of the CLI reference implementation
+- `phpoc-web/src/crypto/index.js` — `CryptoService` — singleton WASM wrapper (key cache, ready-guards, all 20 exports)
+- `phpoc-web/test/wasm_integration.mjs` — 74-test integration suite (all 20 functions vs test vectors)
+- `phpoc-web/test/crypto_service_smoke.mjs` — 22-test CryptoService smoke test

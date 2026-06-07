@@ -3,7 +3,7 @@
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
-- **Commit (mobile-poc):** `14f8c8f`
+- **Commit (mobile-poc):** `784c1d0`
 - **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
@@ -17,9 +17,12 @@
 - **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive cross-platform plan (web, Flutter, React Native contingency)
 - **Mobile PoC progress:**
   - ✅ `phpoc-crypto-core` Rust crate — 7 modules, 61 tests, compiles clean
-  - ✅ WASM bindings module (`wasm.rs`) — 21 functions exported to JS
-  - ✅ WASM build target — 132K `.wasm` binary + JS glue + TypeScript declarations
+  - ✅ WASM bindings module (`wasm.rs`) — 20 functions exported to JS
+  - ✅ WASM build target — 134K `.wasm` binary + JS glue + TypeScript declarations
   - ✅ Worker CORS headers — all responses wrapped, OPTIONS preflight handled
+  - ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions exercised against test vectors + round-trip
+  - ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton with async init, in-memory key cache, ready-guards, all 20 functions in camelCase
+  - ✅ CryptoService smoke test — `phpoc-web/test/crypto_service_smoke.mjs` — 22 tests, singleton lifecycle, key cache, cached-key convenience wrappers, guard
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -141,6 +144,9 @@ Two push paths:
 | `scripts/check_remote_blob.sh` | Deobfuscate and list remote staging blob entries |
 | `scripts/check_remote_ledger.sh` | Count remote ledger blocks and range |
 | `scripts/pull_remote_ledger.py` | **HOTFIX** — pull all remote blocks directly, bypassing onboarding |
+| `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton wrapper for all 20 WASM exports, key caching, ready-guards |
+| `phpoc-web/test/wasm_integration.mjs` | 74-test integration — all 20 WASM functions, test vectors, round-trips, error cases |
+| `phpoc-web/test/crypto_service_smoke.mjs` | 22-test smoke — CryptoService lifecycle, key cache, convenience wrappers |
 
 ### Documentation
 | File | Purpose |
@@ -151,6 +157,9 @@ Two push paths:
 | `MAP.md` | File inventory with HOT/COLD annotations |
 | `ROADMAP.md` | Project roadmap |
 | `CHANGELOG.md` | Release changelog |
+| `phpoc-web/test/wasm_integration.mjs` | 74-test WASM integration suite — covers all 20 exports against test vectors |
+| `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper with key cache and ready-guards |
+| `phpoc-web/test/crypto_service_smoke.mjs` | 22-test CryptoService smoke test — lifecycle, key cache, convenience wrappers |
 | `docs/design/ARCHITECTURAL_DECISIONS.md` | Architectural decisions and rationale |
 | `docs/design/DESIGN_GOALS.md` | Design goals and principles |
 | `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session design |
@@ -160,6 +169,8 @@ Two push paths:
 
 ## Recent Commits
 ```
+784c1d0  feat: CryptoService wrapper for all 20 WASM functions
+8f2a9e2  test: WASM integration test — 74 tests exercising all 20 exported functions
 87a9f8d  chore: move architectural and design docs into docs/design/
 8e5e7df  chore: reorganize root directory — archive retired docs, add mobile roadmap
 d04bd79  docs: mark cross-device handoff verified (item #6) and ledger push superseded (item #7)
@@ -300,9 +311,11 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 
 1. ✅ Extract `crypto_test_vectors.json` from the CLI's existing test suite
 2. ✅ Scaffold `phpoc-crypto-core` Rust crate with `ring` bindings — 7 modules, 61 tests
-3. ✅ Compile to WASM — 21 functions exported via `wasm.rs` bindings module
+3. ✅ Compile to WASM — 20 functions exported via `wasm.rs` bindings module
 4. ✅ Worker CORS headers — all responses wrapped, OPTIONS preflight
-5. 🔄 Build the React web UI (in progress)
+5. ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
+6. ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton, key cache, ready-guards, camelCase API
+7. 🔄 Build the React web UI — next: HTTP transport wrapper, then sync algorithm port
 
 ### CLI — Active Cross-Platform Target
 - ✅ All 1341 tests pass
@@ -312,12 +325,14 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Docs reorganized: `docs/design/` for design docs, `archive/` for retired docs
 - 🔄 ETag caching in long-running daemon mode (lower priority, not blocking mobile)
 
-### Mobile PoC — Progress (2026-06-03)
+### Mobile PoC — Progress (2026-06-07)
 - ✅ Phase 0 complete: `phpoc-crypto-core` Rust crate with all 7 modules, 61 tests
-- ✅ WASM bindings: `src/wasm.rs` — 21 `#[wasm_bindgen]` functions exported
-- ✅ WASM build: 132K `.wasm` binary, JS glue, TypeScript declarations in `pkg/`
+- ✅ WASM bindings: `src/wasm.rs` — 20 `#[wasm_bindgen]` functions exported
+- ✅ WASM build: 134K `.wasm` binary, JS glue, TypeScript declarations in `pkg/`
 - ✅ Worker CORS: OPTIONS preflight + CORS headers on all responses (~45 lines added)
-- 🔄 Next: Scaffold React web app (`phpoc-web/`) and wire WASM module
+- ✅ WASM integration test: `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions verified
+- ✅ CryptoService wrapper: `phpoc-web/src/crypto/index.js` — singleton, in-memory key cache, ready-guards, 20 camelCase methods + 5 cached-key convenience wrappers
+- 🔄 Next: HTTP transport wrapper (fetch-based, ETag caching), then sync algorithm port (`check_and_sync()`)
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -430,6 +445,38 @@ When starting a fresh context with `/new`, the following files should be loaded 
 
 ### Source Files by Layer (read when modifying)
 
+## Next Steps — Immediate
+
+The crypto layer is complete and verified. The next work is the web platform layer:
+
+### Step 1: HTTP Transport Wrapper
+
+Port `core/sync/http_transport.py` to JS:
+- `fetch()`-based `pull(path)`, `push(path, data)`, `listFiles(prefix)`
+- ETag caching (conditional GET with `If-None-Match`)
+- CORS-compatible (Worker already has CORS headers)
+- File: `phpoc-web/src/sync/transport.js`
+- Refs: `core/sync/http_transport.py`, `domain/staging/remote_sync.py` (path constants)
+
+### Step 2: Sync Algorithm Port (`check_and_sync()`)
+
+Port the auth gate logic from `domain/staging/service.py`:
+- Local cookie TTL check → remote cookie pull → specifier comparison
+- Auth gate: pull remote blob → deobfuscate (via CryptoService) → merge → push
+- Cookie creation + push
+- Error states: OFFLINE, REAUTH_NEEDED, READY
+- File: `phpoc-web/src/sync/check_and_sync.js`
+- Refs: `domain/staging/service.py`, `domain/cookie/device_cookie.py`, `domain/staging/merge_engine.py`
+
+### Step 3: React Web UI
+
+Scaffold React app and implement screens:
+- Auth screen (passphrase entry → PBKDF2 via WASM)
+- Dashboard (active tasks with elapsed timers)
+- New Task (capture with title, tags)
+- History (completed entries, filter by date/tags)
+- Sync status indicator
+
 | Layer | Key Files | What They Do |
 |-------|-----------|--------------|
 | CLI entry | `main.py` | Argparse, auth tiers, command wiring. Only modify if adding CLI commands. |
@@ -442,3 +489,6 @@ When starting a fresh context with `/new`, the following files should be loaded 
 | Merge engine | `domain/staging/merge_engine.py` | Cross-device dedup by `entry_id`. |
 | Crypto | `security/crypto.py` | `CryptoManager`, encrypt/decrypt wrappers. The Rust `phpoc-crypto-core` replaces this for non-CLI platforms. |
 | Worker | `worker/src/index.ts` | Cloudflare Worker (149-line dumb blob store). Extend with caution — keep it dumb. |
+| **Web: Crypto** | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper, key cache, 20 methods + 5 cached-key convenience wrappers. |
+| **Web: Transport** | `phpoc-web/src/sync/transport.js` | **(NEXT)** `fetch()`-based HTTP transport with ETag caching. |
+| **Web: Sync** | `phpoc-web/src/sync/check_and_sync.js` | **(NEXT)** Port of `check_and_sync()` auth gate + reconcile. |
