@@ -1,0 +1,202 @@
+import React, { useState, useCallback } from 'react';
+import { useApp } from '../../context/DevModeContext.jsx';
+import { useActiveTasks } from '../../hooks/useActiveTasks.js';
+import ActiveTaskPill from '../pills/ActiveTaskPill.jsx';
+
+/**
+ * Dashboard — main screen.
+ *
+ * Portrait layout:
+ *   ┌───────────────────┐
+ *   │  Active Tasks     │  ← Top half
+ *   │  [Pill] [Pill]    │
+ *   ├───────────────────┤
+ *   │  Start New Task   │  ← Bottom half
+ *   │  [title input]    │
+ *   │  [tags] [Start]   │
+ *   └───────────────────┘
+ *
+ * Landscape layout:
+ *   ┌──────────┬────────┐
+ *   │ Active   │ New    │
+ *   │ Tasks    │ Task   │
+ *   │ [Pill]   │ ...    │
+ *   │ [Pill]   │        │
+ *   └──────────┴────────┘
+ *     Left        Right
+ */
+export default function Dashboard() {
+  const { services, isDev } = useApp();
+  const sync = services.sync;
+
+  const { activeTasks, elapsedMap, loading, refresh } = useActiveTasks(sync);
+
+  // New task form state
+  const [newTitle, setNewTitle] = useState('');
+  const [newTags, setNewTags] = useState('');
+  const [statusMsg, setStatusMsg] = useState(null);
+
+  // Handle starting a new task
+  const handleStartTask = useCallback(async (e) => {
+    e?.preventDefault();
+    if (!newTitle.trim()) return;
+    if (!sync) return;
+
+    try {
+      setStatusMsg(`Starting "${newTitle.trim()}"...`);
+      await sync.capture({
+        title: newTitle.trim(),
+        startEpoch: Date.now(),
+        tags: newTags.split(',')
+          .map(t => t.trim())
+          .filter(Boolean),
+      });
+      setNewTitle('');
+      setNewTags('');
+      setStatusMsg(null);
+      await refresh();
+    } catch (err) {
+      setStatusMsg(`Error: ${err.message}`);
+    }
+  }, [newTitle, newTags, sync, refresh]);
+
+  // Handle pause
+  const handlePause = useCallback(async (title) => {
+    if (!sync) return;
+    try {
+      await sync.pause(title, Date.now());
+      await refresh();
+    } catch (err) {
+      console.warn('Pause failed:', err);
+    }
+  }, [sync, refresh]);
+
+  // Handle resume
+  const handleResume = useCallback(async (title) => {
+    if (!sync) return;
+    try {
+      await sync.unpause(title, Date.now());
+      await refresh();
+    } catch (err) {
+      console.warn('Resume failed:', err);
+    }
+  }, [sync, refresh]);
+
+  // Handle stop
+  const handleStop = useCallback(async (title) => {
+    if (!sync) return;
+    try {
+      await sync.end(title, Date.now());
+      await refresh();
+    } catch (err) {
+      console.warn('Stop failed:', err);
+    }
+  }, [sync, refresh]);
+
+  return (
+    <div className="dashboard">
+      {/* === Active Tasks Pane (top / left) === */}
+      <div className="dashboard-active">
+        <div className="pane-header">
+          <h2 className="pane-title">
+            Active Tasks
+            {activeTasks.length > 0 && (
+              <span className="pane-count">{activeTasks.length}</span>
+            )}
+          </h2>
+        </div>
+
+        <div className="active-tasks-scroll">
+          {loading && (
+            <div className="pane-empty">
+              <div className="pane-spinner" />
+              <p>Loading tasks...</p>
+            </div>
+          )}
+
+          {!loading && activeTasks.length === 0 && (
+            <div className="pane-empty">
+              <span className="pane-empty-icon">⏰</span>
+              <p>No active tasks</p>
+              <p className="pane-hint">Start a new task below</p>
+            </div>
+          )}
+
+          {!loading && activeTasks.length > 0 && (
+            <div className="pill-grid">
+              {activeTasks.map((task) => {
+                const elapsedMs = elapsedMap[task.entry_id] || 0;
+                return (
+                  <ActiveTaskPill
+                    key={task.entry_id}
+                    task={task}
+                    elapsedMs={elapsedMs}
+                    onPause={handlePause}
+                    onResume={handleResume}
+                    onStop={handleStop}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* === New Task Pane (bottom / right) === */}
+      <div className="dashboard-new-task">
+        <div className="pane-header">
+          <h2 className="pane-title">Start New Task</h2>
+        </div>
+
+        <form className="new-task-form" onSubmit={handleStartTask}>
+          <div className="form-group">
+            <label htmlFor="task-title" className="form-label">Title</label>
+            <input
+              id="task-title"
+              type="text"
+              className="form-input form-input-lg"
+              placeholder="What are you working on?"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="task-tags" className="form-label">
+              Tags <span className="form-label-hint">(comma-separated)</span>
+            </label>
+            <input
+              id="task-tags"
+              type="text"
+              className="form-input"
+              placeholder="e.g. coding, work, project-x"
+              value={newTags}
+              onChange={(e) => setNewTags(e.target.value)}
+            />
+          </div>
+
+          {statusMsg && (
+            <p className={`form-status ${statusMsg.startsWith('Error') ? 'form-status-error' : ''}`}>
+              {statusMsg}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            className="btn btn-primary btn-start"
+            disabled={!newTitle.trim()}
+          >
+            ▶ Start
+          </button>
+        </form>
+
+        {isDev && (
+          <div className="dev-mode-indicator">
+            🔧 DEV MODE — Data is in-memory only
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

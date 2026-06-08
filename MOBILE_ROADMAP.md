@@ -51,6 +51,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Sync modules (merge engine) | ✅ | ✅ — `merge_engine.js` — mergeEntries() pure function (dedup by entry_id) |
 | Sync modules (remote blob) | ✅ | ✅ — `remote_sync.js` — RemoteSync (pull/push with CryptoService obfuscation, cookie pull/push) |
 | Sync test suite | N/A | ✅ — `test/sync_test.mjs` — 60 tests covering all 4 layers + edge cases |
+| **React Web UI scaffold** | N/A | ✅ **DONE** — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, bottom tab nav. 14 modules, all compile clean. See `SESSION_HANDOFF.md` Step 3. |
 | Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
@@ -216,6 +217,9 @@ All local-first: writes hit local storage first, sync to remote in background.
 | `ph list` | History screen with filter/sort |
 | `ph sync` | Pull-to-refresh + background sync indicator |
 | `ph tags` | Tag management screen |
+| `ph login` / auth | AuthScreen → UserProfile (identity card, session status) |
+| `ph dev push-status` | Profile → Stats grid / Sync screen |
+| `ph config` (CLI config) | Profile → Configuration (9 sections, 27 fields) |
 | `ph verify` | Settings → Chain Verification |
 | `ph recover` | Settings → Advanced → Recover from Seed |
 
@@ -369,6 +373,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
 | 8 | HTTP Transport implementation (JS) | 1 day | ✅ GREEN — 49 tests, full fetch()-based HttpTransport with ETag caching, all passing | `this commit` |
 | 9 | Sync Algorithm Port (JS) — StorageBackend, IndexedDBBackend, DeviceCookie, RemoteSync, LocalCache, MergeEngine, SyncService | 2-3 days | ✅ DONE — 9 modules, 60-test suite, full auth gate + staging CRUD + blob sync | `this commit` |
+| 10 | React Web UI Scaffold — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, navigation | 2-3 days | ✅ DONE — 14 modules, all compile clean. Auth bypass via DevModeContext. Active task pills with pause/stop. Portrait/landscape layout. Bottom tab nav (7 tabs). UserProfile + Configuration screens covering all 27 CLI config fields. | Jun 8 2026 |
 
 ---
 

@@ -151,6 +151,25 @@ Two push paths:
 | `phpoc-web/test/wasm_integration.mjs` | 74-test integration — all 20 WASM functions, test vectors, round-trips, error cases |
 | `phpoc-web/test/crypto_service_smoke.mjs` | 22-test smoke — CryptoService lifecycle, key cache, convenience wrappers |
 | `phpoc-web/test/transport_test.mjs` | **NEW** — 49-test transport suite (TDD GREEN: all passing, pull/push/listFiles/ETag/headers/URL/error cases) |
+| `phpoc-web/src/context/DevModeContext.jsx` | DevModeProvider — auth bypass via DummyCryptoService + DummySyncService with seeded sample data |
+| `phpoc-web/src/services/DummyLedger.js` | DummyCryptoService (all 20 WASM functions, browser-safe) + DummySyncService + factory |
+| `phpoc-web/src/hooks/useActiveTasks.js` | Live elapsed timer hook (1s tick, pause-frozen, running-ticking) |
+| `phpoc-web/src/components/screens/AuthScreen.jsx` | Passphrase entry screen with dev-mode auto-bypass |
+| `phpoc-web/src/components/screens/Dashboard.jsx` | Main screen: active tasks pane + new task form, portrait/landscape layout |
+| `phpoc-web/src/components/screens/NewTask.jsx` | Standalone task creation (title, tags, comment) |
+| `phpoc-web/src/components/screens/History.jsx` | Completed entries grouped by day, date/tag filter |
+| `phpoc-web/src/components/screens/Tags.jsx` | Tag list with counts, sorted by frequency |
+| `phpoc-web/src/components/screens/SyncSettings.jsx` | Sync status display + manual sync trigger |
+| `phpoc-web/src/components/screens/UserProfile.jsx` | Identity card, auth/key status, stats grid, config gateway |
+| `phpoc-web/src/components/screens/Configuration.jsx` | 9 collapsible sections covering all 27 CLI config fields |
+| `phpoc-web/src/components/screens/LedgerSync.jsx` | Phase 3 placeholder for block chain commit |
+| `phpoc-web/src/components/screens/Settings.jsx` | App settings (dev toggle, remote config, about) |
+| `phpoc-web/src/components/layout/AppLayout.jsx` | Bottom tab nav shell with 7 tabs |
+| `phpoc-web/src/components/pills/ActiveTaskPill.jsx` | Pill-shaped task button: title top, pause/play left-bottom, stop right-bottom |
+| `phpoc-web/src/components/sync/SyncIndicator.jsx` | Sync status badge (🟢🟡🔄🔶🔴) |
+| `phpoc-web/src/App.jsx` | Root component: DevModeProvider → auth gate → navigation |
+| `phpoc-web/src/App.css` | Complete dark theme (20KB): all screens, pills, forms, tabs, portrait/landscape breakpoints |
+| `phpoc-web/vite.config.js` | Vite config with path aliases for @crypto, @sync, @components, @context, @hooks, @services |
 
 ### Documentation
 | File | Purpose |
@@ -167,6 +186,7 @@ Two push paths:
 | `docs/design/ARCHITECTURAL_DECISIONS.md` | Architectural decisions and rationale |
 | `docs/design/DESIGN_GOALS.md` | Design goals and principles |
 | `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session design |
+| `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` | React web UI design decisions — screen architecture, dev mode, component tree, navigation, layout, config coverage |
 | `docs/design/PH-VIEW-Workflow.md` | ph view workflow diagrams |
 | `archive/REMOTE_STAGING_ISSUE_TRACKING.md` | Resolved issue tracking (archived) |
 | `archive/ARCHITECTURAL_MIGRATION_STRATEGY.md` | Archived migration strategy |
@@ -436,7 +456,8 @@ When starting a fresh context with `/new`, the following files should be loaded 
 | 2 | `PHPSPEC.md` | Format specification — crypto primitives, block structure, key derivation, blob obfuscation. Required for any crypto, sync, or wire protocol work. |
 | 3 | `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` | Full architectural rationale for the Rust crypto core, dumb Worker, and cross-platform strategy. |
 | 4 | `MOBILE_ROADMAP.md` | Detailed phased plan: Web (React) → Flutter (primary mobile) → React Native (contingency). Prerequisites, build targets, platform-specific features. |
-| 5 | `VISION.md` | Project vision and philosophy — "know thyself," zero-knowledge, platform independence. Read for design alignment. |
+| 5 | `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` | React web UI design decisions — screen architecture, dev mode, component tree, navigation, layout, CLI config coverage. Read when working on the React web UI. |
+| 6 | `VISION.md` | Project vision and philosophy — "know thyself," zero-knowledge, platform independence. Read for design alignment. |
 
 ### Load When Relevant
 
@@ -527,14 +548,32 @@ checkAndSync():
 
 **Status:** ✅ DONE — 60/60 tests passing. Ready for React UI.
 
-### Step 3: React Web UI
+### Step 3: React Web UI Scaffold ✅
 
-Scaffold React app and implement screens:
-- Auth screen (passphrase entry → PBKDF2 via WASM)
-- Dashboard (active tasks with elapsed timers)
-- New Task (capture with title, tags)
-- History (completed entries, filter by date/tags)
-- Sync status indicator
+Scaffolded Vite + React 18 project with 9 screen components, DevModeContext for auth bypass, dashboard with portrait/landscape layout, and bottom tab navigation. All 14 modules compile cleanly.
+
+**Screens implemented:**
+- **AuthScreen** — passphrase entry with dev-mode auto-bypass (300ms transition)
+- **Dashboard** — main screen: active tasks (top/left) + new task form (bottom/right)
+- **ActiveTaskPill** — pill-shaped task button: title top, pause/play left-bottom, stop right-bottom
+- **NewTask** — standalone task creation with title, tags, comment
+- **History** — completed entries grouped by day, date/tag filter
+- **Tags** — tag list with counts per tag
+- **SyncSettings** — sync status display + manual sync trigger
+- **UserProfile** — identity card, auth/key status, stats grid, configuration gateway
+- **Configuration** — 9 collapsible sections covering all 27 CLI config fields with range/toggle/select/text inputs
+- **LedgerSync** — phase 3 placeholder
+
+**Cross-cutting:**
+- **DevModeContext** — context provider with `dev`/`production` modes, auto-provisions DummyCryptoService + DummySyncService with seeded sample data
+- **AppLayout** — bottom tab nav with 7 tabs (Home, History, New, Tags, Profile, Sync, Settings)
+- **SyncIndicator** — status badge (🟢🟡🔄🔶🔴)
+- **useActiveTasks** — custom hook with 1-second tick for live elapsed timers
+- **DummyLedger** — DummyCryptoService (browser-compatible, no WASM needed) + DummySyncService with 4 pre-seeded entries
+
+**Design decisions documented in:** `PHPOC-REACT_WEB-DESIGN_DECISIONS.md`
+
+**Next:** wire real SyncService into production mode, implement ledger sync (commit blocks, chain verification), Flutter port.
 
 | Layer | Key Files | What They Do |
 |-------|-----------|--------------|
@@ -551,3 +590,4 @@ Scaffold React app and implement screens:
 | **Web: Crypto** | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper, key cache, 20 methods + 5 cached-key convenience wrappers. |
 | **Web: Transport** | `phpoc-web/src/sync/transport.js` | ✅ `fetch()`-based HTTP transport with ETag caching. 49 tests passing. |
 | **Web: Sync (9 modules)** | `phpoc-web/src/sync/` — `sync.js`, `cookie.js`, `remote_sync.js`, `merge_engine.js`, `local_cache.js`, `storage.js`, `indexeddb_storage.js`, `index.js` | ✅ **DONE** — Full auth gate port (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote sync. 60 tests all passing. Prerequisites: CryptoService + HttpTransport (both ✅). |
+| **Web: UI (14 modules)** | `phpoc-web/src/` — see `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` and file tree below | ✅ **DONE** — Vite + React 18 scaffold, 9 screen components, DevModeContext auth bypass, DummyLedger, dashboard, bottom tab nav. All compile clean. |
