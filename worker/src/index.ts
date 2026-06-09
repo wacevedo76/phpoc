@@ -14,13 +14,14 @@
  *   GET /{path}              → 200 + body + ETag, or 404
  *   GET /{path} (If-None-Match) → 304 if ETag matches
  *   PUT /{path}              → 200 (store body), or 413
+ *   DELETE /{path}           → 200 (remove blob)
  *   GET /?prefix={prefix}    → 200 + JSON array of keys
  *
  * Auth:
  *   - X-Api-Key header (shared secret) — required if PHPOC_API_KEY is set
  *   - CORS headers on all responses — enables browser-based clients
  *
- * Methods: OPTIONS, GET, and PUT are allowed; others return 405.
+ * Methods: OPTIONS, GET, PUT, and DELETE are allowed; others return 405.
  */
 
 // ── CORS headers ────────────────────────────────────────────────────────────
@@ -28,13 +29,13 @@
 // WebView) can make cross-origin requests during development and in production.
 //
 // - Allow-Origin: * — any dev server (localhost:3000, etc.)
-// - Allow-Methods: GET, PUT, OPTIONS — matches the Worker's route table
+// - Allow-Methods: GET, PUT, DELETE, OPTIONS — matches the Worker's route table
 // - Allow-Headers: headers the Worker actually reads
 // - Max-Age: 86400 — cache preflight for 24h to reduce latency
 
 const CORS_HEADERS: Record<string, string> = {
 	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+	'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
 	'Access-Control-Allow-Headers': 'X-Api-Key, Content-Type, If-None-Match',
 	'Access-Control-Max-Age': '86400',
 };
@@ -83,6 +84,9 @@ export default {
 			case 'PUT':
 				return withCors(await handlePut(request, env, path));
 
+			case 'DELETE':
+				return withCors(await handleDelete(request, env, path));
+
 			default:
 				return withCors(new Response('Method Not Allowed', { status: 405 }));
 		}
@@ -128,6 +132,25 @@ async function handleGet(
 			'ETag': etag,
 		},
 	});
+}
+
+/**
+ * DELETE /{path} — Remove a blob from R2.
+ *
+ * Returns 200 on success. Returns 404 if the key does not exist
+ * (idempotent — deleting a non-existent key is harmless).
+ */
+async function handleDelete(
+	request: Request,
+	env: Env,
+	path: string,
+): Promise<Response> {
+	if (!path) {
+		return new Response('Bad Request: path required', { status: 400 });
+	}
+
+	await env.PHPOC_BUCKET.delete(path);
+	return new Response('OK', { status: 200 });
 }
 
 /**

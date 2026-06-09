@@ -71,6 +71,15 @@ export class StorageBackend extends StoragePlugin {
   async clear() {
     throw new Error('StorageBackend.clear() not implemented');
   }
+
+  /**
+   * List keys matching a prefix.
+   * @param {string} prefix - Key prefix to filter by.
+   * @returns {Promise<string[]>} Matching keys in sorted order.
+   */
+  async list(prefix) {
+    throw new Error('StorageBackend.list() not implemented');
+  }
 }
 
 
@@ -111,5 +120,15 @@ export class MemoryBackend extends StorageBackend {
 
   async clear() {
     this._store.clear();
+  }
+
+  async list(prefix) {
+    const keys = [];
+    for (const key of this._store.keys()) {
+      if (key.startsWith(prefix)) {
+        keys.push(key);
+      }
+    }
+    return keys.sort();
   }
 }

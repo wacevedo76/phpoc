@@ -11,8 +11,8 @@
  * needs to know if it's talking to real crypto or dummy data.
  */
 
-import { MemoryBackend } from '@sync/storage.js';
-import { LocalCache } from '@sync/local_cache.js';
+import { MemoryBackend } from '../sync/storage.js';
+import { LocalCache } from '../sync/local_cache.js';
 
 // --------------------------------------------------------------------------
 // Deterministic helpers — stable output for reproducible dev experience

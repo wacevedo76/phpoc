@@ -218,6 +218,41 @@ export class HttpTransport {
   }
 
   /**
+   * Delete a blob from remote via HTTP DELETE.
+   *
+   * @param {string} path - Remote path (e.g., "staging/blobs/current.json").
+   * @param {{ timeoutMs?: number }} [options]
+   * @returns {Promise<void>}
+   * @throws {Error} On network errors or non-2xx responses.
+   */
+  async delete(path, { timeoutMs } = {}) {
+    const url = this._buildURL(path);
+
+    const headers = {};
+    this._addApiKey(headers);
+
+    let response;
+    try {
+      response = await fetch(url, { method: 'DELETE', headers });
+    } catch (err) {
+      throw new Error(
+        `HttpTransport: network error deleting ${path}: ${err.message}`
+      );
+    }
+
+    // 2xx success or 404 (already gone) — clear cache
+    if (response.status >= 200 && response.status < 300 || response.status === 404) {
+      this._etagCache.delete(path);
+      return;
+    }
+
+    // Non-2xx error
+    throw new Error(
+      `HttpTransport: HTTP ${response.status} deleting ${path}`
+    );
+  }
+
+  /**
    * Clear all cached ETags and bodies.
    *
    * Used after transport swap to ensure the next pull is a clean request.

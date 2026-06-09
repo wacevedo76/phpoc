@@ -2,6 +2,8 @@
 
 > **Date:** 2026-06-08
 > **Context:** Phase 1 (Web Prototype) of the cross-platform rollout. CLI reference implementation is complete at 1341 tests. The React web UI is the first graphical client, proving the interaction model before the Flutter mobile port.
+>
+> **Deployment vision:** One codebase supporting four deployment targets — standalone PWA, self-hosted LAN, Docker/LXC, and multi-tenant SaaS. The `StoragePlugin` interface is the linchpin that makes this possible.
 
 ---
 
@@ -309,3 +311,303 @@ If the app needs to handle external links or notifications that navigate to spec
 ### 9.4 Light Theme
 
 A light theme variant can be added by introducing a `ThemeContext` that swaps CSS custom properties. All colors are already referenced via `var(--color-name)` throughout the CSS.
+
+---
+
+## 10. Temporary Mock Infrastructure (Archivable)
+
+### 10.1 Purpose
+
+The mock infrastructure exists solely to validate and develop the real sync pipeline (`SyncService`, `RemoteSync`, `LocalCache`, `MergeEngine`, `DeviceCookie`) entirely in-browser during Phase 1 prototyping. It avoids needing a running Cloudflare Worker or local bridge server for development.
+
+### 10.2 Components
+
+| Component | File | Purpose | Coupling |
+|-----------|------|---------|----------|
+| `MockRemoteBackend` | `src/sync/mock_remote.js` | In-browser R2/S3 simulation (IndexedDB-backed, configurable latency, ETag/304/404 simulation, path-prefix listing) | **Zero imports from app code** — standalone class, depends only on `idb-keyval`
+| `MockDataSeeder` | `src/services/MockDataSeeder.js` | Generates 14 days of realistic staging entries + device cookie + genesis block + ledger index | Depends only on `DummyCryptoService` (also dev-only)
+| `mock_remote_test.mjs` | `test/mock_remote_test.mjs` | 46 tests for MockRemoteBackend | Standalone test file
+| `mock_data_seeder_test.mjs` | `test/mock_data_seeder_test.mjs` | 205 tests for MockDataSeeder | Standalone test file
+| `DevModeContext` wiring | `src/context/DevModeContext.jsx` | Boot-time seeding + SyncService wiring | Imports from mock/seed files, plus core sync (no reverse coupling)
+
+### 10.3 Dependency Isolation
+
+```
+MockRemoteBackend
+  └── depends on: idb-keyval (npm package) only
+  └── zero dependencies on any app module
+
+MockDataSeeder
+  └── depends on: ./DummyLedger.js (also dev-only)
+
+References TO MockRemoteBackend (all removable):
+  ├── src/sync/index.js                ← barrel export (delete one line)
+  ├── src/context/DevModeContext.jsx    ← dev wiring (delete ~15 lines)
+  ├── src/services/MockDataSeeder.js   ← dev seeding service (delete file)
+  ├── test/mock_remote_test.mjs        ← its test (delete file)
+  └── test/mock_data_seeder_test.mjs   ← seeder test (delete file)
+
+No core file (sync.js, local_cache.js, remote_sync.js, merge_engine.js,
+storage.js, transport.js, cookie.js, indexeddb_storage.js) imports from
+MockRemoteBackend or MockDataSeeder. Zero reverse coupling.
+```
+
+### 10.4 Archive Checklist
+
+When the system is stable and development no longer requires the mock backend:
+
+**Delete (4 files):**
+```
+phpoc-web/src/sync/mock_remote.js
+phpoc-web/src/services/MockDataSeeder.js
+phpoc-web/test/mock_remote_test.mjs
+phpoc-web/test/mock_data_seeder_test.mjs
+```
+
+**Touch (2 files) — remove references:**
+1. `src/sync/index.js` — remove `export { MockRemoteBackend }` line
+2. `src/context/DevModeContext.jsx` — remove the import lines and the `initializeDevMode` seeding block
+
+**Result:** Zero changes to core sync, transport, storage, or auth code. The production deployment path (`HttpTransport` + real `CryptoService`) is unaffected.
+
+---
+
+## 11. Multi-Deployment Architecture
+
+### 11.1 The Goal
+
+A single phpoc-web codebase that deploys to four targets with zero code changes between them:
+
+| Deployment | Use Case | Storage Backend | Auth | Multi-user |
+|---|---|---|---|---|
+| **Standalone PWA** | Single user, no server needed | IndexedDB (browser-local) | Client-side only | No |
+| **Self-hosted LAN** | Personal server on local network | Bridge server → filesystem | Client-side + optional LAN auth | Single (or per-file) |
+| **Docker / LXC** | Containerized self-host | Bridge server (bundled) → volume | Client-side + optional proxy auth | Single (or per-file) |
+| **SaaS** | Multi-tenant cloud service | Cloudflare Worker → R2 / S3 | Registration service + API keys | Multi-tenant |
+
+### 11.2 Architecture Stack
+
+The key insight: the **UI and sync logic are deployment-agnostic**. Only the storage backend changes per deployment target.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    phpoc-web (React)                          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────────┐ │
+│  │ Auth     │ │ Dashboard│ │ History  │ │ Settings        │ │
+│  │ Screen   │ │          │ │          │ │ (import/export) │ │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────────┬────────┘ │
+│       │            │            │                 │          │
+│  ┌────▼────────────▼────────────▼─────────────────▼────────┐ │
+│  │              SyncService / LedgerEngine                   │ │
+│  │     (same logic, no matter where data lives)             │ │
+│  └───────────────────────┬──────────────────────────────────┘ │
+│                          │                                    │
+│  ┌───────────────────────▼──────────────────────────────────┐ │
+│  │              StoragePlugin (interface)                    │ │
+│  │  get(key), put(key, data), list(prefix), delete(key)     │ │
+│  └──────┬──────────┬──────────┬──────────┬──────────────────┘ │
+│         │          │          │          │                    │
+└─────────┼──────────┼──────────┼──────────┼────────────────────┘
+          │          │          │          │
+    ┌─────▼──┐  ┌────▼───┐  ┌───▼────┐  ┌───▼────────────┐
+    │Indexed │  │Local   │  │Remote  │  │ S3/R2 Plugin   │
+    │DB      │  │Bridge  │  │Worker  │  │ (advanced      │
+    │Backend │  │Server  │  │(SaaS)  │  │  deployments)  │
+    └────────┘  └────────┘  └────────┘  └────────────────┘
+    PWA mode    self-hosted  SaaS        future: BYO S3
+```
+
+### 11.3 StoragePlugin Interface
+
+The interface that makes all deployments possible:
+
+```js
+class StoragePlugin {
+  async get(key) { /* throw — abstract */ }
+  async set(key, value) { /* throw — abstract */ }
+  async remove(key) { /* throw — abstract */ }
+  async clear() { /* throw — abstract */ }
+  async list(prefix) { /* throw — abstract */ }
+}
+```
+
+**Concrete implementations:**
+
+| Implementation | File | Backend | Persistence |
+|---|---|---|---|
+| `MemoryBackend` | `src/sync/storage.js` | In-memory `Map` | Process lifetime (Node testing) |
+| `IndexedDBBackend` | `src/sync/indexeddb_storage.js` | Browser IndexedDB | Across page reloads (PWA mode) |
+| `HttpBackend` | `src/sync/http_backend.js` | Remote HTTP (Worker or bridge) via Transport wrapper | Remote server |
+| `MockRemoteBackend` | `src/sync/mock_remote.js` | IndexedDB partition | Dev/temp (archivable) |
+
+> **Note:** The codebase uses the name `StorageBackend` (in `storage.js`) rather than `StoragePlugin`.
+> The actual `HttpBackend` lives in `src/sync/http_backend.js` (not `transport.js` as originally planned).
+> It wraps a Transport (HttpTransport or MockRemoteBackend) rather than talking directly to HTTP.
+> The interface methods are `get/set/remove/clear/list` (using `remove` not `delete`, `set` not `put`).
+
+**Config-driven selection** (not yet wired — currently hardcoded in `DevModeContext.jsx`):
+
+```js
+// Future factory function in src/sync/storage_plugin.js
+export async function createStoragePlugin(config) {
+  switch (config.storageMode) {
+    case 'standalone':
+      return new IndexedDBBackend();
+    case 'self-hosted':
+    case 'docker':
+      return new HttpBackend({ baseUrl: config.bridgeUrl });
+    case 'saas':
+      return new HttpBackend({
+        baseUrl: config.workerUrl,
+        apiKey: config.apiKey,
+      });
+    case 'dev':
+      return new MockRemoteBackend({ latencyMs: 30 });
+    default:
+      return new IndexedDBBackend();
+  }
+}
+```
+
+### 11.4 Two Transport Interfaces
+
+The project uses two distinct interfaces for different purposes, which must not be confused:
+
+| Interface | File | Purpose | Methods |
+|---|---|---|---|
+| `StorageBackend` / `StoragePlugin` | `storage.js` | Local cache (IndexedDB, Memory) | `get`, `set`, `remove`, `clear`, `list` |
+| `Transport` | `transport.js` | Remote blob I/O (HTTP, mock) | `pull(path)`, `push(path, data)`, `listFiles(prefix)`, `resetCache()` |
+
+The `SyncService` brokers between them:
+- **Local cache** → `StorageBackend` (for fast reads, offline access, merge base)
+- **Remote storage** → `Transport` (for sync, push, pull across devices)
+
+### 11.5 Deployment Data Flow
+
+```
+                           ┌─────────────────────┐
+                           │   Browser Tab        │
+                           │  ┌───────────────┐   │
+                           │  │ IndexedDB      │   │  ← Local cache (always present)
+                           │  │ (phpoc-sync)   │   │
+                           │  └───────┬───────┘   │
+                           │          │            │
+                           │  ┌───────▼───────┐   │
+                           │  │ SyncService   │   │  ← CheckAndSync / Commit
+                           │  └───────┬───────┘   │
+                           │          │            │
+                           │  ┌───────▼───────┐   │
+                           │  │ Transport     │   │  ← Remote: Worker, bridge, or mock
+                           │  └───────┬───────┘   │
+                           └──────────┼────────────┘
+                                      │
+                        ┌─────────────┼─────────────┐
+                        │             │             │
+                   ┌────▼───┐   ┌────▼───┐   ┌────▼───┐
+                   │ Worker  │   │ Bridge │   │ Mock   │
+                   │ (SaaS)  │   │ (LAN)  │   │ (Dev)  │
+                   └────┬───┘   └────┬───┘   └────────┘
+                        │             │
+                   ┌────▼───┐   ┌────▼────┐
+                   │   R2   │   │  Local  │
+                   │        │   │  files  │
+                   └────────┘   └─────────┘
+```
+
+### 11.6 The Bridge Server (Self-Hosted / LAN / Docker)
+
+A minimal HTTP server implementing the same API contract as the Cloudflare Worker — same paths, same verbs, same response format. The web app cannot tell the difference.
+
+```
+# Python bridge_server.py (~80-100 lines)
+# GET  /staging/blobs/current.json        → read local file
+# PUT  /staging/blobs/current.json        → write local file
+# GET  /ledger/blocks/0.json              → read block file
+# GET  /?prefix=ledger/blocks/            → list matching files
+```
+
+This server is:
+- **Optional** — standalone PWA mode skips it entirely
+- **Swappable** — same API as the Worker; dev → prod = one config change
+- **Bundleable** — ships in the Docker image alongside the static web build
+- **Language-agnostic** — can be Python, Node.js, or any HTTP-capable runtime
+
+### 11.7 SaaS: Multi-Tenant Architecture
+
+The SaaS deployment uses the same stack with user isolation layered in:
+
+```
+                     ┌──────────────────────┐
+                     │  phpoc-web (browser)  │
+                     │  - client-side crypto │
+                     │  - IndexedDB cache   │
+                     │  - SyncService       │
+                     └──────────┬───────────┘
+                                │  HTTP (TLS)
+                     ┌──────────▼───────────┐
+                     │  Cloudflare Worker   │
+                     │  (dumb blob store)   │
+                     │  prefix: /users/{id} │
+                     └──────────┬───────────┘
+                                │
+                     ┌──────────▼───────────┐
+                     │  R2 Object Storage   │
+                     │  /users/{id}/staging/ │
+                     │  /users/{id}/ledger/  │
+                     └──────────────────────┘
+
+                     ┌──────────────────────┐
+                     │  Auth Service        │  ← Lightweight, separate
+                     │  POST /register      │
+                     │  POST /login         │
+                     │  (KV-backed)         │
+                     └──────────────────────┘
+```
+
+**Key properties:**
+- **Zero-knowledge by design.** The server stores opaque encrypted bytes. It cannot read user data.
+- **User isolation is path-prefix based.** No shared tables, no multi-tenant database schema.
+- **Auth is minimal.** A registration service (~50 lines, can be a second Worker) that creates `user_id` + API key. No user profile data stored.
+- **Import/export via File API.** Browser-native download/upload for backup. No server involved.
+
+### 11.8 Data Layer Per Deployment
+
+| Layer | PWA | Self-Hosted | Docker | SaaS |
+|---|---|---|---|---|
+| UI rendering | Browser | Browser | Browser | Browser |
+| Local cache | IndexedDB | IndexedDB | IndexedDB | IndexedDB |
+| Remote storage | _(none)_ | Local filesystem | Container volume | R2 bucket |
+| Sync endpoint | _(none)_ | `http://host:port/` | `http://container:port/` | `https://api.phpoc.app/` |
+| Auth | Client-only | Client-only + LAN opt | Client-only + proxy opt | Registration + API keys |
+| Import/Export | File API | File API + bridge FS | File API + volume | File API |
+| Multi-user | No | No (file-per-user) | No (file-per-user) | Yes (path-prefix) |
+
+### 11.9 Roadmap
+
+| Step | What | Delivers | Dependencies |
+|---|---|---|---|
+| 1 | StoragePlugin interface + IndexedDBBackend + HttpBackend + config-driven selection | Interface, IndexedDBBackend, HttpBackend exist. Config-driven factory NOT yet wired. | None |
+| 2 | **MockRemoteBackend** (in-browser R2 simulation) | ✅ Complete (46 tests) — dev mode uses real SyncService + mock remote | Step 1 (interface) |
+| 3 | Browser import/export via File API | Users can backup/restore their ledger | None |
+| 4 | Ledger engine port to JS | Web becomes self-sufficient (no Python dependency) | Step 1 (storage) |
+| 5 | Staging CRUD (add/edit/delete entries in UI) | Full staging interaction | Step 4 (ledger engine) |
+| 6 | Companion bridge server (Python or Node.js) | Self-hosted + LAN deployments work | Step 1 (interface contract) |
+| 7 | Dockerfile (nginx + bridge server) | One-command self-hosted deployment | Step 6 |
+| 8 | Multi-tenant Worker (user isolation) + registration service | SaaS deployment | Step 1 (transport contract) |
+| 9 | Real crypto (WASM) replaces DummyCryptoService | Production-ready crypto | Step 4 (ledger engine) |
+
+**Steps 1–5 are in-browser only** — zero server code required. Steps 6–9 layer on deployment options.
+
+### 11.10 Current Status (2026-06-08)
+
+| Step | Status | Notes |
+|---|---|---|
+| 1 — StoragePlugin interface | ✅ `StorageBackend`, `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` exist | Config-driven factory not yet wired. `list(prefix)` added to StorageBackend. `delete()` added to HttpTransport + MockRemoteBackend. DELETE handler added to Worker. |
+| 2 — MockRemoteBackend | ✅ Complete | 46 tests, 300 total across mock infra |
+| 3 — Import/Export | ❌ Not started | |
+| 4 — Ledger engine JS port | ❌ Not started | Largest remaining work item |
+| 5 — Staging CRUD | ⚠️ Partial | UI scaffold exists, wired to dummy data |
+| 6 — Bridge server | ❌ Not started | |
+| 7 — Dockerfile | ❌ Not started | |
+| 8 — Multi-tenant Worker | ❌ Not started | |
+| 9 — Real crypto | ❌ Not started | WASM binary exists, needs web integration |

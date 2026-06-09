@@ -10,3 +10,9 @@ staging_log/
 
 # Node.js dependencies (worker project)
 node_modules/
+
+# Pi agent instructions — per-user preferences, not project code
+AGENTS.md
+
+# Build artifacts
+phpoc-web/dist/

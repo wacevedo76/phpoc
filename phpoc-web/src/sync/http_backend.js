@@ -1,141 +1,176 @@
 /**
- * HttpBackend — StoragePlugin backed by an HTTP server (bridge or Worker).
+ * HttpBackend — StorageBackend adapter wrapping a Transport.
  *
- * Wraps HttpTransport as a StoragePlugin, so the SyncService and LedgerEngine
- * can use an HTTP remote as their storage layer without any code changes.
+ * Bridges the binary Transport interface (pull/push/listFiles/delete working
+ * with Uint8Array) to the structured StorageBackend interface (get/set/remove/
+ * clear/list working with JSON-serializable values).
  *
- * This serves three deployment targets:
- *   - **Companion bridge server** (Python, ~50 lines) for local network / LAN
- *   - **Docker / LXC** with bundled bridge server
- *   - **Cloudflare Worker → R2** (SaaS)
- *
- * Storage paths on the remote server follow the CLI constants:
- *   staging/blobs/current.json
- *   staging/blobs/device_cookie.bin
- *   ledger/blocks/{seq}.json
- *   ledger/index.json
+ * This enables use of a remote HTTP backend (Worker or bridge server) wherever
+ * the code expects a StorageBackend (e.g., as a local cache or as a sync
+ * endpoint in single-backend deployments).
  *
  * Usage:
- *   import { HttpBackend } from '@sync/http_backend.js';
- *   const storage = new HttpBackend({ baseUrl: 'http://localhost:8080' });
- *   await storage.set('staging/blobs/current.json', blobData);
- *   const data = await storage.get('staging/blobs/current.json');
- *   const paths = await storage.list('ledger/blocks/');
+ *   import { HttpBackend } from './http_backend.js';
+ *   import { HttpTransport } from './transport.js';
+ *
+ *   const transport = new HttpTransport({ baseUrl: 'https://api.phpoc.app' });
+ *   const backend = new HttpBackend({ transport });
+ *
+ *   await backend.set('staging/blobs/current.json', { entries: [...] });
+ *   const blob = await backend.get('staging/blobs/current.json');
+ *   const files = await backend.list('ledger/blocks/');
+ *   await backend.remove('staging/blobs/old.json');
+ *
+ * The transport must implement:
+ *   pull(path)       → Promise<Uint8Array | null>   (null on 404)
+ *   push(path, data) → Promise<void>
+ *   delete(path)     → Promise<void>
+ *   listFiles(prefix)→ Promise<string[]>
+ *   resetCache()     → void
+ *
+ * This matches HttpTransport and MockRemoteBackend.
  */
 
-import { HttpTransport } from './transport.js';
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Encode a JSON value as a Uint8Array for transport push.
+ *
+ * @param {any} value - Must be JSON-serializable.
+ * @returns {Uint8Array} UTF-8 encoded bytes.
+ */
+function encodeValue(value) {
+  const json = JSON.stringify(value);
+  return new TextEncoder().encode(json);
+}
+
+/**
+ * Decode a Uint8Array from transport pull into a JSON value.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {any} Parsed JSON value.
+ */
+function decodeBytes(bytes) {
+  const json = new TextDecoder().decode(bytes);
+  return JSON.parse(json);
+}
+
+// ── HttpBackend ──────────────────────────────────────────────────────
 
 export class HttpBackend {
   /**
    * @param {object} options
-   * @param {string} options.baseUrl — Base URL of the bridge server or Worker.
-   * @param {string} [options.apiKey] — Optional X-Api-Key header value.
+   * @param {object} options.transport - Must implement pull/push/delete/listFiles.
    */
-  constructor({ baseUrl, apiKey } = {}) {
-    if (!baseUrl) {
-      throw new Error('HttpBackend: baseUrl must not be empty');
+  constructor({ transport } = {}) {
+    if (!transport) {
+      throw new Error(
+        'HttpBackend: transport is required'
+      );
     }
+
+    // Validate required methods
+    const required = ['pull', 'push', 'delete', 'listFiles'];
+    for (const method of required) {
+      if (typeof transport[method] !== 'function') {
+        throw new Error(
+          `HttpBackend: transport must implement ${method}()`
+        );
+      }
+    }
+
     /** @private */
-    this._transport = new HttpTransport({ baseUrl, apiKey });
+    this._transport = transport;
   }
 
-  get name() { return 'HTTP Backend'; }
-  get deployment() { return 'saas'; }
-  get isRemote() { return true; }
+  // ------------------------------------------------------------------
+  // StorageBackend interface
+  // ------------------------------------------------------------------
 
   /**
-   * Retrieve a value by storage path.
+   * Retrieve a JSON value by remote path key.
    *
-   * Maps to a GET via HttpTransport.pull().
-   * Returns undefined on 404 (matching the StoragePlugin contract).
+   * Maps to transport.pull(key). If the remote returns null (404),
+   * returns undefined to match the StorageBackend contract.
    *
-   * @param {string} key — Storage path (e.g. "staging/blobs/current.json").
-   * @returns {Promise<Uint8Array|undefined>}
+   * @param {string} key - Remote path (e.g., "staging/blobs/current.json").
+   * @returns {Promise<any|undefined>} Parsed JSON value, or undefined if not found.
+   * @throws {Error} On network errors or invalid JSON response.
    */
   async get(key) {
-    const body = await this._transport.pull(key);
-    return body ?? undefined;
+    const bytes = await this._transport.pull(key);
+    if (bytes === null) {
+      return undefined;
+    }
+    try {
+      return decodeBytes(bytes);
+    } catch (err) {
+      throw new Error(
+        `HttpBackend.get(${key}): invalid JSON response: ${err.message}`
+      );
+    }
   }
 
   /**
-   * Store a value by storage path.
+   * Store a JSON value at a remote path key.
    *
-   * Maps to a PUT via HttpTransport.push().
-   * Accepts Uint8Array, string, or any JSON-serializable value (auto-encoded).
+   * Serializes the value to JSON, encodes as UTF-8 bytes, and pushes
+   * to the transport.
    *
-   * @param {string} key — Storage path.
-   * @param {any} value — Uint8Array, string, or JSON-serializable object.
+   * @param {string} key - Remote path (e.g., "staging/blobs/current.json").
+   * @param {any} value - Must be JSON-serializable.
    * @returns {Promise<void>}
+   * @throws {Error} On serialization failure or network errors.
    */
   async set(key, value) {
-    let data;
-    if (value instanceof Uint8Array) {
-      data = value;
-    } else if (typeof value === 'string') {
-      data = new TextEncoder().encode(value);
-    } else {
-      // JSON-serializable object → encode as UTF-8 JSON
-      data = new TextEncoder().encode(JSON.stringify(value));
+    let bytes;
+    try {
+      bytes = encodeValue(value);
+    } catch (err) {
+      throw new Error(
+        `HttpBackend.set(${key}): value not JSON-serializable: ${err.message}`
+      );
     }
-    await this._transport.push(key, data);
+    await this._transport.push(key, bytes);
   }
 
   /**
-   * Remove a key — not supported on remote backends.
+   * Remove a remote blob by path key.
    *
-   * HTTP storage is append-only by design. This is a no-op for remote
-   * storage; the cookie TTL and block overwrite-by-sequence-number
-   * provide the equivalent lifecycle.
+   * Maps to transport.delete(key). Does not throw if the key did not exist.
    *
-   * @param {string} key
-   * @returns {Promise<void>}
-   */
-  async delete(key) {
-    // No-op: remote storage is append-only
-  }
-
-  /**
-   * Alias for delete().
-   * @param {string} key
+   * @param {string} key - Remote path to delete.
    * @returns {Promise<void>}
    */
   async remove(key) {
-    return this.delete(key);
+    await this._transport.delete(key);
   }
 
   /**
-   * List all keys matching the given prefix.
+   * Clear is not supported for remote storage.
    *
-   * Maps to HttpTransport.listFiles(prefix).
+   * Remote storage is a shared resource shared across sessions,
+   * devices, and potentially users. Clearing it would destroy data
+   * that other clients depend on.
    *
-   * @param {string} [prefix='']
-   * @returns {Promise<string[]>}
-   */
-  async list(prefix = '') {
-    return this._transport.listFiles(prefix);
-  }
-
-  /**
-   * Clear all entries — not supported on remote backends.
-   * @returns {Promise<void>}
+   * @throws {Error} Always throws — not supported.
    */
   async clear() {
-    // No-op: remote storage is append-only
+    throw new Error(
+      'HttpBackend.clear() is not supported for remote storage. ' +
+      'Use remove() to delete individual keys.'
+    );
   }
 
   /**
-   * Access the underlying HttpTransport for direct pull/push/listFiles
-   * when needed (e.g., by RemoteSync for blob obfuscation layers).
-   * @returns {HttpTransport}
+   * List remote paths matching a prefix.
+   *
+   * Maps to transport.listFiles(prefix).
+   *
+   * @param {string} prefix - Path prefix to filter by.
+   * @returns {Promise<string[]>} Matching paths in sorted order.
    */
-  get transport() {
-    return this._transport;
-  }
-
-  /**
-   * Reset ETag cache on the underlying transport.
-   */
-  resetCache() {
-    this._transport.resetCache();
+  async list(prefix) {
+    return this._transport.listFiles(prefix);
   }
 }

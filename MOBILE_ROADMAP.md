@@ -22,6 +22,7 @@ The existing 149-line Cloudflare Worker already handles everything the mobile ap
 |-----------|---------------|-----------------|
 | Read blob | `GET /{path}` | 200 + bytes, 304 (ETag match), or 404 |
 | Write blob | `PUT /{path}` | 200 |
+| Delete blob | `DELETE /{path}` | 200 |
 | List blobs | `GET ?prefix={prefix}` | JSON array of keys |
 
 The mobile app sends the same `X-Api-Key` header and uses the same path constants as the CLI. The Worker doesn't know or care which client is talking to it.
@@ -54,8 +55,6 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | **React Web UI scaffold** | N/A | ✅ **DONE** — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, bottom tab nav. 14 modules, all compile clean. See `SESSION_HANDOFF.md` Step 3. |
 | **Auth overlay system** | ✅ (CLI re-auth prompt) | ✅ **DONE** — Full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile screen. See `SESSION_HANDOFF.md` (2026-06-09). |
 | **Mock data generator** | N/A | ✅ **DONE** — `scripts/generate_mock_data.py` generates 30 days of realistic staging entries for testing. Weighted weekday/weekend templates, plain: prefix, SHA-256 hashes, UUID4 entry IDs. `--apply` writes to staging.json. 115 entries generated spanning Jun 4 → Jul 3, 2026. |
-| **StoragePlugin interface + backends + factory** | N/A | ✅ **DONE** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite all passing. |
-| **MockRemoteBackend comprehensive test suite** | N/A | ✅ **DONE** — `test/mock_remote_test.mjs` — 179 tests: latency, type preservation, ETag depth, error sim, resetCache, concurrency, path normalization, state inspection, SyncService integration. See `SESSION_HANDOFF.md`. |
 | Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
@@ -99,22 +98,23 @@ The current Worker needs three small additions for mobile compatibility:
 | Optional bearer token check | ~5 | ❌ Not yet | Per-device auth (separate from the shared API key) — a simple KV lookup, not a session system |
 | Structured JSON wrapper (optional) | ~10 | ❌ Not yet | Thin JSON coat on GET/PUT responses for mobile convenience (e.g., `{"data": "<base64>", "etag": "..."}`) |
 
-That's the entire delta. The Worker stays under 200 lines (~195), stateless, and domain-ignorant.
+That's the entire delta. The Worker stays under 210 lines (~205), stateless, and domain-ignorant.
 
 **No client platform needs:**
 - Session tokens (the passphrase is the auth mechanism — it never leaves the device)
 - A server-side sync endpoint (sync runs client-side, just like the CLI)
 - CRUD endpoints for staging (each client manipulates its local cache, then pushes the full blob)
-- An OpenAPI spec (the protocol is three HTTP verbs, fully defined by `core/sync/http_transport.py`)
+- An OpenAPI spec (the protocol is four HTTP verbs, fully defined by `core/sync/http_transport.py` and `worker/src/index.ts`)
 
 #### 2. Wire Protocol — Already Defined (No New Work)
 
-Every client implements the same three-operation protocol that the CLI's `HttpStagingTransport` uses:
+Every client implements the same four-operation protocol that the CLI's `HttpStagingTransport` uses:
 
 ```
-GET  /{path}                    → bytes | None (404)
-PUT  /{path}  (body: bytes)     → None
-GET  ?prefix={prefix}           → List[str]
+GET    /{path}                    → bytes | None (404)
+PUT    /{path}  (body: bytes)     → None
+DELETE /{path}                    → None
+GET    ?prefix={prefix}           → List[str]
 ```
 
 The storage paths are constants from the CLI reference — every client uses the exact same strings:
@@ -195,9 +195,9 @@ The Rust crate is compiled per target:
 
 ---
 
-### 🔵 StoragePlugin — Multi-Deployment Architecture ✅
+### 🔵 StoragePlugin — Multi-Deployment Architecture
 
-**Implemented (2026-06-09):** The `StoragePlugin` interface and all four backends are now implemented with a 96-test suite.
+**Decision (2026-06-09):** phpoc-web supports four deployment targets from a single codebase, selected at startup via config. The `StoragePlugin` interface decouples all sync/ledger logic from the storage backend.
 
 ```
 phpoc-web (React)
@@ -217,25 +217,31 @@ phpoc-web (React)
 | **Docker / LXC** | Bridge server bundled in container | Single user | One-command deploy, repeatable |
 | **SaaS** | Cloudflare Worker → R2 (multi-tenant) | Multi-tenant | Hosted service for non-technical users |
 
-**Files created:**
-- `src/sync/storage_plugin.js` — `StoragePlugin` abstract class (`get`/`set`/`delete`/`list`/`clear`, plus `name`/`deployment`/`isRemote` getters)
-- `src/sync/http_backend.js` — `HttpBackend` wrapping `HttpTransport` as a `StoragePlugin`
-- `src/sync/mock_remote_backend.js` — `MockRemoteBackend` with type-preserving round-trips, ETag/304/404, configurable latency & error rate
-- `src/sync/plugin_factory.js` — `createStoragePlugin()` + `detectDeployment()` — auto-selects from URL param, localStorage, or defaults
+**Companion bridge server** (~50 lines Python) exposes the same HTTP API as the Worker:
+```
+GET  /staging/blobs/current.json  → reads filesystem
+PUT  /staging/blobs/current.json  → writes filesystem
+GET  /ledger/blocks/{n}.json      → reads ledger block
+GET  ?prefix=...                  → lists paths
+```
+This enables CLI ↔ web app file sharing without a remote Worker. The bridge is optional — standalone mode uses IndexedDB directly.
 
-**Backend selection (in priority order):**
-1. URL parameter: `?deployment=saas`
-2. `localStorage` key: `phpoc_deployment`
-3. Auto-detect: if `phpoc_worker_url` is set → SaaS
-4. Default: `standalone` (IndexedDB)
+**MockRemoteBackend** (built, 46 tests) simulates R2/S3 in-browser for development — same contract as the real Worker/bridge, zero infra needed.
 
-**Test coverage:** `test/storage_plugin_test.mjs` — 96 tests covering interface contract, all 4 backends, factory, and edge cases.
+**HttpBackend** (built, 41 tests) wraps any Transport (HttpTransport or MockRemoteBackend) to conform to the StorageBackend interface — enabling use of a remote HTTP backend wherever code expects a StorageBackend.
+
+**Worker DELETE** added — `DELETE /{path}` removes a blob. Enables `HttpBackend.remove()` → `HttpTransport.delete()` → Worker DELETE. Idempotent (404 treated as success).
 
 **Next steps:**
-1. Browser import/export via File API
-2. Companion bridge server (Python, ~50 lines)
-3. Dockerfile (nginx + bridge server)
-4. Multi-tenant Worker + registration for SaaS
+1. ✅ `MockRemoteBackend` — built, 46 tests, 300 across mock infra
+2. ✅ `HttpBackend` — built, 41 tests, bridges Transport→StorageBackend interface
+3. ✅ `StorageBackend.list()` + `HttpTransport.delete()` + Worker DELETE
+4. 🔲 Browser import/export via File API
+5. 🔲 Companion bridge server (Python, ~50 lines)
+6. 🔲 Dockerfile (nginx + bridge server)
+7. 🔲 Multi-tenant Worker + registration for SaaS
+
+Detailed design decisions documented in: `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` (Section 11 — Multi-Deployment Architecture)
 
 ---
 
@@ -419,13 +425,15 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 5 | Device identity | 1-2 days | ✅ Done — `device.rs` module | `f199a81` (mobile-poc) |
 | 6 | WASM integration test (JS) | 1 day | ✅ Done — 74 tests, all 20 functions vs test vectors | `8f2a9e2` (mobile-poc) |
 | 7 | CryptoService wrapper (JS) | 1-2 days | ✅ Done — singleton, key cache, 20 camelCase methods, 5 cached-key convenience wrappers | `784c1d0` (mobile-poc) |
-| 8 | HTTP Transport implementation (JS) | 1 day | ✅ GREEN — 49 tests, full fetch()-based HttpTransport with ETag caching, all passing | `this commit` |
+| 8 | HTTP Transport implementation (JS) | 1 day | ✅ GREEN — 49 tests, full fetch()-based HttpTransport with ETag caching + `delete()` method, all passing | `this commit` |
 | 9 | Sync Algorithm Port (JS) — StorageBackend, IndexedDBBackend, DeviceCookie, RemoteSync, LocalCache, MergeEngine, SyncService | 2-3 days | ✅ DONE — 9 modules, 60-test suite, full auth gate + staging CRUD + blob sync | `this commit` |
 | 10 | React Web UI Scaffold — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, navigation | 2-3 days | ✅ DONE — 14 modules, all compile clean. Auth bypass via DevModeContext. Active task pills with pause/stop. Portrait/landscape layout. Bottom tab nav (7 tabs). UserProfile + Configuration screens covering all 27 CLI config fields. | Jun 8 2026 |
 | 11 | **Auth Overlay System** — full-screen AuthScreen on first launch, blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile. | 1 day | ✅ DONE — 5 files changed: App.jsx, AuthScreen.jsx, AppLayout.jsx, UserProfile.jsx, App.css. Lock icon turns red on hover, overlay has backdrop blur + pop-in animation. | Jun 9 2026 |
 | 12 | **Mock Data Generator** — script to generate realistic staging entries for testing | 1 day | ✅ DONE — `scripts/generate_mock_data.py`. 30 days, weighted activities, weekday/weekend templates, plain: prefix, SHA-256 hashes. 115 entries (Jun 4 → Jul 3, 2026) applied to staging.json. | Jun 9 2026 |
-| 13 | **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite. | 1-2 days | ✅ DONE — 96/96 tests passing. Backend selected from URL param, localStorage config, or auto-detection. `DevModeContext` production boot wired to factory. | Jun 9 2026 |
-| 14 | **MockRemoteBackend comprehensive test suite** — 179 tests covering 9 categories: latency sim, type preservation, ETag depth, error sim, resetCache, concurrency, path normalization, state inspection, SyncService integration (auth gate, push/pull/reconcile, workflows). | 1 day | ✅ DONE — 179/179 passing. Total web tests: 480. | Jun 9 2026 |
+| 13 | **MockRemoteBackend** — in-browser R2/S3 simulation (IndexedDB, latency, ETags, 404s) | 1 day | ✅ DONE — `phpoc-web/src/sync/mock_remote.js`. 46 tests. Implements same pull/push/listFiles contract as HttpTransport. | Jun 9 2026 |
+| 14 | **MockDataSeeder** — realistic staging data generator for web dev mode | 1 day | ✅ DONE — `phpoc-web/src/services/MockDataSeeder.js`. 14 days of entries + cookie + genesis + index. 205 tests. | Jun 9 2026 |
+| 15 | **DevModeContext rewired** — DummySyncService replaced with real SyncService + MockRemoteBackend | 1 day | ✅ DONE — Real auth gate, cookie setup, entry pull from mock remote. Full-stack simulation in-browser. | Jun 9 2026 |
+| 16 | **HttpBackend + StorageBackend.list + Worker DELETE** — Transport→StorageBackend adapter, `delete()` on HttpTransport/MockRemoteBackend, DELETE handler on Worker | 1 day | ✅ GREEN — 41 tests (TDD). `list()` added to StorageBackend + MemoryBackend. Worker now handles DELETE method. Zero regressions (155 web tests, 270 total). | Jun 9 2026 |
 
 ---
 
