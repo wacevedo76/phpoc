@@ -45,6 +45,7 @@ import {
 export const Icons = {
   // Bottom nav
   dashboard: Home,
+  clock: Clock,
   history: Clock,
   'new-task': Plus,
   tags: Tags,
