@@ -149,6 +149,37 @@ The **device cookie** is the source of truth. Two concepts only: local TTL and s
 
 ## This Session (2026-06-09)
 
+### Browser Import/Export via File API — Design Decisions
+
+**What:** Browser-native import/export of the user's ledger via File API. Entry data only — no cookie, no device identity, no app metadata.
+
+**Auth gate:** Both import and export require passphrase entry. Passphrase → `crypto.authenticate()` → master key. In dev mode (DummyCryptoService), any passphrase is accepted — UX convention. When real WASM crypto is wired (Step 9), it becomes real authentication.
+
+**Integrity:**
+- File sealed via HMAC-SHA256 (`crypto.computeSeal`/`verifySeal`, PHPSPEC §5.2 key derivation path)
+- Seal covers `JSON.stringify(entries)` only — file wrapper metadata (`exported_at`, `format_version`) sits outside seal
+- Import re-verifies seal, then re-computes each entry's hash
+- Any verification failure → reject entirely, no partial import
+
+**Key decisions:**
+- Ledger = entries only. No cookie, no device metadata.
+- Import overwrites local entries entirely (no merge)
+- `exported_at` is informational for user transparency (backup log), not part of ledger
+- `format_version` allows evolution (entries-only now, ledger blocks in v2)
+- Active task flags preserved as-is on import
+- Passphrase prompt: lightweight modal overlay (reuses AuthScreen overlay pattern)
+
+**UI:** New Backup & Restore section in Settings with Export/Import buttons.
+
+**Implementation order (TDD):**
+1. `ledger_export.js` — exportLedger(storage, crypto, masterKey) → Blob
+2. `ledger_import.js` — importLedger(storage, crypto, masterKey, file) → imported count
+3. `PassphraseModal.jsx` — reusable passphrase prompt overlay
+4. Settings screen: Backup & Restore section with Export/Import buttons
+5. TDD test suites: `test/ledger_export_test.mjs`, `test/ledger_import_test.mjs`, `test/passphrase_modal_test.mjs`
+
+Design documented in: `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.11
+
 ### HttpBackend — Transport→StorageBackend Adapter (TDD, 41 tests)
 
 **What:** `HttpBackend` wraps a Transport (HttpTransport or MockRemoteBackend) to conform to the StorageBackend interface. Bridges binary blob I/O (Uint8Array) to structured key-value storage (JSON-serializable values).
@@ -297,7 +328,15 @@ Vite + React 18, 9 screen components, DevModeContext, bottom tab nav, auth overl
 `StorageBackend` (get/set/remove/clear/list), `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` (Transport→StorageBackend adapter, 41 tests). `delete()` on `HttpTransport` + `MockRemoteBackend`. DELETE handler on Worker. `list()` on StorageBackend interface.
 
 ### Step 5: Browser Import/Export via File API 🔜
-Download/upload JSON for backup/restore. No server needed. Uses browser-native File API.
+
+**Design (2026-06-09):** Auth-gated (passphrase prompt + `crypto.authenticate()`). Ledger entries sealed via HMAC-SHA256 (`crypto.computeSeal`/`verifySeal`, PHPSPEC §5.2). Single `.json` file with `{ format_version, exported_at, entries, seal }`. Seal covers `JSON.stringify(entries)` only — file wrapper metadata is outside seal. Import verification failure → reject entirely (no partial import). Entry hash re-validation on import. Overwrite-only (no merge).
+
+**Implementation order (TDD):**
+1. `phpoc-web/src/services/ledger_export.js` — exportLedger(storage, crypto, masterKey) → returns Blob
+2. `phpoc-web/src/services/ledger_import.js` — importLedger(storage, crypto, masterKey, file) → imported count
+3. `phpoc-web/src/components/modals/PassphraseModal.jsx` — reusable passphrase prompt overlay
+4. Settings screen: Backup & Restore section with Export/Import buttons
+5. Test suite: `test/ledger_export_test.mjs`, `test/ledger_import_test.mjs`, `test/passphrase_modal_test.mjs`
 
 ### Step 6: Ledger Engine JS Port 🔜
 Commit staging → ledger chain, chain verification, block push/pull. Largest remaining work item. Port of `domain/ledger/engine.py` and `domain/ledger/chain.py`.

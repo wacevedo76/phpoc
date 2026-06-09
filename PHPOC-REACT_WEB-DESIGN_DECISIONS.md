@@ -570,6 +570,59 @@ The SaaS deployment uses the same stack with user isolation layered in:
 - **Auth is minimal.** A registration service (~50 lines, can be a second Worker) that creates `user_id` + API key. No user profile data stored.
 - **Import/export via File API.** Browser-native download/upload for backup. No server involved.
 
+### 11.11 Import/Export Design (2026-06-09)
+
+**Auth gate:**
+- Both import and export require passphrase entry via modal prompt before proceeding
+- Passphrase → `crypto.authenticate()` → master key
+- In dev mode (`DummyCryptoService`), any passphrase is accepted — UX convention
+- When real WASM crypto is wired (Step 9), the passphrase becomes real authentication
+
+**Export flow:**
+1. User taps **Export Ledger** in Settings
+2. Passphrase prompt (modal overlay)
+3. `sync.readEntries()` → entry DTOs
+4. `JSON.stringify(entries)` → `crypto.computeSeal(string, masterKey)` → seal hex
+5. Write file: `{ format_version, exported_at, entries, seal }`
+6. Browser-native download via `<a download>` → `.json` file
+
+**Import flow:**
+1. User taps **Import Ledger** in Settings
+2. File picker → select `.json` file
+3. Parse → validate `format_version`, `entries` array, `seal` presence
+4. Passphrase prompt (modal overlay)
+5. `crypto.verifySeal(entriesJson, seal, masterKey)` — **mismatch → reject entirely, show error**
+6. Recompute each entry's `hash` and compare — **any mismatch → reject entirely, show error**
+7. `sync._local.writeEntries(parsed.entries)` → replace all local entries
+8. UI refreshes to show imported data
+
+**File format:**
+```json
+{
+  "format_version": "1",
+  "exported_at": "2026-06-09T14:30:00.000Z",
+  "entries": [ /* StagingEntry[] */ ],
+  "seal": "abc123..."
+}
+```
+
+- `entries` — the user's ledger data (staging entry DTOs). Device-agnostic, system-agnostic.
+- `seal` — HMAC-SHA256 (PHPSPEC §5.2 `computeSeal`) of `JSON.stringify(entries)` only. Proves the ledger was exported by the same master key and hasn't been tampered with.
+- `exported_at` — informational timestamp for user transparency (e.g. backup log display). Sits outside the seal. Not part of the ledger.
+- `format_version` — allows format evolution (entries-only for now; could add ledger blocks in v2).
+
+**Key decisions:**
+- Ledger is defined as the entries array only — no cookie, no device identity, no app metadata
+- File wrapper metadata (`exported_at`, `format_version`) sits outside the sealed region
+- Import always overwrites (replaces) local entries — no merge
+- Verification failure (seal or entry hash) → reject entirely, no partial import
+- Active task flags (`is_active`, `is_paused`) preserved as-is on import
+
+**UI placement:**
+- New **Backup & Restore** section in Settings screen
+- Two buttons: Export Ledger, Import Ledger
+- Passphrase prompt: lightweight modal overlay (reuses pattern from AuthScreen overlay)
+
 ### 11.8 Data Layer Per Deployment
 
 | Layer | PWA | Self-Hosted | Docker | SaaS |
@@ -588,7 +641,7 @@ The SaaS deployment uses the same stack with user isolation layered in:
 |---|---|---|---|
 | 1 | StoragePlugin interface + IndexedDBBackend + HttpBackend + config-driven selection | Interface, IndexedDBBackend, HttpBackend exist. Config-driven factory NOT yet wired. | None |
 | 2 | **MockRemoteBackend** (in-browser R2 simulation) | ✅ Complete (46 tests) — dev mode uses real SyncService + mock remote | Step 1 (interface) |
-| 3 | Browser import/export via File API | Users can backup/restore their ledger | None |
+| 3 | Browser import/export via File API | Users can backup/restore their ledger via encrypted, signed JSON files | None |
 | 4 | Ledger engine port to JS | Web becomes self-sufficient (no Python dependency) | Step 1 (storage) |
 | 5 | Staging CRUD (add/edit/delete entries in UI) | Full staging interaction | Step 4 (ledger engine) |
 | 6 | Companion bridge server (Python or Node.js) | Self-hosted + LAN deployments work | Step 1 (interface contract) |
@@ -598,13 +651,13 @@ The SaaS deployment uses the same stack with user isolation layered in:
 
 **Steps 1–5 are in-browser only** — zero server code required. Steps 6–9 layer on deployment options.
 
-### 11.10 Current Status (2026-06-08)
+### 11.10 Current Status (2026-06-09)
 
 | Step | Status | Notes |
 |---|---|---|
 | 1 — StoragePlugin interface | ✅ `StorageBackend`, `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` exist | Config-driven factory not yet wired. `list(prefix)` added to StorageBackend. `delete()` added to HttpTransport + MockRemoteBackend. DELETE handler added to Worker. |
 | 2 — MockRemoteBackend | ✅ Complete | 46 tests, 300 total across mock infra |
-| 3 — Import/Export | ❌ Not started | |
+| 3 — Import/Export | 🔜 Design complete, TDD pending | Auth-gated (passphrase prompt). File sealed via HMAC-SHA256 (PHPSPEC §5.2 `computeSeal`/`verifySeal`). Entries-only export — no cookie/device metadata. Seal covers `JSON.stringify(entries)`, not file wrapper. Single `.json` file format. Verification failure → reject entirely. |
 | 4 — Ledger engine JS port | ❌ Not started | Largest remaining work item |
 | 5 — Staging CRUD | ⚠️ Partial | UI scaffold exists, wired to dummy data |
 | 6 — Bridge server | ❌ Not started | |
