@@ -54,6 +54,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | **React Web UI scaffold** | N/A | ✅ **DONE** — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, bottom tab nav. 14 modules, all compile clean. See `SESSION_HANDOFF.md` Step 3. |
 | **Auth overlay system** | ✅ (CLI re-auth prompt) | ✅ **DONE** — Full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile screen. See `SESSION_HANDOFF.md` (2026-06-09). |
 | **Mock data generator** | N/A | ✅ **DONE** — `scripts/generate_mock_data.py` generates 30 days of realistic staging entries for testing. Weighted weekday/weekend templates, plain: prefix, SHA-256 hashes, UUID4 entry IDs. `--apply` writes to staging.json. 115 entries generated spanning Jun 4 → Jul 3, 2026. |
+| **StoragePlugin interface + backends + factory** | N/A | ✅ **DONE** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite all passing. |
 | Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
@@ -193,9 +194,9 @@ The Rust crate is compiled per target:
 
 ---
 
-### 🔵 StoragePlugin — Multi-Deployment Architecture
+### 🔵 StoragePlugin — Multi-Deployment Architecture ✅
 
-**Decision (2026-06-09):** phpoc-web supports four deployment targets from a single codebase, selected at startup via config. The `StoragePlugin` interface decouples all sync/ledger logic from the storage backend.
+**Implemented (2026-06-09):** The `StoragePlugin` interface and all four backends are now implemented with a 96-test suite.
 
 ```
 phpoc-web (React)
@@ -215,22 +216,25 @@ phpoc-web (React)
 | **Docker / LXC** | Bridge server bundled in container | Single user | One-command deploy, repeatable |
 | **SaaS** | Cloudflare Worker → R2 (multi-tenant) | Multi-tenant | Hosted service for non-technical users |
 
-**Companion bridge server** (~50 lines Python) exposes the same HTTP API as the Worker:
-```
-GET  /staging/blobs/current.json  → reads filesystem
-PUT  /staging/blobs/current.json  → writes filesystem
-GET  /ledger/blocks/{n}.json      → reads ledger block
-GET  ?prefix=...                  → lists paths
-```
-This enables CLI ↔ web app file sharing without a remote Worker. The bridge is optional — standalone mode uses IndexedDB directly.
+**Files created:**
+- `src/sync/storage_plugin.js` — `StoragePlugin` abstract class (`get`/`set`/`delete`/`list`/`clear`, plus `name`/`deployment`/`isRemote` getters)
+- `src/sync/http_backend.js` — `HttpBackend` wrapping `HttpTransport` as a `StoragePlugin`
+- `src/sync/mock_remote_backend.js` — `MockRemoteBackend` with type-preserving round-trips, ETag/304/404, configurable latency & error rate
+- `src/sync/plugin_factory.js` — `createStoragePlugin()` + `detectDeployment()` — auto-selects from URL param, localStorage, or defaults
+
+**Backend selection (in priority order):**
+1. URL parameter: `?deployment=saas`
+2. `localStorage` key: `phpoc_deployment`
+3. Auto-detect: if `phpoc_worker_url` is set → SaaS
+4. Default: `standalone` (IndexedDB)
+
+**Test coverage:** `test/storage_plugin_test.mjs` — 96 tests covering interface contract, all 4 backends, factory, and edge cases.
 
 **Next steps:**
-1. `StoragePlugin` interface + config-driven backend selection
-2. `MockRemoteBackend` — in-browser simulation of R2/S3 (latency, ETags, 404s)
-3. Browser import/export via File API
-4. Companion bridge server (Python, ~50 lines)
-5. Dockerfile (nginx + bridge server)
-6. Multi-tenant Worker + registration for SaaS
+1. Browser import/export via File API
+2. Companion bridge server (Python, ~50 lines)
+3. Dockerfile (nginx + bridge server)
+4. Multi-tenant Worker + registration for SaaS
 
 ---
 
@@ -419,6 +423,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 10 | React Web UI Scaffold — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, navigation | 2-3 days | ✅ DONE — 14 modules, all compile clean. Auth bypass via DevModeContext. Active task pills with pause/stop. Portrait/landscape layout. Bottom tab nav (7 tabs). UserProfile + Configuration screens covering all 27 CLI config fields. | Jun 8 2026 |
 | 11 | **Auth Overlay System** — full-screen AuthScreen on first launch, blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile. | 1 day | ✅ DONE — 5 files changed: App.jsx, AuthScreen.jsx, AppLayout.jsx, UserProfile.jsx, App.css. Lock icon turns red on hover, overlay has backdrop blur + pop-in animation. | Jun 9 2026 |
 | 12 | **Mock Data Generator** — script to generate realistic staging entries for testing | 1 day | ✅ DONE — `scripts/generate_mock_data.py`. 30 days, weighted activities, weekday/weekend templates, plain: prefix, SHA-256 hashes. 115 entries (Jun 4 → Jul 3, 2026) applied to staging.json. | Jun 9 2026 |
+| 13 | **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite. | 1-2 days | ✅ DONE — 96/96 tests passing. Backend selected from URL param, localStorage config, or auto-detection. `DevModeContext` production boot wired to factory. | Jun 9 2026 |
 
 ---
 

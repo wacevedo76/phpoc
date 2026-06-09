@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * UserProfile — user identity, device info, stats, and gateway to Configuration.
@@ -185,7 +186,7 @@ export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
               if (onLogoutRequest) onLogoutRequest();
             }}
           >
-            🔒 Lock & Re-authenticate
+            <Icons.lock size={16} /> Lock & Re-authenticate
           </button>
         </section>
 
@@ -196,7 +197,7 @@ export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
             <div className="profile-detail-row">
               <span className="profile-detail-label">Mode</span>
               <span className="profile-detail-value">
-                {isDev ? '🛠️ Development (dummy data)' : '🔒 Production'}
+                {isDev ? <><Icons.devMode size={14} /> Development (dummy data)</> : <><Icons.production size={14} /> Production</>}
               </span>
             </div>
             <div className="profile-detail-row">
@@ -225,7 +226,7 @@ export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
         {/* ── Configuration Gateway ── */}
         <section className="profile-section profile-section-action">
           <div className="profile-config-card">
-            <div className="profile-config-icon">⚙️</div>
+            <div className="profile-config-icon"><Icons.settings size={24} /></div>
             <div className="profile-config-text">
               <h3 className="profile-config-title">Configuration</h3>
               <p className="profile-config-desc">

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * Tags — tag management screen.
@@ -50,7 +51,7 @@ export default function Tags() {
 
         {!loading && sortedTags.length === 0 && (
           <div className="pane-empty">
-            <span className="pane-empty-icon">🏷️</span>
+            <span className="pane-empty-icon"><Icons.tags size={32} /></span>
             <p>No tags yet</p>
             <p className="pane-hint">Tags appear when you add them to tasks</p>
           </div>

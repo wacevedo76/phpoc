@@ -5,7 +5,9 @@
  *   import { SyncService, SyncResult, DeviceCookie,
  *            mergeEntries, RemoteSync, BLOB_KEY_MISMATCH,
  *            LocalCache, StorageBackend, MemoryBackend,
- *            IndexedDBBackend } from './sync/index.js';
+ *            IndexedDBBackend, HttpBackend, MockRemoteBackend,
+ *            StoragePlugin, createStoragePlugin,
+ *            detectDeployment } from './sync/index.js';
  */
 
 export { SyncService, SyncResult } from './sync.js';
@@ -15,3 +17,7 @@ export { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 export { LocalCache } from './local_cache.js';
 export { StorageBackend, MemoryBackend } from './storage.js';
 export { IndexedDBBackend } from './indexeddb_storage.js';
+export { HttpBackend } from './http_backend.js';
+export { MockRemoteBackend } from './mock_remote_backend.js';
+export { StoragePlugin } from './storage_plugin.js';
+export { createStoragePlugin, detectDeployment } from './plugin_factory.js';

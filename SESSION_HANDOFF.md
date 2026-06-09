@@ -4,7 +4,7 @@
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
 - **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite, with GREEN implementation)
-- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core); 205 passing, 0 failures (web: 74 WASM + 22 CryptoService + 49 transport + 60 sync)
+- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core); 301 passing, 0 failures (web: 74 WASM + 22 CryptoService + 49 transport + 60 sync + 96 storage plugin)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -23,8 +23,9 @@
   - ✅ WASM integration test — `phpoc-web/test/wasm_integration.mjs` — 74 tests, all 20 functions exercised against test vectors + round-trip
   - ✅ `CryptoService` wrapper — `phpoc-web/src/crypto/index.js` — singleton with async init, in-memory key cache, ready-guards, all 20 functions in camelCase
   - ✅ CryptoService smoke test — `phpoc-web/test/crypto_service_smoke.mjs` — 22 tests, singleton lifecycle, key cache, cached-key convenience wrappers, guard
-  - ✅ Transport implementation + test suite (TDD GREEN) — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching, 49 tests all passing
+  - ✅ `HttpTransport` — fetch()-based HTTP transport with ETag caching, 49 tests all passing
   - ✅ **Sync algorithm port** — `phpoc-web/src/sync/` — full auth gate (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote blob sync, localStorage abstraction (StorageBackend + IndexedDBBackend). 60-test suite all passing.
+  - ✅ **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class + `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend` + `createStoragePlugin()` config-driven factory. 96-test suite all passing.
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -361,41 +362,45 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Transport implementation + test suite — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching. `phpoc-web/test/transport_test.mjs` — 49 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction, cache reset. All passing (TDD GREEN).
 - ✅ Sync algorithm port — `phpoc-web/src/sync/` — 9 modules (storage abstraction, IndexedDB backend, device cookie, merge engine, remote sync, local cache, SyncService, barrel export). Full `checkAndSync()` auth gate with fast path, specifier mismatch, TTL expiry, reconcile-and-claim. 60-test suite all passing.
 - ✅ **Auth overlay system** — full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button added as last icon on bottom nav bar + in Profile screen. (Jun 9 2026)
-- 🔄 Next: StoragePlugin interface, mock remote backend, browser import/export, companion bridge server
+- ✅ **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` config-driven factory. 96-test suite all passing.
+- 🔄 Next: browser import/export via File API, companion bridge server, Dockerfile, multi-tenant Worker
 
 ## This Session (2026-06-09)
 
-### Architecture Decision — Multi-Deployment StoragePlugin
+### Émoji-to-SVG Icon Migration
+Replaced all 30+ emoji icons across 10 component files with **Lucide React** (MIT-licensed SVG icons). New centralized icon map at `src/components/ui/Icons.jsx` maps semantic names to Lucide components. No font dependency — icons render in any browser.
 
-**Decision:** phpoc-web will support four deployment targets from a single codebase, selected at startup via config:
+**Files changed:** `AppLayout.jsx`, `ActiveTaskPill.jsx`, `SyncIndicator.jsx`, `Dashboard.jsx`, `NewTask.jsx`, `History.jsx`, `Tags.jsx`, `Settings.jsx`, `UserProfile.jsx`, `Configuration.jsx`.
 
-| Deployment | Storage Backend | Multi-user |
-|-----------|----------------|------------|
-| **Standalone PWA** | IndexedDB | Single user |
-| **Local network / LAN** | Companion bridge server (HTTP → filesystem) | Single user |
-| **Docker / LXC** | Bridge server bundled in container | Single user |
-| **SaaS** | Cloudflare Worker → R2 (multi-tenant) | Multi-tenant |
+### StoragePlugin Interface + 4 Backend Implementations (2026-06-09)
 
-The key interface is `StoragePlugin` — an abstract class with `get(key)`, `put(key, data)`, `list(prefix)`, `delete(key)`. The UI and sync logic are deployment-agnostic. Only the plugin changes.
+The `StoragePlugin` architecture is now implemented with a 96-test suite.
 
-```
-phpoc-web (React)
-  ├── SyncService / LedgerEngine (same logic)
-  │     └── StoragePlugin (interface)
-  │           ├── IndexedDBBackend (standalone)
-  │           ├── HttpBackend (bridge server or Worker)
-  │           ├── MockRemoteBackend (dev, simulates R2)
-  │           └── S3Backend (advanced deployments)
-  └── Browser File API (import/export)
-```
+**Files created:**
+- `phpoc-web/src/sync/storage_plugin.js` — `StoragePlugin` abstract class with `get()`, `set()`, `delete()`, `list(prefix)`, `clear()`, plus `name`/`deployment`/`isRemote` property getters
+- `phpoc-web/src/sync/http_backend.js` — `HttpBackend` wrapping `HttpTransport` as a `StoragePlugin` (for LAN bridge, Docker, SaaS)
+- `phpoc-web/src/sync/mock_remote_backend.js` — `MockRemoteBackend` with type-preserving round-trips, ETag simulation, 304/404 responses, configurable latency & error rate
+- `phpoc-web/src/sync/plugin_factory.js` — `createStoragePlugin()` + `detectDeployment()` — selects backend from URL param (`?deployment=`), localStorage (`phpoc_deployment`), or auto-detection
 
-**Next steps (in priority order):**
-1. `StoragePlugin` interface + config-driven backend selection
-2. `MockRemoteBackend` — in-browser simulation of R2/S3 (latency, ETags, 404s)
-3. Browser import/export via File API (download/upload JSON)
-4. Companion bridge server (Python, ~50 lines) for self-hosted/LAN
-5. Dockerfile (nginx + bridge server) for one-command deploy
-6. Multi-tenant Worker (user isolation) + registration for SaaS
+**Files modified:**
+- `phpoc-web/src/sync/storage.js` — `StorageBackend` extends `StoragePlugin`, `MemoryBackend` gains `list()`
+- `phpoc-web/src/sync/indexeddb_storage.js` — adds `list()`, `delete()`, `remove()` alias, `name`/`deployment`/`isRemote` getters
+- `phpoc-web/src/context/DevModeContext.jsx` — production boot now instantiates `createStoragePlugin()`
+- `phpoc-web/src/sync/index.js` — barrel exports all new modules
+
+**Deployment selection (in priority order):**
+1. URL parameter: `?deployment=saas`
+2. `localStorage` key: `phpoc_deployment` (values: `standalone`, `lan`, `saas`, `mock`, `memory`)
+3. Auto-detect: if `phpoc_worker_url` is set → SaaS
+4. Default: `standalone` (IndexedDB)
+
+**Result:** 96/96 tests passing, 301 total web tests.
+
+**Next steps:**
+1. Browser import/export via File API (download/upload JSON)
+2. Companion bridge server (Python, ~50 lines) for self-hosted/LAN
+3. Dockerfile (nginx + bridge server) for one-command deploy
+4. Multi-tenant Worker (user isolation) + registration for SaaS
 
 ### Mock Ledger Data Generator
 `scripts/generate_mock_data.py`: New script that generates one month of realistic staging entries for development/testing. Features:

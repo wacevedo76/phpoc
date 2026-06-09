@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { useActiveTasks } from '../../hooks/useActiveTasks.js';
 import ActiveTaskPill from '../pills/ActiveTaskPill.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * Dashboard — main screen.
@@ -116,7 +117,7 @@ export default function Dashboard() {
 
           {!loading && activeTasks.length === 0 && (
             <div className="pane-empty">
-              <span className="pane-empty-icon">⏰</span>
+              <span className="pane-empty-icon"><Icons.clock size={32} /></span>
               <p>No active tasks</p>
               <p className="pane-hint">Start a new task below</p>
             </div>
@@ -187,13 +188,13 @@ export default function Dashboard() {
             className="btn btn-primary btn-start"
             disabled={!newTitle.trim()}
           >
-            ▶ Start
+            <Icons.play size={16} /> Start
           </button>
         </form>
 
         {isDev && (
           <div className="dev-mode-indicator">
-            🔧 DEV MODE — Data is in-memory only
+            <Icons.devMode size={16} /> DEV MODE — Data is in-memory only
           </div>
         )}
       </div>

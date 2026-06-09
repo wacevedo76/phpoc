@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * Settings — app configuration screen.
@@ -42,7 +43,7 @@ export default function Settings() {
         <section className="settings-section">
           <h3 className="settings-section-title">Developer Mode</h3>
           <div className="settings-toggle-row">
-            <span>{isDev ? '🛠️ Dev Mode (dummy data)' : '🔒 Production Mode'}</span>
+            <span>{isDev ? <><Icons.devMode size={16} /> Dev Mode (dummy data)</> : <><Icons.production size={16} /> Production Mode</>}</span>
             <button
               className={`btn btn-sm ${isDev ? 'btn-warning' : 'btn-secondary'}`}
               onClick={toggleMode}
@@ -90,14 +91,14 @@ export default function Settings() {
 
         {/* Chain Verification (Phase 3 placeholder) */}
         <section className="settings-section settings-section-disabled">
-          <h3 className="settings-section-title">🔒 Chain Verification</h3>
+          <h3 className="settings-section-title"><Icons.lock size={16} /> Chain Verification</h3>
           <p className="settings-hint">Verify ledger chain integrity. Available after ledger sync is implemented.</p>
           <button className="btn btn-secondary btn-sm" disabled>Verify Chain</button>
         </section>
 
         {/* Recovery (Phase 3 placeholder) */}
         <section className="settings-section settings-section-disabled">
-          <h3 className="settings-section-title">🔒 Recover from Seed</h3>
+          <h3 className="settings-section-title"><Icons.lock size={16} /> Recover from Seed</h3>
           <p className="settings-hint">Restore your ledger from a recovery seed. Available after ledger sync is implemented.</p>
           <button className="btn btn-secondary btn-sm" disabled>Recover</button>
         </section>
@@ -109,7 +110,7 @@ export default function Settings() {
             <p><strong>PH Ledger</strong> — Zero-knowledge time tracking</p>
             <p>Version: 0.1.0 (Web Prototype)</p>
             <p>Crypto: phpoc-crypto-core (WASM) / Dummy (Dev Mode)</p>
-            <p>Mode: <strong>{isDev ? '🛠️ Dev' : '🔒 Production'}</strong></p>
+            <p>Mode: <strong>{isDev ? <><Icons.devMode size={14} /> Dev</> : <><Icons.production size={14} /> Production</>}</strong></p>
           </div>
         </section>
       </div>

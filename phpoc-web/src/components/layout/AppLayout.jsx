@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * AppLayout — navigation shell + routing.
@@ -18,13 +19,13 @@ import React from 'react';
  */
 export default function AppLayout({ currentScreen, onNavigate, children, onLogoutRequest }) {
   const tabs = [
-    { id: 'dashboard',   label: 'Home',     icon: '🏠' },
-    { id: 'history',     label: 'History',  icon: '📋' },
-    { id: 'new-task',    label: 'New',      icon: '➕' },
-    { id: 'tags',        label: 'Tags',     icon: '🏷️' },
-    { id: 'profile',     label: 'Profile',  icon: '👤' },
-    { id: 'sync',        label: 'Sync',     icon: '🔄' },
-    { id: 'settings',    label: 'Settings', icon: '⚙️' },
+    { id: 'dashboard',   label: 'Home',     icon: Icons.dashboard },
+    { id: 'history',     label: 'History',  icon: Icons.history },
+    { id: 'new-task',    label: 'New',      icon: Icons['new-task'] },
+    { id: 'tags',        label: 'Tags',     icon: Icons.tags },
+    { id: 'profile',     label: 'Profile',  icon: Icons.profile },
+    { id: 'sync',        label: 'Sync',     icon: Icons.sync },
+    { id: 'settings',    label: 'Settings', icon: Icons.settings },
   ];
 
   return (
@@ -41,7 +42,7 @@ export default function AppLayout({ currentScreen, onNavigate, children, onLogou
             onClick={() => onNavigate(tab.id)}
             title={tab.label}
           >
-            <span className="nav-tab-icon">{tab.icon}</span>
+            <span className="nav-tab-icon"><tab.icon size={20} /></span>
             <span className="nav-tab-label">{tab.label}</span>
           </button>
         ))}
@@ -51,7 +52,7 @@ export default function AppLayout({ currentScreen, onNavigate, children, onLogou
           onClick={onLogoutRequest}
           title="Lock & Re-authenticate"
         >
-          <span className="nav-tab-icon">🔒</span>
+          <span className="nav-tab-icon"><Icons.lock size={20} /></span>
           <span className="nav-tab-label">Lock</span>
         </button>
       </nav>

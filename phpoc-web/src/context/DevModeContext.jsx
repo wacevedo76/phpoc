@@ -7,10 +7,15 @@
  *   │    ├─ mode: 'dev' | 'production'            │
  *   │    ├─ crypto: DummyCryptoService | real      │
  *   │    ├─ sync:   DummySyncService | real        │
- *   │    ├─ storage: MemoryBackend | IndexedDB     │
+ *   │    ├─ storage: (from StoragePlugin factory)  │
  *   │    ├─ user:   { isAuthenticated, ... }       │
  *   │    └─ devBanner: visible in dev mode only    │
  *   └─────────────────────────────────────────────┘
+ *
+ * Storage selection:
+ *   In dev mode, uses a MemoryBackend (in-memory, resets on refresh).
+ *   In production, uses createStoragePlugin() to select the backend
+ *   based on deployment config (IndexedDB, HttpBackend, etc.).
  *
  * Auth bypass:
  *   In 'dev' mode, the user is auto-authenticated. No passphrase prompt
@@ -31,6 +36,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createDummyLedger } from '../services/DummyLedger.js';
+import { createStoragePlugin } from '../sync/plugin_factory.js';
 
 // --------------------------------------------------------------------------
 // Context
@@ -93,9 +99,19 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
             });
           }
         } else {
-          // Production boot — real WASM + IndexedDB
+          // Production boot — real WASM + config-driven StoragePlugin
           // *** FUTURE: implement real CryptoService.create() here ***
-          throw new Error('Production mode not yet implemented. Use dev mode.');
+          // For now, attempt storage bootstrap so the UI can show
+          // which backend would be used:
+          const storage = await createStoragePlugin({ deployment: 'standalone' });
+          if (!cancelled) {
+            setServices({ crypto: null, sync: null, storage });
+            setUser({
+              isAuthenticated: false,
+              deviceId: null,
+              masterKeyCached: false,
+            });
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err.message);

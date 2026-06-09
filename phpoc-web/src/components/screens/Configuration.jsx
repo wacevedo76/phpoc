@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * Configuration — all user-configurable aspects from the CLI reference.
@@ -100,7 +101,7 @@ export default function Configuration({ onBack }) {
           {title}
         </span>
         <span className={`config-chevron ${openSections[id] ? 'config-chevron-open' : ''}`}>
-          ▶
+          <Icons.chevronRight size={12} />
         </span>
       </button>
       {openSections[id] && (
@@ -191,7 +192,7 @@ export default function Configuration({ onBack }) {
         </p>
 
         {/* ── 1. Storage ── */}
-        <Section id="storage" title="Storage" icon="💾">
+        <Section id="storage" title="Storage" icon={<Icons.server size={16} />}>
           <Field label="Config Directory" hint="Where config.json lives">
             <TextInput field="configDir" placeholder="~/.config/phpoc" mono />
           </Field>
@@ -216,7 +217,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 2. Remote ── */}
-        <Section id="remote" title="Remote" icon="☁️">
+        <Section id="remote" title="Remote" icon={<Icons.sync size={16} />}>
           <Field label="Transport" hint="Protocol to reach the remote store">
             <SelectInput
               field="transport"
@@ -238,7 +239,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 3. HTTP ── */}
-        <Section id="http" title="HTTP / Worker" icon="🌐">
+        <Section id="http" title="HTTP / Worker" icon={<Icons.server size={16} />}>
           <Field label="Provider" hint="Worker backend type">
             <SelectInput
               field="httpProvider"
@@ -263,7 +264,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 4. Auth ── */}
-        <Section id="auth" title="Authentication" icon="🔐">
+        <Section id="auth" title="Authentication" icon={<Icons.lock size={16} />}>
           <Field label="Session Cache Timeout" hint="Minutes before re-prompting for passphrase">
             <RangeInput field="cacheTimeoutMinutes" min={1} max={240} step={1} unit=" min" />
           </Field>
@@ -273,7 +274,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 5. Device ── */}
-        <Section id="device" title="Device Identity" icon="📱">
+        <Section id="device" title="Device Identity" icon={<Icons.smartphone size={16} />}>
           <Field label="Device Label" hint="Friendly name for this device">
             <TextInput field="deviceLabel" placeholder="e.g. My Phone, Work Laptop" />
           </Field>
@@ -289,7 +290,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 6. Timeouts ── */}
-        <Section id="timeouts" title="Timeouts" icon="⏱️">
+        <Section id="timeouts" title="Timeouts" icon={<Icons.clock size={16} />}>
           <Field label="Remote Check" hint="How long to wait for cookie/connectivity check">
             <RangeInput field="remoteCheckMs" min={100} max={5000} step={100} unit="ms" />
           </Field>
@@ -299,7 +300,7 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 7. Cookie ── */}
-        <Section id="cookie" title="Device Cookie" icon="🍪">
+        <Section id="cookie" title="Device Cookie" icon={<Icons.activity size={16} />}>
           <Field label="TTL" hint="Minutes until cookie expires, forcing re-auth">
             <RangeInput field="cookieTtlMinutes" min={1} max={1440} step={5} unit=" min" />
           </Field>
@@ -312,14 +313,14 @@ export default function Configuration({ onBack }) {
         </Section>
 
         {/* ── 8. Debug ── */}
-        <Section id="debug" title="Debug" icon="🐛">
+        <Section id="debug" title="Debug" icon={<Icons.fileText size={16} />}>
           <Field>
             <Toggle field="traceEnabled" label="Trace logging enabled" />
           </Field>
         </Section>
 
         {/* ── 9. Staging ── */}
-        <Section id="staging" title="Staging Blob" icon="📦">
+        <Section id="staging" title="Staging Blob" icon={<Icons.bookmark size={16} />}>
           <Field label="Blob Size Tier" hint="Target size for the remote staging blob">
             <SelectInput
               field="blobSizeTier"
@@ -336,11 +337,11 @@ export default function Configuration({ onBack }) {
         {/* ── Save bar ── */}
         <div className="config-save-bar">
           <p className="config-save-hint">
-            ⚠ Configuration is not yet wired to the storage layer.
+            <Icons.syncPending size={14} /> Configuration is not yet wired to the storage layer.
             These controls demonstrate the available settings from the CLI.
           </p>
           <button className="btn btn-primary" disabled>
-            💾 Save Configuration
+            <Icons.server size={16} /> Save Configuration
           </button>
         </div>
       </div>

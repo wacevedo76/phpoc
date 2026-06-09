@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * ActiveTaskPill — pill-shaped button representing one active activity.
@@ -7,7 +8,7 @@ import React from 'react';
  *
  *   ┌──────────────────────────────┐
  *   │       Coding Practice        │  ← Title (top half)
- *   │        ⏸️      ⏹️           │  ← Pause/Play (left)  Stop (right)
+ *   │        ⏸      ⏹️           │  ← Pause/Play (left)  Stop (right)
  *   └──────────────────────────────┘
  *
  * Props:
@@ -79,7 +80,7 @@ export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapse
           title={task.is_paused ? 'Resume' : 'Pause'}
           aria-label={task.is_paused ? 'Resume task' : 'Pause task'}
         >
-          {task.is_paused ? '▶' : '⏸'}
+          {task.is_paused ? <Icons.play size={16} /> : <Icons.pause size={16} />}
         </button>
         <div className="pill-divider" />
         <button
@@ -89,7 +90,7 @@ export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapse
           title="Stop task"
           aria-label="Stop task"
         >
-          ⏹
+          <Icons.stop size={16} />
         </button>
       </div>
     </div>

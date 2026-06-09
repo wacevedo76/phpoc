@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * NewTask — standalone task creation screen.
@@ -110,7 +111,7 @@ export default function NewTask() {
           className="btn btn-primary btn-start btn-start-lg"
           disabled={!title.trim() || !!success}
         >
-          ▶ Start Task
+          <Icons.play size={16} /> Start Task
         </button>
       </form>
     </div>

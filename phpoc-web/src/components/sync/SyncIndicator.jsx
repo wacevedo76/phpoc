@@ -1,13 +1,14 @@
 import React from 'react';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * SyncIndicator — visual sync status badge.
  *
  * Shows one of:
- *   🟢 READY         — remote synced, all good
- *   🟡 PENDING       — local changes not yet pushed
- *   🔶 OFFLINE        — remote unreachable
- *   🔴 REAUTH_NEEDED — device mismatch, passphrase required
+ *   READY         — remote synced, all good
+ *   PENDING       — local changes not yet pushed
+ *   OFFLINE        — remote unreachable
+ *   REAUTH_NEEDED — device mismatch, passphrase required
  *
  * Props:
  *   @param {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'PENDING'|'SYNCING'} status
@@ -15,11 +16,11 @@ import React from 'react';
  */
 export default function SyncIndicator({ status, compact = false }) {
   const config = {
-    READY:         { emoji: '🟢', label: 'Synced',      className: 'sync-ready' },
-    PENDING:       { emoji: '🟡', label: 'Pending...',  className: 'sync-pending' },
-    SYNCING:       { emoji: '🔄', label: 'Syncing...',  className: 'sync-syncing' },
-    OFFLINE:       { emoji: '🔶', label: 'Offline',     className: 'sync-offline' },
-    REAUTH_NEEDED: { emoji: '🔴', label: 'Re-auth',    className: 'sync-reauth' },
+    READY:         { icon: Icons.syncReady, label: 'Synced',      className: 'sync-ready' },
+    PENDING:       { icon: Icons.syncPending, label: 'Pending...',  className: 'sync-pending' },
+    SYNCING:       { icon: Icons.syncing, label: 'Syncing...',  className: 'sync-syncing' },
+    OFFLINE:       { icon: Icons.offline, label: 'Offline',     className: 'sync-offline' },
+    REAUTH_NEEDED: { icon: Icons.reauthNeeded, label: 'Re-auth',    className: 'sync-reauth' },
   };
 
   const c = config[status] || config.OFFLINE;
@@ -27,14 +28,14 @@ export default function SyncIndicator({ status, compact = false }) {
   if (compact) {
     return (
       <span className={`sync-dot ${c.className}`} title={c.label}>
-        {c.emoji}
+        <c.icon size={14} />
       </span>
     );
   }
 
   return (
     <div className={`sync-indicator ${c.className}`}>
-      <span className="sync-icon">{c.emoji}</span>
+      <span className="sync-icon"><c.icon size={20} /></span>
       <span className="sync-label">{c.label}</span>
     </div>
   );

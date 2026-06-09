@@ -18,7 +18,7 @@
  * Node.js: requires fake-indexeddb polyfill or use MemoryBackend for tests.
  */
 
-import { get, set, del, clear, createStore } from 'idb-keyval';
+import { get, set, del, clear, createStore, keys } from 'idb-keyval';
 
 export class IndexedDBBackend {
   /**
@@ -28,6 +28,10 @@ export class IndexedDBBackend {
     /** @private */
     this._store = createStore('phpoc-db', storeName);
   }
+
+  get name() { return 'IndexedDB'; }
+  get deployment() { return 'standalone'; }
+  get isRemote() { return false; }
 
   /**
    * Retrieve a value by key.
@@ -65,12 +69,38 @@ export class IndexedDBBackend {
    * @param {string} key
    * @returns {Promise<void>}
    */
-  async remove(key) {
+  async delete(key) {
     try {
       await del(key, this._store);
     } catch (err) {
       throw new Error(
         `IndexedDBBackend: error deleting key "${key}": ${err.message}`
+      );
+    }
+  }
+
+  /**
+   * Alias for delete() — backward compat.
+   * @param {string} key
+   * @returns {Promise<void>}
+   */
+  async remove(key) {
+    return this.delete(key);
+  }
+
+  /**
+   * List all keys matching the given prefix.
+   * @param {string} [prefix='']
+   * @returns {Promise<string[]>}
+   */
+  async list(prefix = '') {
+    try {
+      const allKeys = await keys(this._store);
+      if (!prefix) return allKeys.sort();
+      return allKeys.filter(k => k.startsWith(prefix)).sort();
+    } catch (err) {
+      throw new Error(
+        `IndexedDBBackend: error listing keys: ${err.message}`
       );
     }
   }

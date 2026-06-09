@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
+import { Icons } from '../ui/Icons.jsx';
 
 /**
  * History — completed entries with date/tag filter.
@@ -108,7 +109,7 @@ export default function History() {
 
         {!loading && Object.keys(grouped).length === 0 && (
           <div className="pane-empty">
-            <span className="pane-empty-icon">📋</span>
+            <span className="pane-empty-icon"><Icons.clipboard size={32} /></span>
             <p>No completed entries yet</p>
             <p className="pane-hint">Tasks will appear here after you stop them</p>
           </div>
