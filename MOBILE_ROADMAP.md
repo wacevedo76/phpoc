@@ -236,7 +236,7 @@ This enables CLI ↔ web app file sharing without a remote Worker. The bridge is
 1. ✅ `MockRemoteBackend` — built, 46 tests, 300 across mock infra
 2. ✅ `HttpBackend` — built, 41 tests, bridges Transport→StorageBackend interface
 3. ✅ `StorageBackend.list()` + `HttpTransport.delete()` + Worker DELETE
-4. 🔲 **Browser import/export via File API** — auth-gated (passphrase prompt), entries sealed via HMAC-SHA256 (`crypto.computeSeal`), single `.json` file format. Design complete in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.11`.
+4. ✅ **Browser import/export via File API** — `exportLedger()`, `importLedger()`, `PassphraseModal`. Auth-gated (passphrase → `crypto.authenticate()` → master key). Entries sealed via HMAC-SHA256 (`crypto.seal`/`crypto.verifySeal`). Single `.json` file with `{ format_version, exported_at, entries, seal }`. Import verifies seal + re-validates entry hashes. 3 source files, 83 tests. Commit: `0faf316`.
 5. 🔲 Companion bridge server (Python, ~50 lines)
 6. 🔲 Dockerfile (nginx + bridge server)
 7. 🔲 Multi-tenant Worker + registration for SaaS

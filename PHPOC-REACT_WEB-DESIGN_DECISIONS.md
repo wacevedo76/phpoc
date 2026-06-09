@@ -641,7 +641,7 @@ The SaaS deployment uses the same stack with user isolation layered in:
 |---|---|---|---|
 | 1 | StoragePlugin interface + IndexedDBBackend + HttpBackend + config-driven selection | Interface, IndexedDBBackend, HttpBackend exist. Config-driven factory NOT yet wired. | None |
 | 2 | **MockRemoteBackend** (in-browser R2 simulation) | ✅ Complete (46 tests) — dev mode uses real SyncService + mock remote | Step 1 (interface) |
-| 3 | Browser import/export via File API | Users can backup/restore their ledger via encrypted, signed JSON files | None |
+| 3 | Browser import/export via File API | ✅ Complete (83 tests) — `exportLedger()`, `importLedger()`, `PassphraseModal`. Auth-gated, HMAC-sealed, single `.json` file format. | None |
 | 4 | Ledger engine port to JS | Web becomes self-sufficient (no Python dependency) | Step 1 (storage) |
 | 5 | Staging CRUD (add/edit/delete entries in UI) | Full staging interaction | Step 4 (ledger engine) |
 | 6 | Companion bridge server (Python or Node.js) | Self-hosted + LAN deployments work | Step 1 (interface contract) |
@@ -657,7 +657,7 @@ The SaaS deployment uses the same stack with user isolation layered in:
 |---|---|---|
 | 1 — StoragePlugin interface | ✅ `StorageBackend`, `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` exist | Config-driven factory not yet wired. `list(prefix)` added to StorageBackend. `delete()` added to HttpTransport + MockRemoteBackend. DELETE handler added to Worker. |
 | 2 — MockRemoteBackend | ✅ Complete | 46 tests, 300 total across mock infra |
-| 3 — Import/Export | 🔜 Design complete, TDD pending | Auth-gated (passphrase prompt). File sealed via HMAC-SHA256 (PHPSPEC §5.2 `computeSeal`/`verifySeal`). Entries-only export — no cookie/device metadata. Seal covers `JSON.stringify(entries)`, not file wrapper. Single `.json` file format. Verification failure → reject entirely. |
+| 3 — Import/Export | ✅ Complete (83 tests) | `exportLedger(entries, crypto, masterKey)` → signed JSON Blob. `importLedger(file, crypto, masterKey)` → `{entries, count}`. `PassphraseModal.jsx` — reusable passphrase prompt overlay (reuses AuthScreen pattern). 3 test suites: 24 (export), 26 (import), 33 (modal). Auth-gated (passphrase → `crypto.authenticate()` → master key). Seal = HMAC-SHA256 of `JSON.stringify(entries)` only. Entry hash re-validation on import. Reject entirely on any failure. Settings screen wiring pending (Backup & Restore section). |
 | 4 — Ledger engine JS port | ❌ Not started | Largest remaining work item |
 | 5 — Staging CRUD | ⚠️ Partial | UI scaffold exists, wired to dummy data |
 | 6 — Bridge server | ❌ Not started | |

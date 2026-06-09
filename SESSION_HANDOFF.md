@@ -2,8 +2,8 @@
 
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete)
-- **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite, with GREEN implementation)
-- **Web tests:** 270 passing, 0 failures (49 transport + 46 mock_remote + 60 sync + 74 wasm + 41 http_backend)
+- **Commit (mobile-poc):** `0faf316` (➕ Step 5: Browser import/export via File API, 83 tests)
+- **Web tests:** 353 passing, 0 failures (49 transport + 46 mock_remote + 60 sync + 74 wasm + 41 http_backend + 24 ledger_export + 26 ledger_import + 33 passphrase_modal)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth (ported to JS)
 - **CLI:** In maintenance mode — 1341 tests, fully functional, not actively worked on
@@ -23,7 +23,8 @@
 - ✅ **HttpBackend** — Transport→StorageBackend adapter wrapping pull/push/delete/listFiles into get/set/remove/list (41 tests)
 - ✅ **React Web UI** — Vite + React 18, 9 screen components, bottom tab nav, dark theme
 - ✅ **Auth overlay** — full-screen on first launch, blurred-backdrop overlay on re-auth, Lock button on bottom nav + Profile
-- 🔄 Next: Browser import/export via File API, ledger engine JS port, companion bridge server, import wizard UI
+- ✅ **Browser import/export** — `exportLedger()`, `importLedger()`, `PassphraseModal` (3 source files, 83 tests)
+- 🔄 Next: Settings Backup & Restore UI wiring, ledger engine JS port, companion bridge server, import wizard UI
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -327,16 +328,22 @@ Vite + React 18, 9 screen components, DevModeContext, bottom tab nav, auth overl
 ### Step 4: StorageBackend Interface + HttpBackend ✅
 `StorageBackend` (get/set/remove/clear/list), `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` (Transport→StorageBackend adapter, 41 tests). `delete()` on `HttpTransport` + `MockRemoteBackend`. DELETE handler on Worker. `list()` on StorageBackend interface.
 
-### Step 5: Browser Import/Export via File API 🔜
+### Step 5: Browser Import/Export via File API ✅
+
+**Commit:** `0faf316` (2026-06-09)
 
 **Design (2026-06-09):** Auth-gated (passphrase prompt + `crypto.authenticate()`). Ledger entries sealed via HMAC-SHA256 (`crypto.computeSeal`/`verifySeal`, PHPSPEC §5.2). Single `.json` file with `{ format_version, exported_at, entries, seal }`. Seal covers `JSON.stringify(entries)` only — file wrapper metadata is outside seal. Import verification failure → reject entirely (no partial import). Entry hash re-validation on import. Overwrite-only (no merge).
 
-**Implementation order (TDD):**
-1. `phpoc-web/src/services/ledger_export.js` — exportLedger(storage, crypto, masterKey) → returns Blob
-2. `phpoc-web/src/services/ledger_import.js` — importLedger(storage, crypto, masterKey, file) → imported count
-3. `phpoc-web/src/components/modals/PassphraseModal.jsx` — reusable passphrase prompt overlay
-4. Settings screen: Backup & Restore section with Export/Import buttons
-5. Test suite: `test/ledger_export_test.mjs`, `test/ledger_import_test.mjs`, `test/passphrase_modal_test.mjs`
+**Files created (TDD):**
+1. ✅ `phpoc-web/src/services/ledger_export.js` — `exportLedger(entries, crypto, masterKey)` → signed JSON Blob (24 tests)
+2. ✅ `phpoc-web/src/services/ledger_import.js` — `importLedger(file, crypto, masterKey)` → `{entries, count}` (26 tests)
+3. ✅ `phpoc-web/src/components/modals/PassphraseModal.jsx` — reusable passphrase prompt overlay (33 tests)
+4. 🔜 Settings screen: Backup & Restore section with Export/Import buttons — **not yet wired**
+5. ✅ `test/ledger_export_test.mjs` — 24 tests (format, seal integrity, hash preservation, master key, error handling)
+6. ✅ `test/ledger_import_test.mjs` — 26 tests (seal verify, hash re-validation, file structure, active flags, errors)
+7. ✅ `test/passphrase_modal_test.mjs` — 33 tests (file existence, props, rendering structure via fs inspection)
+
+**Test results:** 83 tests, 0 failures. All green.
 
 ### Step 6: Ledger Engine JS Port 🔜
 Commit staging → ledger chain, chain verification, block push/pull. Largest remaining work item. Port of `domain/ledger/engine.py` and `domain/ledger/chain.py`.
