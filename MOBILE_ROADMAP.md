@@ -55,6 +55,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | **Auth overlay system** | ✅ (CLI re-auth prompt) | ✅ **DONE** — Full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile screen. See `SESSION_HANDOFF.md` (2026-06-09). |
 | **Mock data generator** | N/A | ✅ **DONE** — `scripts/generate_mock_data.py` generates 30 days of realistic staging entries for testing. Weighted weekday/weekend templates, plain: prefix, SHA-256 hashes, UUID4 entry IDs. `--apply` writes to staging.json. 115 entries generated spanning Jun 4 → Jul 3, 2026. |
 | **StoragePlugin interface + backends + factory** | N/A | ✅ **DONE** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite all passing. |
+| **MockRemoteBackend comprehensive test suite** | N/A | ✅ **DONE** — `test/mock_remote_test.mjs` — 179 tests: latency, type preservation, ETag depth, error sim, resetCache, concurrency, path normalization, state inspection, SyncService integration. See `SESSION_HANDOFF.md`. |
 | Ledger block sync (port) | ✅ | ❌ |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
@@ -424,6 +425,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 11 | **Auth Overlay System** — full-screen AuthScreen on first launch, blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile. | 1 day | ✅ DONE — 5 files changed: App.jsx, AuthScreen.jsx, AppLayout.jsx, UserProfile.jsx, App.css. Lock icon turns red on hover, overlay has backdrop blur + pop-in animation. | Jun 9 2026 |
 | 12 | **Mock Data Generator** — script to generate realistic staging entries for testing | 1 day | ✅ DONE — `scripts/generate_mock_data.py`. 30 days, weighted activities, weekday/weekend templates, plain: prefix, SHA-256 hashes. 115 entries (Jun 4 → Jul 3, 2026) applied to staging.json. | Jun 9 2026 |
 | 13 | **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` with `detectDeployment()`. 96-test suite. | 1-2 days | ✅ DONE — 96/96 tests passing. Backend selected from URL param, localStorage config, or auto-detection. `DevModeContext` production boot wired to factory. | Jun 9 2026 |
+| 14 | **MockRemoteBackend comprehensive test suite** — 179 tests covering 9 categories: latency sim, type preservation, ETag depth, error sim, resetCache, concurrency, path normalization, state inspection, SyncService integration (auth gate, push/pull/reconcile, workflows). | 1 day | ✅ DONE — 179/179 passing. Total web tests: 480. | Jun 9 2026 |
 
 ---
 

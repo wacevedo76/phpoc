@@ -4,7 +4,7 @@
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added)
 - **Commit (main):** `1c08002`
 - **Commit (mobile-poc):** `784c1d0` (➕ Transport test suite, with GREEN implementation)
-- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core); 301 passing, 0 failures (web: 74 WASM + 22 CryptoService + 49 transport + 60 sync + 96 storage plugin)
+- **Tests:** 1341 passing, 0 failures (CLI); 61 passing, 0 failures (Rust crypto core); 480 passing, 0 failures (web: 74 WASM + 22 CryptoService + 49 transport + 60 sync + 96 storage plugin + 179 mock remote)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + 93 ledger blocks + index)
 - **Phases:** A (instant reads ✓), B (WAL writes ✓), C (daemon ✓), onboarding ✓
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth
@@ -26,6 +26,7 @@
   - ✅ `HttpTransport` — fetch()-based HTTP transport with ETag caching, 49 tests all passing
   - ✅ **Sync algorithm port** — `phpoc-web/src/sync/` — full auth gate (`checkAndSync()`), staging CRUD, device cookie, merge engine, remote blob sync, localStorage abstraction (StorageBackend + IndexedDBBackend). 60-test suite all passing.
   - ✅ **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class + `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend` + `createStoragePlugin()` config-driven factory. 96-test suite all passing.
+  - ✅ **MockRemoteBackend comprehensive test suite** — `phpoc-web/test/mock_remote_test.mjs` — 179 tests covering latency simulation, type-preservation edge cases, ETag depth, error simulation, resetCache semantics, concurrency, path normalization, state inspection, and full SyncService integration with auth gate, push/pull/reconcile, pause/resume workflows.
 - **Docs reorganized:** `docs/design/` for architectural docs, `archive/` for retired docs
 - **CLI complete:** All commands have auto-re-auth prompting; CLI is in maintenance mode
 
@@ -363,6 +364,7 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ Sync algorithm port — `phpoc-web/src/sync/` — 9 modules (storage abstraction, IndexedDB backend, device cookie, merge engine, remote sync, local cache, SyncService, barrel export). Full `checkAndSync()` auth gate with fast path, specifier mismatch, TTL expiry, reconcile-and-claim. 60-test suite all passing.
 - ✅ **Auth overlay system** — full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button added as last icon on bottom nav bar + in Profile screen. (Jun 9 2026)
 - ✅ **StoragePlugin interface + 4 backends + factory** — `StoragePlugin` abstract class, `MemoryBackend`/`IndexedDBBackend`/`HttpBackend`/`MockRemoteBackend`, `createStoragePlugin()` config-driven factory. 96-test suite all passing.
+- ✅ **MockRemoteBackend comprehensive test suite** — `phpoc-web/test/mock_remote_test.mjs` — 179 tests: latency sim, type-preservation edge cases, ETag depth, error sim, resetCache semantics, concurrency, path normalization, state inspection, SyncService integration (auth gate, push/pull/reconcile, workflows).
 - 🔄 Next: browser import/export via File API, companion bridge server, Dockerfile, multi-tenant Worker
 
 ## This Session (2026-06-09)
@@ -394,13 +396,16 @@ The `StoragePlugin` architecture is now implemented with a 96-test suite.
 3. Auto-detect: if `phpoc_worker_url` is set → SaaS
 4. Default: `standalone` (IndexedDB)
 
-**Result:** 96/96 tests passing, 301 total web tests.
+**Result:** 96/96 tests passing, 480 total web tests.
 
 **Next steps:**
 1. Browser import/export via File API (download/upload JSON)
 2. Companion bridge server (Python, ~50 lines) for self-hosted/LAN
 3. Dockerfile (nginx + bridge server) for one-command deploy
 4. Multi-tenant Worker (user isolation) + registration for SaaS
+
+### MockRemoteBackend Comprehensive Test Suite
+`test/mock_remote_test.mjs` (179 tests) — see standalone section below.
 
 ### Mock Ledger Data Generator
 `scripts/generate_mock_data.py`: New script that generates one month of realistic staging entries for development/testing. Features:
@@ -433,6 +438,23 @@ App loads
   │
   └─ Session expires / cookie mismatch → same overlay flow
 ```
+
+### MockRemoteBackend Comprehensive Test Suite (2026-06-09)
+
+Added `phpoc-web/test/mock_remote_test.mjs` — 179 tests covering `MockRemoteBackend` as a standalone storage simulation and through full `SyncService` integration.
+
+**Test categories (9):**
+1. **Latency simulation (11 tests)** — per-op delays for get/set/delete/list/getWithMeta/setWithMeta, default 2x write latency, explicit write latency, zero-latency fast path
+2. **Type preservation edge cases (29 tests)** — empty/all-zero/all-255 Uint8Array, 100K binary payloads, 100K strings, Unicode/emoji, nested JSON, float precision, `__proto__` pollution guard
+3. **ETag simulation depth (22 tests)** — set generation, re-set updates, identical payloads produce same ETag, `setWithMeta` matches `getEtag()`, conditional GET 200/304, delete/clear removes ETags
+4. **Error simulation (29 tests)** — errorRate=0/1.0 bounds, seed determinism (3 trials), different seeds differ, ~50% rate verified statistically, no partial writes, error recovery, message string
+5. **resetCache() semantics (10 tests)** — preserves data + types, clears ETags, getWithMeta returns 200 after reset, fresh ETags generated, idempotent
+6. **Concurrency (8 tests)** — 100 parallel `set()`, 50 parallel `get()` on same key, concurrent set+delete, concurrent `setWithMeta` preserves ETags
+7. **Path/key normalization (12 tests)** — slash-delimited paths, special characters, 500+ char keys, empty string key, leading/trailing whitespace, deep hierarchy
+8. **State inspection (17 tests)** — `getEtag()` lifecycle, independent ETags, type tracking map consistency
+9. **SyncService integration (41 tests)** — auth gate (no cookie → REAUTH_NEEDED), pushToRemote stores blob+cookie on mock, RemoteSync round-trip, errorRate OFFLINE with local cookie, local CRUD, capture+end+push, pause+resume, latency through pushToRemote, checkRemotePing, no-transport READY, pushBlobOnly (no cookie)
+
+**Result:** 179/179 passing. Total web tests: 480.
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -645,7 +667,7 @@ Scaffolded Vite + React 18 project with 9 screen components, DevModeContext for 
 
 **Design decisions documented in:** `PHPOC-REACT_WEB-DESIGN_DECISIONS.md`
 
-**Next:** StoragePlugin interface, mock remote backend, browser import/export, companion bridge server.
+**Next:** browser import/export, companion bridge server, Dockerfile, multi-tenant Worker.
 
 | Layer | Key Files | What They Do |
 |-------|-----------|--------------|
