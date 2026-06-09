@@ -218,7 +218,7 @@ e536cfd  fix: prevent infinite CPU loop in phase4 tests — configure MagicMock 
 - "Remote blob permanently garbled" was a **false alarm**. Decrypted with master key `00fb89ef...`: valid JSON, 844 bytes, 1 entry.
 - Per-phase test timeouts added via `pytest-timeout` (10s/30s tiers) — prevents any future CPU-lock hang.
 
-## This Session (2026-05-28)
+## This Session (2026-06-09)
 
 ### Docs & UX fixes (2026-05-29)
 
@@ -360,7 +360,74 @@ The CLI reference implementation is complete at 1341 tests and serves as the anc
 - ✅ CryptoService wrapper: `phpoc-web/src/crypto/index.js` — singleton, in-memory key cache, ready-guards, 20 camelCase methods + 5 cached-key convenience wrappers
 - ✅ Transport implementation + test suite — `phpoc-web/src/sync/transport.js` — fetch()-based HttpTransport with ETag caching. `phpoc-web/test/transport_test.mjs` — 49 tests covering pull, push, listFiles, ETag caching, error handling, headers, URL construction, cache reset. All passing (TDD GREEN).
 - ✅ Sync algorithm port — `phpoc-web/src/sync/` — 9 modules (storage abstraction, IndexedDB backend, device cookie, merge engine, remote sync, local cache, SyncService, barrel export). Full `checkAndSync()` auth gate with fast path, specifier mismatch, TTL expiry, reconcile-and-claim. 60-test suite all passing.
-- 🔄 Next: React web UI (auth screen, dashboard, new task, history)
+- ✅ **Auth overlay system** — full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button added as last icon on bottom nav bar + in Profile screen. (Jun 9 2026)
+- 🔄 Next: StoragePlugin interface, mock remote backend, browser import/export, companion bridge server
+
+## This Session (2026-06-09)
+
+### Architecture Decision — Multi-Deployment StoragePlugin
+
+**Decision:** phpoc-web will support four deployment targets from a single codebase, selected at startup via config:
+
+| Deployment | Storage Backend | Multi-user |
+|-----------|----------------|------------|
+| **Standalone PWA** | IndexedDB | Single user |
+| **Local network / LAN** | Companion bridge server (HTTP → filesystem) | Single user |
+| **Docker / LXC** | Bridge server bundled in container | Single user |
+| **SaaS** | Cloudflare Worker → R2 (multi-tenant) | Multi-tenant |
+
+The key interface is `StoragePlugin` — an abstract class with `get(key)`, `put(key, data)`, `list(prefix)`, `delete(key)`. The UI and sync logic are deployment-agnostic. Only the plugin changes.
+
+```
+phpoc-web (React)
+  ├── SyncService / LedgerEngine (same logic)
+  │     └── StoragePlugin (interface)
+  │           ├── IndexedDBBackend (standalone)
+  │           ├── HttpBackend (bridge server or Worker)
+  │           ├── MockRemoteBackend (dev, simulates R2)
+  │           └── S3Backend (advanced deployments)
+  └── Browser File API (import/export)
+```
+
+**Next steps (in priority order):**
+1. `StoragePlugin` interface + config-driven backend selection
+2. `MockRemoteBackend` — in-browser simulation of R2/S3 (latency, ETags, 404s)
+3. Browser import/export via File API (download/upload JSON)
+4. Companion bridge server (Python, ~50 lines) for self-hosted/LAN
+5. Dockerfile (nginx + bridge server) for one-command deploy
+6. Multi-tenant Worker (user isolation) + registration for SaaS
+
+### Mock Ledger Data Generator
+`scripts/generate_mock_data.py`: New script that generates one month of realistic staging entries for development/testing. Features:
+- 30-day schedule with weighted random activities (coding, housework, exercise, leisure, teaching, reading, music practice)
+- Weekday/weekend templates with different routines
+- Uses `plain:` prefix convention so data is readable without auth
+- Proper SHA-256 hashes, UUID4 entry IDs, matching `device_uuid_enc`
+- `--apply` flag writes directly to `~/.local/share/phpoc/staging.json`
+- `--days`, `--start-date`, `--seed`, `--avg-entries` flags for customization
+- Backward compatible: appends to existing staging entries instead of overwriting
+
+### Auth Overlay — Re-auth While App Is Running
+**Files changed:**
+- `phpoc-web/src/App.jsx` — Added `hasBeenAuthenticated` tracking. First launch → full-screen AuthScreen. Re-auth (logout, session expiry) → overlay AuthScreen on top of app content.
+- `phpoc-web/src/components/screens/AuthScreen.jsx` — Added `overlay` prop. Overlay mode uses `.auth-overlay` / `.auth-overlay-card` CSS classes with backdrop blur + scale pop-in animation. Shows "Session expired — please re-authenticate" subtitle.
+- `phpoc-web/src/components/screens/UserProfile.jsx` — Added "🔒 Lock & Re-authenticate" button in a new Session section. Calls `logout()` + `onLogoutRequest()` to trigger overlay.
+- `phpoc-web/src/components/layout/AppLayout.jsx` — Added Lock button as last item in bottom nav bar, separated by a visual divider (`nav-separator`). Lock icon turns red on hover.
+- `phpoc-web/src/App.css` — Added `.auth-overlay` (fixed, fullscreen backdrop with blur + fade-in animation), `.auth-overlay-card` (pop-in animation with scale + translate), `.btn-danger` (red accent for destructive buttons), `.nav-separator` (vertical divider), `.nav-tab-logout` (fixed-width logout tab with red hover).
+
+**Flow:**
+```
+App loads
+  ├─ First time → AuthScreen (radial gradient, full screen)
+  │     └─ Authenticate → Dashboard with bottom nav
+  │
+  ├─ Authenticated → App with 7 nav tabs + Lock button
+  │     └─ User taps Lock (bottom nav or Profile)
+  │           └─ Auth overlay (blurred backdrop, card pops in)
+  │                 └─ Re-authenticate → overlay dismissed, app remains
+  │
+  └─ Session expires / cookie mismatch → same overlay flow
+```
 
 ## ~~Critical Open Issue: Wrong Session Key on Both Machines~~ **RESOLVED — Misdiagnosis**
 
@@ -573,7 +640,7 @@ Scaffolded Vite + React 18 project with 9 screen components, DevModeContext for 
 
 **Design decisions documented in:** `PHPOC-REACT_WEB-DESIGN_DECISIONS.md`
 
-**Next:** wire real SyncService into production mode, implement ledger sync (commit blocks, chain verification), Flutter port.
+**Next:** StoragePlugin interface, mock remote backend, browser import/export, companion bridge server.
 
 | Layer | Key Files | What They Do |
 |-------|-----------|--------------|

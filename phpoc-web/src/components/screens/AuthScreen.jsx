@@ -15,7 +15,7 @@ import { useApp } from '../../context/DevModeContext.jsx';
  *
  * For now, dev mode auto-redirects with a brief flash message.
  */
-export default function AuthScreen({ onAuthenticated }) {
+export default function AuthScreen({ onAuthenticated, overlay = false }) {
   const { isDev, loading, error, login, user } = useApp();
   const [passphrase, setPassphrase] = React.useState('');
   const [authError, setAuthError] = React.useState(null);
@@ -25,10 +25,10 @@ export default function AuthScreen({ onAuthenticated }) {
   React.useEffect(() => {
     if (isDev && !loading && user.isAuthenticated) {
       // Briefly show the auth screen branding, then transition
-      const timer = setTimeout(() => onAuthenticated(), 300);
+      const timer = setTimeout(() => onAuthenticated(), overlay ? 100 : 300);
       return () => clearTimeout(timer);
     }
-  }, [isDev, loading, user.isAuthenticated, onAuthenticated]);
+  }, [isDev, loading, user.isAuthenticated, onAuthenticated, overlay]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -45,10 +45,13 @@ export default function AuthScreen({ onAuthenticated }) {
     }
   };
 
+  const containerClass = overlay ? 'auth-overlay' : 'auth-screen';
+  const cardClass = overlay ? 'auth-overlay-card' : 'auth-card';
+
   if (loading) {
     return (
-      <div className="auth-screen">
-        <div className="auth-card">
+      <div className={containerClass}>
+        <div className={cardClass}>
           <div className="auth-spinner" />
           <p>Initializing...</p>
         </div>
@@ -58,8 +61,8 @@ export default function AuthScreen({ onAuthenticated }) {
 
   if (error) {
     return (
-      <div className="auth-screen">
-        <div className="auth-card auth-error">
+      <div className={containerClass}>
+        <div className={`${cardClass} auth-error`}>
           <h2>Startup Error</h2>
           <p>{error}</p>
           <p className="auth-hint">Check the console for details.</p>
@@ -69,11 +72,11 @@ export default function AuthScreen({ onAuthenticated }) {
   }
 
   return (
-    <div className="auth-screen">
-      <div className="auth-card">
+    <div className={containerClass}>
+      <div className={cardClass}>
         <div className="auth-logo">⏱</div>
         <h1 className="auth-title">PH Ledger</h1>
-        <p className="auth-subtitle">Zero-knowledge time tracking</p>
+        <p className="auth-subtitle">{overlay ? 'Session expired — please re-authenticate' : 'Zero-knowledge time tracking'}</p>
 
         {isDev && (
           <div className="auth-dev-banner">

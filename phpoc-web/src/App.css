@@ -206,6 +206,59 @@ a { color: var(--accent-blue); text-decoration: none; }
 }
 
 /* ===================================================================
+   Auth Overlay (re-auth while app is running)
+   =================================================================== */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(15, 17, 23, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: auth-overlay-fadein 0.25s ease-out;
+}
+
+@keyframes auth-overlay-fadein {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+}
+
+.auth-overlay-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation: auth-overlay-card-pop 0.25s ease-out;
+}
+
+@keyframes auth-overlay-card-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ===================================================================
    App Layout
    =================================================================== */
 .app-layout {
@@ -275,6 +328,24 @@ a { color: var(--accent-blue); text-decoration: none; }
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+
+.nav-separator {
+  width: 1px;
+  background: var(--border-color);
+  margin: 8px 4px;
+  flex-shrink: 0;
+}
+
+.nav-tab-logout {
+  flex: none;
+  width: 48px;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.nav-tab-logout:hover {
+  color: var(--accent-red);
 }
 
 /* ===================================================================
@@ -602,6 +673,16 @@ a { color: var(--accent-blue); text-decoration: none; }
   background: var(--accent-yellow-bg);
   color: var(--accent-yellow);
   border: 1px solid var(--accent-yellow);
+}
+
+.btn-danger {
+  background: var(--accent-red-bg);
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(234, 67, 53, 0.2);
 }
 
 .btn-ghost {

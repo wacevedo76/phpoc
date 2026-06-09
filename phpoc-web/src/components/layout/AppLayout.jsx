@@ -11,11 +11,12 @@ import React from 'react';
  *   │                              │
  *   │                              │
  *   ├──────────────────────────────┤
- *   │  [Home] [Hx] [Tags] [Sync]  │ ← Bottom tab nav
- *   │  [Settings]                  │
- *   └──────────────────────────────┘
+ *   │ [Home] [Hx] [New] [Tags]    │ ← Bottom tab nav
+ *   │ [Profile] [Sync] [Settings] ││ │
+ *   └──────────────────────────────┘ │
+ *                            Lock btn─┘
  */
-export default function AppLayout({ currentScreen, onNavigate, children }) {
+export default function AppLayout({ currentScreen, onNavigate, children, onLogoutRequest }) {
   const tabs = [
     { id: 'dashboard',   label: 'Home',     icon: '🏠' },
     { id: 'history',     label: 'History',  icon: '📋' },
@@ -44,6 +45,15 @@ export default function AppLayout({ currentScreen, onNavigate, children }) {
             <span className="nav-tab-label">{tab.label}</span>
           </button>
         ))}
+        <div className="nav-separator" />
+        <button
+          className="nav-tab nav-tab-logout"
+          onClick={onLogoutRequest}
+          title="Lock & Re-authenticate"
+        >
+          <span className="nav-tab-icon">🔒</span>
+          <span className="nav-tab-label">Lock</span>
+        </button>
       </nav>
     </div>
   );

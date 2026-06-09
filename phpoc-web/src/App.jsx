@@ -37,11 +37,15 @@ function AppInner() {
   const [currentScreen, setCurrentScreen] = useState('dashboard');
   const [profileSubview, setProfileSubview] = useState('profile'); // 'profile' | 'configuration'
   const [authenticated, setAuthenticated] = useState(user.isAuthenticated);
+  const [hasBeenAuthenticated, setHasBeenAuthenticated] = useState(user.isAuthenticated);
 
   // Sync with context auth state
   useEffect(() => {
     if (user.isAuthenticated) {
       setAuthenticated(true);
+      setHasBeenAuthenticated(true);
+    } else {
+      setAuthenticated(false);
     }
   }, [user.isAuthenticated]);
 
@@ -55,6 +59,12 @@ function AppInner() {
 
   const handleAuthenticated = useCallback(() => {
     setAuthenticated(true);
+    setHasBeenAuthenticated(true);
+  }, []);
+
+  const handleLogoutOverlay = useCallback(() => {
+    setAuthenticated(false);
+    // hasBeenAuthenticated stays true → overlay mode
   }, []);
 
   // Loading state
@@ -78,8 +88,8 @@ function AppInner() {
     );
   }
 
-  // Auth gate
-  if (!authenticated) {
+  // Auth gate — full screen on first launch, overlay on re-auth
+  if (!authenticated && !hasBeenAuthenticated) {
     return (
       <AuthScreen onAuthenticated={handleAuthenticated} />
     );
@@ -105,6 +115,7 @@ function AppInner() {
         return (
           <UserProfile
             onNavigateToConfig={() => setProfileSubview('configuration')}
+            onLogoutRequest={handleLogoutOverlay}
           />
         );
       case 'settings':
@@ -117,8 +128,12 @@ function AppInner() {
   };
 
   return (
-    <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate}>
+    <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogoutOverlay}>
       {renderScreen()}
+      {/* Re-auth overlay: shown when authenticated drops while app was running */}
+      {!authenticated && hasBeenAuthenticated && (
+        <AuthScreen overlay onAuthenticated={handleAuthenticated} />
+      )}
     </AppLayout>
   );
 }

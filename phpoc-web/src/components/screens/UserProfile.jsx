@@ -14,8 +14,8 @@ import { useApp } from '../../context/DevModeContext.jsx';
  *   @param {function} onNavigateToConfig — () => void, called when user taps
  *          "Open Configuration"
  */
-export default function UserProfile({ onNavigateToConfig }) {
-  const { services, user, isDev } = useApp();
+export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
+  const { services, user, isDev, logout } = useApp();
   const sync = services.sync;
 
   const [stats, setStats] = useState(null);
@@ -163,6 +163,30 @@ export default function UserProfile({ onNavigateToConfig }) {
           ) : (
             <p className="profile-empty">No data yet.</p>
           )}
+        </section>
+
+        {/* ── Session ── */}
+        <section className="profile-section">
+          <h3 className="profile-section-title">Session</h3>
+          <div className="profile-detail-list">
+            <div className="profile-detail-row">
+              <span className="profile-detail-label">Status</span>
+              <span className="profile-detail-value">
+                <span className="profile-status-dot profile-status-authenticated" />
+                {' '}Authenticated
+              </span>
+            </div>
+          </div>
+          <button
+            className="btn btn-danger btn-sm"
+            style={{ marginTop: '1rem' }}
+            onClick={() => {
+              logout();
+              if (onLogoutRequest) onLogoutRequest();
+            }}
+          >
+            🔒 Lock & Re-authenticate
+          </button>
         </section>
 
         {/* ── Device Info ── */}
