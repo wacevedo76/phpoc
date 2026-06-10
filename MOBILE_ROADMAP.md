@@ -42,7 +42,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
 | Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
 | HTTP Transport implementation + test suite (49 tests) | N/A | ✅ GREEN — `phpoc-web/src/sync/transport.js` (full fetch()-based impl with ETag caching) — `phpoc-web/test/transport_test.mjs` (49 tests, all passing) |
-| Core engine (chain, crypto, storage) | ✅ | ❌ |
+| Core engine (chain, crypto, storage) | ✅ | ✅ DONE — All 4 modules (Chain 67, Index 33, Summary 49, Engine 97), 246 tests, 0 failures |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
 | Remote staging sync (port to JS) | ✅ | ✅ FULL — `phpoc-web/src/sync/sync.js` — SyncService with `checkAndSync()`, `_reconcileAndClaim()`, `pushToRemote()`, `pushBlobOnly()`. Full auth gate flow with cookie fast path. 60-test suite. |
 | Auth gate (device cookies port) | ✅ | ✅ FULL — `phpoc-web/src/sync/cookie.js` — DeviceCookie (create, validate TTL, parse remote, match specifiers, destroy). 14-test suite. |
@@ -55,7 +55,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | **React Web UI scaffold** | N/A | ✅ **DONE** — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, bottom tab nav. 14 modules, all compile clean. See `SESSION_HANDOFF.md` Step 3. |
 | **Auth overlay system** | ✅ (CLI re-auth prompt) | ✅ **DONE** — Full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile screen. See `SESSION_HANDOFF.md` (2026-06-09). |
 | **Mock data generator** | N/A | ✅ **DONE** — `scripts/generate_mock_data.py` generates 30 days of realistic staging entries for testing. Weighted weekday/weekend templates, plain: prefix, SHA-256 hashes, UUID4 entry IDs. `--apply` writes to staging.json. 115 entries generated spanning Jun 4 → Jul 3, 2026. |
-| Ledger block sync (port) | ✅ | ❌ |
+| Ledger block sync (port) | ✅ | ✅ DONE — LedgerEngine.verify() catches tampered chain, revert restores entries |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
 
 ---
@@ -434,6 +434,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 14 | **MockDataSeeder** — realistic staging data generator for web dev mode | 1 day | ✅ DONE — `phpoc-web/src/services/MockDataSeeder.js`. 14 days of entries + cookie + genesis + index. 205 tests. | Jun 9 2026 |
 | 15 | **DevModeContext rewired** — DummySyncService replaced with real SyncService + MockRemoteBackend | 1 day | ✅ DONE — Real auth gate, cookie setup, entry pull from mock remote. Full-stack simulation in-browser. | Jun 9 2026 |
 | 16 | **HttpBackend + StorageBackend.list + Worker DELETE** — Transport→StorageBackend adapter, `delete()` on HttpTransport/MockRemoteBackend, DELETE handler on Worker | 1 day | ✅ GREEN — 41 tests (TDD). `list()` added to StorageBackend + MemoryBackend. Worker now handles DELETE method. Zero regressions (155 web tests, 270 total). | Jun 9 2026 |
+| 17 | **Ledger Engine JS Port** — 4 modules: `LedgerChain`, `IndexManager`, `SummaryPolicy`, `LedgerEngine` | 2-3 days | ✅ DONE — All 4 modules GREEN, 246 tests, 0 failures. Chain (67), Index (33), Summary (49), Engine (97). Direct `StorageBackend` consumption (key convention `ledger:blocks`/`ledger:index`). No adapter layer. | Jun 10 2026 |
 
 ---
 

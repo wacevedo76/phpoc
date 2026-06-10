@@ -3,9 +3,16 @@
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete)
 - **Commit (mobile-poc):** `0faf316` (➕ Step 5: Browser import/export via File API, 83 tests)
-- **Web tests:** 353 passing, 0 failures (49 transport + 46 mock_remote + 60 sync + 74 wasm + 41 http_backend + 24 ledger_export + 26 ledger_import + 33 passphrase_modal)
+- **Web tests:** 353 existing + 246 TDD tests = 599 total
+  - Existing: 353 passing, 0 failures
+  - **Step 6 (Ledger Engine JS Port) — ✅ COMPLETE** (246 assertions, 0 failures)
+    - `test/ledger_chain_test.mjs` — 67 assertions ✅ GREEN (source: `src/ledger/chain.js`)
+    - `test/index_manager_test.mjs` — 33 assertions ✅ GREEN (source: `src/ledger/index_manager.js`)
+    - `test/summary_policy_test.mjs` — 49 assertions ✅ GREEN (source: `src/ledger/summary_policy.js`)
+    - `test/ledger_engine_test.mjs` — 97 assertions ✅ GREEN (source: `src/ledger/engine.js`)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
 - **Auth gate:** Cookie-only fast path, device_uuid decides pull vs push after auth (ported to JS)
+- **Storage decision (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON). No adapter layer.
 - **CLI:** In maintenance mode — 1341 tests, fully functional, not actively worked on
 - **Mobile roadmap:** `MOBILE_ROADMAP.md` — comprehensive cross-platform plan (web, Flutter, React Native contingency)
 
@@ -24,7 +31,12 @@
 - ✅ **React Web UI** — Vite + React 18, 9 screen components, bottom tab nav, dark theme
 - ✅ **Auth overlay** — full-screen on first launch, blurred-backdrop overlay on re-auth, Lock button on bottom nav + Profile
 - ✅ **Browser import/export** — `exportLedger()`, `importLedger()`, `PassphraseModal` (3 source files, 83 tests)
-- 🔄 Next: Settings Backup & Restore UI wiring, ledger engine JS port, companion bridge server, import wizard UI
+- ✅ **LedgerChain** — block ops, seal/sign, buildDayBlock, append/truncate, chain verification, single-block verification (67 tests, GREEN)
+- ✅ **IndexManager** — blind index, query, update, clear, reload, rebuild, getAll returns copy (33 tests, GREEN)
+- ✅ **SummaryPolicy** — YearMonthSummaryPolicy, YearOnlySummaryPolicy, NoSummaryPolicy (49 tests, GREEN)
+- ✅ **LedgerEngine** — commit (group by date, encrypt, summary insertion), verify, revert, queryIndex, rebuildIndex (97 tests, GREEN)
+- ✅ **Ledger Engine JS Port** — all 4 modules complete (246 tests, 0 failures)
+- 🔄 Next: Staging CRUD in UI (Step 7), Companion bridge server (Step 8), Docker + multi-tenant Worker (Step 9)
 
 ## Auth Gate Design — `check_and_sync()` (2026-05-28)
 
@@ -345,11 +357,34 @@ Vite + React 18, 9 screen components, DevModeContext, bottom tab nav, auth overl
 
 **Test results:** 83 tests, 0 failures. All green.
 
-### Step 6: Ledger Engine JS Port 🔜
-Commit staging → ledger chain, chain verification, block push/pull. Largest remaining work item. Port of `domain/ledger/engine.py` and `domain/ledger/chain.py`.
+### Step 6: Ledger Engine JS Port ✅ COMPLETE (2026-06-10)
+Commit staging → ledger chain, chain verification, block push/pull. Port of `domain/ledger/engine.py` and `domain/ledger/chain.py`.
+
+**Status (2026-06-10):** All 4 modules GREEN — 246 assertions, 0 failures.
+
+**Files:**
+- ✅ `src/ledger/chain.js` — LedgerChain (block ops, seal/sign, build, append, truncate, verify) — 67 tests, GREEN
+- ✅ `src/ledger/index_manager.js` — IndexManager (blind index, query, update, clear, reload, getAll returns copy) — 33 tests, GREEN
+- ✅ `src/ledger/summary_policy.js` — YearMonthSummaryPolicy, YearOnlySummaryPolicy, NoSummaryPolicy — 49 tests, GREEN
+- ✅ `src/ledger/engine.js` — LedgerEngine (commit, verify, revert, queryIndex, rebuildIndex, helpers) — 97 tests, GREEN
+
+**Test files — all GREEN:**
+- `test/ledger_chain_test.mjs` — ✅ 67 assertions, GREEN
+- `test/index_manager_test.mjs` — ✅ 33 assertions, GREEN
+- `test/summary_policy_test.mjs` — ✅ 49 assertions, GREEN
+- `test/ledger_engine_test.mjs` — ✅ 97 assertions, GREEN
+
+**Source file status:** All four source files (`chain.js`, `index_manager.js`, `summary_policy.js`, `engine.js`) already existed and were fully functional — no source changes needed.
+
+**Test-only fixes (2026-06-10):**
+- **Epoch timestamps:** 4 hardcoded epoch values in `ledger_engine_test.mjs` were wrong — `1704153600000` maps to `2024-01-02`, not `2025-01-02`. Replaced with `new Date(Date.UTC(...)).getTime()` for correct dates on `entry1`, `entryDay1a`, `entryDay1b`, `entryDay2`.
+- **Tampered seal test:** The deterministic mock hash happened to start with `0000`, making `'0000' + hash.slice(4)` a no-op. Changed to `'f'.repeat(64)` to guarantee detection.
+- **Missing `await`:** 2 async calls without `await` — `rebuildIndex()` and `getDayBlocks()`. Added `await` to prevent race conditions / Promise-as-array bugs.
+
+**Storage decision:** Direct `StorageBackend` consumption (Option B) — key convention `ledger:blocks` for the chain array, `ledger:index` for the blind index. No adapter layer.
 
 ### Step 7: Staging CRUD in UI 🔜
-Full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data.
+Full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. Depends on Step 6 completion.
 
 ### Step 8: Companion Bridge Server 🔜
 ~50-100 lines Python HTTP server implementing same API contract as Worker. Enables self-hosted LAN deployment.

@@ -572,6 +572,8 @@ The SaaS deployment uses the same stack with user isolation layered in:
 
 ### 11.11 Import/Export Design (2026-06-09)
 
+
+
 **Auth gate:**
 - Both import and export require passphrase entry via modal prompt before proceeding
 - Passphrase → `crypto.authenticate()` → master key
@@ -649,6 +651,46 @@ The SaaS deployment uses the same stack with user isolation layered in:
 | 8 | Multi-tenant Worker (user isolation) + registration service | SaaS deployment | Step 1 (transport contract) |
 | 9 | Real crypto (WASM) replaces DummyCryptoService | Production-ready crypto | Step 4 (ledger engine) |
 
+### 11.12 Ledger Engine JS Port — Design Decisions (2026-06-10)
+
+**Storage integration (Option B):** Direct `StorageBackend` consumption — no adapter layer.
+The `LedgerChain`, `IndexManager`, and `LedgerEngine` classes use the same `StorageBackend`
+interface (from `storage.js`) that the sync layer already uses, rather than introducing
+separate `AbstractLedgerStore` / `AbstractIndexStore` adapter classes.
+
+| Dimension | Decision | Rationale |
+|-----------|----------|-----------|
+| Storage interface | Direct `StorageBackend` | Single consistent abstraction across the codebase. Every other module (`SyncService`, `LocalCache`, `HttpBackend`) uses it directly. Adding parallel Python-style abstract stores would be the *only* second storage pattern. |
+| Key convention | `ledger:blocks` (JSON array), `ledger:index` (JSON dict) | Simple, discoverable, same pattern as other modules. No adapter boilerplate needed. |
+| Block format | Byte-identical to CLI (`domain/ledger/chain.py`) | 🔴 O8 constraint from `__init__.py`. Test fixtures include known-good block structure verified against CLI output. |
+
+**TDD approach:** Four modules tested in dependency order (bottom-up):
+
+| Order | Module | Test file | Assertions | Depends on |
+|-------|--------|-----------|------------|------------|
+| 1 | `LedgerChain` — block operations | `test/ledger_chain_test.mjs` | 40 | `CryptoService` calls (`seal`, `verifySeal`, `sign`, `sha256`) + `StorageBackend` |
+| 2 | `IndexManager` — blind index | `test/index_manager_test.mjs` | 22 | `StorageBackend` (key `ledger:index`) |
+| 3 | `SummaryPolicy` — boundary summaries | `test/summary_policy_test.mjs` | 21 | `CryptoService` calls (`seal`, `sign`) |
+| 4 | `LedgerEngine` — commit/verify/revert | `test/ledger_engine_test.mjs` | 50 | All above + `CryptoService` (`encrypt`, `decrypt`, `seal`, `sha256`) + `StorageBackend` |
+
+**Test coverage highlights:**
+- `LedgerChain`: seal/sign helpers, `buildDayBlock()` structure, day_index auto-increment, entry hash computation, pre-hashed vs raw entries, optional identity signature, `appendBlocks()` linkage rejection, `truncate()` preserves genesis, `verify()` catches tampered seal/tampered prev_hash/tampered entry hash/tampered signature, `verifyBlock()` edge cases
+- `IndexManager`: `update()` create/accumulate/remove-at-zero/remove-date, `query()` range/single-day/from>to/partial-overlap, `clear()`, `reload()` picks up external changes, `getAll()` returns defensive copy
+- `SummaryPolicy`: `YearMonthSummaryPolicy` boundary detection (same month, month-only, year+month, cross-year Dec→Jan→Feb, skip-month Dec→Feb), no-redundant-after-year-summary, identity signature support; `YearOnlySummaryPolicy` (year-only, no month); `NoSummaryPolicy` (always empty); all policies return empty array not null for no-op
+- `LedgerEngine`: empty commit, single-day/multi-day grouping, field encryption (`startTime_enc`, `endTime_enc`, `metadata_enc`, `pauses_enc`), content_hash computation, staging-only field removal (start_epoch, end_epoch, pauses, metadata, is_active, is_paused), month boundary summary insertion, year boundary summary insertion (+12→month), verify catches tampered chain, revert restores entries and updates index negatively, revert too-many returns -1, revert removes summary blocks between reverted days, rebuildIndex scans chain, edge cases (empty title, zero duration, empty chain)
+
+**Current status (2026-06-10):** ✅ COMPLETE — All 4 modules GREEN, 246 assertions, 0 failures. Source files at `src/ledger/{chain,index_manager,summary_policy,engine}.js` are fully functional. Test-only fixes were needed: 4 epoch timestamps corrected (hardcoded `1704153600000` maps to 2024, not 2025), 1 tampered-seal test strengthened (mock hash collision), 2 missing `await` keywords added. Zero regressions against existing 353 web tests.
+
+**CLI reference mapping:**
+
+| Python file | JS port | Key structural differences |
+|---|---|---|
+| `domain/ledger/chain.py` | `src/ledger/chain.js` | Uses `StorageBackend.get/set('ledger:blocks')` instead of `AbstractLedgerStore.read_blocks/append_blocks` |
+| `domain/ledger/index_manager.py` | `src/ledger/index_manager.js` | Uses `StorageBackend.get/set('ledger:index')` instead of `AbstractIndexStore` |
+| `domain/ledger/summary_policy.py` | `src/ledger/summary_policy.js` | JS idiomatic: object with `getSummaryBlocks()` returning array instead of Python polymorphism |
+| `domain/ledger/engine.py` | `src/ledger/engine.js` | Optional `identitySecret` parameter instead of Python's duck-typed `identity_secret` |
+| `domain/ledger/__init__.py` | N/A | Design doc only — the 🔴 O8 constraint is enforced by test fixtures |
+
 **Steps 1–5 are in-browser only** — zero server code required. Steps 6–9 layer on deployment options.
 
 ### 11.10 Current Status (2026-06-09)
@@ -658,7 +700,7 @@ The SaaS deployment uses the same stack with user isolation layered in:
 | 1 — StoragePlugin interface | ✅ `StorageBackend`, `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` exist | Config-driven factory not yet wired. `list(prefix)` added to StorageBackend. `delete()` added to HttpTransport + MockRemoteBackend. DELETE handler added to Worker. |
 | 2 — MockRemoteBackend | ✅ Complete | 46 tests, 300 total across mock infra |
 | 3 — Import/Export | ✅ Complete (83 tests) | `exportLedger(entries, crypto, masterKey)` → signed JSON Blob. `importLedger(file, crypto, masterKey)` → `{entries, count}`. `PassphraseModal.jsx` — reusable passphrase prompt overlay (reuses AuthScreen pattern). 3 test suites: 24 (export), 26 (import), 33 (modal). Auth-gated (passphrase → `crypto.authenticate()` → master key). Seal = HMAC-SHA256 of `JSON.stringify(entries)` only. Entry hash re-validation on import. Reject entirely on any failure. Settings screen wiring pending (Backup & Restore section). |
-| 4 — Ledger engine JS port | ❌ Not started | Largest remaining work item |
+| 4 — Ledger engine JS port | ✅ Complete (246 tests) | All 4 modules GREEN — Chain (67), Index (33), Summary (49), Engine (97). Direct `StorageBackend` consumption with key convention `ledger:blocks`/`ledger:index`. No adapter layer. Zero regressions against 353 existing web tests. |
 | 5 — Staging CRUD | ⚠️ Partial | UI scaffold exists, wired to dummy data |
 | 6 — Bridge server | ❌ Not started | |
 | 7 — Dockerfile | ❌ Not started | |
