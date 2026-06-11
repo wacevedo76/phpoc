@@ -8,6 +8,7 @@
 - **Auth gate:** Cookie-only fast path. Full implementation in `src/sync/sync.js` (60 tests). Documented in `docs/design/DESIGN_MULTI_DEVICE_SESSION.md`.
 - **Architecture:** Multi-deployment via `StorageBackend` interface — standalone PWA (IndexedDB), self-hosted LAN/Docker (bridge server), SaaS (Worker→R2). Full details in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.
 - **Onboarding:** New phase-based lifecycle system with Landing, Onboarding, Auth, and Ready phases. Production mode collects **username** and **email** (per PHPSPEC §4.1) alongside passphrase, creates a PHPSPEC-compliant genesis block with encrypted recovery seed, encrypted identity secret, HMAC seal, and identity signature. Dev mode preserved for backward compat via `?dev=true`.
+- **Sync Screen:** Complete rewrite of the Sync screen (`SyncSettings.jsx`). Shows all uncommitted entries (active + stopped) as compact cards. Stopped entries get a yellow border/yellow left syncability indicator, can be selected for committing, and expand on click to show inline tag/comment editing (× buttons to remove tags, +input to add, debounced comment textarea). Active entries show a red left indicator, lock icon, and are non-expandable. Commit buttons sit between the entries list and the sync status section.
 
 ### Web Platform — Completed Steps
 
@@ -25,9 +26,10 @@
 | 10 | **Export works in dev mode** — uses cached master key from bootstrap instead of requiring seed authentication. Dev mode: any passphrase works. | ✅ | — |
 | 11 | **Recovery seed display** — after new ledger creation, a full-screen overlay shows the base64 seed in monospace. "I've saved it" confirm button. Only shown once. | ✅ | — |
 | 12 | **Logout button** — renamed from "Lock" to "Logout" with exit-door icon. Clears crypto master key, returns to Landing screen. Fixed blank screen bug (hasExistingData) and in-memory data loss on re-login (FallbackStorage caching). | ✅ | — |
-| 13 | Staging CRUD in UI (Dashboard) | 🔜 | — |
-| 14 | Companion bridge server (Python) | 🔜 | — |
-| 15 | Docker + multi-tenant Worker | 🔜 | — |
+| 13 | **Sync Screen with Commit UI** — dedicated Sync screen replacing old sync status panel. Shows all uncommitted entries (active + stopped) in compact cards. Stopped entries: yellow border/syncability indicator, expandable inline tag & comment editing (× remove, +input add, debounced comment textarea). Active entries: red border (not syncable), compact non-expandable with lock icon. Commit button bar (Commit Selected / Commit All) between entries and status section. Sync status, Last push, Remote availability below. | ✅ | — |
+| 14 | Staging CRUD in UI (Dashboard) | 🔜 | — |
+| 15 | Companion bridge server (Python) | 🔜 | — |
+| 16 | Docker + multi-tenant Worker | 🔜 | — |
 
 ### Ledger Engine — Step 6 Detailed Status
 
@@ -83,6 +85,7 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/context/DevModeContext.jsx` | `createNewLedger()` now accepts username + email, creates genesis block via `engine.init()` |
 | `phpoc-web/src/components/screens/UserProfile.jsx` | Shows `user.username` as display name and `user.email` underneath |
 | `phpoc-web/src/components/screens/Settings.jsx` | Settings — Data Management section with Import/Export |
+| `phpoc-web/src/components/screens/SyncSettings.jsx` | Sync screen — compact pills for all uncommitted entries, selection checkboxes, expand/collapse with inline tag & comment editing, Commit Selected/Commit All buttons, sync status section below |
 | `phpoc-web/src/components/screens/History.jsx` | History — display-only entry list with staging/committed badges, expand/collapse details on card click, date/tag filters, no commit UI |
 | `phpoc-web/src/sync/local_cache.js` | `StagingEntry` now tracks `committed` (boolean) and `block_index` (number). Added `markCommitted()`. |
 | `phpoc-web/src/sync/sync.js` | Exposes `markCommitted()` from LocalCache |
@@ -124,22 +127,14 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ## Next Steps
 
-### 1. Build Sync Screen with Commit UI
-
-Move the commit/selection UI from History (removed) into a dedicated Sync screen:
-- Show uncommitted entries with selection checkboxes
-- "Commit Selected" / "Commit All" buttons
-- Call `commitEntries()` from DevModeContext
-- Show commit progress and result (hash prefix, block index)
-
-### 2. Wire Device Cookie TTL to Re-auth Overlay
+### 1. Wire Device Cookie TTL to Re-auth Overlay
 
 The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
 - Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
 - Pop the `AuthScreen` overlay when TTL expires (30 min default)
 - Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
 
-### 3. Wire Identity Secret into LedgerEngine for Commit Signing
+### 2. Wire Identity Secret into LedgerEngine for Commit Signing
 
 The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 

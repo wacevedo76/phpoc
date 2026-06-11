@@ -19,6 +19,7 @@ import {
   Play,
   Pause,
   Square,
+  Check,
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
@@ -80,6 +81,8 @@ export const Icons = {
   list: List,
   fileText: FileText,
   smartphone: Smartphone,
+
+  check: Check,
 
   // Fallback: render emoji as SVG alternative
   devMode: Smartphone,

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html><head><title>PH Ledger — Reset</title></head>
+<body>
+<h2>Clearing PH Ledger data...</h2>
+<script>
+  // Clear all IndexedDB databases
+  indexedDB.databases().then(dbs => {
+    dbs.forEach(db => { indexedDB.deleteDatabase(db.name); });
+  });
+  // Clear relevant localStorage keys
+  ['phpoc_dev_mode', 'phpoc_seed', 'phpoc_username', 'phpoc_email', 'phpoc_identity_secret'].forEach(k => {
+    localStorage.removeItem(k);
+  });
+  console.log('✅ PH Ledger data cleared');
+  document.body.innerHTML = '<h2 style="color:green">✅ Data cleared!</h2><p><a href="/">← Back to app</a></p>';
+</script>
+</body></html>

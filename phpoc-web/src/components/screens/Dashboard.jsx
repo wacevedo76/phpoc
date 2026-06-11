@@ -35,6 +35,7 @@ export default function Dashboard() {
   // New task form state
   const [newTitle, setNewTitle] = useState('');
   const [newTags, setNewTags] = useState('');
+  const [isOneOff, setIsOneOff] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
 
   // Handle starting a new task
@@ -43,23 +44,39 @@ export default function Dashboard() {
     if (!newTitle.trim()) return;
     if (!sync) return;
 
+    const now = Date.now();
+
     try {
-      setStatusMsg(`Starting "${newTitle.trim()}"...`);
-      await sync.capture({
-        title: newTitle.trim(),
-        startEpoch: Date.now(),
-        tags: newTags.split(',')
-          .map(t => t.trim())
-          .filter(Boolean),
-      });
+      if (isOneOff) {
+        setStatusMsg(`Logging "${newTitle.trim()}"...`);
+        await sync.capture({
+          title: newTitle.trim(),
+          startEpoch: now,
+          endEpoch: now,
+          isActive: false,
+          tags: newTags.split(',')
+            .map(t => t.trim())
+            .filter(Boolean),
+        });
+      } else {
+        setStatusMsg(`Starting "${newTitle.trim()}"...`);
+        await sync.capture({
+          title: newTitle.trim(),
+          startEpoch: now,
+          tags: newTags.split(',')
+            .map(t => t.trim())
+            .filter(Boolean),
+        });
+      }
       setNewTitle('');
       setNewTags('');
+      setIsOneOff(false);
       setStatusMsg(null);
       await refresh();
     } catch (err) {
       setStatusMsg(`Error: ${err.message}`);
     }
-  }, [newTitle, newTags, sync, refresh]);
+  }, [newTitle, newTags, isOneOff, sync, refresh]);
 
   // Handle pause
   const handlePause = useCallback(async (title) => {
@@ -150,17 +167,28 @@ export default function Dashboard() {
         </div>
 
         <form className="new-task-form" onSubmit={handleStartTask}>
-          <div className="form-group">
+          <div className="form-group title-row">
             <label htmlFor="task-title" className="form-label">Title</label>
-            <input
-              id="task-title"
-              type="text"
-              className="form-input form-input-lg"
-              placeholder="What are you working on?"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              autoFocus
-            />
+            <div className="title-input-group">
+              <input
+                id="task-title"
+                type="text"
+                className="form-input form-input-lg"
+                placeholder="What are you working on?"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                autoFocus
+              />
+              <label className="oneoff-checkbox-label">
+                <input
+                  type="checkbox"
+                  className="oneoff-checkbox"
+                  checked={isOneOff}
+                  onChange={(e) => setIsOneOff(e.target.checked)}
+                />
+                <span className="oneoff-text">one-off</span>
+              </label>
+            </div>
           </div>
 
           <div className="form-group">
@@ -188,7 +216,11 @@ export default function Dashboard() {
             className="btn btn-primary btn-start"
             disabled={!newTitle.trim()}
           >
-            <Icons.play size={16} /> Start
+            {isOneOff ? (
+              <><Icons.check size={16} /> Log</>
+            ) : (
+              <><Icons.play size={16} /> Start</>
+            )}
           </button>
         </form>
 

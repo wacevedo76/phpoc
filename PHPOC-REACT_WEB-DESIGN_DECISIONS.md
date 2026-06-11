@@ -20,7 +20,7 @@ Each screen is a standalone React component in `src/components/screens/`. Screen
 | NewTask | `NewTask.jsx` | `ph add` | Standalone task creation (alternative entry) |
 | History | `History.jsx` | `ph list` | Completed entries, grouped by day, filtered |
 | Tags | `Tags.jsx` | `ph tags` | Tag list with frequency counts |
-| SyncSettings | `SyncSettings.jsx` | `ph sync` | Sync status display, manual sync trigger |
+| SyncSettings | `SyncSettings.jsx` | `ph sync` | Sync screen — uncommitted entries list with selection, commit to ledger, sync status section |
 | UserProfile | `UserProfile.jsx` | `ph login info` | Identity card, auth status, stats, gateway to config |
 | Configuration | `Configuration.jsx` | `ph config` / CLI config file | All 27 CLI config fields across 9 sections |
 | LedgerSync | `LedgerSync.jsx` | `ph sync --commit` | Phase 3 placeholder for block chain commit |
@@ -230,7 +230,14 @@ If deep linking becomes necessary (e.g., `ph://ledger/view/2026-06-01`), React R
                   │       ├─ Debug (trace toggle)
                   │       └─ Staging (blob size tier select)
                   ├─ <SyncSettings />
-                  │   ├─ SyncIndicator
+                  │   ├─ Entry list (compact pills)
+                  │   │   ├─ [☐] Stopped entry (yellow, expandable)
+                  │   │   │   └─ Inline tag editing (× remove, +input add)
+                  │   │   │   └─ Comment textarea (debounced auto-save)
+                  │   │   └─ 🔴 Active entry (red, compact, locked)
+                  │   ├─ Commit button bar
+                  │   │   ├─ Commit Selected (N)
+                  │   │   └─ Commit All (N)
                   │   ├─ Status detail rows
                   │   └─ Sync Now button
                   └─ <Settings />
@@ -886,3 +893,67 @@ if (!masterKey) {
 | 13 — Export works in dev mode | ✅ Complete | Uses cached master key when available, skips seed auth. Any passphrase works in dev mode. |
 | 14 — Recovery seed display | ✅ Complete | Full-screen overlay after onboarding shows base64 seed, "I've saved it" confirm button. |
 | 15 — Logout button + fixes | ✅ Complete | Renamed from Lock to Logout. Fixed blank screen (hasExistingData). Fixed in-memory data loss (FallbackStorage caching). |
+| 16 — Sync screen with Commit UI | ✅ Complete | Dedicated Sync screen replacing old status panel. Uncommitted entries (active + stopped) as compact pills. Stopped: yellow border/left syncability indicator, expandable inline tag & comment editing. Active: red border, lock icon, non-expandable. Commit Selected/Commit All buttons. Status section below. `commitEntries()` in DevModeContext returns result. |
+
+### 11.20 Sync Screen Design (2026-06-11)
+
+**Problem:** The old SyncSettings screen showed only sync status (READY/OFFLINE/REAUTH) with a manual Sync Now button. There was no way to see which entries were uncommitted, select them for committing, or manage tags/comments inline during the sync flow.
+
+**Solution:** Complete rewrite of `SyncSettings.jsx` into a full-featured Sync screen.
+
+**Layout (portrait, default):**
+
+```
+┌──────────────────────────────┐
+│  Sync                    [↻] │  ← Screen header
+├──────────────────────────────┤
+│  [☐] ✓ Completed Task   12m  │  ← Compact pills for stopped
+│  #tag1  #tag2          [×]▶ │     entries (expandable)
+│  ┌────────────────────────┐  │
+│  │ [+tag]                │  │
+│  │ Add a comment…        │  │
+│  └────────────────────────┘  │
+│  🔴 ▶ Active Task       5m  │  ← Active entries (compact, locked)
+│  (scrollable)               │
+├──────────────────────────────┤
+│  [Commit Selected (N)]       │  ← Commit button bar
+│  [Commit All (N)]            │
+├──────────────────────────────┤
+│  Status    ● Synced          │  ← Sync status info
+│  Last push 2:30 PM           │
+│  Remote    ✅ Configured     │
+└──────────────────────────────┘
+```
+
+**Design decisions:**
+
+1. **Three-zone layout** — scrollable entries list (top), commit button bar (middle), sync status (bottom). The commit bar acts as a visual separator between actionable entries and passive status info.
+
+2. **Color-coded syncability indicators:**
+   - **Yellow** border + left indicator → stopped entry, ready to commit
+   - **Red** left indicator → active entry, cannot commit yet
+   - On hover, border changes to blue for interactive feedback
+
+3. **Expand/collapse for stopped entries only** — clicking a stopped card toggles the inline editing panel (tags + comment). Active entries are compact-only and non-interactive.
+
+4. **Checkbox operates independently** — clicking the checkbox toggles selection without triggering expand/collapse (`e.stopPropagation()`). This allows batch operations on collapsed cards.
+
+5. **Inline tag editing** — reuses the same pattern as History.jsx:
+   - × buttons on each tag to remove
+   - `+tag` input (Enter to confirm, deduplicated, lowercased)
+   - Tags saved instantly via `sync.modify(entry_index, { tags })`
+
+6. **Inline comment editing** — textarea with debounced auto-save (800ms), saves on blur too. Matches History.jsx behavior.
+
+7. **Active entries** show a 🔒 lock icon (red circle), no checkbox, no expand — they visually communicate "not ready for sync."
+
+8. **Expanded state is pruned** — when entries are removed from the list (e.g. committed by another session or removed), their editing state is cleaned up.
+
+9. **Backend fix:** `commitEntries()` in `DevModeContext.jsx` now returns the `{hashPrefix, committedEntryIds, blockIndex}` result from `LedgerEngine.commit()`, enabling the Sync screen to display commit confirmation details.
+
+10. **`SyncIndicator` reused** — the status section uses the existing `SyncIndicator` component for consistent visual status display across screens.
+
+**Key files:**
+- `phpoc-web/src/components/screens/SyncSettings.jsx` — Complete rewrite (~500 lines)
+- `phpoc-web/src/App.css` — ~160 lines of new sync styles (.sync-pill, .sync-pill-main, .sync-pill-details, .sync-pill-commitable, .sync-pill-not-commitable, .sync-commit-bar, etc.)
+- `phpoc-web/src/context/DevModeContext.jsx` — `commitEntries()` now returns result

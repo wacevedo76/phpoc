@@ -617,6 +617,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     if (result && result.committedEntryIds.length > 0) {
       await sync.markCommitted(result.committedEntryIds, result.blockIndex);
     }
+    return result;
   }, [services]);
 
   // ── Context value ────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import PassphraseModal from '../modals/PassphraseModal.jsx';
  *   - Placeholder for Recovery (Phase 3)
  */
 export default function Settings() {
-  const { mode, isDev, toggleMode, services } = useApp();
+  const { mode, isDev, toggleMode, services, exportLedger: exportLedgerAction, importLedger: importLedgerAction } = useApp();
 
   const [workerUrl, setWorkerUrl] = React.useState(
     () => localStorage.getItem('phpoc_worker_url') || ''
@@ -37,12 +37,12 @@ export default function Settings() {
 
   const handleExport = useCallback(async (passphrase) => {
     try {
-      await services.exportLedger(passphrase);
+      await exportLedgerAction(passphrase);
       setShowExportModal(false);
     } catch (err) {
       throw err; // PassphraseModal shows the error
     }
-  }, [services]);
+  }, [exportLedgerAction]);
 
   const handleImportFileChange = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -61,7 +61,7 @@ export default function Settings() {
     setImporting(true);
     setImportError(null);
     try {
-      await services.importLedger(importFile, importPassphrase.trim(), importSeed.trim());
+      await importLedgerAction(importFile, importPassphrase.trim(), importSeed.trim());
       setShowImportModal(false);
       setImportFile(null);
       setImportSeed('');
@@ -70,7 +70,7 @@ export default function Settings() {
       setImportError(err.message);
       setImporting(false);
     }
-  }, [importFile, importPassphrase, importSeed, services]);
+  }, [importFile, importPassphrase, importSeed, importLedgerAction]);
 
   const handleCancelImport = useCallback(() => {
     setShowImportModal(false);

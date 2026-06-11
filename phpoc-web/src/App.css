@@ -631,6 +631,50 @@ a { color: var(--accent-blue); text-decoration: none; }
   gap: 0.35rem;
 }
 
+.title-input-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.title-input-group .form-input-lg {
+  flex: 1;
+  min-width: 0;
+}
+
+.oneoff-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.oneoff-checkbox-label:has(input:checked) {
+  border-color: var(--accent-yellow);
+  background: var(--accent-yellow-bg);
+}
+
+.oneoff-checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-yellow);
+  cursor: pointer;
+}
+
+.oneoff-text {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .form-label {
   font-size: 0.8rem;
   font-weight: 600;
@@ -990,23 +1034,23 @@ a { color: var(--accent-blue); text-decoration: none; }
   display: inline-flex;
 }
 .tag-add-input {
-  width: 4.5rem;
+  width: 5.5rem;
   font-size: 0.75rem;
-  padding: 0.15rem 0.4rem;
-  border: 1px dashed var(--border-color);
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #000;
   border-radius: 4px;
-  background: transparent;
-  color: var(--text-color);
+  background: var(--accent-blue);
+  color: #fff;
   outline: none;
-  transition: border-color 0.15s;
+  transition: opacity 0.15s;
 }
 .tag-add-input:focus {
-  border-color: var(--accent-blue);
-  border-style: solid;
+  opacity: 0.85;
+  border-color: #000;
 }
 .tag-add-input::placeholder {
-  color: var(--text-muted);
-  opacity: 0.6;
+  color: rgba(255,255,255,0.75);
+  opacity: 1;
 }
 
 /* ── Inline comment editing ────────────────────────────────────── */
@@ -1165,6 +1209,353 @@ a { color: var(--accent-blue); text-decoration: none; }
 
 /* ===================================================================
    Sync Screen
+   =================================================================== */
+/* ── Sync area: flex column, fills screen ─────────────────────── */
+.sync-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Scrollable entries list ──────────────────────────────────── */
+.sync-entries-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sync-compact-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* ── Compact entry pill ───────────────────────────────────────── */
+.sync-pill {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  user-select: none;
+  overflow: hidden;
+}
+
+.sync-pill:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+}
+
+.sync-pill:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.sync-pill-selected {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.25);
+  background: var(--accent-blue-bg);
+}
+
+/* ── Main row (always visible) ─────────────────────────────────── */
+.sync-pill-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+}
+
+/* ── Left syncability indicator ─────────────────────────────────── */
+.sync-pill-commitable {
+  border: 1px solid var(--accent-yellow);
+  border-left: 3px solid var(--accent-yellow);
+}
+
+.sync-pill-commitable:hover {
+  border-color: var(--accent-blue);
+}
+
+.sync-pill-commitable.sync-pill-selected {
+  border-color: var(--accent-blue);
+  border-left: 3px solid var(--accent-blue);
+}
+
+.sync-pill-not-commitable {
+  border-left: 3px solid var(--accent-red);
+  opacity: 0.85;
+}
+
+/* ── Lock icon for non-commitable entries ───────────────────────── */
+.sync-pill-lock-indicator {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-red-bg);
+  color: var(--accent-red);
+  opacity: 0.7;
+}
+
+/* ── Checkbox ──────────────────────────────────────────────────── */
+.sync-pill-check {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sync-pill-checkbox {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--text-muted);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  color: transparent;
+}
+
+.sync-pill-checked {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+.sync-pill-selected .sync-pill-checkbox {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+/* ── Status dot (play/pause/stop icon) ─────────────────────────── */
+.sync-pill-status-dot {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.sync-pill-running .sync-pill-status-dot {
+  color: var(--accent-green);
+  background: var(--accent-green-bg);
+}
+
+.sync-pill-paused .sync-pill-status-dot {
+  color: var(--accent-yellow);
+  background: var(--accent-yellow-bg);
+}
+
+/* ── Chevron indicator ──────────────────────────────────────────── */
+.sync-pill-chevron {
+  flex-shrink: 0;
+  font-size: 0.55rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.sync-pill-chevron-up {
+  transform: rotate(90deg);
+}
+
+/* ── Comment preview (when not expanded) ───────────────────────── */
+.sync-pill-comment-preview {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+/* ── Title and tags ────────────────────────────────────────────── */
+.sync-pill-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.sync-pill-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-pill-tags {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.sync-pill-tag {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.sync-pill-tag-more {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* ── Duration / elapsed ────────────────────────────────────────── */
+.sync-pill-duration {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.sync-pill-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  animation: sync-live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sync-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.3); }
+}
+
+.sync-pill-time-live {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+/* ── Expanded details section ──────────────────────────────────── */
+.sync-pill-details {
+  padding: 0 0.75rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  margin-top: 0;
+  padding-top: 0.6rem;
+}
+
+/* Tag editing area */
+.sync-pill-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+/* Comment textarea */
+.sync-pill-comment-edit {
+  width: 100%;
+  font-size: 0.82rem;
+  font-family: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  resize: vertical;
+  min-height: 2.5rem;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.sync-pill-comment-edit:focus {
+  border-color: var(--accent-blue);
+}
+
+.sync-pill-comment-edit::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── Commit bar ────────────────────────────────────────────────── */
+.sync-commit-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.sync-commit-selection {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sync-commit-count {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.sync-commit-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-sync-commit {
+  flex: 1;
+  font-size: 0.9rem;
+  padding: 0.7rem 1rem;
+}
+
+/* ── Inline commit result (in header) ──────────────────────────── */
+.sync-result-inline {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.sync-result-inline-ok {
+  background: var(--accent-green-bg);
+  color: var(--accent-green);
+}
+
+.sync-result-inline-info {
+  background: var(--accent-blue-bg);
+  color: var(--accent-blue);
+}
+
+/* ── Remote status value ───────────────────────────────────────── */
+.sync-detail-remote {
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+}
+
+/* ===================================================================
+   Sync Screen (existing)
    =================================================================== */
 .sync-details {
   padding: 1rem;

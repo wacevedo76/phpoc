@@ -363,7 +363,7 @@ export default function History() {
                               <input
                                 type="text"
                                 className="tag-add-input"
-                                placeholder="+tag"
+                                placeholder="add a tag"
                                 value={currentTagInput}
                                 onChange={(e) =>
                                   setEditTagInputs((prev) => ({
