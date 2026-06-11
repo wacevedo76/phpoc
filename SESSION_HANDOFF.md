@@ -18,11 +18,12 @@
 | 3 | React Web UI — Vite + React 18, 9 screens, dev mode, auth overlay | ✅ | — |
 | 4 | `StorageBackend` + `HttpBackend` — interface + Transport→StorageBackend adapter | ✅ | 41 |
 | 5 | Browser import/export via File API | ✅ | 83 |
-| 6 | **Ledger Engine JS Port + Refactoring** — Chain, Index, Summary, Engine | ✅ | 266 |
+| 6 | **Ledger Engine JS Port + Refactoring** — Chain, Index, Summary, Engine | ✅ | 269 (70+36+49+114) |
 | 7 | **Onboarding Workflow** — Landing screen, onboarding wizard (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2, identity fields (username + email), PHPSPEC-compliant genesis block creation with encrypted seed + identity secret + seal + signature | ✅ | — |
-| 8 | Staging CRUD in UI | 🔜 | — |
-| 9 | Companion bridge server (Python) | 🔜 | — |
-| 10 | Docker + multi-tenant Worker | 🔜 | — |
+| 8 | **History screen — staging vs committed differentiation** — visual badges (Not Committed / Committed), expand/collapse tags & comments on card click, red border for staging, blue when expanded. Commit UI removed from History (moves to Sync screen). | ✅ | — |
+| 9 | Staging CRUD in UI | 🔜 | — |
+| 10 | Companion bridge server (Python) | 🔜 | — |
+| 11 | Docker + multi-tenant Worker | 🔜 | — |
 
 ### Ledger Engine — Step 6 Detailed Status
 
@@ -78,6 +79,10 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/context/DevModeContext.jsx` | `createNewLedger()` now accepts username + email, creates genesis block via `engine.init()` |
 | `phpoc-web/src/components/screens/UserProfile.jsx` | Shows `user.username` as display name and `user.email` underneath |
 | `phpoc-web/src/components/screens/Settings.jsx` | Settings — Data Management section with Import/Export |
+| `phpoc-web/src/components/screens/History.jsx` | History — display-only entry list with staging/committed badges, expand/collapse details on card click, date/tag filters, no commit UI |
+| `phpoc-web/src/sync/local_cache.js` | `StagingEntry` now tracks `committed` (boolean) and `block_index` (number). Added `markCommitted()`. |
+| `phpoc-web/src/sync/sync.js` | Exposes `markCommitted()` from LocalCache |
+| `phpoc-web/src/ledger/engine.js` | `commit()` returns `{hashPrefix, committedEntryIds, blockIndex}` for caller tracking. `_commitDay()` returns block index. Staging entry IDs preserved through commit flow. Tests: 114 |
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
 
 ### Cross-Platform (reference)
@@ -115,14 +120,22 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ## Next Steps
 
-### 1. Wire Device Cookie TTL to Re-auth Overlay
+### 1. Build Sync Screen with Commit UI
+
+Move the commit/selection UI from History into a dedicated Sync screen:
+- Show uncommitted entries with selection checkboxes
+- "Commit Selected" / "Commit All" buttons
+- Call `commitEntries()` from DevModeContext
+- Show commit progress and result (hash prefix, block index)
+
+### 3. Wire Device Cookie TTL to Re-auth Overlay
 
 The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
 - Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
 - Pop the `AuthScreen` overlay when TTL expires (30 min default)
 - Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
 
-### 2. Show Recovery Seed After New Ledger Creation
+### 4. Show Recovery Seed After New Ledger Creation
 
 Currently the seed is silently stored. The user has no way to back it up. After "Begin a new ledger", show a one-time "Recovery Seed" screen with:
 - The base64 seed in a large monospace display
@@ -130,14 +143,7 @@ Currently the seed is silently stored. The user has no way to back it up. After 
 - Confirm button ("I've saved it")
 - Should never show again (stored in IndexedDB as `phpoc_seed`)
 
-### 3. Staging CRUD in UI (was Step 7)
-
-Following onboarding, wire full staging CRUD to the UI components:
-- Dashboard active tasks → linked to real SyncService
-- History screen → linked to real entries
-- Edit/delete entries in UI
-
-### 4. Wire Identity Secret into LedgerEngine for Commit Signing
+### 5. Wire Identity Secret into LedgerEngine for Commit Signing
 
 The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 

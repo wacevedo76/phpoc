@@ -761,6 +761,29 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 - `phpoc-web/src/components/screens/OnboardingScreen.jsx` — username + email fields
 - `phpoc-web/src/components/screens/UserProfile.jsx` — displays username + email
 
+### 11.15 History Screen: Staging vs Committed Differentiation (2026-06-11)
+
+**Problem:** The History screen showed all completed entries without distinguishing which had been persisted to the ledger chain. Users had no feedback on whether their data was backed up.
+
+**Solution:** Added a `committed` (boolean) and `block_index` (number|null) tracking field to `StagingEntry`, and modified `LedgerEngine.commit()` to return committed entry IDs so the caller can mark them.
+
+| Component | Change |
+|-----------|--------|
+| `local_cache.js` | `StagingEntry` typedef now includes `committed` (default `false`) and `block_index` (default `null`). Added `markCommitted(entryIds, blockIndex)`. |
+| `sync.js` | Exposes `markCommitted()` from LocalCache. |
+| `engine.js` | `commit()` returns `{hashPrefix, committedEntryIds, blockIndex}` instead of bare string. `_commitDay()` returns the block's `day_index`. |
+| `DevModeContext.jsx` | Added `commitEntries()` wrapper — creates `LedgerEngine`, calls `commit()`, then `markCommitted()`. |
+| `History.jsx` | Display-only. Cards show a green ✓ Committed badge or yellow ⏱ Not Committed badge. Tags & comments hidden by default — click to expand. Staging cards have a red border (blue when expanded) and show a checkmark on the badge when expanded. No commit UI buttons. |
+| `App.css` | `.badge-committed`, `.badge-staging`, `.badge-staging-count`, `.history-entry-staging` (red border), `.history-entry-expanded` (blue border). |
+
+**Design decisions:**
+- **History is display-only** — the commit UI lives on a future Sync screen, keeping each screen focused on one responsibility.
+- **Staging entries sorted first** within each date group so pending items are always visible.
+- **Tags and comments hidden by default** — reduces visual noise. Click to expand reveals them with a smooth transition.
+- **Red border for staging, blue when expanded** — gives immediate visual feedback that the entry needs attention, and the blue border confirms the expanded state.
+
+**Tests:** Engine tests grew from 111 to 114 (extra assertions on new `commit()` return shape). All 269 ledger tests pass.
+
 ### 11.10 Current Status (2026-06-09)
 
 | Step | Status | Notes |
@@ -775,3 +798,4 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 | 8 — Multi-tenant Worker | ❌ Not started | |
 | 9 — Real crypto | ❌ Not started | WASM binary exists, needs web integration |
 | 10 — Genesis block (PHPSPEC §4.1) | ✅ Complete | `LedgerChain.buildGenesisBlock()` + `LedgerEngine.init()` produce spec-compliant genesis block with identity, encrypted seed/secrets, HMAC seal, and identity signature. Onboarding form collects username + email. |
+| 11 — History screen: staging vs committed | ✅ Complete | History shows real SyncService data with collapsible details. Badges: green "Committed" / yellow "Not Committed". Red border for staging (blue when expanded). `StagingEntry` tracks `committed` + `block_index`. `commit()` returns entry IDs. 269 ledger tests. |
