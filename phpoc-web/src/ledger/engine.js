@@ -12,7 +12,6 @@
  *   const valid = await engine.verify();
  */
 
-import { createHash } from 'crypto';
 import { LedgerChain } from './chain.js';
 import { IndexManager } from './index_manager.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
@@ -187,7 +186,7 @@ export class LedgerEngine {
     data.content_hash = this._computeContentHash(data);
 
     // Compute entry hash
-    const entryHash = computeEntryHash(data);
+    const entryHash = computeEntryHash(data, this.crypto);
 
     return { hash: entryHash, data, start_epoch: startEpoch };
   }
@@ -467,8 +466,6 @@ export class LedgerEngine {
         content[key] = value;
       }
     }
-    return createHash('sha256')
-      .update(jsonSort(content), 'utf-8')
-      .digest('hex');
+    return this.crypto.sha256(jsonSort(content));
   }
 }

@@ -172,7 +172,7 @@ export class LedgerChain {
       } else {
         data = Object.assign({}, e);
       }
-      const entryHash = computeEntryHash(data);
+      const entryHash = computeEntryHash(data, this.crypto);
       normalizedEntries.push({ hash: entryHash, data });
     }
 
@@ -463,7 +463,7 @@ export class LedgerChain {
     if (type === 'day' && block.entries) {
       for (const entry of block.entries) {
         const data = entry.data;
-        const expectedHash = computeEntryHash(data);
+        const expectedHash = computeEntryHash(data, this.crypto);
         if (expectedHash !== entry.hash) {
           return false;
         }

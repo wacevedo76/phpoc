@@ -5,8 +5,6 @@
  * chain.js, engine.js, and summary_policy.js.
  */
 
-import { createHash } from 'crypto';
-
 /**
  * Recursively sort the keys of an object for deterministic JSON serialization.
  */
@@ -33,9 +31,13 @@ export function jsonSort(data) {
 /**
  * Compute SHA-256 hex digest of pretty-printed JSON.
  * Matches the test convention (2-space indentation).
+ *
+ * @param {object} data - Data to hash.
+ * @param {object} crypto - CryptoService with a sha256() method.
+ * @returns {string} 64-character hex SHA-256.
  */
-export function computeEntryHash(data) {
-  return createHash('sha256').update(JSON.stringify(data, null, 2), 'utf-8').digest('hex');
+export function computeEntryHash(data, crypto) {
+  return crypto.sha256(JSON.stringify(data, null, 2));
 }
 
 /**
