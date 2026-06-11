@@ -20,10 +20,14 @@
 | 5 | Browser import/export via File API | ✅ | 83 |
 | 6 | **Ledger Engine JS Port + Refactoring** — Chain, Index, Summary, Engine | ✅ | 269 (70+36+49+114) |
 | 7 | **Onboarding Workflow** — Landing screen, onboarding wizard (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2, identity fields (username + email), PHPSPEC-compliant genesis block creation with encrypted seed + identity secret + seal + signature | ✅ | — |
-| 8 | **History screen — staging vs committed differentiation** — visual badges (Not Committed / Committed), expand/collapse tags & comments on card click, red border for staging, blue when expanded. Commit UI removed from History (moves to Sync screen). | ✅ | — |
-| 9 | Staging CRUD in UI | 🔜 | — |
-| 10 | Companion bridge server (Python) | 🔜 | — |
-| 11 | Docker + multi-tenant Worker | 🔜 | — |
+| 8 | **History screen — staging vs committed differentiation** — visual badges (Not Committed / Committed), expand/collapse tags & comments on card click, red border for staging, blue when expanded. **Inline editing for staging entries**: add/remove tags (× buttons, +input with Enter), edit comments (textarea debounced auto-save). Commit UI removed from History (moves to Sync screen). | ✅ | — |
+| 9 | **Inline tag & comment editing on staging entries** — when expanded, staging cards show × on tags to remove, an input to add tags (Enter to confirm), and an editable textarea for comments with debounced auto-save. Committed entries read-only. | ✅ | — |
+| 10 | **Export works in dev mode** — uses cached master key from bootstrap instead of requiring seed authentication. Dev mode: any passphrase works. | ✅ | — |
+| 11 | **Recovery seed display** — after new ledger creation, a full-screen overlay shows the base64 seed in monospace. "I've saved it" confirm button. Only shown once. | ✅ | — |
+| 12 | **Logout button** — renamed from "Lock" to "Logout" with exit-door icon. Clears crypto master key, returns to Landing screen. Fixed blank screen bug (hasExistingData) and in-memory data loss on re-login (FallbackStorage caching). | ✅ | — |
+| 13 | Staging CRUD in UI (Dashboard) | 🔜 | — |
+| 14 | Companion bridge server (Python) | 🔜 | — |
+| 15 | Docker + multi-tenant Worker | 🔜 | — |
 
 ### Ledger Engine — Step 6 Detailed Status
 
@@ -122,28 +126,22 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ### 1. Build Sync Screen with Commit UI
 
-Move the commit/selection UI from History into a dedicated Sync screen:
+Move the commit/selection UI from History (removed) into a dedicated Sync screen:
 - Show uncommitted entries with selection checkboxes
 - "Commit Selected" / "Commit All" buttons
 - Call `commitEntries()` from DevModeContext
 - Show commit progress and result (hash prefix, block index)
 
-### 3. Wire Device Cookie TTL to Re-auth Overlay
+### 2. Wire Device Cookie TTL to Re-auth Overlay
 
 The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
 - Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
 - Pop the `AuthScreen` overlay when TTL expires (30 min default)
 - Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
 
-### 4. Show Recovery Seed After New Ledger Creation
+### 3. Wire Identity Secret into LedgerEngine for Commit Signing
 
-Currently the seed is silently stored. The user has no way to back it up. After "Begin a new ledger", show a one-time "Recovery Seed" screen with:
-- The base64 seed in a large monospace display
-- "Write this down" instruction
-- Confirm button ("I've saved it")
-- Should never show again (stored in IndexedDB as `phpoc_seed`)
-
-### 5. Wire Identity Secret into LedgerEngine for Commit Signing
+The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 
 The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 
@@ -152,4 +150,4 @@ The identity secret is stored during genesis creation but not yet loaded into `L
 - MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.
 - ETag caching stale in long-running daemon mode (CLI-only, low priority).
 - WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.
-- IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage, data lost on reload.
+- IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.

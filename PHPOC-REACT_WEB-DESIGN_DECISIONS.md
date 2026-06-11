@@ -784,6 +784,89 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 
 **Tests:** Engine tests grew from 111 to 114 (extra assertions on new `commit()` return shape). All 269 ledger tests pass.
 
+### 11.16 Inline Tag & Comment Editing on Staging Entries (2026-06-11)
+
+**Problem:** Users could view tags and comments on expanded cards but couldn't modify them in-place. Editing required external tools.
+
+**Solution:** When a staging (not-committed) card is expanded, tags and comments become editable inline.
+
+**Tag editing:**
+- Each tag badge (`#tagname`) shows a small **×** button on the right
+- Clicking × immediately removes the tag and saves via `sync.modify(entry_index, { tags })`
+- A dashed-border `+tag` input appears at the end of the tag row
+- Typing and pressing **Enter** adds the tag (lowercased, deduplicated, sorted)
+- Tags are saved instantly on each add/remove operation
+
+**Comment editing:**
+- The comment becomes a `<textarea>` pre-filled with existing text
+- Changes auto-save after **800ms** of no typing (debounce timer)
+- Also saves immediately on textarea blur
+- Blank textarea → comment saved as `null` (cleared)
+
+**Visual feedback:**
+- A small spinning dot appears beside the "Not Committed" badge during save
+- Clicking the × button, tag input, or textarea does **not** collapse the card (`e.stopPropagation()`)
+- Committed entries remain read-only (tags as plain badges, comments as static text)
+
+**Architecture:**
+- Editing state stored in React: `editTags`, `editTagInputs`, `editComments` (maps keyed by `entry_id`)
+- Changes saved via `sync.modify(entry_index, fields)` → `LocalCache.update()` → recomputes hash
+- Editing state initialized on expand, cleared on collapse
+
+**Key files:** `History.jsx`, `App.css` (`.tag-badge-remove`, `.tag-add-input`, `.history-entry-comment-edit`, `.saving-spinner`)
+
+### 11.17 Export Works in Dev Mode (2026-06-11)
+
+**Problem:** Export forced re-authentication by reading `phpoc_seed` from storage. In dev mode, no seed was stored — the crypto had a hardcoded master key set during bootstrap. Export threw "No recovery seed found".
+
+**Solution:** Added a cached-master-key check to both fast and slow export paths:
+
+```js
+// Before (broken in dev mode):
+const seed = await storage.get(STORED_SEED_KEY);
+const masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+
+// After (works in both modes):
+let masterKey = crypto.getMasterKey();  // try cache first
+if (!masterKey) {
+  const seed = await storage.get(STORED_SEED_KEY);
+  masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+}
+```
+
+**Key files:** `DevModeContext.jsx` (`exportLedgerAction`)
+
+### 11.18 Recovery Seed Display After Onboarding (2026-06-11)
+
+**Problem:** After creating a new ledger, the recovery seed was silently stored in IndexedDB. Users had no way to back it up or know it existed.
+
+**Solution:** Added a one-time full-screen overlay after successful onboarding:
+- Shows the base64 seed in a large monospace code block (`user-select: all` for easy copy)
+- "Write this down and keep it somewhere safe" instruction
+- ⚠ Warning about data loss if seed is lost
+- "I've saved it" button dismisses the overlay permanently
+- The overlay appears on top of the ready-phase app (phase transitions to 'ready' first)
+
+**Architecture:**
+- `createNewLedger()` now returns `{ seed }` so the caller can display it
+- `App.jsx` manages `recoverySeed` + `seedConfirmed` state
+- Not shown again on refresh (seed is already stored in IndexedDB)
+
+**Key files:** `App.jsx`, `App.css` (`.seed-overlay-backdrop`, `.seed-overlay`, `.seed-overlay-code`)
+
+### 11.19 Logout Button + Bug Fixes (2026-06-11)
+
+**Changes:**
+- Renamed "Lock & Re-authenticate" to **"Logout"** with exit-door icon (`Icons.logout`)
+- Clears crypto master key from memory and returns to Landing screen
+
+**Bug fixes:**
+1. **Blank screen after logout** — LandingScreen checked `hasExistingData` which defaulted to `false` in dev mode (never set during `bootDevMode`). Fixed by setting `hasExistingData=true` in `logout()`.
+2. **In-memory data loss on re-login** — `createStorage()` created a new `FallbackStorage` each call, losing all data from the previous session. Fixed by caching the `FallbackStorage` instance at module level.
+3. **Storage reference lost** — `logout()` set `services.storage = null`, so re-login had no access to existing data. Fixed by retaining `services.storage` in logout.
+
+**Key files:** `AppLayout.jsx`, `DevModeContext.jsx` (`logout`, `createStorage`)
+
 ### 11.10 Current Status (2026-06-09)
 
 | Step | Status | Notes |
@@ -799,3 +882,7 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 | 9 — Real crypto | ❌ Not started | WASM binary exists, needs web integration |
 | 10 — Genesis block (PHPSPEC §4.1) | ✅ Complete | `LedgerChain.buildGenesisBlock()` + `LedgerEngine.init()` produce spec-compliant genesis block with identity, encrypted seed/secrets, HMAC seal, and identity signature. Onboarding form collects username + email. |
 | 11 — History screen: staging vs committed | ✅ Complete | History shows real SyncService data with collapsible details. Badges: green "Committed" / yellow "Not Committed". Red border for staging (blue when expanded). `StagingEntry` tracks `committed` + `block_index`. `commit()` returns entry IDs. 269 ledger tests. |
+| 12 — Inline tag & comment editing | ✅ Complete | Staging entries in History: add/remove tags (× buttons, +input with Enter), edit comments (textarea debounced auto-save). Committed entries read-only. |
+| 13 — Export works in dev mode | ✅ Complete | Uses cached master key when available, skips seed auth. Any passphrase works in dev mode. |
+| 14 — Recovery seed display | ✅ Complete | Full-screen overlay after onboarding shows base64 seed, "I've saved it" confirm button. |
+| 15 — Logout button + fixes | ✅ Complete | Renamed from Lock to Logout. Fixed blank screen (hasExistingData). Fixed in-memory data loss (FallbackStorage caching). |
