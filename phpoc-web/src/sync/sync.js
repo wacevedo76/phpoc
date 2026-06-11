@@ -260,12 +260,36 @@ export class SyncService {
   }
 
   /**
-   * Return only completed (ended) entries.
+   * Return only completed (ended) entries — both staging and committed.
    * @returns {Promise<import('./local_cache.js').StagingEntry[]>}
    */
   async getCompleted() {
     const entries = await this._local.readEntries();
-    return entries.filter((e) => !e.is_active);
+    const stagingCompleted = entries.filter((e) => !e.is_active);
+
+    // Also read committed entries from the ledger chain
+    const committedDTOs = [];
+    try {
+      const blocks = (await this._storage.get('ledger:blocks')) || [];
+      for (let bi = 0; bi < blocks.length; bi++) {
+        const block = blocks[bi];
+        if (!block.entries || !Array.isArray(block.entries)) continue;
+        for (const raw of block.entries) {
+          const dto = this._rawCommittedEntryToDTO(raw);
+          if (dto) {
+            dto.committed = true;
+            dto.block_index = bi;
+            committedDTOs.push(dto);
+          }
+        }
+      }
+    } catch (err) {
+      // Decryption may fail if master key isn't cached yet;
+      // staging entries will still show.
+      console.warn('getCompleted: could not read committed entries:', err.message);
+    }
+
+    return [...committedDTOs, ...stagingCompleted];
   }
 
   /**
@@ -528,6 +552,66 @@ export class SyncService {
   // ------------------------------------------------------------------
   // Raw entry → DTO conversion
   // ------------------------------------------------------------------
+
+  /**
+   * Decrypt and convert a raw committed entry from a ledger block into a DTO.
+   * Unlike staging entries (which use plain: prefixed values), committed
+   * entries have encrypted hex fields that must be decrypted first.
+   * @param {object} rawEntry - Raw entry dict with `data`, `hash`
+   * @returns {object|null} Decrypted DTO, or null if decryption fails.
+   * @private
+   */
+  _rawCommittedEntryToDTO(rawEntry) {
+    try {
+      const data = rawEntry.data || {};
+
+      // Decrypt timestamp fields from hex ciphertext
+      const startEpochStr = data.startTime_enc
+        ? this._crypto.decryptWithCachedKey(data.startTime_enc)
+        : null;
+      const startEpoch = startEpochStr ? parseInt(startEpochStr, 10) : null;
+      if (!startEpoch) return null;
+
+      const endEpochStr = data.endTime_enc
+        ? this._crypto.decryptWithCachedKey(data.endTime_enc)
+        : null;
+      const endEpoch = endEpochStr ? parseInt(endEpochStr, 10) : null;
+
+      // Decrypt metadata
+      let metadata = {};
+      if (data.metadata_enc) {
+        try {
+          const metaStr = this._crypto.decryptWithCachedKey(data.metadata_enc);
+          metadata = JSON.parse(metaStr);
+        } catch { /* ignore corrupt metadata */ }
+      }
+
+      const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
+
+      return {
+        entry_id: data.entry_id || rawEntry.hash || '',
+        entry_index: -1, // committed entries have no staging index
+        title: data.title || '',
+        start_epoch: startEpoch,
+        end_epoch: endEpoch,
+        duration: data.duration || 0,
+        is_active: false,
+        is_paused: false,
+        pauses: [],
+        tags: data.tags || [],
+        comment: data.comment || null,
+        media: [],
+        metadata,
+        date: dateStr,
+        source: 'ledger',
+        hash: rawEntry.hash || '',
+        device_uuid: data.device_uuid || '',
+        end_device_uuid: data.end_device_uuid || '',
+      };
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Convert a single raw staging entry (from remote blob) to a DTO.

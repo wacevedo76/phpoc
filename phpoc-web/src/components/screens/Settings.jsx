@@ -1,7 +1,40 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
 import PassphraseModal from '../modals/PassphraseModal.jsx';
+
+/**
+ * Lightweight check: does IndexedDB hold existing ledger or staging data?
+ * Returns { blocksCount, stagingCount } or null if IndexedDB unavailable.
+ */
+async function probeExistingData() {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open('phpoc-sync');
+      req.onsuccess = (event) => {
+        const db = event.target.result;
+        try {
+          const tx = db.transaction('keyval', 'readonly');
+          const store = tx.objectStore('keyval');
+          const blocksReq = store.get('ledger:blocks');
+          const stagingReq = store.get('entries');
+          let blocksCount = 0, stagingCount = 0;
+          tx.oncomplete = () => resolve({ blocksCount, stagingCount });
+          tx.onerror = () => resolve(null);
+          blocksReq.onsuccess = () => {
+            const v = blocksReq.result;
+            blocksCount = Array.isArray(v) ? v.length : 0;
+          };
+          stagingReq.onsuccess = () => {
+            const v = stagingReq.result;
+            stagingCount = Array.isArray(v) ? v.length : 0;
+          };
+        } catch { resolve(null); }
+      };
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
 
 /**
  * Settings — app configuration screen.
@@ -15,7 +48,7 @@ import PassphraseModal from '../modals/PassphraseModal.jsx';
  *   - Placeholder for Recovery (Phase 3)
  */
 export default function Settings() {
-  const { mode, isDev, toggleMode, services, exportLedger: exportLedgerAction, importLedger: importLedgerAction } = useApp();
+  const { mode, isDev, toggleMode, services, exportLedger: exportLedgerAction, importLedger: importLedgerAction, validateImport, confirmImport, exportLedgerFull: exportLedgerFullAction } = useApp();
 
   const [workerUrl, setWorkerUrl] = React.useState(
     () => localStorage.getItem('phpoc_worker_url') || ''
@@ -33,7 +66,21 @@ export default function Settings() {
   const [importPassphrase, setImportPassphrase] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState(null);
+  // ── Single-phase import with inline confirmation ─────────────
+  const [importPhase, setImportPhase] = useState('form'); // 'form' | 'executing'
+  const [keepStaging, setKeepStaging] = useState(true);
+  const [confirmDestroy, setConfirmDestroy] = useState(false);
+  const [existingInfo, setExistingInfo] = useState(null); // { blocksCount, stagingCount } | null
   const fileInputRef = useRef(null);
+
+  // Probe existing data when import modal opens
+  useEffect(() => {
+    if (showImportModal) {
+      setConfirmDestroy(false);
+      setKeepStaging(true);
+      probeExistingData().then(setExistingInfo);
+    }
+  }, [showImportModal]);
 
   const handleExport = useCallback(async (passphrase) => {
     try {
@@ -52,6 +99,7 @@ export default function Settings() {
     }
   }, []);
 
+  // ── Submit: validate + confirm in one flow ────────────────────
   const handleImportSubmit = useCallback(async (e) => {
     e?.preventDefault();
     if (!importFile || !importPassphrase.trim() || !importSeed.trim()) {
@@ -60,25 +108,43 @@ export default function Settings() {
     }
     setImporting(true);
     setImportError(null);
+    setImportPhase('executing');
     try {
-      await importLedgerAction(importFile, importPassphrase.trim(), importSeed.trim());
-      setShowImportModal(false);
-      setImportFile(null);
-      setImportSeed('');
-      setImportPassphrase('');
+      // Validate file first (read-only, throws on failure)
+      await validateImport(importFile, importPassphrase.trim(), importSeed.trim());
+      // Execute the destructive import
+      await confirmImport({ keepStaging });
+      handleResetImport();
     } catch (err) {
       setImportError(err.message);
-      setImporting(false);
+      setImportPhase('form');
     }
-  }, [importFile, importPassphrase, importSeed, importLedgerAction]);
+    setImporting(false);
+  }, [importFile, importPassphrase, importSeed, keepStaging, validateImport, confirmImport]);
 
-  const handleCancelImport = useCallback(() => {
+  // ── Export current ledger before import ───────────────────────
+  const handlePreImportExport = useCallback(async () => {
+    try {
+      await exportLedgerFullAction();
+    } catch (err) {
+      setImportError('Export failed: ' + err.message);
+    }
+  }, [exportLedgerFullAction]);
+
+  const handleResetImport = useCallback(() => {
     setShowImportModal(false);
     setImportFile(null);
     setImportSeed('');
     setImportPassphrase('');
     setImportError(null);
+    setImportPhase('form');
+    setConfirmDestroy(false);
+    setKeepStaging(true);
   }, []);
+
+  const handleCancelImport = useCallback(() => {
+    handleResetImport();
+  }, [handleResetImport]);
 
   const handleSaveRemote = (e) => {
     e.preventDefault();
@@ -203,82 +269,195 @@ export default function Settings() {
         {/* Import inline form modal */}
         {showImportModal && (
           <div className="auth-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleCancelImport(); }}>
-            <div className="auth-overlay-card">
-              <h2 className="auth-title" style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>📥 Import Ledger</h2>
-              <p className="auth-subtitle">
-                Select an exported ledger file and authenticate.
-              </p>
-              <p className="auth-hint" style={{ marginBottom: '0.75rem', color: '#e67e22' }}>
-                ⚠ This will replace all current data.
-              </p>
+            <div className="auth-overlay-card" style={{ maxWidth: '460px' }}>
+              {/* ── Phase 1: Upload + Authenticate ──────────────── */}
+              {importPhase === 'form' && (
+                <>
+                  <h2 className="auth-title" style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>📥 Import Ledger</h2>
+                  <p className="auth-subtitle">
+                    Select an exported ledger file and authenticate.
+                  </p>
 
-              <form className="auth-form" onSubmit={handleImportSubmit}>
-                <div className="form-group">
-                  <label className="auth-label">Ledger File</label>
-                  <input
-                    type="file"
-                    accept=".json"
-                    onChange={handleImportFileChange}
-                    ref={fileInputRef}
-                    className="form-input"
-                    style={{ padding: '0.4rem' }}
-                    disabled={importing}
-                  />
-                  {importFile && (
-                    <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
-                      Selected: {importFile.name}
-                    </p>
+                  {/* ── Destroy warning (only if existing data) ────── */}
+                  {existingInfo && (existingInfo.blocksCount > 0 || existingInfo.stagingCount > 0) && (
+                    <>
+                      <div style={{
+                        background: '#fff3e0',
+                        border: '1px solid #e67e22',
+                        borderRadius: '8px',
+                        padding: '0.75rem',
+                        marginBottom: '0.75rem',
+                      }}>
+                        <p style={{ margin: 0, fontSize: '0.9rem', color: '#e65100' }}>
+                          <strong>⚠️ The ledger currently in use will be destroyed.</strong>
+                        </p>
+                        {existingInfo.blocksCount > 0 && (
+                          <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#bf360c' }}>
+                            {existingInfo.blocksCount} committed block{existingInfo.blocksCount !== 1 ? 's' : ''} will be replaced.
+                          </p>
+                        )}
+                        {existingInfo.stagingCount > 0 && (
+                          <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#bf360c' }}>
+                            {existingInfo.stagingCount} uncommitted staging entr{existingInfo.stagingCount !== 1 ? 'ies' : 'y'} will be lost unless preserved below.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Export offer */}
+                      <div style={{ marginBottom: '0.75rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={handlePreImportExport}
+                          style={{ width: '100%' }}
+                        >
+                          📤 Export current ledger before proceeding
+                        </button>
+                      </div>
+
+                      {/* Required destroy acknowledgment */}
+                      <div style={{
+                        background: '#ffebee',
+                        border: '1px solid #e53935',
+                        borderRadius: '8px',
+                        padding: '0.75rem',
+                        marginBottom: '0.75rem',
+                      }}>
+                        <label style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '0.5rem',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          color: '#c62828',
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={confirmDestroy}
+                            onChange={(e) => setConfirmDestroy(e.target.checked)}
+                            style={{ marginTop: '0.15rem', flexShrink: 0 }}
+                          />
+                          <span>
+                            <strong>I understand</strong> this will destroy my existing ledger and replace it with the imported file.
+                          </span>
+                        </label>
+                      </div>
+
+                      {/* Staging persistence option */}
+                      {existingInfo.stagingCount > 0 && (
+                        <div style={{
+                          background: '#e8f5e9',
+                          border: '1px solid #4caf50',
+                          borderRadius: '8px',
+                          padding: '0.75rem',
+                          marginBottom: '0.75rem',
+                        }}>
+                          <label style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '0.5rem',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                            color: '#2e7d32',
+                          }}>
+                            <input
+                              type="checkbox"
+                              checked={keepStaging}
+                              onChange={(e) => setKeepStaging(e.target.checked)}
+                              style={{ marginTop: '0.15rem', flexShrink: 0 }}
+                            />
+                            <span>
+                              Keep <strong>{existingInfo.stagingCount}</strong> uncommitted staging entr{existingInfo.stagingCount !== 1 ? 'ies' : 'y'} after import.
+                            </span>
+                          </label>
+                        </div>
+                      )}
+                    </>
                   )}
-                </div>
 
-                <div className="form-group">
-                  <label htmlFor="settings-import-seed" className="auth-label">Recovery Seed</label>
-                  <input
-                    id="settings-import-seed"
-                    type="text"
-                    className="auth-input"
-                    placeholder="Base64 recovery seed"
-                    value={importSeed}
-                    onChange={(e) => setImportSeed(e.target.value)}
-                    disabled={importing}
-                  />
-                </div>
+                  <form className="auth-form" onSubmit={handleImportSubmit}>
+                    <div className="form-group">
+                      <label className="auth-label">Ledger File</label>
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleImportFileChange}
+                        ref={fileInputRef}
+                        className="form-input"
+                        style={{ padding: '0.4rem' }}
+                        disabled={importing}
+                      />
+                      {importFile && (
+                        <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                          Selected: {importFile.name}
+                        </p>
+                      )}
+                    </div>
 
-                <div className="form-group">
-                  <label htmlFor="settings-import-passphrase" className="auth-label">Passphrase</label>
-                  <input
-                    id="settings-import-passphrase"
-                    type="password"
-                    className="auth-input"
-                    placeholder="Enter your passphrase"
-                    value={importPassphrase}
-                    onChange={(e) => setImportPassphrase(e.target.value)}
-                    disabled={importing}
-                  />
-                </div>
+                    <div className="form-group">
+                      <label htmlFor="settings-import-seed" className="auth-label">Recovery Seed</label>
+                      <input
+                        id="settings-import-seed"
+                        type="text"
+                        className="auth-input"
+                        placeholder="Base64 recovery seed"
+                        value={importSeed}
+                        onChange={(e) => setImportSeed(e.target.value)}
+                        disabled={importing}
+                      />
+                    </div>
 
-                {importError && <p className="auth-error-msg">{importError}</p>}
+                    <div className="form-group">
+                      <label htmlFor="settings-import-passphrase" className="auth-label">Passphrase</label>
+                      <input
+                        id="settings-import-passphrase"
+                        type="password"
+                        className="auth-input"
+                        placeholder="Enter your passphrase"
+                        value={importPassphrase}
+                        onChange={(e) => setImportPassphrase(e.target.value)}
+                        disabled={importing}
+                      />
+                    </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  <button
-                    type="submit"
-                    className="auth-btn"
-                    style={{ flex: 1 }}
-                    disabled={importing || !importFile || !importPassphrase.trim() || !importSeed.trim()}
-                  >
-                    {importing ? 'Importing...' : 'Import'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={handleCancelImport}
-                    style={{ flex: 1 }}
-                    disabled={importing}
-                  >
-                    Cancel
-                  </button>
+                    {importError && <p className="auth-error-msg">{importError}</p>}
+
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary btn-sm"
+                        style={{ flex: 1 }}
+                        disabled={
+                          importing ||
+                          !importFile ||
+                          !importPassphrase.trim() ||
+                          !importSeed.trim() ||
+                          (existingInfo && (existingInfo.blocksCount > 0 || existingInfo.stagingCount > 0) && !confirmDestroy)
+                        }
+                      >
+                        {importing ? 'Validating...' : 'Import Ledger'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleCancelImport}
+                        style={{ flex: 1 }}
+                        disabled={importing}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+
+              {/* ── Phase 2: Executing (spinner) ───────────────── */}
+              {importPhase === 'executing' && (
+                <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                  <div className="loading-spinner" />
+                  <p style={{ marginTop: '1rem', color: '#666' }}>Importing ledger...</p>
                 </div>
-              </form>
+              )}
             </div>
           </div>
         )}

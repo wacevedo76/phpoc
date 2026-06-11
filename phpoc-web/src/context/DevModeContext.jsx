@@ -142,6 +142,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // ── Boot phase ───────────────────────────────────────────────────
   const bootAttempted = useRef(false);
 
+  // ── Pending import state (carries data from validate to confirm) ──
+  const pendingImportRef = useRef(null);
+
   useEffect(() => {
     if (bootAttempted.current) return;
     bootAttempted.current = true;
@@ -464,10 +467,26 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   }, []);
 
   /**
-   * Import a ledger from an exported file.
-   * Authenticates with passphrase + seed, verifies seal, writes entries.
+   * Validate an import file — read-only, no storage modifications.
+   *
+   * Runs all five validation gates (parse → seal → hash → genesis) plus
+   * reads existing ledger state for the confirmation UI. Returns enough
+   * info for the caller to show destroy warnings, staging counts, and
+   * export offers BEFORE any destructive operation.
+   *
+   * Stores validation result in pendingImportRef for the subsequent
+   * confirmImport() call.
+   *
+   * @returns {Promise<{
+   *   needsConfirmation: boolean,
+   *   genesisCheck: 'same'|'different'|'new',
+   *   stagingCount: number,
+   *   blocksCount: number,
+   *   importEntryCount: number,
+   *   formatVersion: string,
+   * }>}
    */
-  const importLedgerAction = useCallback(async (file, passphrase, seed) => {
+  const validateImport = useCallback(async (file, passphrase, seed) => {
     setLoading(true);
 
     // Initialize crypto
@@ -482,18 +501,140 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Derive master key
     const masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
 
-    // Import and verify
+    // Import and verify (returns { entries, count, genesisHash, formatVersion, ledger })
     const result = await importLedger(file, crypto, masterKey);
 
-    // Clear existing data and write imported entries
+    // Read existing data for confirmation UI
+    const storage = await createStorage();
+    const existingBlocks = await storage.get('ledger:blocks') || [];
+    const stagingEntries = await storage.get(ENTRIES_KEY) || [];
+    const existingGenesisHash = Array.isArray(existingBlocks) && existingBlocks.length > 0
+      ? existingBlocks[0].day_hash
+      : null;
+
+    const hasExistingData = existingBlocks.length > 0 || stagingEntries.length > 0;
+
+    // ── Genesis identity check ────────────────────────────────────
+    let genesisCheck = 'new';
+    if (result.genesisHash && existingGenesisHash) {
+      genesisCheck = result.genesisHash === existingGenesisHash ? 'same' : 'different';
+    }
+
+    if (genesisCheck === 'same') {
+      setLoading(false);
+      throw new Error(
+        'This ledger shares your identity but merge is not yet supported. ' +
+        'Export from your most recent device instead, or use a different import file.'
+      );
+    }
+
+    // Store validation result for confirmImport()
+    pendingImportRef.current = {
+      file,
+      passphrase,
+      seed,
+      crypto,
+      masterKey,
+      result,
+      storage,
+      existingBlocks,
+      stagingEntries,
+      existingGenesisHash,
+      genesisCheck,
+    };
+
+    setLoading(false);
+
+    return {
+      needsConfirmation: hasExistingData,
+      genesisCheck,
+      stagingCount: stagingEntries.length,
+      blocksCount: existingBlocks.length,
+      importEntryCount: result.count,
+      formatVersion: result.formatVersion,
+    };
+  }, []);
+
+  /**
+   * Execute a confirmed import — clears storage, writes imported data,
+   * optionally preserves existing staging entries, and bootstraps services.
+   *
+   * Must be called after a successful validateImport().
+   *
+   * @param {{ keepStaging?: boolean }} opts
+   */
+  const confirmImport = useCallback(async (opts = {}) => {
+    const pending = pendingImportRef.current;
+    if (!pending) {
+      throw new Error('No pending import — call validateImport() first.');
+    }
+
+    const { crypto, masterKey, result, stagingEntries, seed } = pending;
+    const { keepStaging = false } = opts;
+
+    setLoading(true);
+
+    // Save staging entries before clear if user wants to keep them
+    let savedStaging = [];
+    if (keepStaging && stagingEntries.length > 0) {
+      savedStaging = stagingEntries;
+    }
+
+    // Clear existing data
     const storage = await createStorage();
     await storage.clear();
-    await storage.set(STORED_SEED_KEY, seed);
-    await storage.set(ENTRIES_KEY, result.entries);
 
-    // Bootstrap
+    // Write seed for future logins
+    await storage.set(STORED_SEED_KEY, seed);
+
+    // Write staging entries: merge saved existing + imported
+    // Imported entries take precedence on entry_id collision
+    const importedIds = new Set(result.entries.map(e => e.entry_id));
+    const mergedStaging = [
+      ...savedStaging.filter(s => !importedIds.has(s.entry_id)),
+      ...result.entries,
+    ];
+    await storage.set(ENTRIES_KEY, mergedStaging);
+
+    // Write committed chain for v2 imports
+    if (result.ledger && Array.isArray(result.ledger) && result.ledger.length > 0) {
+      await storage.set('ledger:blocks', result.ledger);
+    }
+
+    // Write identity info from genesis block if available
+    if (result.ledger && result.ledger.length > 0) {
+      const genesis = result.ledger[0];
+      if (genesis.type === 'genesis' && genesis.identity) {
+        if (genesis.identity.username) {
+          await storage.set(USERNAME_KEY, genesis.identity.username);
+        }
+        if (genesis.identity.email) {
+          await storage.set(EMAIL_KEY, genesis.identity.email);
+        }
+      }
+    }
+
+    // Clear pending import
+    pendingImportRef.current = null;
+
+    // Bootstrap all services
     await bootstrapServices({ crypto, masterKey, storage });
   }, []);
+
+  /**
+   * Import a ledger from an exported file (one-shot convenience).
+   *
+   * For enhanced UX with confirmation dialogs, use validateImport() +
+   * confirmImport() instead. This function auto-confirms and is kept
+   * for backward compatibility with OnboardingScreen.
+   *
+   * @deprecated Prefer validateImport() + confirmImport() for import flows
+   *   that show destroy warnings and staging persistence options.
+   */
+  const importLedgerAction = useCallback(async (file, passphrase, seed) => {
+    await validateImport(file, passphrase, seed);
+    await confirmImport({ keepStaging: false });
+  }, [validateImport, confirmImport]);
 
   /**
    * Export the current ledger.
@@ -555,6 +696,48 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const blob = await exportLedger(entries, crypto, masterKey);
     const timestamp = new Date().toISOString().slice(0, 10);
     triggerDownload(blob, `ph-ledger-export-${timestamp}.json`);
+  }, [services]);
+
+  /**
+   * Export the full ledger (committed chain + staging) for backup before import.
+   *
+   * Works in two modes:
+   *   1. Services loaded (called from Settings) — uses services.crypto/sync/sync.readEntries()
+   *   2. Pending import (called from confirmation dialog) — uses pendingImportRef data
+   */
+  const exportLedgerFullAction = useCallback(async () => {
+    // ── Mode 1: Pending import data (confirmation dialog) ──
+    const pending = pendingImportRef.current;
+    if (pending) {
+      const { crypto, masterKey, existingBlocks, stagingEntries } = pending;
+      const blocks = existingBlocks || [];
+      const staging = stagingEntries || [];
+      if (blocks.length === 0 && staging.length === 0) {
+        throw new Error('No data to export.');
+      }
+      const blob = await exportLedgerFull(blocks, staging, crypto, masterKey);
+      const timestamp = new Date().toISOString().slice(0, 10);
+      triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
+      return;
+    }
+
+    // ── Mode 2: Services loaded (Settings) ──
+    const { crypto: existingCrypto, sync: existingSync, storage: existingStorage } = services;
+    if (!existingCrypto || !existingSync || !existingStorage) {
+      throw new Error('Services not loaded — cannot export.');
+    }
+    const masterKey = existingCrypto.getMasterKey();
+    if (!masterKey) {
+      throw new Error('Not authenticated — cannot export.');
+    }
+    const blocks = await existingStorage.get('ledger:blocks') || [];
+    const staging = await existingSync.readEntries();
+    if (blocks.length === 0 && staging.length === 0) {
+      throw new Error('No data to export.');
+    }
+    const blob = await exportLedgerFull(blocks, staging, existingCrypto, masterKey);
+    const timestamp = new Date().toISOString().slice(0, 10);
+    triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
   }, [services]);
 
   // ── Toggle dev/production mode ───────────────────────────────────
@@ -658,7 +841,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     login,
     createNewLedger,
     importLedger: importLedgerAction,
+    validateImport,
+    confirmImport,
     exportLedger: exportLedgerAction,
+    exportLedgerFull: exportLedgerFullAction,
     logout,
 
     // Cookie TTL check
@@ -697,7 +883,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   login: (passphrase: string) => Promise<void>,
  *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
+ *   validateImport: (file: File, passphrase: string, seed: string) => Promise<{needsConfirmation: boolean, genesisCheck: string, stagingCount: number, blocksCount: number, importEntryCount: number, formatVersion: string}>,
+ *   confirmImport: (opts: {keepStaging?: boolean}) => Promise<void>,
  *   exportLedger: (passphrase: string) => Promise<void>,
+ *   exportLedgerFull: () => Promise<void>,
  *   logout: () => void,
  *   checkCookieTtl: () => Promise<boolean>,
  * }}

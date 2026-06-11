@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
 
@@ -36,7 +36,16 @@ export default function History() {
     setLoading(true);
     try {
       const completed = await sync.getCompleted();
-      setEntries(completed);
+      // Ensure every entry has a `date` field (computed from start_epoch if missing)
+      const normalized = completed.map((e) => {
+        if (e.date) return e;
+        const epoch = e.start_epoch;
+        if (epoch) {
+          return { ...e, date: new Date(epoch).toISOString().slice(0, 10) };
+        }
+        return { ...e, date: 'unknown' };
+      });
+      setEntries(normalized);
       // Reset all editing state on refresh
       setEditTags({});
       setEditTagInputs({});
@@ -179,6 +188,95 @@ export default function History() {
     saveComment(entryId, value || '');
   }, [editComments, saveComment]);
 
+  // ── Calendar state ───────────────────────────────────────────────
+  const today = useMemo(() => {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  }, []);
+
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth()); // 0-11
+
+  // Reset calendar to today when entries load
+  useEffect(() => {
+    if (!loading && entries.length > 0) {
+      const now = new Date();
+      setCalendarYear(now.getFullYear());
+      setCalendarMonth(now.getMonth());
+    }
+  }, [loading, entries.length]);
+
+  // ── Compute dates that have entries (for calendar dots) ───────────
+  const datesWithEntries = useMemo(() => {
+    const set = new Set();
+    for (const e of entries) {
+      if (e.date) set.add(e.date);
+    }
+    return set;
+  }, [entries]);
+
+  // ── Calendar navigation helpers ───────────────────────────────────
+  const calendarDays = useMemo(() => {
+    const firstDay = new Date(calendarYear, calendarMonth, 1);
+    const lastDay = new Date(calendarYear, calendarMonth + 1, 0);
+    const startDow = firstDay.getDay(); // 0=Sun
+    const totalDays = lastDay.getDate();
+
+    const weeks = [];
+    let week = [];
+
+    // Pad leading empty cells
+    for (let i = 0; i < startDow; i++) {
+      week.push(null);
+    }
+
+    for (let day = 1; day <= totalDays; day++) {
+      const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      week.push({ day, dateStr, hasEntries: datesWithEntries.has(dateStr) });
+      if (week.length === 7) {
+        weeks.push(week);
+        week = [];
+      }
+    }
+
+    // Pad trailing empty cells
+    if (week.length > 0) {
+      while (week.length < 7) week.push(null);
+      weeks.push(week);
+    }
+
+    return weeks;
+  }, [calendarYear, calendarMonth, datesWithEntries]);
+
+  const monthLabel = useMemo(() => {
+    const d = new Date(calendarYear, calendarMonth, 1);
+    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }, [calendarYear, calendarMonth]);
+
+  const dayHeaders = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+  const navigateMonth = useCallback((delta) => {
+    setCalendarMonth((prev) => {
+      let m = prev + delta;
+      let y = calendarYear;
+      if (m < 0) { m = 11; y--; }
+      if (m > 11) { m = 0; y++; }
+      setCalendarYear(y);
+      return m;
+    });
+  }, [calendarYear]);
+
+  const navigateYear = useCallback((delta) => {
+    setCalendarYear((prev) => prev + delta);
+  }, []);
+
+  const goToToday = useCallback(() => {
+    const now = new Date();
+    setCalendarYear(now.getFullYear());
+    setCalendarMonth(now.getMonth());
+    setFilterDate(now.toISOString().slice(0, 10));
+  }, []);
+
   // ── Filter ────────────────────────────────────────────────────────
 
   const filtered = entries.filter((e) => {
@@ -241,30 +339,109 @@ export default function History() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Calendar + Tag Filter */}
       <div className="history-filters">
-        <input
-          type="date"
-          className="form-input form-input-sm"
-          value={filterDate}
-          onChange={(e) => setFilterDate(e.target.value)}
-          aria-label="Filter by date"
-        />
-        <input
-          type="text"
-          className="form-input form-input-sm"
-          placeholder="Filter by tag..."
-          value={filterTag}
-          onChange={(e) => setFilterTag(e.target.value)}
-          aria-label="Filter by tag"
-        />
-        {(filterDate || filterTag) && (
-          <button className="btn btn-ghost btn-sm" onClick={() => { setFilterDate(''); setFilterTag(''); }}>
-            Clear
-          </button>
-        )}
+        <div className="history-calendar">
+          {/* Month/Year navigation */}
+          <div className="calendar-nav">
+            <button className="calendar-nav-btn" onClick={() => navigateYear(-1)} title="Previous year">
+              ◀◀
+            </button>
+            <button className="calendar-nav-btn" onClick={() => navigateMonth(-1)} title="Previous month">
+              ◀
+            </button>
+            <span
+              className="calendar-month-label"
+              onClick={() => { setFilterDate(''); }}
+              title="Click to show all entries"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter') setFilterDate(''); }}
+            >
+              {monthLabel}
+            </span>
+            <button className="calendar-nav-btn" onClick={() => navigateMonth(1)} title="Next month">
+              ▶
+            </button>
+            <button className="calendar-nav-btn" onClick={() => navigateYear(1)} title="Next year">
+              ▶▶
+            </button>
+          </div>
+
+          {/* Day-of-week headers */}
+          <div className="calendar-dow">
+            {dayHeaders.map((d) => (
+              <span key={d} className="calendar-dow-cell">{d}</span>
+            ))}
+          </div>
+
+          {/* Day grid */}
+          <div className="calendar-grid">
+            {calendarDays.map((week, wi) => (
+              <div key={wi} className="calendar-week">
+                {week.map((cell, ci) => {
+                  if (!cell) {
+                    return <span key={`e-${wi}-${ci}`} className="calendar-day calendar-day-empty" />;
+                  }
+                  const { day, dateStr, hasEntries } = cell;
+                  const isToday = dateStr === today;
+                  const isSelected = dateStr === filterDate;
+                  return (
+                    <button
+                      key={dateStr}
+                      className={`calendar-day${
+                        isToday ? ' calendar-day-today' : ''
+                      }${
+                        isSelected ? ' calendar-day-selected' : ''
+                      }${
+                        hasEntries ? ' calendar-day-has-entries' : ''
+                      }`}
+                      onClick={() => setFilterDate(isSelected ? '' : dateStr)}
+                      title={hasEntries ? `${day} — has entries` : String(day)}
+                    >
+                      <span className="calendar-day-num">{day}</span>
+                      {hasEntries && <span className="calendar-day-dot" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* Today + clear shortcuts */}
+          <div className="calendar-actions">
+            <button className="btn btn-ghost btn-sm" onClick={goToToday}>
+              Today
+            </button>
+            {filterDate && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setFilterDate('')}>
+                Clear date
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Tag filter */}
+        <div className="history-tag-filter">
+          <input
+            type="text"
+            className="form-input form-input-sm"
+            placeholder="Filter by tag..."
+            value={filterTag}
+            onChange={(e) => setFilterTag(e.target.value)}
+            aria-label="Filter by tag"
+          />
+          {filterTag && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setFilterTag('')}>
+              Clear
+            </button>
+          )}
+        </div>
+
         {uncommittedCount > 0 && (
-          <span className="badge-staging-count">{uncommittedCount} not committed</span>
+          <span className="badge-staging-count" style={{ alignSelf: 'center' }}>
+            {uncommittedCount} not committed
+          </span>
         )}
       </div>
 

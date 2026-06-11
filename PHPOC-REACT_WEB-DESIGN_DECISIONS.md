@@ -16,15 +16,15 @@ Each screen is a standalone React component in `src/components/screens/`. Screen
 | Screen | Component File | CLI Origin | Purpose |
 |--------|---------------|------------|---------|
 | AuthScreen | `AuthScreen.jsx` | `ph login` | Passphrase entry → PBKDF2 → seed decryption |
-| Dashboard | `Dashboard.jsx` | `ph view` + `ph add` | Main screen: active tasks + new task form |
+| Dashboard | `Dashboard.jsx` | `ph view` + `ph add` | Main screen: active tasks + new task form (timed / one-off toggle) |
 | NewTask | `NewTask.jsx` | `ph add` | Standalone task creation (alternative entry) |
 | History | `History.jsx` | `ph list` | Completed entries, grouped by day, filtered |
 | Tags | `Tags.jsx` | `ph tags` | Tag list with frequency counts |
-| SyncSettings | `SyncSettings.jsx` | `ph sync` | Sync screen — uncommitted entries list with selection, commit to ledger, sync status section |
+| SyncSettings | `SyncSettings.jsx` | `ph sync` | Sync screen — uncommitted entry pills, selection + commit bar, NOT_SYNCED when staging has entries, sync status |
 | UserProfile | `UserProfile.jsx` | `ph login info` | Identity card, auth status, stats, gateway to config |
 | Configuration | `Configuration.jsx` | `ph config` / CLI config file | All 27 CLI config fields across 9 sections |
 | LedgerSync | `LedgerSync.jsx` | `ph sync --commit` | Phase 3 placeholder for block chain commit |
-| Settings | `Settings.jsx` | App-level (dev toggle, about) | Developer mode toggle, remote config, about |
+| Settings | `Settings.jsx` | `ph settings` | Dev mode, remote sync config, ledger export/import, about |
 
 ### 1.2 Sub-Navigation: Profile → Configuration
 
@@ -204,7 +204,7 @@ If deep linking becomes necessary (e.g., `ph://ledger/view/2026-06-01`), React R
                   │   ├─ Active Tasks Pane
                   │   │   └─ <ActiveTaskPill /> × N
                   │   └─ New Task Pane
-                  │       └─ form (title, tags, start)
+                  │       └─ form (title + ☐ one-off, tags, Start/Log)
                   ├─ <NewTask />
                   │   └─ form (title, tags, comment, start)
                   ├─ <History />
@@ -243,6 +243,9 @@ If deep linking becomes necessary (e.g., `ph://ledger/view/2026-06-01`), React R
                   └─ <Settings />
                       ├─ Dev mode toggle
                       ├─ Remote URL + API key
+                      ├─ Data Management (Export/Import)
+                      │   ├─ Export → PassphraseModal → triggerDownload()
+                      │   └─ Import → file picker + seed + passphrase form
                       └─ About section
               └─ Bottom Tab Nav
                   └─ 7 tab buttons
@@ -577,7 +580,7 @@ The SaaS deployment uses the same stack with user isolation layered in:
 - **Auth is minimal.** A registration service (~50 lines, can be a second Worker) that creates `user_id` + API key. No user profile data stored.
 - **Import/export via File API.** Browser-native download/upload for backup. No server involved.
 
-### 11.11 Import/Export Design (2026-06-09)
+### 11.11 Import/Export Design (2026-06-09, updated 2026-06-11)
 
 
 
@@ -598,21 +601,45 @@ The SaaS deployment uses the same stack with user isolation layered in:
 **Import flow:**
 1. User taps **Import Ledger** in Settings
 2. File picker → select `.json` file
-3. Parse → validate `format_version`, `entries` array, `seal` presence
+3. Parse → auto-detect format (v1 export, v2 export, or raw chain)
 4. Passphrase prompt (modal overlay)
 5. `crypto.verifySeal(entriesJson, seal, masterKey)` — **mismatch → reject entirely, show error**
 6. Recompute each entry's `hash` and compare — **any mismatch → reject entirely, show error**
 7. `sync._local.writeEntries(parsed.entries)` → replace all local entries
 8. UI refreshes to show imported data
 
-**File format:**
+**File formats (three supported):**
+
+| Format | Detected by | Seal scope | Validation |
+|--------|-------------|-----------|------------|
+| v1 export | `{ format_version: "1", entries, seal }` | File-level: `seal` over `JSON.stringify(entries)` | Seal + entry hash recalc |
+| v2 export | `{ format_version: "2", ledger, staging, seal }` | File-level: `seal` over `JSON.stringify({ledger, staging})` | Seal + entry hash recalc |
+| **Raw chain** | Top-level `[...]` JSON array | Per-block: each block has its own `day_hash`/`month_hash`/`year_hash` | Per-block seal + `prev_hash` chain linkage + entry hash recalc |
+
 ```json
+// v1 export (staging-only)
 {
   "format_version": "1",
   "exported_at": "2026-06-09T14:30:00.000Z",
   "entries": [ /* StagingEntry[] */ ],
   "seal": "abc123..."
 }
+
+// v2 export (committed chain + staging)
+{
+  "format_version": "2",
+  "exported_at": "2026-06-11T12:00:00.000Z",
+  "ledger": [ /* Block[] — committed chain */ ],
+  "staging": [ /* StagingEntry[] */ ],
+  "seal": "abc123..."
+}
+
+// Raw chain (CLI ledger.json — JSON array of blocks)
+[
+  { "type": "genesis", "date": "2026-04-23", "day_hash": "..., "entries": [], ... },
+  { "type": "day", "date": "2026-04-23", "day_hash": "..., "entries": [...], "prev_hash": "...", ... },
+  ...
+]
 ```
 
 - `entries` — the user's ledger data (staging entry DTOs). Device-agnostic, system-agnostic.
@@ -620,12 +647,40 @@ The SaaS deployment uses the same stack with user isolation layered in:
 - `exported_at` — informational timestamp for user transparency (e.g. backup log display). Sits outside the seal. Not part of the ledger.
 - `format_version` — allows format evolution (entries-only for now; could add ledger blocks in v2).
 
+**Cross-platform JSON compatibility (2026-06-11):**
+
+A critical finding during raw chain import development: Python's `json.dumps(obj, sort_keys=True)` and JavaScript's `JSON.stringify(obj)` produce **different output** for the same object:
+
+| Aspect | Python `json.dumps(sort_keys=True)` | JavaScript `JSON.stringify()` |
+|--------|-------------------------------------|-------------------------------|
+| Key sorting | All keys at **all nesting levels** sorted alphabetically | No sorting — insertion order preserved |
+| Separators | `": "` (colon-space) and `", "` (comma-space) | `":"` (colon) and `","` (comma) — compact |
+
+This means a SHA-256 hash computed in Python vs JavaScript will differ even for identical data. Since the CLI computes entry hashes and block seals in Python, the web app needs a Python-compatible JSON serializer for verification. The `jsonDumps()` helper in `ledger_import.js` handles this:
+
+```js
+function jsonDumps(obj, sortedKeys = null) {
+  if (obj === null) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(v => jsonDumps(v)).join(', ') + ']';
+  }
+  const keys = sortedKeys || Object.keys(obj).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ': ' + jsonDumps(obj[k])).join(', ') + '}';
+}
+```
+
+This is only needed when verifying Python-computed hashes (raw chain import). The export format uses JavaScript-native `JSON.stringify` for both seal creation (export) and seal verification (import) — no cross-platform translation needed.
+
 **Key decisions:**
 - Ledger is defined as the entries array only — no cookie, no device identity, no app metadata
 - File wrapper metadata (`exported_at`, `format_version`) sits outside the sealed region
 - Import always overwrites (replaces) local entries — no merge
 - Verification failure (seal or entry hash) → reject entirely, no partial import
 - Active task flags (`is_active`, `is_paused`) preserved as-is on import
+- Raw chain imports return `{ entries: [], ledger: blocks, formatVersion: 'chain' }` — all entries are in the committed chain, not staging
 
 **UI placement:**
 - New **Backup & Restore** section in Settings screen
@@ -893,7 +948,11 @@ if (!masterKey) {
 | 13 — Export works in dev mode | ✅ Complete | Uses cached master key when available, skips seed auth. Any passphrase works in dev mode. |
 | 14 — Recovery seed display | ✅ Complete | Full-screen overlay after onboarding shows base64 seed, "I've saved it" confirm button. |
 | 15 — Logout button + fixes | ✅ Complete | Renamed from Lock to Logout. Fixed blank screen (hasExistingData). Fixed in-memory data loss (FallbackStorage caching). |
-| 16 — Sync screen with Commit UI | ✅ Complete | Dedicated Sync screen replacing old status panel. Uncommitted entries (active + stopped) as compact pills. Stopped: yellow border/left syncability indicator, expandable inline tag & comment editing. Active: red border, lock icon, non-expandable. Commit Selected/Commit All buttons. Status section below. `commitEntries()` in DevModeContext returns result. |
+| 16 — Sync screen with Commit UI | ✅ Complete | Dedicated Sync screen. Uncommitted entries (active + stopped) as compact pills. Stopped: yellow border/left syncability indicator, expandable inline tag & comment editing. Active: red border, lock icon, non-expandable. Commit Selected/Commit All buttons. NOT_SYNCED status when staging has entries. Tag-add input restyled (blue badge, white text, black border). |
+| 17 — One-off task checkbox | ✅ Complete | Dashboard "Start New Task" form: ☐ one-off checkbox next to title input. When checked: button changes to "Log", capture calls sync.capture() with isActive=false + endEpoch=now (immediate close). When unchecked: normal timed task with "Start" button. |
+| 18 — Full ledger export + import interface | ⚠️ v2 chain loss bug | `exportLedgerFull(blocks, staging, crypto, masterKey)` — v2 format with committed chain + staging, HMAC seal over {ledger, staging}. Pure read — never commits. 72 tests with real mock ledger data (97 blocks, 205 entries). `importLedger` updated to handle both v1/v2 formats, returns genesisHash. DevModeContext import action checks genesis match: same genesis → reject with merge-not-supported message (open interface for future merge logic); different genesis → replace. **Known bug:** v2 import discards committed chain — `importLedger()` returns only staging entries, never writes `ledger:blocks`. |
+| 19 — Import security analysis | ✅ Confirmed | Passphrase verification happens before any destructive operations. Five read-only validation gates (parse → seal verify → entry hash re-validate → genesis check) pass before `storage.clear()`. Wrong passphrase or tampered file rejected with zero impact on existing data. Staging entries confirmed cryptographically portable across ledgers (plaintext commit fields, genesis hash not in entry hash per PHPSPEC §5.4). |
+| 20 — Import workflow enhancement | 🔜 Planned | Two safety gates before `storage.clear()`: (A) destroy warning + offer to export current ledger via `exportLedgerFull()`; (B) offer to keep uncommitted staging entries (both stopped and running) merged into imported staging area. |
 
 ### 11.20 Sync Screen Design (2026-06-11)
 
@@ -957,3 +1016,213 @@ if (!masterKey) {
 - `phpoc-web/src/components/screens/SyncSettings.jsx` — Complete rewrite (~500 lines)
 - `phpoc-web/src/App.css` — ~160 lines of new sync styles (.sync-pill, .sync-pill-main, .sync-pill-details, .sync-pill-commitable, .sync-pill-not-commitable, .sync-commit-bar, etc.)
 - `phpoc-web/src/context/DevModeContext.jsx` — `commitEntries()` now returns result
+
+### 11.21 One-Off Task Toggle (2026-06-11)
+
+**Problem:** The Dashboard's "Start New Task" form always creates timed, active tasks. Users need a quick way to log a completed task without starting/stopping it — e.g. "Read an article — 5 minutes ago" that should appear directly in the Sync screen as a stopped, commitable entry.
+
+**Solution:** A small ☐ checkbox labeled "one-off" placed to the right of the Title input.
+
+**Behavior:**
+- **Unchecked (default):** Normal timed task. Button shows ▶ **Start**. `sync.capture({isActive: true})` → appears in Active Tasks pane.
+- **Checked:** One-off task. Button shows ✓ **Log**. `sync.capture({isActive: false, endEpoch: Date.now()})` → captured as immediately ended (zero duration), appears directly in Sync screen as a stopped/commitable entry.
+
+**Design decisions:**
+1. **Checkbox location:** Next to the Title input in an inline flex row (`.title-input-group`) — avoids adding vertical height to the form.
+2. **Visual feedback:** The checkbox label gets a yellow border + yellow-tinted background when checked (`:has(input:checked)`), matching the syncability yellow used on the Sync screen.
+3. **Button label toggle:** "Start" → "Log" communicates the mode clearly. Icon switches from Play to Check.
+4. **State reset:** `isOneOff` resets to `false` after submission so the next task defaults to timed.
+5. **Data model:** A one-off task is just a regular staging entry with `is_active: false` and `end_epoch` equal to `start_epoch`. No special flag — it's indistinguishable from a manually stopped 0-duration task.
+
+**Key files:**
+- `phpoc-web/src/components/screens/Dashboard.jsx` — `isOneOff` state + checkbox + `handleStartTask` branches
+- `phpoc-web/src/App.css` — `.title-input-group`, `.oneoff-checkbox-label`, `.oneoff-checkbox` styles
+- `phpoc-web/src/components/ui/Icons.jsx` — Added `Check` icon
+
+### 11.22 Full Ledger Export & Import Interface (2026-06-11)
+
+**Problem:** The existing export (`exportLedger`) only exports staging entries — no committed blocks, no chain integrity. Import always did a full replace with no identity check. A full backup/restore workflow requires exporting the committed chain alongside staging entries.
+
+**Solution:** New `exportLedgerFull()` function and genesis-aware import with merge placeholder.
+
+#### Export (`ledger_export.js`)
+
+```js
+export async function exportLedgerFull(blocks, staging, crypto, masterKey)
+```
+
+**v2 export format:**
+```json
+{
+  "format_version": "2",
+  "exported_at": "2026-06-11T...",
+  "ledger": [{ "type": "genesis", ... }, { "type": "day", ... }, ...],
+  "staging": [{ "entry_id": "...", "title": "...", ... }, ...],
+  "seal": "<HMAC of JSON.stringify({ledger, staging})>"
+}
+```
+
+**Design decisions:**
+1. **Pure read — never commits:** `exportLedgerFull` is a read-only operation. It serializes the current state of both the committed chain and staging entries without modifying anything.
+2. **Seal covers {ledger, staging}:** The combined state is hashed — both arrays must validate together on import.
+3. **Separate ledger/staging arrays:** Unlike v1 which conflated everything into `entries`, v2 keeps committed blocks and staging entries separate. This enables the import side to detect genesis identity and make merge decisions.
+4. **Block hashes preserved as-is:** Chain integrity is maintained — `prev_hash` links, `day_hash`, entry hashes within blocks — all untouched.
+
+**Test coverage:** 72 tests covering function existence, Blob/MIME type, v2 format structure, block/staging preservation, seal integrity (covers data not metadata), deterministic output, different-key-isolation, empty-data edge cases, staging-not-mutated guarantee, chain linkage verification, real mock ledger (97 blocks, 205 entries from user's data at `/tmp/phpoc-mock-ledger.json`), error handling (null/undefined/empty), v1/v2 format version differentiation, and large export (100 synthetic blocks).
+
+#### Import (`ledger_import.js`)
+
+**Updated return shape:**
+```js
+{
+  entries: [...],           // staging entries to write
+  count: number,
+  genesisHash: string|null, // genesis day_hash (v2 only)
+  formatVersion: "1"|"2"
+}
+```
+
+**Seal verification adapts to format:**
+- v1 → seal covers `JSON.stringify(entries)`
+- v2 → seal covers `JSON.stringify({ledger, staging})`
+
+**Genesis-aware import in DevModeContext:**
+
+| Condition | Behavior |
+|---|---|
+| `genesisHash` is `null` (v1 file) | Replace (backward compat) |
+| `genesisHash` ≠ existing | Replace (different identity) |
+| `genesisHash` = existing | **Reject:** "This ledger shares your identity but merge is not yet supported" |
+
+**Merge path is an open interface:** The `genesisHash = existing` branch is a single clear location where future merge reconciliation plugs in. When implemented, it will:
+1. Decrypt `startTime_enc` from all entries in both divergent chains (requires master key)
+2. Collect unique entries (no millisecond collisions expected for different human activities)
+3. Sort by plaintext start time
+4. Rebuild day blocks, re-seal, re-hash from fork point forward
+
+**Bug fix:** Settings.jsx was calling `services.exportLedger()` / `services.importLedger()` but these functions are exposed at the top level of the context, not nested under `services`. Fixed by destructuring them directly from `useApp()`.
+
+**Key files:**
+- `phpoc-web/src/services/ledger_export.js` — Added `exportLedgerFull()` (v2 format)
+- `phpoc-web/src/services/ledger_import.js` — Updated for v1/v2 dual-format, genesis extraction
+- `phpoc-web/src/context/DevModeContext.jsx` — Genesis-aware import with merge stub
+- `phpoc-web/src/components/screens/Settings.jsx` — Fixed export/import context path
+- `phpoc-web/test/ledger_export_full_test.mjs` — 72 tests
+- `phpoc-web/test/ledger_export_test.mjs` — 24 tests (v1, unchanged)
+- `phpoc-web/test/ledger_import_test.mjs` — 26 tests (unchanged)
+
+### 11.23 Import Security Analysis (2026-06-11)
+
+**Question:** Is it possible to import a different ledger without destroying the existing one if the passphrase is wrong?
+
+**Answer: Yes — passphrase verification gates all destructive operations.**
+
+The import pipeline has five read-only validation gates before `storage.clear()` is ever called:
+
+```
+1. Parse JSON        → reject if invalid file
+2. Seal verification  → reject if wrong passphrase/seed (HMAC mismatch)
+3. Entry hash check   → reject if any entry hash doesn't match
+4. Genesis check      → reject if same genesis (merge not supported)
+5. [All pass]         → storage.clear() — first destructive operation
+```
+
+**Seal as passphrase gate:** `importLedger()` calls `crypto.verifySeal(sealPayload, seal, masterKey)`. The seal is HMAC-SHA256 derived from a sub-key of the Master Key. If the passphrase or seed is wrong → wrong Master Key → seal verification fails → `Error` thrown. No storage mutations occur.
+
+**All 122 import/export tests pass** (26 import + 24 export + 72 full-export).
+
+### 11.24 Staging Entry Portability Across Ledgers (2026-06-11)
+
+**Question:** Can staging entries from one ledger be committed into a completely different ledger?
+
+**Answer: Yes — staging entries are cryptographically portable.**
+
+**Why:**
+1. **Staging entries carry plaintext commit fields** at the outer level: `start_epoch`, `duration`, `title`, `tags`, `comment`, `pauses`. These are the source of truth for commit.
+2. **`_encryptEntry()` reads plaintext, not ciphertext** — it extracts `data.start_epoch` directly and encrypts fresh with the current Master Key. It never calls `crypto.decrypt()` on `data.startTime_enc`.
+3. **The genesis hash is not part of the entry hash** (confirmed against PHPSPEC §5.4). Entry hashes are computed from the entry's own data dict only. No genesis, no block hash, no `prev_hash`.
+4. **Old encrypted fields are dead weight** — `data.startTime_enc = this.crypto.encrypt(...)` overwrites whatever was there from the previous ledger.
+
+**Key derivation chain (per PHPSPEC §2):**
+```
+Passphrase → PBKDF2(passphrase, "session-salt", 600K) → PDK
+PDK → AES-decrypt genesis.identity.recovery_seed_enc → Seed (32 bytes)
+Seed → base64_decode → Master Key (32 bytes)
+Master Key → HMAC-SHA256(MK, random_salt)[:16] → AES-128-CTR encryption key
+```
+
+Two different ledgers = two different seeds = two different Master Keys. But since commit reads plaintext and re-encrypts fresh, the staging entry is fungible.
+
+**Implication for import workflow:** When importing a different ledger, uncommitted staging entries can be preserved and merged into the imported ledger's staging area with no cryptographic conflict. The only artifacts are semantic (another person's device UUIDs on the entries).
+
+### 11.25 Known Bug — v2 Import Loses Committed Chain (2026-06-11)
+
+**Problem:** `importLedger()` extracts `parsed.staging` as `result.entries` but never returns `parsed.ledger`. `importLedgerAction` writes only `ENTRIES_KEY` (staging entries) — never writes `ledger:blocks`.
+
+**Impact:** After importing a v2 file with 97 committed blocks, the ledger chain is empty. The first `commitEntries()` call sees `[]` blocks and builds day blocks from scratch, losing the imported chain's entire history.
+
+**Fix (planned):** `importLedger()` should also return `{ledger}` array. `importLedgerAction` should write it to `ledger:blocks` alongside `ENTRIES_KEY`.
+
+### 11.26 Import Workflow Enhancement (Completed 2026-06-11)
+
+Two safety gates added before the destructive `storage.clear()`:
+
+**A. Destroy warning + export offer:**
+- "The ledger currently in use will be destroyed. Export it first?"
+- Calls `exportLedgerFull()` if user accepts before proceeding.
+
+**B. Staging persistence option:**
+- "You have N uncommitted entries (M active). Keep them staged after import?"
+- If yes: read entries before `storage.clear()`, then merge into imported staging after write.
+- If no: proceed with full wipe as currently implemented.
+
+**C. UI Design (2026-06-11):**
+- Warnings and checkboxes merged DIRECTLY into the form phase (no separate confirmation phase)
+- `probeExistingData()` reads IndexedDB directly to check for existing `ledger:blocks` and `entries`
+- Required "I understand" checkbox (red background) before Import button enables
+- Optional "Keep N staging entries" checkbox (green background)
+- "📤 Export current ledger" button before proceeding
+- Applied to both Settings and Onboarding screens
+
+### 11.27 History Calendar Widget + Committed Entry Decryption (2026-06-11)
+
+**Problem:** The History screen used `<input type="date">` which only allows single-date filtering. Imported committed entries from `ledger:blocks` never appeared because `sync.getCompleted()` only read from staging.
+
+**A. Custom Month Calendar Widget:**
+Replaces the plain date input with an inline calendar component in `History.jsx`:
+- **State:** `calendarYear`, `calendarMonth` — tracks which month is displayed
+- **Navigation:** `◀◀`/`◀`/`▶`/`▶▶` buttons for year/month stepping
+- **Day grid:** 7-column CSS grid (`grid-template-columns: repeat(7, 1fr)`) per week row
+- **Entry dots:** Green dots on dates that have entries (computed via `datesWithEntries` Set)
+- **Today:** Blue border ring
+- **Selected date:** Blue filled background
+- **Click behavior:** Toggle — click a day to filter, click selected day to clear
+- **Shortcuts:** [Today] and [Clear date] buttons below the grid
+- **Month label:** Click to show all entries (clear filter)
+- **CSS:** `.history-calendar`, `.calendar-week`, `.calendar-day`, `.calendar-day-today`, `.calendar-day-selected`, `.calendar-day-has-entries`, `.calendar-day-dot`, `.calendar-actions`, `.history-tag-filter`
+
+**B. Committed Entry Decryption:**
+Imported committed entries are stored encrypted in `ledger:blocks`. Each entry's data has:
+- `startTime_enc` — AES-128-CTR encrypted hex of the start epoch
+- `endTime_enc` — AES-128-CTR encrypted hex of the end epoch
+- `metadata_enc` — AES-128-CTR encrypted hex of JSON metadata
+
+Unlike staging entries which use `plain:` prefixed plaintext values, committed block entries require actual decryption. New method `_rawCommittedEntryToDTO(rawEntry)` in `sync.js`:
+- Calls `this._crypto.decryptWithCachedKey()` on each encrypted field
+- Parses decrypted strings as integers/JSON
+- Builds DTO with `committed: true`, `block_index`, and computed `date`
+- Uses `rawEntry.hash` as `entry_id` (committed entries have no separate entry_id field)
+
+`sync.getCompleted()` now:
+1. Reads staging completed entries from `readEntries()` (as before)
+2. Reads `ledger:blocks` from storage
+3. Iterates all block entries → decrypts via `_rawCommittedEntryToDTO()` → marks committed
+4. Returns `[...committedDTOs, ...stagingCompleted]` merged
+5. Wraps block reading in try/catch — if master key isn't cached, staging entries still show
+
+**Files changed:**
+| File | Change |
+|------|--------|
+| `sync.js` | New `_rawCommittedEntryToDTO()` (58 lines). Extended `getCompleted()` to read + decrypt committed entries. |
+| `History.jsx` | Calendar state + 100 lines of calendar compute/JSX. Entry `date` normalization from `start_epoch`. |
+| `App.css` | ~100 lines of calendar CSS. |

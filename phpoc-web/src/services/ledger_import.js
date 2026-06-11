@@ -1,15 +1,33 @@
 /**
  * ledger_import.js — Import ledger entries from a signed JSON file.
  *
- * Parses, validates, and decrypts an exported ledger file. The caller
- * (UI layer) is responsible for writing the returned entries to storage
- * and refreshing the UI.
+ * Supports three formats:
+ *   - v1 export: { format_version: '1', entries, seal }
+ *   - v2 export: { format_version: '2', ledger, staging, seal }
+ *   - Raw chain: [block, ...] — the CLI's ledger.json format
+ * The caller (UI layer) is responsible for writing entries to storage
+ * and deciding replace vs. merge based on genesis identity.
  *
- * Validation flow:
- *   1. Parse JSON → validate structural fields
- *   2. Verify seal = HMAC(JSON.stringify(entries), masterKey)
+ * Validation flow (export formats):
+ *   1. Parse JSON → detect format version
+ *   2. Verify seal (v1: over entries, v2: over {ledger, staging})
  *   3. Recompute each entry's SHA-256 hash → compare
- *   4. Any failure → throw (reject entirely, no partial import)
+ *   4. Extract genesis hash from v2 ledger when available
+ *   5. Any failure → throw (reject entirely, no partial import)
+ *
+ * Validation flow (raw chain):
+ *   1. Parse JSON → detect top-level array
+ *   2. Verify each block has required fields (type, prev_hash, etc.)
+ *   3. Verify prev_hash chain linkage
+ *   4. Verify each block's seal (day_hash/month_hash/year_hash)
+ *   5. Extract genesis hash from first block
+ *
+ * Return shape:
+ *   { entries, count, genesisHash, formatVersion, ledger }
+ *   - genesisHash: genesis block day_hash (v2/chain) or null (v1)
+ *   - ledger: committed chain blocks array (v2/chain) or null (v1)
+ *   - entries: staging entries (export) or empty (raw chain)
+ *   - Merge decision is the CALLER's responsibility.
  *
  * @module ledger_import
  */
@@ -20,7 +38,7 @@
  * @param {Blob|File} file - The exported .json file (Blob or File).
  * @param {object} crypto - CryptoService instance with verifySeal() and sha256().
  * @param {string} masterKey - 64-char hex master key.
- * @returns {Promise<{entries: Array, count: number}>} Parsed and verified entries.
+ * @returns {Promise<{entries: Array, count: number, genesisHash: string|null, formatVersion: string, ledger: Array|null}>}
  * @throws {Error} On any validation failure (seal mismatch, bad hash, missing fields).
  */
 export async function importLedger(file, crypto, masterKey) {
@@ -44,29 +62,71 @@ export async function importLedger(file, crypto, masterKey) {
     );
   }
 
-  // ── Structural validation ───────────────────────────────────────
+  // ── Format detection ────────────────────────────────────────────
+  // Raw chain format: top-level JSON array (CLI ledger.json)
+  if (Array.isArray(parsed)) {
+    return _importRawChain(parsed, crypto, masterKey);
+  }
+
+  // ── Export format: must have format_version ─────────────────────
   if (typeof parsed.format_version !== 'string' || !parsed.format_version) {
     throw new Error(
-      'importLedger: missing or invalid format_version in file'
+      'importLedger: missing or invalid format_version in file. ' +
+      'If this is a raw ledger chain (CLI ledger.json), it should be a JSON array.'
     );
   }
 
-  if (!Array.isArray(parsed.entries)) {
-    throw new Error(
-      'importLedger: missing or invalid entries array in file'
-    );
-  }
+  const formatVersion = parsed.format_version;
 
-  if (typeof parsed.seal !== 'string' || !parsed.seal) {
-    throw new Error(
-      'importLedger: missing or invalid seal in file'
-    );
+  // ── Determine entries and seal payload based on format ──────────
+  let entries;
+  let sealPayload; // The data the seal covers
+  let genesisHash = null;
+  let ledger = null;
+
+  if (formatVersion === '2') {
+    // v2: full ledger export — { ledger, staging, seal }
+    if (!Array.isArray(parsed.ledger)) {
+      throw new Error(
+        'importLedger: format v2 requires a "ledger" array'
+      );
+    }
+    if (!Array.isArray(parsed.staging)) {
+      throw new Error(
+        'importLedger: format v2 requires a "staging" array'
+      );
+    }
+    if (typeof parsed.seal !== 'string' || !parsed.seal) {
+      throw new Error('importLedger: missing or invalid seal in file');
+    }
+
+    // Extract genesis hash (first block in the chain)
+    if (parsed.ledger.length > 0 && parsed.ledger[0].type === 'genesis') {
+      genesisHash = parsed.ledger[0].day_hash || null;
+    }
+
+    // v2 entries = staging entries (committed blocks stay as ledger)
+    entries = parsed.staging;
+    ledger = parsed.ledger;
+    sealPayload = JSON.stringify({ ledger: parsed.ledger, staging: parsed.staging });
+  } else {
+    // v1 (and any future unrecognized version): staging-only
+    if (!Array.isArray(parsed.entries)) {
+      throw new Error(
+        'importLedger: missing or invalid entries array in file'
+      );
+    }
+    if (typeof parsed.seal !== 'string' || !parsed.seal) {
+      throw new Error('importLedger: missing or invalid seal in file');
+    }
+
+    entries = parsed.entries;
+    sealPayload = JSON.stringify(entries);
+    // v1: no genesis info — genesisHash stays null
   }
 
   // ── Seal verification ───────────────────────────────────────────
-  // Seal covers JSON.stringify(entries) only — NOT wrapper metadata
-  const entriesJson = JSON.stringify(parsed.entries);
-  const sealValid = crypto.verifySeal(entriesJson, parsed.seal, masterKey);
+  const sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
 
   if (!sealValid) {
     throw new Error(
@@ -76,8 +136,8 @@ export async function importLedger(file, crypto, masterKey) {
   }
 
   // ── Entry hash re-validation ────────────────────────────────────
-  for (let i = 0; i < parsed.entries.length; i++) {
-    const entry = parsed.entries[i];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
 
     // Build the canonical data (all fields except hash, sorted keys)
     const hashData = {};
@@ -98,7 +158,167 @@ export async function importLedger(file, crypto, masterKey) {
 
   // ── Success ─────────────────────────────────────────────────────
   return {
-    entries: parsed.entries,
-    count: parsed.entries.length,
+    entries,
+    count: entries.length,
+    genesisHash,
+    formatVersion,
+    ledger,
+  };
+}
+
+// ── Block seal field names per block type ──────────────────────────
+const BLOCK_HASH_FIELD = {
+  genesis: 'day_hash',
+  year_summary: 'year_hash',
+  month_summary: 'month_hash',
+  day: 'day_hash',
+};
+
+// ── Canonical JSON stringify (sorted keys, Python-compatible spacing) ──
+// Python's json.dumps(obj, sort_keys=True) sorts keys at ALL nesting levels
+// recursively and uses ": " and ", " separators. JavaScript's JSON.stringify
+// uses no spaces and preserves insertion order. For cross-platform hash
+// compatibility, we must match Python's output exactly.
+function jsonDumps(obj, sortedKeys = null) {
+  if (obj === null) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    const items = obj.map(v => jsonDumps(v));
+    return '[' + items.join(', ') + ']';
+  }
+  // Object: sort keys recursively
+  const keys = sortedKeys || Object.keys(obj).sort();
+  const pairs = keys.map(k => {
+    return JSON.stringify(k) + ': ' + jsonDumps(obj[k]);
+  });
+  return '{' + pairs.join(', ') + '}';
+}
+
+function jsonSort(obj) {
+  return jsonDumps(obj, Object.keys(obj).sort());
+}
+
+/**
+ * Import a raw ledger chain (CLI ledger.json format — JSON array of blocks).
+ *
+ * Validates chain structure (prev_hash linkage) and per-block seals.
+ * Returns the committed chain as `ledger` and an empty `entries` array
+ * (raw chains have no separate staging — all entries are in blocks).
+ *
+ * @param {object[]} blocks - Array of block objects from the parsed chain.
+ * @param {object} crypto - CryptoService with verifySeal() and sha256().
+ * @param {string} masterKey - 64-char hex master key.
+ * @returns {{entries: Array, count: number, genesisHash: string|null, formatVersion: string, ledger: Array}}
+ */
+function _importRawChain(blocks, crypto, masterKey) {
+  // ── Validate non-empty ──────────────────────────────────────────
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    throw new Error(
+      'importLedger: raw chain file must be a non-empty JSON array of blocks'
+    );
+  }
+
+  // ── Validate genesis block ──────────────────────────────────────
+  const genesis = blocks[0];
+  if (genesis.type !== 'genesis') {
+    throw new Error(
+      'importLedger: raw chain must start with a genesis block (type: "genesis")'
+    );
+  }
+
+  const genesisHash = genesis.day_hash || null;
+
+  // ── Validate each block's structure and seal ────────────────────
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    const blockType = block.type || 'day';
+    const hashField = BLOCK_HASH_FIELD[blockType];
+
+    if (!hashField) {
+      throw new Error(
+        `importLedger: unknown block type "${blockType}" at index ${i}`
+      );
+    }
+
+    const blockHash = block[hashField];
+    if (typeof blockHash !== 'string' || blockHash.length !== 64) {
+      throw new Error(
+        `importLedger: missing or invalid ${hashField} at block index ${i}`
+      );
+    }
+
+    // Verify per-block seal: HMAC of block content (excluding hash + signature)
+    // Uses the same seal key as the export format (derived from masterKey).
+    // The export format's crypto.verifySeal() expects (data, seal, masterKey).
+    const checkData = {};
+    for (const key of Object.keys(block).sort()) {
+      if (key !== hashField && key !== 'signature') {
+        checkData[key] = block[key];
+      }
+    }
+    const sealPayload = jsonSort(checkData);
+    const sealValid = crypto.verifySeal(sealPayload, blockHash, masterKey);
+
+    if (!sealValid) {
+      throw new Error(
+        `importLedger: block seal verification failed at index ${i} ` +
+        `(${blockType}, date: ${block.date || 'unknown'}) — ` +
+        'file may be tampered or opened with the wrong passphrase'
+      );
+    }
+
+    // Verify prev_hash chain linkage (skip genesis)
+    if (i > 0) {
+      const prevBlock = blocks[i - 1];
+      const prevType = prevBlock.type || 'day';
+      const prevHashField = BLOCK_HASH_FIELD[prevType];
+      const expectedPrevHash = prevBlock[prevHashField];
+
+      if (block.prev_hash !== expectedPrevHash) {
+        throw new Error(
+          `importLedger: chain linkage broken at block index ${i} ` +
+          `(prev_hash ${block.prev_hash?.slice(0, 8)}... ≠ ` +
+          `expected ${expectedPrevHash?.slice(0, 8)}...)`
+        );
+      }
+    }
+  }
+
+  // ── Validate entries inside day blocks ──────────────────────────
+  let totalEntries = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type === 'genesis' || block.type === 'year_summary' || block.type === 'month_summary') {
+      continue;
+    }
+    const entries = block.entries || [];
+    for (let j = 0; j < entries.length; j++) {
+      const entry = entries[j];
+      if (!entry.hash || !entry.data) {
+        throw new Error(
+          `importLedger: malformed entry at block ${i}, entry ${j} — missing hash or data`
+        );
+      }
+      // Verify entry hash (over the data dict, sorted keys, Python-compatible spacing)
+      const expectedHash = crypto.sha256(jsonDumps(entry.data, Object.keys(entry.data).sort()));
+      if (entry.hash !== expectedHash) {
+        throw new Error(
+          `importLedger: entry hash mismatch at block ${i}, entry ${j} ` +
+          `("${entry.data.title || 'untitled'}") — file may be corrupted`
+        );
+      }
+      totalEntries++;
+    }
+  }
+
+  // ── Success ─────────────────────────────────────────────────────
+  return {
+    entries: [],       // Raw chain has no separate staging — all entries are in blocks
+    count: 0,
+    genesisHash,
+    formatVersion: 'chain',
+    ledger: blocks,
   };
 }

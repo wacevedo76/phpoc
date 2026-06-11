@@ -44,7 +44,10 @@ function AppInner() {
     login,
     createNewLedger,
     importLedger,
+    validateImport,
+    confirmImport,
     exportLedger,
+    exportLedgerFull,
     logout,
   } = useApp();
 
@@ -123,8 +126,11 @@ function AppInner() {
         hasExistingData={hasExistingData}
         onBack={goBackToLanding}
         onImport={importLedger}
+        onValidateImport={validateImport}
+        onConfirmImport={confirmImport}
         onNewLedger={handleNewLedger}
         onExport={exportLedger}
+        onExportFull={exportLedgerFull}
       />
     );
   }
