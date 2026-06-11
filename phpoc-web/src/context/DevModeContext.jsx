@@ -58,7 +58,11 @@ class FallbackStorage {
 
 /**
  * Attempt to create an IndexedDBBackend, falling back to in-memory storage.
+ *
+ * Caches the FallbackStorage instance within the same session so data
+ * survives logout/login cycles in private browsing mode.
  */
+let _fallbackStorage = null;
 async function createStorage() {
   try {
     const backend = new IndexedDBBackend('phpoc-sync');
@@ -67,7 +71,10 @@ async function createStorage() {
     return backend;
   } catch {
     console.warn('IndexedDB unavailable — using in-memory fallback');
-    return new FallbackStorage();
+    if (!_fallbackStorage) {
+      _fallbackStorage = new FallbackStorage();
+    }
+    return _fallbackStorage;
   }
 }
 
@@ -568,11 +575,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     if (services.crypto) {
       services.crypto.clearMasterKey();
     }
+    setHasExistingData(true);
     setPhase('landing');
-    setServices({ crypto: null, sync: null, storage: null });
+    // Keep storage in services so in-memory data survives logout
+    setServices({ crypto: null, sync: null, storage: services.storage });
     setIdentityInfo({ username: null, email: null });
     setLoading(false);
-  }, [services.crypto]);
+  }, [services.crypto, services.storage]);
 
   // ── Check device cookie TTL (for re-auth overlay) ────────────────
 
