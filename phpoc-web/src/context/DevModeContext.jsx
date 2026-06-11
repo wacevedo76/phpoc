@@ -451,6 +451,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Bootstrap services
     await bootstrapServices({ crypto, masterKey, storage });
+
+    // Return seed so the caller can display it to the user
+    return { seed };
   }, []);
 
   /**
@@ -681,7 +684,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   startOnboarding: () => void,
  *   goBackToLanding: () => void,
  *   login: (passphrase: string) => Promise<void>,
- *   createNewLedger: (passphrase: string) => Promise<void>,
+ *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
  *   exportLedger: (passphrase: string) => Promise<void>,
  *   logout: () => void,

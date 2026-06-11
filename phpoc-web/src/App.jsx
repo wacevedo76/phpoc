@@ -64,6 +64,23 @@ function AppInner() {
     setReauthOverlay(false);
   }, [logout]);
 
+  // ── Recovery seed display (one-time after new ledger creation) ──
+  const [recoverySeed, setRecoverySeed] = useState(null);
+  const [seedConfirmed, setSeedConfirmed] = useState(false);
+
+  const handleNewLedger = useCallback(async (passphrase, username, email) => {
+    const result = await createNewLedger(passphrase, username, email);
+    if (result?.seed) {
+      setRecoverySeed(result.seed);
+      setSeedConfirmed(false);
+    }
+  }, [createNewLedger]);
+
+  const handleSeedConfirmed = useCallback(() => {
+    setSeedConfirmed(true);
+    setRecoverySeed(null);
+  }, []);
+
   // ── Phase-based routing (early returns, no hooks below) ─────────
 
   // Boot phase
@@ -106,7 +123,7 @@ function AppInner() {
         hasExistingData={hasExistingData}
         onBack={goBackToLanding}
         onImport={importLedger}
-        onNewLedger={createNewLedger}
+        onNewLedger={handleNewLedger}
         onExport={exportLedger}
       />
     );
@@ -178,6 +195,32 @@ function AppInner() {
             }
           }}
         />
+      )}
+
+      {/* Recovery seed overlay: one-time display after new ledger creation */}
+      {recoverySeed && !seedConfirmed && (
+        <div className="seed-overlay-backdrop">
+          <div className="seed-overlay">
+            <h2 className="seed-overlay-title">🔐 Your Recovery Seed</h2>
+            <p className="seed-overlay-instruction">
+              Write this down and keep it somewhere safe. You'll need it to
+              recover your ledger if you lose access to this device.
+            </p>
+            <div className="seed-overlay-code">
+              <code>{recoverySeed}</code>
+            </div>
+            <p className="seed-overlay-warning">
+              ⚠ If you lose your recovery seed, your data cannot be recovered.
+            </p>
+            <button
+              className="btn btn-primary"
+              onClick={handleSeedConfirmed}
+              style={{ marginTop: '1rem' }}
+            >
+              I've saved it
+            </button>
+          </div>
+        </div>
       )}
     </>
   );
