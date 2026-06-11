@@ -494,12 +494,19 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     if (existingCrypto && existingSync) {
       // ── Fast path: services already loaded (called from Settings) ──
-      const seed = await existingStorage.get(STORED_SEED_KEY);
-      if (!seed) {
-        throw new Error('No recovery seed found — cannot authenticate.');
+      // Use cached master key if available (dev mode), else authenticate
+      let masterKey = existingCrypto.getMasterKey();
+      if (!masterKey) {
+        const seed = await existingStorage.get(STORED_SEED_KEY);
+        if (!seed) {
+          throw new Error('No recovery seed found — cannot authenticate.');
+        }
+        masterKey = existingCrypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
       }
-      const masterKey = existingCrypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
       const entries = await existingSync.readEntries();
+      if (entries.length === 0) {
+        throw new Error('No entries to export.');
+      }
       const blob = await exportLedger(entries, existingCrypto, masterKey);
       const timestamp = new Date().toISOString().slice(0, 10);
       triggerDownload(blob, `ph-ledger-export-${timestamp}.json`);
@@ -507,13 +514,8 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     }
 
     // ── Slow path: services not loaded (called from Onboarding) ──
-    // Load on demand: create storage, read seed, init crypto,
-    // authenticate, read entries directly, export.
+    // Load on demand: create storage, init crypto, read entries, export.
     const storage = await createStorage();
-    const seed = await storage.get(STORED_SEED_KEY);
-    if (!seed) {
-      throw new Error('No recovery seed found — cannot authenticate.');
-    }
 
     let crypto;
     try {
@@ -523,8 +525,16 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       crypto = await DummyCryptoService.create();
     }
 
-    const masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
-    crypto.setMasterKey(masterKey);
+    // Use cached master key if available, else authenticate via seed
+    let masterKey = crypto.getMasterKey();
+    if (!masterKey) {
+      const seed = await storage.get(STORED_SEED_KEY);
+      if (!seed) {
+        throw new Error('No recovery seed found — cannot authenticate.');
+      }
+      masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+      crypto.setMasterKey(masterKey);
+    }
 
     // Read entries directly from storage
     const entries = await storage.get(ENTRIES_KEY) || [];
