@@ -27,38 +27,26 @@ export class IndexManager {
 
   /**
    * Write in-memory cache back to store.
+   * @returns {Promise<void>}
    */
   _flush() {
-    // Fire-and-forget: MemoryBackend.set() is async but the internal Map.set()
-    // runs synchronously. We don't await because the cache is always the
-    // source of truth for reads.
-    this.store.set(INDEX_KEY, JSON.parse(JSON.stringify(this._cache)));
+    return this.store.set(INDEX_KEY, JSON.parse(JSON.stringify(this._cache)));
   }
 
   /**
    * Reload cache from the underlying store.
    *
    * Call this when an external component may have written to the
-   * store directly (e.g., legacy code paths).
+   * store directly (e.g., legacy code paths). Uses the StorageBackend
+   * interface uniformly — no direct _store access.
    *
-   * For MemoryBackend, reads the internal Map synchronously.
+   * @returns {Promise<void>}
    */
-  reload() {
+  async reload() {
     this._cache = {};
-    // MemoryBackend stores values in this.store._store (a Map).
-    // Access it directly for synchronous reload in tests.
-    if (this.store._store && this.store._store.has(INDEX_KEY)) {
-      const stored = this.store._store.get(INDEX_KEY);
-      if (stored && typeof stored === 'object') {
-        this._cache = JSON.parse(JSON.stringify(stored));
-      }
-    } else {
-      // Async fallback for non-MemoryBackend stores
-      this.store.get(INDEX_KEY).then(stored => {
-        if (stored && typeof stored === 'object') {
-          this._cache = JSON.parse(JSON.stringify(stored));
-        }
-      });
+    const stored = await this.store.get(INDEX_KEY);
+    if (stored && typeof stored === 'object') {
+      this._cache = JSON.parse(JSON.stringify(stored));
     }
   }
 
@@ -102,7 +90,7 @@ export class IndexManager {
       this._cache[date][title] = newVal;
     }
 
-    this._flush();
+    return this._flush();
   }
 
   /**
@@ -133,6 +121,6 @@ export class IndexManager {
    */
   clear() {
     this._cache = {};
-    this._flush();
+    return this._flush();
   }
 }

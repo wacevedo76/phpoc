@@ -11,15 +11,13 @@
  *   const blocks = policy.getSummaryBlocks(prevBlock, '2026-02-01');
  */
 
+import { getBlockHash } from './utils.js';
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function parseDate(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return { year: y, month: m, day: d };
-}
-
-function getPrevHash(block) {
-  return block.day_hash || block.month_hash || block.year_hash;
 }
 
 function formatMonth(year, month) {
@@ -101,7 +99,7 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
     const summaries = [];
     const currDate = parseDate(currDateStr);
 
-    let prevHash = getPrevHash(prevBlock);
+    let prevHash = getBlockHash(prevBlock);
 
     // Resolve the effective previous year and month.
     // For a month_summary block, the 'month' field carries the actual
@@ -176,7 +174,7 @@ class YearOnlySummaryPolicy extends SummaryPolicy {
     const currDate = parseDate(currDateStr);
 
     if (currDate.year > prevDate.year && prevBlock.type !== 'year_summary') {
-      const prevHash = getPrevHash(prevBlock);
+      const prevHash = getBlockHash(prevBlock);
       const yearSummary = makeYearSummary(
         this.crypto, this.masterKey, this.identitySecret,
         prevDate.year, prevHash, currDateStr

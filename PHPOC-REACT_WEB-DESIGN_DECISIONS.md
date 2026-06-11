@@ -693,6 +693,34 @@ separate `AbstractLedgerStore` / `AbstractIndexStore` adapter classes.
 
 **Steps 1–5 are in-browser only** — zero server code required. Steps 6–9 layer on deployment options.
 
+### 11.13 Step 6 Code Review — Findings (2026-06-10)
+
+A code review of the Ledger Engine JS port identified 16 findings across three areas: Modularity (5), Clarity (6), and Security (5). The full review is in `SESSION_HANDOFF.md`; this section captures the design-affecting decisions only.
+
+**Design-impacting findings:**
+
+| # | Area | Finding | Design Decision |
+|---|------|---------|-----------------|
+| 6 | Clarity | `buildDayBlock` (sync) duplicates `buildDayBlockAsync` (async); exists only for synchronous test calls | Remove sync version. Update tests to `await buildDayBlockAsync`. Remove `_blockCache`. |
+| 7 | Clarity | `_blockCache` side-effect in `_getBlocks()` is a caching layer consumed only by the sync `buildDayBlock` | Eliminated as a consequence of #6. |
+| 1 | Modularity | `sortKeys`/`jsonSort`/`computeEntryHash` duplicated between `chain.js` and `engine.js` | Extract to `src/ledger/utils.js`. Both files import from shared utility. |
+| 5 | Modularity | `getPrevHash` pattern (`day_hash \|\| month_hash \|\| year_hash`) duplicated across 3 files | Move to `utils.js` as `getBlockHash(block)`. |
+| 8 | Clarity | `IndexManager._flush()` and `reload()` are fire-and-forget — silently broken with IndexedDBBackend/HttpBackend | Make both properly async; all call sites must `await`. |
+| 12 | Security | `_computeContentHash` silently swallows `decrypt()` errors (line 334 of `engine.js`) | Propagate error. A decrypt failure indicates wrong key or tampered data — must not produce a valid content hash. |
+| 13 | Security | `verifyBlock(0)` only checks `block.type` validity; `verify()` block-0 checks seal + entry hashes | Align `verifyBlock(0)` with `verify()` by delegating to `_verifyBlockData()`. |
+| 14 | Security | Missing `signature` field passes verification even when `identitySecret` is configured | Fail verification for missing signatures when `identitySecret` is set. |
+| 15 | Security | `IndexManager.reload()` reaches into `this.store._store` (MemoryBackend private internals) | Use async `this.store.get()` path uniformly. |
+
+**Refactoring is organized into 3 sequential phases** (2026-06-11, all ✅ COMPLETE):
+
+| Phase | Area | Findings | Status | Outcome |
+|-------|------|----------|--------|---------|
+| 1 | Modularity | 5 | ✅ Complete | `utils.js`, `mock_crypto.mjs`, `test_helpers.mjs` extracted. ~100 LOC net reduction. |
+| 2 | Clarity | 6 | ✅ Complete | Sync dead code removed, fire-and-forget → async, staging persistence, array sort fix. +7 new tests. |
+| 3 | Security | 5 | ✅ Complete | Decrypt error propagation, verifyBlock(0) integrity, missing signature enforcement, reload interface test, input validation. +10 new tests, 3 mutation fixes. |
+
+**Final metrics:** 266 assertions across 4 suites, 0 failures. Zero regressions in 787 total web tests.
+
 ### 11.10 Current Status (2026-06-09)
 
 | Step | Status | Notes |
@@ -700,7 +728,7 @@ separate `AbstractLedgerStore` / `AbstractIndexStore` adapter classes.
 | 1 — StoragePlugin interface | ✅ `StorageBackend`, `MemoryBackend`, `IndexedDBBackend`, `HttpBackend` exist | Config-driven factory not yet wired. `list(prefix)` added to StorageBackend. `delete()` added to HttpTransport + MockRemoteBackend. DELETE handler added to Worker. |
 | 2 — MockRemoteBackend | ✅ Complete | 46 tests, 300 total across mock infra |
 | 3 — Import/Export | ✅ Complete (83 tests) | `exportLedger(entries, crypto, masterKey)` → signed JSON Blob. `importLedger(file, crypto, masterKey)` → `{entries, count}`. `PassphraseModal.jsx` — reusable passphrase prompt overlay (reuses AuthScreen pattern). 3 test suites: 24 (export), 26 (import), 33 (modal). Auth-gated (passphrase → `crypto.authenticate()` → master key). Seal = HMAC-SHA256 of `JSON.stringify(entries)` only. Entry hash re-validation on import. Reject entirely on any failure. Settings screen wiring pending (Backup & Restore section). |
-| 4 — Ledger engine JS port | ✅ Complete (246 tests) | All 4 modules GREEN — Chain (67), Index (33), Summary (49), Engine (97). Direct `StorageBackend` consumption with key convention `ledger:blocks`/`ledger:index`. No adapter layer. Zero regressions against 353 existing web tests. |
+| 4 — Ledger engine JS port | ✅ Complete (266 tests) | All 4 modules GREEN — Chain (70), Index (36), Summary (49), Engine (111). Direct `StorageBackend` consumption with key convention `ledger:blocks`/`ledger:index`. No adapter layer. **Step 6 Refactoring complete (3 phases, 16 findings resolved).** Zero regressions. |
 | 5 — Staging CRUD | ⚠️ Partial | UI scaffold exists, wired to dummy data |
 | 6 — Bridge server | ❌ Not started | |
 | 7 — Dockerfile | ❌ Not started | |

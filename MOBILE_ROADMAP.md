@@ -42,7 +42,7 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Worker: CORS headers | N/A | ✅ OPTIONS + CORS on all responses |
 | Crypto test vector suite | ✅ | ✅ 19 vectors, validated |
 | HTTP Transport implementation + test suite (49 tests) | N/A | ✅ GREEN — `phpoc-web/src/sync/transport.js` (full fetch()-based impl with ETag caching) — `phpoc-web/test/transport_test.mjs` (49 tests, all passing) |
-| Core engine (chain, crypto, storage) | ✅ | ✅ DONE — All 4 modules (Chain 67, Index 33, Summary 49, Engine 97), 246 tests, 0 failures |
+| Core engine (chain, crypto, storage) | ✅ | ✅ Refactoring COMPLETE — 4 modules (Chain 70, Index 36, Summary 49, Engine 111), 266 tests, 0 failures |
 | CLI UX (`add`, `view`, `sync`, `verify`) | ✅ | N/A |
 | Remote staging sync (port to JS) | ✅ | ✅ FULL — `phpoc-web/src/sync/sync.js` — SyncService with `checkAndSync()`, `_reconcileAndClaim()`, `pushToRemote()`, `pushBlobOnly()`. Full auth gate flow with cookie fast path. 60-test suite. |
 | Auth gate (device cookies port) | ✅ | ✅ FULL — `phpoc-web/src/sync/cookie.js` — DeviceCookie (create, validate TTL, parse remote, match specifiers, destroy). 14-test suite. |
@@ -434,7 +434,8 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 14 | **MockDataSeeder** — realistic staging data generator for web dev mode | 1 day | ✅ DONE — `phpoc-web/src/services/MockDataSeeder.js`. 14 days of entries + cookie + genesis + index. 205 tests. | Jun 9 2026 |
 | 15 | **DevModeContext rewired** — DummySyncService replaced with real SyncService + MockRemoteBackend | 1 day | ✅ DONE — Real auth gate, cookie setup, entry pull from mock remote. Full-stack simulation in-browser. | Jun 9 2026 |
 | 16 | **HttpBackend + StorageBackend.list + Worker DELETE** — Transport→StorageBackend adapter, `delete()` on HttpTransport/MockRemoteBackend, DELETE handler on Worker | 1 day | ✅ GREEN — 41 tests (TDD). `list()` added to StorageBackend + MemoryBackend. Worker now handles DELETE method. Zero regressions (155 web tests, 270 total). | Jun 9 2026 |
-| 17 | **Ledger Engine JS Port** — 4 modules: `LedgerChain`, `IndexManager`, `SummaryPolicy`, `LedgerEngine` | 2-3 days | ✅ DONE — All 4 modules GREEN, 246 tests, 0 failures. Chain (67), Index (33), Summary (49), Engine (97). Direct `StorageBackend` consumption (key convention `ledger:blocks`/`ledger:index`). No adapter layer. | Jun 10 2026 |
+| 17 | **Ledger Engine JS Port + Refactoring** — 4 modules, then 3-phase code review refactoring (16 findings: Modularity, Clarity, Security) | 2-3 days | ✅ DONE — 266 tests, 0 failures. Chain (70), Index (36), Summary (49), Engine (111). Shared utilities, proper async, security hardening. | Jun 10-11 2026 |
+| 18 | **Staging CRUD in UI** — full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. | 2-3 days | 🔜 Next | — |
 
 ---
 

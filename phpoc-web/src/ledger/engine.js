@@ -16,36 +16,7 @@ import { createHash } from 'crypto';
 import { LedgerChain } from './chain.js';
 import { IndexManager } from './index_manager.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
-
-/**
- * Recursively sort object keys for deterministic serialization.
- */
-function sortKeys(obj) {
-  if (obj === null || obj === undefined || typeof obj !== 'object') {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(sortKeys);
-  }
-  return Object.keys(obj).sort().reduce((acc, key) => {
-    acc[key] = sortKeys(obj[key]);
-    return acc;
-  }, {});
-}
-
-/**
- * Deterministic JSON: compact, sorted keys.
- */
-function jsonSort(data) {
-  return JSON.stringify(sortKeys(data));
-}
-
-/**
- * Compute entry hash matching the test convention: SHA-256 of pretty-printed JSON.
- */
-function computeEntryHash(data) {
-  return createHash('sha256').update(JSON.stringify(data, null, 2), 'utf-8').digest('hex');
-}
+import { sortKeys, jsonSort, computeEntryHash, getBlockHash } from './utils.js';
 
 export class LedgerEngine {
   /**
@@ -87,8 +58,19 @@ export class LedgerEngine {
       return null;
     }
 
+    // Input validation: reject entries missing required fields
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (typeof e.title !== 'string') {
+        throw new Error(`Entry ${i}: title must be a string, got ${typeof e.title}`);
+      }
+      if (typeof e.start_epoch !== 'number' || e.start_epoch <= 0) {
+        throw new Error(`Entry ${i}: start_epoch must be a positive number, got ${e.start_epoch}`);
+      }
+    }
+
     // Group entries by date and encrypt/process
-    const daysToSync = this._prepareEntries(entries);
+    const daysToSync = this._groupByDate(entries);
 
     if (Object.keys(daysToSync).length === 0) {
       return null;
@@ -108,7 +90,7 @@ export class LedgerEngine {
       return null;
     }
 
-    const lastHash = last.day_hash || last.month_hash || last.year_hash;
+    const lastHash = getBlockHash(last);
     if (lastHash) {
       return lastHash.slice(0, 10);
     }
@@ -116,54 +98,67 @@ export class LedgerEngine {
   }
 
   /**
-   * Group entries by date, encrypt fields, remove staging-only fields, compute hashes.
+   * Encrypt a single staging entry for ledger storage.
+   *
+   * Encrypts sensitive fields, strips staging-only keys, computes
+   * content_hash and entry hash, and returns the processed entry.
+   *
+   * @param {object} entry - Staging-style entry.
+   * @returns {{hash: string, data: object, start_epoch: number}}
+   */
+  _encryptEntry(entry) {
+    const data = Object.assign({}, entry);
+
+    // Extract plaintext values
+    const startEpoch = data.start_epoch || 0;
+    const duration = data.duration || 0;
+    const metadata = data.metadata || {};
+    const pauses = data.pauses || [];
+    let endEpoch = data.end_epoch;
+    if (endEpoch === undefined || endEpoch === null) {
+      endEpoch = startEpoch + duration;
+    }
+
+    // Encrypt fields for ledger storage
+    data.startTime_enc = this.crypto.encrypt(String(startEpoch), this.masterKey);
+    data.endTime_enc = this.crypto.encrypt(String(endEpoch), this.masterKey);
+    data.metadata_enc = this.crypto.encrypt(jsonSort(metadata), this.masterKey);
+    data.pauses_enc = this.crypto.encrypt(jsonSort(pauses), this.masterKey);
+
+    // Remove staging-only fields
+    delete data.start_epoch;
+    delete data.end_epoch;
+    delete data.pauses;
+    delete data.metadata;
+    delete data.is_active;
+    delete data.is_paused;
+    delete data.entry_id;
+    delete data.device_uuid;
+    delete data.end_device_uuid;
+    delete data.hash;
+
+    // Compute content hash
+    data.content_hash = this._computeContentHash(data);
+
+    // Compute entry hash
+    const entryHash = computeEntryHash(data);
+
+    return { hash: entryHash, data, start_epoch: startEpoch };
+  }
+
+  /**
+   * Group entries by date, encrypting each via _encryptEntry.
    * @param {object[]} entries - Staging-style entries.
    * @returns {object} {dateStr: [{hash, data, start_epoch}]}
    */
-  _prepareEntries(entries) {
+  _groupByDate(entries) {
     const days = {};
 
     for (const entry of entries) {
-      const data = Object.assign({}, entry);
-
-      // Extract plaintext values
-      const startEpoch = data.start_epoch || 0;
-      const title = data.title || '';
-      const duration = data.duration || 0;
-      const metadata = data.metadata || {};
-      const pauses = data.pauses || [];
-      const tags = data.tags || [];
-      let endEpoch = data.end_epoch;
-      if (endEpoch === undefined || endEpoch === null) {
-        endEpoch = startEpoch + duration;
-      }
-
-      // Encrypt fields for ledger storage
-      data.startTime_enc = this.crypto.encrypt(String(startEpoch), this.masterKey);
-      data.endTime_enc = this.crypto.encrypt(String(endEpoch), this.masterKey);
-      data.metadata_enc = this.crypto.encrypt(jsonSort(metadata), this.masterKey);
-      data.pauses_enc = this.crypto.encrypt(jsonSort(pauses), this.masterKey);
-
-      // Remove staging-only fields
-      delete data.start_epoch;
-      delete data.end_epoch;
-      delete data.pauses;
-      delete data.metadata;
-      delete data.is_active;
-      delete data.is_paused;
-      delete data.entry_id;
-      delete data.device_uuid;
-      delete data.end_device_uuid;
-      delete data.hash;
-
-      // Compute content hash
-      data.content_hash = this._computeContentHash(data);
-
-      // Compute entry hash
-      const entryHash = computeEntryHash(data);
+      const processed = this._encryptEntry(entry);
 
       // Determine date from start epoch
-      const dateObj = new Date(startEpoch);
+      const dateObj = new Date(processed.start_epoch);
       const year = dateObj.getUTCFullYear();
       const month = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
       const day = String(dateObj.getUTCDate()).padStart(2, '0');
@@ -173,11 +168,7 @@ export class LedgerEngine {
         days[dateStr] = [];
       }
 
-      days[dateStr].push({
-        hash: entryHash,
-        data: data,
-        start_epoch: startEpoch,
-      });
+      days[dateStr].push(processed);
     }
 
     return days;
@@ -194,14 +185,14 @@ export class LedgerEngine {
     if (!prevBlock) {
       // No ledger at all — first-ever day block
       const zeroHash = '0'.repeat(64);
-      const dayBlock = await this.chain.buildDayBlockAsync(dayEntries, zeroHash, dateStr);
+      const dayBlock = await this.chain.buildDayBlock(dayEntries, zeroHash, dateStr);
       await this.chain.append(dayBlock);
 
       // Update index
       for (const entry of dayEntries) {
         const title = entry.data.title || '';
         const duration = entry.data.duration || 0;
-        this.index.update(dateStr, title, duration);
+        await this.index.update(dateStr, title, duration);
       }
       return;
     }
@@ -212,17 +203,23 @@ export class LedgerEngine {
       await this.chain.append(summary);
     }
 
-    // Update index BEFORE building the day block
+    // Update index before the day block build.
+    // The index is updated in-memory here and flushed to store after
+    // all day blocks are committed (see commit()). The order relative
+    // to buildDayBlock is not correctness-critical since index data
+    // is derived from entries, not from the block. Updating before
+    // build lets us re-read the chain for prev_hash without index
+    // state affecting block construction.
     for (const entry of dayEntries) {
       const title = entry.data.title || '';
       const duration = entry.data.duration || 0;
-      this.index.update(dateStr, title, duration);
+      await this.index.update(dateStr, title, duration);
     }
 
     // Build day block using the new last block for prev_hash
     const newPrevBlock = await this.chain.getLastBlock();
-    const prevHash = newPrevBlock.day_hash || newPrevBlock.month_hash || newPrevBlock.year_hash;
-    const dayBlock = await this.chain.buildDayBlockAsync(dayEntries, prevHash, dateStr);
+    const prevHash = getBlockHash(newPrevBlock);
+    const dayBlock = await this.chain.buildDayBlock(dayEntries, prevHash, dateStr);
     await this.chain.append(dayBlock);
   }
 
@@ -328,13 +325,14 @@ export class LedgerEngine {
           // Remove from index
           const title = data.title || '';
           const duration = data.duration || 0;
-          this.index.update(dateStr, title, -duration);
+          await this.index.update(dateStr, title, -duration);
         }
       }
     }
 
-    // Store staging back into the blocks store for now (no dedicated staging store)
-    // For the test, we just return the count and truncate the chain
+    // Persist restored entries to staging store so they can be
+    // re-committed or edited by the user.
+    await this.store.set('ledger:staging', staging);
 
     // Truncate chain to keep everything before effectiveStart
     await this.chain.truncate_keep(effectiveStart);
@@ -349,11 +347,8 @@ export class LedgerEngine {
    * @param {string} toDate - ISO end date (inclusive).
    * @returns {object} {title: total_duration_ms}
    */
-  queryIndex(fromDate, toDate) {
-    // Reload from store before querying to pick up any external modifications.
-    // For MemoryBackend this is synchronous. For async backends, the reload
-    // may be deferred — cache will be populated on next query.
-    this.index.reload();
+  async queryIndex(fromDate, toDate) {
+    await this.index.reload();
     return this.index.query(fromDate, toDate);
   }
 
@@ -370,7 +365,7 @@ export class LedgerEngine {
           const data = entry.data;
           const title = data.title || '';
           const duration = data.duration || 0;
-          this.index.update(dateStr, title, duration);
+          await this.index.update(dateStr, title, duration);
         }
       }
     }
@@ -419,13 +414,9 @@ export class LedgerEngine {
         continue;
       }
       if (key.endsWith('_enc') && value !== null && value !== undefined && value !== '') {
-        try {
-          content[key] = this.crypto.decrypt(value, this.masterKey);
-        } catch {
-          content[key] = value;
-        }
+        content[key] = this.crypto.decrypt(value, this.masterKey);
       } else if (Array.isArray(value)) {
-        content[key] = value.slice().sort();
+        content[key] = value.slice().sort((a, b) => String(a).localeCompare(String(b)));
       } else {
         content[key] = value;
       }

@@ -10,52 +10,14 @@
  * Usage:
  *   import { LedgerChain } from './chain.js';
  *   const chain = new LedgerChain(crypto, store, masterKey, identitySecret);
- *   const block = chain.buildDayBlock(entries, prevHash, dateStr);
+ *   const block = await chain.buildDayBlock(entries, prevHash, dateStr);
  *   await chain.append(block);
  *   const valid = await chain.verify();
  */
 
-import { createHash } from 'crypto';
+import { sortKeys, jsonSort, computeEntryHash, getBlockHash } from './utils.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
-
-/**
- * Recursively sort the keys of an object for deterministic JSON serialization.
- */
-function sortKeys(obj) {
-  if (obj === null || obj === undefined || typeof obj !== 'object') {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(sortKeys);
-  }
-  return Object.keys(obj).sort().reduce((acc, key) => {
-    acc[key] = sortKeys(obj[key]);
-    return acc;
-  }, {});
-}
-
-/**
- * Deterministic JSON serialization: compact, with sorted keys (Python sort_keys=True equivalent).
- */
-function jsonSort(data) {
-  return JSON.stringify(sortKeys(data));
-}
-
-/**
- * Compute SHA-256 hex digest of a string.
- */
-function sha256Hex(str) {
-  return createHash('sha256').update(str, 'utf-8').digest('hex');
-}
-
-/**
- * Compute entry hash matching the test convention: SHA-256 of pretty-printed JSON.
- */
-function computeEntryHash(data) {
-  // Use 2-space indentation to match test helpers' entryHash() and computeEntryHash()
-  return sha256Hex(JSON.stringify(data, null, 2));
-}
 
 export class LedgerChain {
   /**
@@ -69,23 +31,16 @@ export class LedgerChain {
     this.store = store;
     this.masterKey = masterKey;
     this.identitySecret = identitySecret;
-    /** @type {object[]|null} Lazy-loaded block cache for synchronous access. */
-    this._blockCache = null;
   }
 
   // ── Store access helpers ──────────────────────────────────────────
 
   async _getBlocks() {
-    // Always read from store to stay in sync with external modifications.
-    // The block cache is updated as a side effect for synchronous access
-    // by buildDayBlock, which reads this._blockCache directly.
     const blocks = await this.store.get(BLOCKS_KEY);
-    this._blockCache = Array.isArray(blocks) ? blocks : [];
-    return this._blockCache;
+    return Array.isArray(blocks) ? blocks : [];
   }
 
   async _saveBlocks(blocks) {
-    this._blockCache = blocks;
     await this.store.set(BLOCKS_KEY, blocks);
   }
 
@@ -184,79 +139,18 @@ export class LedgerChain {
   /**
    * Build a day block with proper sealing and optional identity signature.
    *
+   * Reads the chain state to determine the correct day_index. Entries are
+   * normalized — raw dicts and pre-hashed {"hash", "data"} pairs are both
+   * accepted, and the hash is always recomputed from the actual data.
+   *
    * @param {object[]} entries - List of entry dicts. Each may be:
    *   {"hash": string, "data": object} (pre-hashed), or a raw dict.
    *   Hash is always recomputed from the actual data.
    * @param {string} prevHash - The hash of the preceding block.
    * @param {string} dateStr - ISO date string (YYYY-MM-DD).
-   * @returns {object} The constructed day block.
-   */
-  buildDayBlock(entries, prevHash, dateStr) {
-    // Normalize entries: accept both {"hash", "data"} and raw dicts,
-    // always recomputing hash from the actual data dict.
-    const normalizedEntries = [];
-    for (const e of entries) {
-      let data;
-      if (e.hash !== undefined && e.data !== undefined) {
-        data = e.data;
-      } else {
-        data = Object.assign({}, e);
-      }
-      const entryHash = computeEntryHash(data);
-      normalizedEntries.push({ hash: entryHash, data });
-    }
-
-    // Determine day_index from the last day block (if any)
-    // We use the in-memory state for this since buildDayBlock is synchronous.
-    // For async resolution, we need to read blocks. We'll handle this via
-    // an internal helper that the caller must have initialized.
-    const dayContent = {
-      type: 'day',
-      day_index: 0, // placeholder — resolved below
-      date: dateStr,
-      prev_hash: prevHash,
-      entries: normalizedEntries,
-    };
-
-    // day_index is resolved differently in tests: they call buildDayBlock
-    // BEFORE appending, so getBlockCount() is 0 on fresh chains.
-    // We handle the increment by reading from the store.
-    // Since buildDayBlock is called synchronously, we use a cached approach.
-    // The day_index field is already set correctly in each test scenario.
-    // We actually compute it lazily.
-
-    // Determine day_index from cached blocks if available (sync access)
-    let dayIndex = 1;
-    if (this._blockCache) {
-      for (let i = this._blockCache.length - 1; i >= 0; i--) {
-        if (this._blockCache[i].type === 'day') {
-          dayIndex = (this._blockCache[i].day_index || 0) + 1;
-          break;
-        }
-      }
-    }
-    dayContent.day_index = dayIndex;
-
-    const dayJson = jsonSort(dayContent);
-    dayContent.day_hash = this.crypto.seal(dayJson, this.masterKey);
-
-    if (this.identitySecret) {
-      dayContent.signature = this.crypto.sign(dayContent.day_hash, this.identitySecret);
-    }
-
-    return dayContent;
-  }
-
-  /**
-   * Build a day block with proper day_index resolved from the chain.
-   * This is the async version that properly reads the chain state.
-   *
-   * @param {object[]} entries - List of entry dicts.
-   * @param {string} prevHash - The hash of the preceding block.
-   * @param {string} dateStr - ISO date string (YYYY-MM-DD).
    * @returns {Promise<object>} The constructed day block.
    */
-  async buildDayBlockAsync(entries, prevHash, dateStr) {
+  async buildDayBlock(entries, prevHash, dateStr) {
     const blocks = await this._getBlocks();
 
     // Determine day_index
@@ -331,7 +225,7 @@ export class LedgerChain {
     // Verify linkage across the bridge (last existing → first new)
     if (existing.length > 0) {
       const lastExisting = existing[existing.length - 1];
-      const existingHash = lastExisting.day_hash || lastExisting.month_hash || lastExisting.year_hash;
+      const existingHash = getBlockHash(lastExisting);
       const firstNewPrevHash = blocks[0].prev_hash;
       if (firstNewPrevHash !== existingHash) {
         throw new Error(
@@ -343,7 +237,7 @@ export class LedgerChain {
     // Verify linkage among the new blocks
     for (let i = 1; i < blocks.length; i++) {
       const prevBlock = blocks[i - 1];
-      const prevBlockHash = prevBlock.day_hash || prevBlock.month_hash || prevBlock.year_hash;
+      const prevBlockHash = getBlockHash(prevBlock);
       if (blocks[i].prev_hash !== prevBlockHash) {
         throw new Error(
           `Block ${i} prev_hash ${blocks[i].prev_hash} does not match block ${i - 1} hash ${prevBlockHash}`
@@ -433,8 +327,7 @@ export class LedgerChain {
       const prev = ledger[i - 1];
 
       // 1. prev_hash linkage
-      const prevHash = prev.day_hash || prev.month_hash || prev.year_hash;
-      if (current.prev_hash !== prevHash) {
+      if (current.prev_hash !== getBlockHash(prev)) {
         return false;
       }
 
@@ -479,8 +372,11 @@ export class LedgerChain {
       return false;
     }
 
-    // 3. Identity signature (if present)
-    if (this.identitySecret && block.signature) {
+    // 3. Identity signature
+    if (this.identitySecret) {
+      if (!block.signature) {
+        return false;
+      }
       if (!this.crypto.verifySignature(block[hashKey], block.signature, this.identitySecret)) {
         return false;
       }
@@ -521,7 +417,7 @@ export class LedgerChain {
     }
 
     if (index === 0) {
-      return ['genesis', 'day', 'month_summary', 'year_summary'].includes(block.type);
+      return this._verifyBlockData(block, 0);
     }
 
     const prev = await this.getBlock(index - 1);
@@ -532,8 +428,7 @@ export class LedgerChain {
     const current = block;
 
     // 1. prev_hash linkage
-    const prevHash = prev.day_hash || prev.month_hash || prev.year_hash;
-    if (current.prev_hash !== prevHash) {
+    if (current.prev_hash !== getBlockHash(prev)) {
       return false;
     }
 
