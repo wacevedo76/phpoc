@@ -921,6 +921,23 @@ a { color: var(--accent-blue); text-decoration: none; }
   white-space: nowrap;
 }
 
+/* Expand/collapse details */
+.history-entry {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.history-entry:hover {
+  background: var(--bg-hover);
+}
+.history-entry .history-entry-tags,
+.history-entry .history-entry-comment {
+  display: none;
+}
+.history-entry-expanded .history-entry-tags,
+.history-entry-expanded .history-entry-comment {
+  display: flex;
+}
+
 .badge-selected-indicator {
   color: var(--accent-green);
   font-weight: 700;

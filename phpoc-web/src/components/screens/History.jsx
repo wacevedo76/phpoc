@@ -17,6 +17,7 @@ export default function History() {
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [expandedIds, setExpandedIds] = useState(new Set());
   const [filterDate, setFilterDate] = useState('');
   const [filterTag, setFilterTag] = useState('');
 
@@ -66,7 +67,17 @@ export default function History() {
     }
   }, [commitEntries, entries, committing, refresh]);
 
-  // Toggle selection
+  // Toggle expand/collapse for tags & comments
+  const toggleExpand = useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Toggle selection (for staging entries only)
   const toggleSelect = useCallback((id) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -75,6 +86,14 @@ export default function History() {
       return next;
     });
   }, []);
+
+  // Card click: expand/collapse for all entries, + selection for staging
+  const handleCardClick = useCallback((entryId, isCommitted) => {
+    toggleExpand(entryId);
+    if (!isCommitted) {
+      toggleSelect(entryId);
+    }
+  }, [toggleExpand, toggleSelect]);
 
   // Filter
   const filtered = entries.filter((e) => {
@@ -179,7 +198,7 @@ export default function History() {
           </button>
         )}
         {uncommittedCount > 0 && (
-          <span className="badge-staging-count">{uncommittedCount} staging</span>
+          <span className="badge-staging-count">{uncommittedCount} not committed</span>
         )}
       </div>
 
@@ -202,11 +221,11 @@ export default function History() {
               {dayEntries.map((entry) => (
                 <div
                   key={entry.entry_id}
-                  className={`history-entry${entry.committed ? '' : ' history-entry-staging'}`}
-                  onClick={() => !entry.committed && toggleSelect(entry.entry_id)}
+                  className={`history-entry${entry.committed ? '' : ' history-entry-staging'}${expandedIds.has(entry.entry_id) ? ' history-entry-expanded' : ''}`}
+                  onClick={() => handleCardClick(entry.entry_id, entry.committed)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!entry.committed) toggleSelect(entry.entry_id); }}}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(entry.entry_id, entry.committed); }}}
                 >
                   {/* Status badge */}
                   <div className="history-entry-status">
@@ -228,15 +247,19 @@ export default function History() {
                     <span className="history-entry-title">{entry.title}</span>
                     <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
                   </div>
-                  {entry.tags?.length > 0 && (
-                    <div className="history-entry-tags">
-                      {entry.tags.map((tag, i) => (
-                        <span key={i} className="tag-badge">#{tag}</span>
-                      ))}
-                    </div>
-                  )}
-                  {entry.comment && (
-                    <p className="history-entry-comment">{entry.comment}</p>
+                  {expandedIds.has(entry.entry_id) && (
+                    <>
+                      {entry.tags?.length > 0 && (
+                        <div className="history-entry-tags">
+                          {entry.tags.map((tag, i) => (
+                            <span key={i} className="tag-badge">#{tag}</span>
+                          ))}
+                        </div>
+                      )}
+                      {entry.comment && (
+                        <p className="history-entry-comment">{entry.comment}</p>
+                      )}
+                    </>
                   )}
                 </div>
               ))}
