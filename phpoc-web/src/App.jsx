@@ -1,5 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { DevModeProvider, useApp } from './context/DevModeContext.jsx';
+import LandingScreen from './components/screens/LandingScreen.jsx';
+import OnboardingScreen from './components/screens/OnboardingScreen.jsx';
 import AuthScreen from './components/screens/AuthScreen.jsx';
 import Dashboard from './components/screens/Dashboard.jsx';
 import History from './components/screens/History.jsx';
@@ -11,64 +13,61 @@ import NewTask from './components/screens/NewTask.jsx';
 import UserProfile from './components/screens/UserProfile.jsx';
 import Configuration from './components/screens/Configuration.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
-import SyncIndicator from './components/sync/SyncIndicator.jsx';
 
 import './App.css';
 
 /**
- * App — root component.
+ * AppInner — renders the correct screen based on the current phase.
  *
- * Flow:
- *   1. DevModeProvider bootstraps services (dummy or real)
- *   2. If not authenticated → AuthScreen
- *   3. If authenticated → AppLayout with navigation
+ * Phase flow:
+ *   boot        → Loading spinner
+ *   landing     → LandingScreen (existing data: login vs onboarding)
+ *   onboarding  → OnboardingScreen (import / new / export)
+ *   auth        → AuthScreen (passphrase entry for login)
+ *   ready       → Main app with navigation
  *
- * Screen routing:
- *   dashboard  → main view (active tasks + new task form)
- *   new-task   → standalone new task form (alternate entry)
- *   history    → completed entries with filters
- *   tags       → tag management
- *   sync       → sync status/control
- *   settings   → app configuration
- *   ledger     → ledger sync (Phase 3)
+ * IMPORTANT: All hooks must be at the top level, before any early returns.
+ * React hooks cannot be called conditionally.
  */
 function AppInner() {
-  const { loading, error, user } = useApp();
-  const [currentScreen, setCurrentScreen] = useState('dashboard');
-  const [profileSubview, setProfileSubview] = useState('profile'); // 'profile' | 'configuration'
-  const [authenticated, setAuthenticated] = useState(user.isAuthenticated);
-  const [hasBeenAuthenticated, setHasBeenAuthenticated] = useState(user.isAuthenticated);
+  // ── All hooks at the top, unconditionally ─────────────────────────
+  const {
+    phase,
+    loading,
+    error,
+    hasExistingData,
+    services,
+    user,
+    startLogin,
+    startOnboarding,
+    goBackToLanding,
+    login,
+    createNewLedger,
+    importLedger,
+    exportLedger,
+    logout,
+  } = useApp();
 
-  // Sync with context auth state
-  useEffect(() => {
-    if (user.isAuthenticated) {
-      setAuthenticated(true);
-      setHasBeenAuthenticated(true);
-    } else {
-      setAuthenticated(false);
-    }
-  }, [user.isAuthenticated]);
+  const [currentScreen, setCurrentScreen] = useState('dashboard');
+  const [profileSubview, setProfileSubview] = useState('profile');
+  const [reauthOverlay, setReauthOverlay] = useState(false);
 
   const handleNavigate = useCallback((screen) => {
     setCurrentScreen(screen);
-    // Reset profile subview when navigating away and back
     if (screen !== 'profile') {
       setProfileSubview('profile');
     }
   }, []);
 
-  const handleAuthenticated = useCallback(() => {
-    setAuthenticated(true);
-    setHasBeenAuthenticated(true);
-  }, []);
+  const handleLogout = useCallback(() => {
+    logout();
+    setReauthOverlay(false);
+  }, [logout]);
 
-  const handleLogoutOverlay = useCallback(() => {
-    setAuthenticated(false);
-    // hasBeenAuthenticated stays true → overlay mode
-  }, []);
+  // ── Phase-based routing (early returns, no hooks below) ─────────
 
-  // Loading state
-  if (loading) {
+  // Boot phase
+  if (phase === 'boot') {
     return (
       <div className="app-loading">
         <div className="loading-spinner" />
@@ -77,8 +76,8 @@ function AppInner() {
     );
   }
 
-  // Error state
-  if (error && !user.isAuthenticated) {
+  // Error state (before landing/onboarding)
+  if (error && phase !== 'ready') {
     return (
       <div className="app-error">
         <h2>⚠ Startup Error</h2>
@@ -88,14 +87,47 @@ function AppInner() {
     );
   }
 
-  // Auth gate — full screen on first launch, overlay on re-auth
-  if (!authenticated && !hasBeenAuthenticated) {
+  // Landing phase — existing data found
+  if (phase === 'landing') {
     return (
-      <AuthScreen onAuthenticated={handleAuthenticated} />
+      <LandingScreen
+        hasExistingData={hasExistingData}
+        loading={loading}
+        onLogin={startLogin}
+        onOnboarding={startOnboarding}
+      />
     );
   }
 
-  // Main app — render current screen inside AppLayout
+  // Onboarding phase — first-time setup or fresh start
+  if (phase === 'onboarding') {
+    return (
+      <OnboardingScreen
+        hasExistingData={hasExistingData}
+        onBack={goBackToLanding}
+        onImport={importLedger}
+        onNewLedger={createNewLedger}
+        onExport={exportLedger}
+      />
+    );
+  }
+
+  // Auth phase — passphrase entry for login
+  if (phase === 'auth') {
+    return (
+      <AuthScreen
+        onAuthenticated={async (passphrase) => {
+          try {
+            await login(passphrase);
+          } catch (err) {
+            throw err;
+          }
+        }}
+      />
+    );
+  }
+
+  // ── Ready phase — main app ──────────────────────────────────────
   const renderScreen = () => {
     switch (currentScreen) {
       case 'dashboard':
@@ -115,7 +147,7 @@ function AppInner() {
         return (
           <UserProfile
             onNavigateToConfig={() => setProfileSubview('configuration')}
-            onLogoutRequest={handleLogoutOverlay}
+            onLogoutRequest={handleLogout}
           />
         );
       case 'settings':
@@ -128,22 +160,35 @@ function AppInner() {
   };
 
   return (
-    <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogoutOverlay}>
-      {renderScreen()}
-      {/* Re-auth overlay: shown when authenticated drops while app was running */}
-      {!authenticated && hasBeenAuthenticated && (
-        <AuthScreen overlay onAuthenticated={handleAuthenticated} />
+    <>
+      <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogout}>
+        {renderScreen()}
+      </AppLayout>
+
+      {/* Re-auth overlay: triggered when cookie TTL expires */}
+      {reauthOverlay && (
+        <AuthScreen
+          overlay
+          onAuthenticated={async (passphrase) => {
+            try {
+              await login(passphrase);
+              setReauthOverlay(false);
+            } catch (err) {
+              throw err;
+            }
+          }}
+        />
       )}
-    </AppLayout>
+    </>
   );
 }
 
 /**
- * App — wrapped with DevModeProvider for dev/auth bypass.
+ * App — wrapped with DevModeProvider for application lifecycle.
  */
 export default function App() {
   return (
-    <DevModeProvider defaultDevMode={true}>
+    <DevModeProvider defaultDevMode={false}>
       <AppInner />
     </DevModeProvider>
   );

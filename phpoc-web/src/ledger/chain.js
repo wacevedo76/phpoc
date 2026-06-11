@@ -194,6 +194,83 @@ export class LedgerChain {
     return dayContent;
   }
 
+  /**
+   * Build a genesis block according to PHPSPEC §4.1.
+   *
+   * The genesis block carries the user's identity (username, email),
+   * encrypted recovery seed, and encrypted identity secret. It is
+   * HMAC-sealed with the sealing sub-key and optionally signed with
+   * the generated identity secret.
+   *
+   * This method generates a new identity secret (32 random bytes),
+   * sets it on the chain instance for subsequent block signing, and
+   * returns the complete genesis block ready for append().
+   *
+   * Required crypto primitives:
+   *   - generateSeed() / deriveMasterKey() — for identity secret
+   *   - derivePdk() — PDK from passphrase (to encrypt seed)
+   *   - encrypt() — encrypt seed with PDK, identity secret with MK
+   *   - sha256() — derive identity_pub_key from identity secret
+   *   - seal() — HMAC-SHA256 block seal
+   *   - sign() — identity signature over day_hash
+   *
+   * @param {object} opts
+   * @param {string} opts.username - Display name
+   * @param {string} opts.email - Contact email
+   * @param {string} opts.passphrase - User's passphrase (for PDK derivation)
+   * @param {string} opts.seed - Base64 recovery seed
+   * @returns {Promise<object>} The genesis block.
+   */
+  async buildGenesisBlock({ username, email, passphrase, seed }) {
+    // 1. Generate identity secret (32 random bytes as hex)
+    const identitySeed = this.crypto.generateSeed();
+    const identitySecret = this.crypto.deriveMasterKey(identitySeed);
+
+    // Store identity secret for future block signing
+    this.identitySecret = identitySecret;
+
+    // 2. Compute identity public key: SHA-256(identity_secret)
+    const identityPubKey = this.crypto.sha256(identitySecret);
+
+    // 3. Derive PDK from passphrase (PBKDF2, 600K iterations)
+    const pdk = this.crypto.derivePdk(passphrase, 600000);
+
+    // 4. Encrypt recovery seed with PDK
+    const recoverySeedEnc = this.crypto.encrypt(seed, pdk);
+
+    // 5. Encrypt identity secret with master key (fallback storage)
+    const identitySecretEncFallback = this.crypto.encrypt(identitySecret, this.masterKey);
+
+    // 6. Today's date
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 7. Build genesis content (without seal / signature)
+    const genesisContent = {
+      type: 'genesis',
+      format_version: '0.3.0',
+      day_index: 0,
+      date: today,
+      identity: {
+        username,
+        email,
+        recovery_seed_enc: recoverySeedEnc,
+        identity_pub_key: identityPubKey,
+        identity_secret_enc_fallback: identitySecretEncFallback,
+      },
+      prev_hash: '0'.repeat(64),
+      entries: [],
+    };
+
+    // 8. Compute block seal (day_hash per PHPSPEC §4.1 convention)
+    const genesisJson = jsonSort(genesisContent);
+    genesisContent.day_hash = this.crypto.seal(genesisJson, this.masterKey);
+
+    // 9. Sign with identity secret
+    genesisContent.signature = this.crypto.sign(genesisContent.day_hash, identitySecret);
+
+    return genesisContent;
+  }
+
   // ── Append / truncate ─────────────────────────────────────────────
 
   /**

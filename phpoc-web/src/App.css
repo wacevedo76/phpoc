@@ -259,6 +259,71 @@ a { color: var(--accent-blue); text-decoration: none; }
 }
 
 /* ===================================================================
+   Landing Screen
+   =================================================================== */
+.landing-prompt {
+  color: var(--text-secondary);
+  margin: 1rem 0 1.5rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.landing-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.btn-landing {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-landing:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+}
+
+/* ===================================================================
+   Settings — Data Management
+   =================================================================== */
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.settings-action-row:last-child {
+  border-bottom: none;
+}
+
+.settings-action-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-action-info strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.settings-action-info .settings-hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+/* ===================================================================
    App Layout
    =================================================================== */
 .app-layout {
@@ -1098,6 +1163,14 @@ a { color: var(--accent-blue); text-decoration: none; }
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-device-detail {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

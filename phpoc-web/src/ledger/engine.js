@@ -37,6 +37,52 @@ export class LedgerEngine {
     this.summaryPolicy = summaryPolicy || new YearMonthSummaryPolicy(crypto, masterKey, identitySecret);
   }
 
+  // ── Init ────────────────────────────────────────────────────────────
+
+  /**
+   * Initialize a new ledger by creating and appending the genesis block.
+   *
+   * The genesis block embeds the user's identity (username, email),
+   * encrypted recovery seed, encrypted identity secret, and is sealed
+   * and signed per PHPSPEC §4.1.
+   *
+   * An identity secret (32 random bytes) is generated during this
+   * process and stored on the underlying chain for subsequent block
+   * signing. It is also encrypted and stored in the genesis block
+   * (identity_secret_enc_fallback) for recovery.
+   *
+   * @param {object} opts
+   * @param {string} opts.username - Display name
+   * @param {string} opts.email - Contact email
+   * @param {string} opts.passphrase - User's passphrase (for PDK derivation)
+   * @param {string} opts.seed - Base64 recovery seed
+   * @returns {Promise<{genesisBlock: object, identitySecret: string}>}
+   * @throws {Error} If the ledger already has blocks.
+   */
+  async init({ username, email, passphrase, seed }) {
+    const existing = await this.chain.getLastBlock();
+    if (existing) {
+      throw new Error('Ledger already initialized. Cannot create a second genesis block.');
+    }
+
+    const genesisBlock = await this.chain.buildGenesisBlock({
+      username,
+      email,
+      passphrase,
+      seed,
+    });
+
+    await this.chain.append(genesisBlock);
+
+    // Sync the engine's identity secret with the chain (set during buildGenesisBlock)
+    this.identitySecret = this.chain.identitySecret;
+
+    return {
+      genesisBlock,
+      identitySecret: this.identitySecret,
+    };
+  }
+
   // ── Commit ─────────────────────────────────────────────────────────
 
   /**

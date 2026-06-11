@@ -721,6 +721,46 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 
 **Final metrics:** 266 assertions across 4 suites, 0 failures. Zero regressions in 787 total web tests.
 
+### 11.14 Genesis Block Creation — Design Decisions (2026-06-11)
+
+**Problem:** The onboarding flow collected only a passphrase and stored the seed as a flat IndexedDB key. No genesis block was created, violating PHPSPEC §4.1 which requires block 0 of the ledger chain to be a genesis block with a full identity object.
+
+**Solution:** Added `LedgerChain.buildGenesisBlock()` which produces a PHPSPEC-compliant genesis block:
+
+| Step | Operation | PHPSPEC Ref |
+|------|-----------|-------------|
+| 1 | Generate 32-byte identity secret via `generateSeed()` + `deriveMasterKey()` | §2.7.1 |
+| 2 | Compute `identity_pub_key = SHA-256(identity_secret)` | §2.7.1 |
+| 3 | Derive PDK via PBKDF2(passphrase, "session-salt", 600K) | §2.4 |
+| 4 | Encrypt recovery seed with PDK → `recovery_seed_enc` | §2.5 |
+| 5 | Encrypt identity secret with master key → `identity_secret_enc_fallback` | §2.7.2 |
+| 6 | Build `identity` object with username, email, encrypted fields | §4.1 |
+| 7 | Compute HMAC-SHA256 seal over block (excluding day_hash, signature) | §5.2 |
+| 8 | Sign day_hash with identity secret | §5.3 |
+
+**Architecture:**
+- `buildGenesisBlock()` is a method on `LedgerChain`, following the same pattern as `buildDayBlock()`
+- `LedgerEngine.init()` orchestrates: `chain.buildGenesisBlock()` → `chain.append()`
+- `DevModeContext.createNewLedger()` creates a `LedgerEngine`, calls `init()`, stores the identity secret hex for future use
+- The genesis block is appended as block 0 in the `ledger:blocks` array, making it the canonical source of identity data
+- Flat IndexedDB keys (`phpoc_seed`, `phpoc_username`, `phpoc_email`, `phpoc_identity_secret`) are retained as a cache alongside the canonical genesis block
+
+**CryptoService primitives used:**
+- `generateSeed()` — 32 random bytes, base64-encoded
+- `deriveMasterKey(seed)` — base64 decode → 64-char hex
+- `derivePdk(passphrase, iterations)` — PBKDF2-HMAC-SHA256
+- `encrypt(plaintext, keyHex)` — AES-128-CTR + auth tag, works with both PDK and master key
+- `sha256(data)` — hash identity secret for public key
+- `seal(data, masterKey)` — HMAC-SHA256 with sealing sub-key derivation
+- `sign(data, secretHex)` — raw HMAC-SHA256 for identity signature
+
+**Key files:**
+- `phpoc-web/src/ledger/chain.js` — `buildGenesisBlock()`
+- `phpoc-web/src/ledger/engine.js` — `init()`
+- `phpoc-web/src/context/DevModeContext.jsx` — updated `createNewLedger()`
+- `phpoc-web/src/components/screens/OnboardingScreen.jsx` — username + email fields
+- `phpoc-web/src/components/screens/UserProfile.jsx` — displays username + email
+
 ### 11.10 Current Status (2026-06-09)
 
 | Step | Status | Notes |
@@ -734,3 +774,4 @@ A code review of the Ledger Engine JS port identified 16 findings across three a
 | 7 — Dockerfile | ❌ Not started | |
 | 8 — Multi-tenant Worker | ❌ Not started | |
 | 9 — Real crypto | ❌ Not started | WASM binary exists, needs web integration |
+| 10 — Genesis block (PHPSPEC §4.1) | ✅ Complete | `LedgerChain.buildGenesisBlock()` + `LedgerEngine.init()` produce spec-compliant genesis block with identity, encrypted seed/secrets, HMAC seal, and identity signature. Onboarding form collects username + email. |

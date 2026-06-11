@@ -7,6 +7,7 @@
 - **Storage decision (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON). No adapter layer.
 - **Auth gate:** Cookie-only fast path. Full implementation in `src/sync/sync.js` (60 tests). Documented in `docs/design/DESIGN_MULTI_DEVICE_SESSION.md`.
 - **Architecture:** Multi-deployment via `StorageBackend` interface — standalone PWA (IndexedDB), self-hosted LAN/Docker (bridge server), SaaS (Worker→R2). Full details in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.
+- **Onboarding:** New phase-based lifecycle system with Landing, Onboarding, Auth, and Ready phases. Production mode collects **username** and **email** (per PHPSPEC §4.1) alongside passphrase, creates a PHPSPEC-compliant genesis block with encrypted recovery seed, encrypted identity secret, HMAC seal, and identity signature. Dev mode preserved for backward compat via `?dev=true`.
 
 ### Web Platform — Completed Steps
 
@@ -18,9 +19,10 @@
 | 4 | `StorageBackend` + `HttpBackend` — interface + Transport→StorageBackend adapter | ✅ | 41 |
 | 5 | Browser import/export via File API | ✅ | 83 |
 | 6 | **Ledger Engine JS Port + Refactoring** — Chain, Index, Summary, Engine | ✅ | 266 |
-| 7 | Staging CRUD in UI | 🔜 | — |
-| 8 | Companion bridge server (Python) | 🔜 | — |
-| 9 | Docker + multi-tenant Worker | 🔜 | — |
+| 7 | **Onboarding Workflow** — Landing screen, onboarding wizard (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2, identity fields (username + email), PHPSPEC-compliant genesis block creation with encrypted seed + identity secret + seal + signature | ✅ | — |
+| 8 | Staging CRUD in UI | 🔜 | — |
+| 9 | Companion bridge server (Python) | 🔜 | — |
+| 10 | Docker + multi-tenant Worker | 🔜 | — |
 
 ### Ledger Engine — Step 6 Detailed Status
 
@@ -66,7 +68,16 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/crypto/index.js` | `CryptoService` — singleton WASM wrapper, 20 functions |
 | `phpoc-web/src/services/ledger_export.js` | `exportLedger()` — entries → signed JSON Blob |
 | `phpoc-web/src/services/ledger_import.js` | `importLedger()` — file → verified entries |
-| `phpoc-web/src/App.jsx` | Root — DevModeProvider → auth gate → navigation |
+| `phpoc-web/src/App.jsx` | Root — phase-based routing, DevModeProvider → lifecycle phases |
+| `phpoc-web/src/context/DevModeContext.jsx` | Phase-based lifecycle: boot → landing → onboarding → auth → ready |
+| `phpoc-web/src/components/screens/LandingScreen.jsx` | Landing screen — detects IndexedDB data, Login vs Onboarding choices |
+| `phpoc-web/src/components/screens/OnboardingScreen.jsx` | Onboarding wizard — Import / New Ledger / Export flows. New ledger form includes Username + Email fields. |
+| `phpoc-web/src/components/screens/AuthScreen.jsx` | Passphrase entry — async PBKDF2, spinner, error handling |
+| `phpoc-web/src/ledger/chain.js` | `LedgerChain.buildGenesisBlock()` — builds PHPSPEC §4.1 genesis block with identity, encrypted seed/secrets, seal, and signature |
+| `phpoc-web/src/ledger/engine.js` | `LedgerEngine.init()` — orchestrates genesis block creation + append during onboarding |
+| `phpoc-web/src/context/DevModeContext.jsx` | `createNewLedger()` now accepts username + email, creates genesis block via `engine.init()` |
+| `phpoc-web/src/components/screens/UserProfile.jsx` | Shows `user.username` as display name and `user.email` underneath |
+| `phpoc-web/src/components/screens/Settings.jsx` | Settings — Data Management section with Import/Export |
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
 
 ### Cross-Platform (reference)
@@ -104,11 +115,35 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ## Next Steps
 
-1. **Step 7: Staging CRUD in UI** — Full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data.
-2. **Step 8: Companion bridge server** — ~50 lines Python HTTP server implementing same API contract as Worker. Enables self-hosted LAN deployment.
-3. **Step 9: Dockerfile + Multi-tenant Worker** — One-command self-hosted deployment + SaaS multi-tenant isolation.
+### 1. Wire Device Cookie TTL to Re-auth Overlay
+
+The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
+- Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
+- Pop the `AuthScreen` overlay when TTL expires (30 min default)
+- Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
+
+### 2. Show Recovery Seed After New Ledger Creation
+
+Currently the seed is silently stored. The user has no way to back it up. After "Begin a new ledger", show a one-time "Recovery Seed" screen with:
+- The base64 seed in a large monospace display
+- "Write this down" instruction
+- Confirm button ("I've saved it")
+- Should never show again (stored in IndexedDB as `phpoc_seed`)
+
+### 3. Staging CRUD in UI (was Step 7)
+
+Following onboarding, wire full staging CRUD to the UI components:
+- Dashboard active tasks → linked to real SyncService
+- History screen → linked to real entries
+- Edit/delete entries in UI
+
+### 4. Wire Identity Secret into LedgerEngine for Commit Signing
+
+The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 
 ## Known Issues
 - `HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.
 - MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.
 - ETag caching stale in long-running daemon mode (CLI-only, low priority).
+- WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.
+- IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage, data lost on reload.

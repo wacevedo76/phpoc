@@ -1,114 +1,117 @@
-import React from 'react';
-import { useApp } from '../../context/DevModeContext.jsx';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 /**
- * AuthScreen — passphrase entry screen.
+ * AuthScreen — passphrase entry screen for login & re-auth.
  *
- * In DEV MODE, the user is auto-authenticated immediately. In production,
- * this screen would:
- *   1. Prompt for passphrase
- *   2. Run PBKDF2-600K via WASM (background thread with spinner)
- *   3. Decrypt the recovery seed
- *   4. Derive master key → cache in memory
- *   5. Call checkAndSync() to reconcile remote staging
- *   6. Transition to Dashboard
+ * Used in two contexts:
+ *   1. Login (phase === 'auth' in App.jsx) — full screen, first auth
+ *   2. Re-auth overlay (cookie TTL expired) — blurred backdrop overlay
  *
- * For now, dev mode auto-redirects with a brief flash message.
+ * Props:
+ *   onAuthenticated(passphrase) — Async callback. Called with trimmed
+ *     passphrase. Must throw on failure so the error state is shown.
+ *     The caller (App.jsx) handles the actual auth logic.
+ *   overlay                    — If true, renders as overlay (re-auth).
+ *                                If false/omitted, renders full-screen.
  */
 export default function AuthScreen({ onAuthenticated, overlay = false }) {
-  const { isDev, loading, error, login, user } = useApp();
-  const [passphrase, setPassphrase] = React.useState('');
-  const [authError, setAuthError] = React.useState(null);
-  const [authing, setAuthing] = React.useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [authError, setAuthError] = useState(null);
+  const [authing, setAuthing] = useState(false);
+  const inputRef = useRef(null);
 
-  // Dev mode: auto-authenticate immediately
-  React.useEffect(() => {
-    if (isDev && !loading && user.isAuthenticated) {
-      // Briefly show the auth screen branding, then transition
-      const timer = setTimeout(() => onAuthenticated(), overlay ? 100 : 300);
-      return () => clearTimeout(timer);
+  // Auto-focus on mount
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
     }
-  }, [isDev, loading, user.isAuthenticated, onAuthenticated, overlay]);
+  }, []);
 
-  const handleSubmit = async (e) => {
+  // Close on Escape (overlay only)
+  useEffect(() => {
+    if (!overlay) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        // On overlay, Escape dismisses (handled by parent via onCancel)
+        // For now, no-op — App.jsx controls overlay visibility
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [overlay]);
+
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
-    if (!passphrase.trim()) return;
+    const trimmed = passphrase.trim();
+    if (!trimmed) {
+      setAuthError('Passphrase cannot be empty.');
+      return;
+    }
+
     setAuthing(true);
     setAuthError(null);
+
     try {
-      const ok = await login(passphrase.trim());
-      if (ok) onAuthenticated();
+      await onAuthenticated(trimmed);
+      // If we get here, auth succeeded — parent handles the transition
     } catch (err) {
-      setAuthError(err.message);
-    } finally {
+      setAuthError(err.message || 'Authentication failed.');
       setAuthing(false);
     }
-  };
+  }, [passphrase, onAuthenticated]);
 
   const containerClass = overlay ? 'auth-overlay' : 'auth-screen';
   const cardClass = overlay ? 'auth-overlay-card' : 'auth-card';
-
-  if (loading) {
-    return (
-      <div className={containerClass}>
-        <div className={cardClass}>
-          <div className="auth-spinner" />
-          <p>Initializing...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={containerClass}>
-        <div className={`${cardClass} auth-error`}>
-          <h2>Startup Error</h2>
-          <p>{error}</p>
-          <p className="auth-hint">Check the console for details.</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={containerClass}>
       <div className={cardClass}>
         <div className="auth-logo">⏱</div>
         <h1 className="auth-title">PH Ledger</h1>
-        <p className="auth-subtitle">{overlay ? 'Session expired — please re-authenticate' : 'Zero-knowledge time tracking'}</p>
+        <p className="auth-subtitle">
+          {overlay
+            ? 'Session expired — please re-authenticate'
+            : 'Zero-knowledge time tracking'}
+        </p>
 
-        {isDev && (
-          <div className="auth-dev-banner">
-            🔧 Dev Mode — auto-authenticating...
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="auth-form">
+          <label htmlFor="auth-passphrase" className="auth-label">
+            Passphrase
+          </label>
+          <input
+            id="auth-passphrase"
+            ref={inputRef}
+            type="password"
+            className="auth-input"
+            placeholder="Enter your passphrase"
+            value={passphrase}
+            onChange={(e) => {
+              setPassphrase(e.target.value);
+              if (authError) setAuthError(null);
+            }}
+            disabled={authing}
+            autoFocus
+          />
 
-        {!isDev && (
-          <form onSubmit={handleSubmit} className="auth-form">
-            <label htmlFor="passphrase" className="auth-label">
-              Passphrase
-            </label>
-            <input
-              id="passphrase"
-              type="password"
-              className="auth-input"
-              placeholder="Enter your passphrase"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              autoFocus
-              disabled={authing}
-            />
-            {authError && <p className="auth-error-msg">{authError}</p>}
-            <button
-              type="submit"
-              className="auth-btn"
-              disabled={authing || !passphrase.trim()}
-            >
-              {authing ? 'Decrypting...' : 'Unlock'}
-            </button>
-          </form>
-        )}
+          {authing && (
+            <p className="auth-hint" style={{ textAlign: 'center', margin: '0.5rem 0' }}>
+              <span className="auth-spinner" style={{ display: 'inline-block', width: 16, height: 16 }} />
+              {' '}Decrypting...
+            </p>
+          )}
+
+          {authError && (
+            <p className="auth-error-msg">{authError}</p>
+          )}
+
+          <button
+            type="submit"
+            className="auth-btn"
+            disabled={authing || !passphrase.trim()}
+          >
+            {authing ? 'Unlocking...' : 'Unlock'}
+          </button>
+        </form>
       </div>
     </div>
   );

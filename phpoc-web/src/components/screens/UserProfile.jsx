@@ -22,13 +22,16 @@ export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Derive an avatar initial from device label or fallback
+  // Derive an avatar initial from username or device label
   const avatarInitial = React.useMemo(() => {
+    if (user.username && user.username !== 'dev') {
+      return user.username.charAt(0).toUpperCase();
+    }
     if (user.deviceId && user.deviceId !== 'dev-dummy-001') {
       return user.deviceId.charAt(0).toUpperCase();
     }
     return 'D'; // Dev mode default
-  }, [user.deviceId]);
+  }, [user.username, user.deviceId]);
 
   // Load stats on mount
   useEffect(() => {
@@ -94,8 +97,11 @@ export default function UserProfile({ onNavigateToConfig, onLogoutRequest }) {
           </div>
           <div className="profile-identity-info">
             <h3 className="profile-device-label">
-              {user.deviceId === 'dev-dummy-001' ? 'Development Device' : 'My Device'}
+              {user.username || (user.deviceId === 'dev-dummy-001' ? 'Development Device' : 'My Device')}
             </h3>
+            {user.email && (
+              <span className="profile-device-detail">{user.email}</span>
+            )}
             <span className="profile-device-id">{user.deviceId || 'Unknown'}</span>
           </div>
         </div>

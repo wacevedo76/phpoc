@@ -54,6 +54,8 @@ The mobile app sends the same `X-Api-Key` header and uses the same path constant
 | Sync test suite | N/A | ✅ — `test/sync_test.mjs` — 60 tests covering all 4 layers + edge cases |
 | **React Web UI scaffold** | N/A | ✅ **DONE** — Vite + React 18, 9 screen components, DevModeContext, DummyLedger, dashboard, bottom tab nav. 14 modules, all compile clean. See `SESSION_HANDOFF.md` Step 3. |
 | **Auth overlay system** | ✅ (CLI re-auth prompt) | ✅ **DONE** — Full-screen AuthScreen on first launch; blurred-backdrop overlay on re-auth while app is running. Lock button on bottom nav + Profile screen. See `SESSION_HANDOFF.md` (2026-06-09). |
+| **Onboarding workflow** | N/A | ✅ **DONE** — LandingScreen, OnboardingScreen (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2. New ledger form collects **username** and **email** per PHPSPEC §4.1. Creates PHPSPEC-compliant genesis block with encrypted recovery seed, encrypted identity secret, HMAC seal, and identity signature. See `SESSION_HANDOFF.md` Step 7. |
+| **Data Management** (Settings import/export) | N/A | ✅ **DONE** — Export (auth-gated PassphraseModal) and Import (file + seed + passphrase) in Settings screen. See `SESSION_HANDOFF.md` Step 7. |
 | **Mock data generator** | N/A | ✅ **DONE** — `scripts/generate_mock_data.py` generates 30 days of realistic staging entries for testing. Weighted weekday/weekend templates, plain: prefix, SHA-256 hashes, UUID4 entry IDs. `--apply` writes to staging.json. 115 entries generated spanning Jun 4 → Jul 3, 2026. |
 | Ledger block sync (port) | ✅ | ✅ DONE — LedgerEngine.verify() catches tampered chain, revert restores entries |
 | Format spec (`PHPSPEC.md`) | ✅ | ✅ |
@@ -435,7 +437,9 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 15 | **DevModeContext rewired** — DummySyncService replaced with real SyncService + MockRemoteBackend | 1 day | ✅ DONE — Real auth gate, cookie setup, entry pull from mock remote. Full-stack simulation in-browser. | Jun 9 2026 |
 | 16 | **HttpBackend + StorageBackend.list + Worker DELETE** — Transport→StorageBackend adapter, `delete()` on HttpTransport/MockRemoteBackend, DELETE handler on Worker | 1 day | ✅ GREEN — 41 tests (TDD). `list()` added to StorageBackend + MemoryBackend. Worker now handles DELETE method. Zero regressions (155 web tests, 270 total). | Jun 9 2026 |
 | 17 | **Ledger Engine JS Port + Refactoring** — 4 modules, then 3-phase code review refactoring (16 findings: Modularity, Clarity, Security) | 2-3 days | ✅ DONE — 266 tests, 0 failures. Chain (70), Index (36), Summary (49), Engine (111). Shared utilities, proper async, security hardening. | Jun 10-11 2026 |
-| 18 | **Staging CRUD in UI** — full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. | 2-3 days | 🔜 Next | — |
+| 18 | **Onboarding Workflow** — Landing screen, onboarding wizard (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2 | 2-3 days | ✅ DONE — 4 new/modified components, refactored DevModeContext with phase-based lifecycle. Production mode: `?dev=false` or `defaultDevMode={false}`. | Jun 11 2026 |
+| 19 | **Staging CRUD in UI** — full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. | 2-3 days | 🔜 Next | — |
+| 20 | **Genesis block creation** — `LedgerChain.buildGenesisBlock()` + `LedgerEngine.init()` producing PHPSPEC §4.1 genesis block with identity, encrypted seed, encrypted identity secret, HMAC seal, and identity signature. Onboarding form collects username + email. | 1 day | ✅ Done | Jun 11 2026 |
 
 ---
 
