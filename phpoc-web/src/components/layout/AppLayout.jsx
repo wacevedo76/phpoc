@@ -50,10 +50,10 @@ export default function AppLayout({ currentScreen, onNavigate, children, onLogou
         <button
           className="nav-tab nav-tab-logout"
           onClick={onLogoutRequest}
-          title="Lock & Re-authenticate"
+          title="Logout"
         >
-          <span className="nav-tab-icon"><Icons.lock size={20} /></span>
-          <span className="nav-tab-label">Lock</span>
+          <span className="nav-tab-icon"><Icons.logout size={20} /></span>
+          <span className="nav-tab-label">Logout</span>
         </button>
       </nav>
     </div>

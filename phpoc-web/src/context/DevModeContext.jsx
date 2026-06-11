@@ -571,6 +571,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setPhase('landing');
     setServices({ crypto: null, sync: null, storage: null });
     setIdentityInfo({ username: null, email: null });
+    setLoading(false);
   }, [services.crypto]);
 
   // ── Check device cookie TTL (for re-auth overlay) ────────────────
