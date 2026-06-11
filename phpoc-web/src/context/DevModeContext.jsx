@@ -414,6 +414,35 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       const result = await engine.init({ username, email, passphrase, seed });
       // Store encrypted identity secret hex for future engine use
       await storage.set('phpoc_identity_secret', result.identitySecret);
+
+      // Debug: dump genesis block and stored IndexedDB keys
+      if (import.meta.env.DEV) {
+        console.log('═══ GENESIS BLOCK ═══');
+        console.table({
+          type: result.genesisBlock.type,
+          format_version: result.genesisBlock.format_version,
+          day_index: result.genesisBlock.day_index,
+          date: result.genesisBlock.date,
+          username: result.genesisBlock.identity.username,
+          email: result.genesisBlock.identity.email,
+          recovery_seed_enc: (result.genesisBlock.identity.recovery_seed_enc || '').slice(0, 40) + '…',
+          identity_pub_key: (result.genesisBlock.identity.identity_pub_key || '').slice(0, 20) + '…',
+          identity_secret_enc_fallback: (result.genesisBlock.identity.identity_secret_enc_fallback || '').slice(0, 40) + '…',
+          prev_hash: result.genesisBlock.prev_hash === '0'.repeat(64) ? '✅ all zeros' : '❌ WRONG',
+          entries_count: result.genesisBlock.entries.length,
+          day_hash: (result.genesisBlock.day_hash || '').slice(0, 20) + '…',
+          signature: result.genesisBlock.signature ? '✅ present' : '❌ MISSING',
+          identity_secret: (result.identitySecret || '').slice(0, 20) + '…',
+        });
+        // Read back the blocks from storage
+        const blocks = await storage.get('ledger:blocks');
+        console.log('═══ INDEXEDDB STORED KEYS ═══');
+        console.log('ledger:blocks blocks count:', blocks ? blocks.length : 0);
+        console.log('phpoc_seed:', await storage.get('phpoc_seed'));
+        console.log('phpoc_username:', await storage.get('phpoc_username'));
+        console.log('phpoc_email:', await storage.get('phpoc_email'));
+        console.log('phpoc_identity_secret:', (await storage.get('phpoc_identity_secret') || '').slice(0, 20) + '…');
+      }
     } catch (err) {
       console.error('Genesis block creation failed:', err);
       // Non-fatal — the flat keys are stored, and the ledger will
@@ -544,6 +573,29 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     }
   }, [services.sync, services.storage]);
 
+  // ── Commit entries to ledger ─────────────────────────────────────
+
+  const commitEntries = useCallback(async (entryIds) => {
+    const { sync, crypto, storage } = services;
+    if (!sync || !crypto || !storage) {
+      throw new Error('Services not ready');
+    }
+    const entries = await sync.readEntries();
+    const toCommit = entries.filter((e) => entryIds.includes(e.entry_id));
+    if (toCommit.length === 0) return;
+
+    // Create LedgerEngine
+    const { LedgerEngine } = await import('../ledger/engine.js');
+    const masterKey = crypto.getMasterKey();
+    const engine = new LedgerEngine(crypto, storage, masterKey);
+
+    // Commit
+    const result = await engine.commit(toCommit);
+    if (result && result.committedEntryIds.length > 0) {
+      await sync.markCommitted(result.committedEntryIds, result.blockIndex);
+    }
+  }, [services]);
+
   // ── Context value ────────────────────────────────────────────────
 
   const contextValue = {
@@ -587,6 +639,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Cookie TTL check
     checkCookieTtl,
+
+    // Commit entries to ledger
+    commitEntries,
   };
 
   return (

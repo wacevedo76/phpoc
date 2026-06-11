@@ -48,6 +48,8 @@
  * @property {object} metadata
  * @property {string} hash
  * @property {number} entry_index
+ * @property {boolean} committed - Whether this entry has been committed to the ledger chain
+ * @property {number|null} block_index - The block index in the ledger where this entry was committed
  */
 
 const ENTRIES_KEY = 'entries';
@@ -150,7 +152,7 @@ export class LocalCache {
       JSON.stringify(data, Object.keys(data).sort())
     );
 
-    const entry = { ...data, hash };
+    const entry = { ...data, hash, committed: false, block_index: null };
     entries.push(entry);
     await this.writeEntries(entries);
     return hash.slice(0, 10);
@@ -190,6 +192,28 @@ export class LocalCache {
 
     entries[index] = entry;
     await this.writeEntries(entries);
+  }
+
+  /**
+   * Mark one or more entries as committed to the ledger.
+   *
+   * @param {string[]} entryIds - Entry UUIDs to mark.
+   * @param {number} blockIndex - The block index these entries were committed in.
+   */
+  async markCommitted(entryIds, blockIndex) {
+    if (!entryIds || entryIds.length === 0) return;
+    const entries = await this.readEntries();
+    let changed = false;
+    for (const entry of entries) {
+      if (entryIds.includes(entry.entry_id)) {
+        entry.committed = true;
+        entry.block_index = blockIndex;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.writeEntries(entries);
+    }
   }
 
   /**

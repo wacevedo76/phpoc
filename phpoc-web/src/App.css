@@ -873,6 +873,76 @@ a { color: var(--accent-blue); text-decoration: none; }
   margin-top: 0.2rem;
 }
 
+/* Staging vs Committed indicators */
+.screen-header-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.history-entry-status {
+  margin-bottom: 0.3rem;
+}
+
+.badge-committed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-green);
+  background: var(--accent-green-bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge-staging {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-yellow);
+  background: var(--accent-yellow-bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge-staging-count {
+  font-size: 0.72rem;
+  color: var(--accent-yellow);
+  background: var(--accent-yellow-bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-selected-indicator {
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+.history-entry-staging {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.history-entry-staging:hover {
+  background: var(--bg-hover);
+}
+.history-entry-staging:focus {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: -1px;
+}
+
+.btn-sm {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.7rem;
+}
+
 /* ===================================================================
    Tags Screen
    =================================================================== */

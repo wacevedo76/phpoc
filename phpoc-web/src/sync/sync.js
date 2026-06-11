@@ -277,6 +277,15 @@ export class SyncService {
     return entries.filter((e) => !e.is_active && !e.is_paused);
   }
 
+  /**
+   * Mark entries as committed to the ledger.
+   * @param {string[]} entryIds - Entry UUIDs to mark.
+   * @param {number} blockIndex - Ledger block index.
+   */
+  async markCommitted(entryIds, blockIndex) {
+    return this._local.markCommitted(entryIds, blockIndex);
+  }
+
   // ------------------------------------------------------------------
   // Cookie helpers
   // ------------------------------------------------------------------

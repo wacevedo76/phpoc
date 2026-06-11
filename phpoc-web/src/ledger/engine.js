@@ -96,7 +96,8 @@ export class LedgerEngine {
    *   6. Update the blind index
    *
    * @param {object[]} entries - List of entry dicts with at minimum title, start_epoch, duration.
-   * @returns {Promise<string|null>} 10-char hash prefix, or null if no entries committed.
+   *   Each entry may include an `entry_id` which is preserved for caller tracking.
+   * @returns {Promise<{hashPrefix: string|null, committedEntryIds: string[], blockIndex: number}|null>}
    */
   async commit(entries) {
     if (!entries || entries.length === 0) {
@@ -114,6 +115,18 @@ export class LedgerEngine {
       }
     }
 
+    // Collect entry_ids for caller tracking (before _groupByDate strips them)
+    const allEntryIds = [];
+    const entryIdsByDate = {};
+    for (const e of entries) {
+      if (e.entry_id) {
+        allEntryIds.push(e.entry_id);
+        const dateStr = new Date(e.start_epoch).toISOString().slice(0, 10);
+        if (!entryIdsByDate[dateStr]) entryIdsByDate[dateStr] = [];
+        entryIdsByDate[dateStr].push(e.entry_id);
+      }
+    }
+
     // Group entries by date and encrypt/process
     const daysToSync = this._groupByDate(entries);
 
@@ -122,24 +135,25 @@ export class LedgerEngine {
     }
 
     // Append blocks for each day, inserting summaries as needed
+    let lastBlockIndex = -1;
     const sortedDates = Object.keys(daysToSync).sort();
     for (const dateStr of sortedDates) {
-      await this._commitDay(dateStr, daysToSync[dateStr]);
+      const dateEntryIds = entryIdsByDate[dateStr] || [];
+      const blockIndex = await this._commitDay(dateStr, daysToSync[dateStr], dateEntryIds);
+      if (blockIndex > lastBlockIndex) lastBlockIndex = blockIndex;
     }
 
     await this.index._flush();
 
     // Return the hash prefix of the last block
     const last = await this.chain.getLastBlock();
-    if (!last) {
-      return null;
-    }
+    const lastHash = last ? getBlockHash(last) : null;
 
-    const lastHash = getBlockHash(last);
-    if (lastHash) {
-      return lastHash.slice(0, 10);
-    }
-    return null;
+    return {
+      hashPrefix: lastHash ? lastHash.slice(0, 10) : null,
+      committedEntryIds: allEntryIds,
+      blockIndex: lastBlockIndex,
+    };
   }
 
   /**
@@ -223,14 +237,18 @@ export class LedgerEngine {
    * Process a single day: insert summaries, build/append day block, update index.
    * @param {string} dateStr - ISO date string.
    * @param {object[]} dayEntries - Prepared entries for this day.
+   * @param {string[]} [_dateEntryIds] - Staging entry IDs for this date (for caller tracking).
+   * @returns {Promise<number>} The block index of the committed day block.
    */
-  async _commitDay(dateStr, dayEntries) {
+  async _commitDay(dateStr, dayEntries, _dateEntryIds) {
     const prevBlock = await this.chain.getLastBlock();
+
+    let dayBlock;
 
     if (!prevBlock) {
       // No ledger at all — first-ever day block
       const zeroHash = '0'.repeat(64);
-      const dayBlock = await this.chain.buildDayBlock(dayEntries, zeroHash, dateStr);
+      dayBlock = await this.chain.buildDayBlock(dayEntries, zeroHash, dateStr);
       await this.chain.append(dayBlock);
 
       // Update index
@@ -239,7 +257,8 @@ export class LedgerEngine {
         const duration = entry.data.duration || 0;
         await this.index.update(dateStr, title, duration);
       }
-      return;
+
+      return dayBlock.day_index;
     }
 
     // Insert summary blocks if needed
@@ -264,8 +283,10 @@ export class LedgerEngine {
     // Build day block using the new last block for prev_hash
     const newPrevBlock = await this.chain.getLastBlock();
     const prevHash = getBlockHash(newPrevBlock);
-    const dayBlock = await this.chain.buildDayBlock(dayEntries, prevHash, dateStr);
+    dayBlock = await this.chain.buildDayBlock(dayEntries, prevHash, dateStr);
     await this.chain.append(dayBlock);
+
+    return dayBlock.day_index;
   }
 
   // ── Verify ─────────────────────────────────────────────────────────

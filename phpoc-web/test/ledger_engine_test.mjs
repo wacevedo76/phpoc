@@ -121,10 +121,13 @@ if (typeof LedgerEngine === 'function') {
     tags: ['fitness'],
   });
 
-  // Test 3: commit returns a hash prefix string
+  // Test 3: commit returns a hash prefix object
   const result1 = await engine1.commit([entry1]);
-  t.assert(typeof result1 === 'string', 'commit returns a string for non-empty entries');
-  t.assertEq(result1.length, 10, 'commit returns 10-char hash prefix');
+  t.assert(result1 !== null && typeof result1 === 'object', 'commit returns an object for non-empty entries');
+  t.assert(typeof result1.hashPrefix === 'string', 'commit.hashPrefix is a string');
+  t.assertEq(result1.hashPrefix.length, 10, 'commit.hashPrefix is 10-char');
+  t.assert(Array.isArray(result1.committedEntryIds), 'commit.committedEntryIds is an array');
+  t.assert(typeof result1.blockIndex === 'number', 'commit.blockIndex is a number');
 
   // Test 4: One day block created
   t.assertEq(await engine1.getBlockCount(), 1, 'single entry creates one block');
@@ -212,7 +215,7 @@ if (typeof LedgerEngine === 'function') {
   });
 
   const result2a = await engine2.commit([entryDay1a, entryDay1b, entryDay2]);
-  t.assert(typeof result2a === 'string', 'multi-day commit returns hash prefix');
+  t.assert(typeof result2a.hashPrefix === 'string', 'multi-day commit returns hash prefix');
 
   // Test 14: Two day blocks created
   const dayBlocks2 = await engine2.getDayBlocks();
@@ -260,10 +263,10 @@ if (typeof LedgerEngine === 'function') {
   });
 
   const result3a = await engine3.commit([entryJan]);
-  t.assert(typeof result3a === 'string', 'Jan entry commits');
+  t.assert(typeof result3a.hashPrefix === 'string', 'Jan entry commits');
 
   const result3b = await engine3.commit([entryFeb]);
-  t.assert(typeof result3b === 'string', 'Feb entry commits');
+  t.assert(typeof result3b.hashPrefix === 'string', 'Feb entry commits');
 
   // Test 21: Chain now has 3 blocks: Jan day + month_summary + Feb day
   const allBlocks3 = await store3.get('ledger:blocks');
@@ -564,7 +567,7 @@ if (typeof LedgerEngine === 'function') {
     entry_id: 'a0000000-0000-4000-a000-000000000080',
   });
   const resultNoTitle = await engineE1.commit([noTitleEntry]);
-  t.assert(typeof resultNoTitle === 'string', 'commit with empty title still succeeds');
+  t.assert(typeof resultNoTitle.hashPrefix === 'string', 'commit with empty title still succeeds');
 
   // Test 45: commit with zero duration
   const storeE2 = new MemoryBackend();
@@ -575,7 +578,7 @@ if (typeof LedgerEngine === 'function') {
     entry_id: 'a0000000-0000-4000-a000-000000000081',
   });
   const resultZeroDur = await engineE2.commit([zeroDurEntry]);
-  t.assert(typeof resultZeroDur === 'string', 'commit with zero duration still succeeds');
+  t.assert(typeof resultZeroDur.hashPrefix === 'string', 'commit with zero duration still succeeds');
 
   // Test 46: verify on empty chain returns true
   const storeE3 = new MemoryBackend();
@@ -694,7 +697,7 @@ if (typeof LedgerEngine === 'function') {
     entry_id: 'valid-0000-4000-a000-000000000090',
   });
   const validResult = await engineValid.commit([validEntry]);
-  t.assert(typeof validResult === 'string', 'valid entry still commits successfully after validation');
+  t.assert(typeof validResult.hashPrefix === 'string', 'valid entry still commits successfully after validation');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────
