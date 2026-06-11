@@ -5,18 +5,18 @@ import { Icons } from '../ui/Icons.jsx';
 /**
  * History — completed entries with date/tag filter.
  *
- * Shows ended tasks from local staging, grouped by date.
- * Differentiates between staging-only entries and entries committed to the ledger.
- * Supports batch committing staging entries to the ledger chain.
+ * Display-only: shows ended tasks from local staging, grouped by date.
+ * Differentiates between not-committed (staging) and committed-to-ledger entries.
+ * Tags and comments are hidden by default — click a card to expand and reveal them.
+ *
+ * Committing entries to the ledger is handled by the Sync screen.
  */
 export default function History() {
-  const { services, commitEntries } = useApp();
+  const { services } = useApp();
   const sync = services.sync;
 
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [committing, setCommitting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState(new Set());
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [filterDate, setFilterDate] = useState('');
   const [filterTag, setFilterTag] = useState('');
@@ -36,38 +36,8 @@ export default function History() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // ── Commit handler ─────────────────────────────────────────────────
+  // ── Expand/collapse details ───────────────────────────────────────
 
-  const handleCommit = useCallback(async () => {
-    if (selectedIds.size === 0 || committing) return;
-    setCommitting(true);
-    try {
-      const ids = Array.from(selectedIds);
-      await commitEntries(ids);
-      setSelectedIds(new Set());
-      await refresh();
-    } catch (err) {
-      console.error('Commit failed:', err);
-    } finally {
-      setCommitting(false);
-    }
-  }, [commitEntries, selectedIds, committing, refresh]);
-
-  const handleCommitAll = useCallback(async () => {
-    const uncommitted = entries.filter((e) => !e.committed).map((e) => e.entry_id);
-    if (uncommitted.length === 0 || committing) return;
-    setCommitting(true);
-    try {
-      await commitEntries(uncommitted);
-      await refresh();
-    } catch (err) {
-      console.error('Commit all failed:', err);
-    } finally {
-      setCommitting(false);
-    }
-  }, [commitEntries, entries, committing, refresh]);
-
-  // Toggle expand/collapse for tags & comments
   const toggleExpand = useCallback((id) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -77,25 +47,12 @@ export default function History() {
     });
   }, []);
 
-  // Toggle selection (for staging entries only)
-  const toggleSelect = useCallback((id) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  // Card click: expand/collapse for all entries, + selection for staging
-  const handleCardClick = useCallback((entryId, isCommitted) => {
+  const handleCardClick = useCallback((entryId) => {
     toggleExpand(entryId);
-    if (!isCommitted) {
-      toggleSelect(entryId);
-    }
-  }, [toggleExpand, toggleSelect]);
+  }, [toggleExpand]);
 
-  // Filter
+  // ── Filter ────────────────────────────────────────────────────────
+
   const filtered = entries.filter((e) => {
     if (filterDate && e.date !== filterDate) return false;
     if (filterTag) {
@@ -105,20 +62,21 @@ export default function History() {
     return true;
   });
 
-  // Group by date (staging entries first within each date group)
+  // Group by date (uncommitted entries first within each group)
   const grouped = {};
   for (const e of filtered) {
     const date = e.date || 'unknown';
     if (!grouped[date]) grouped[date] = [];
     grouped[date].push(e);
   }
-  // Sort each date group: staging first (committed=false), then committed
   for (const date of Object.keys(grouped)) {
     grouped[date].sort((a, b) => {
       if (a.committed !== b.committed) return a.committed ? 1 : -1;
       return 0;
     });
   }
+
+  // ── Formatters ────────────────────────────────────────────────────
 
   const formatDuration = (ms) => {
     if (!ms) return '0m';
@@ -142,33 +100,13 @@ export default function History() {
 
   const uncommittedCount = entries.filter((e) => !e.committed).length;
 
+  // ── Render ────────────────────────────────────────────────────────
+
   return (
     <div className="screen">
       <div className="screen-header">
         <h2 className="screen-title">History</h2>
         <div className="screen-header-actions">
-          {uncommittedCount > 0 && (
-            <>
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={handleCommit}
-                disabled={selectedIds.size === 0 || committing}
-                title={selectedIds.size > 0
-                  ? `Commit ${selectedIds.size} selected entr${selectedIds.size === 1 ? 'y' : 'ies'}`
-                  : 'Select entries to commit'}
-              >
-                {committing ? 'Committing…' : `Commit (${selectedIds.size})`}
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={handleCommitAll}
-                disabled={committing}
-                title={`Commit all ${uncommittedCount} uncommitted entr${uncommittedCount === 1 ? 'y' : 'ies'}`}
-              >
-                Commit All
-              </button>
-            </>
-          )}
           <button className="btn btn-ghost" onClick={refresh} title="Refresh">
             ↻
           </button>
@@ -218,51 +156,64 @@ export default function History() {
           <div key={date} className="history-day">
             <h3 className="history-date-header">{formatDateLabel(date)}</h3>
             <div className="history-entries">
-              {dayEntries.map((entry) => (
-                <div
-                  key={entry.entry_id}
-                  className={`history-entry${entry.committed ? '' : ' history-entry-staging'}${expandedIds.has(entry.entry_id) ? ' history-entry-expanded' : ''}`}
-                  onClick={() => handleCardClick(entry.entry_id, entry.committed)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick(entry.entry_id, entry.committed); }}}
-                >
-                  {/* Status badge */}
-                  <div className="history-entry-status">
-                    {entry.committed ? (
-                      <span className="badge-committed" title={`Committed in block ${entry.block_index}`}>
-                        <Icons.syncReady size={14} /> Committed
-                      </span>
-                    ) : (
-                      <span className="badge-staging">
-                        <Icons.history size={14} /> Not Committed
-                        {selectedIds.has(entry.entry_id) && (
-                          <span className="badge-selected-indicator"> ✓</span>
+              {dayEntries.map((entry) => {
+                const isExpanded = expandedIds.has(entry.entry_id);
+                return (
+                  <div
+                    key={entry.entry_id}
+                    className={`history-entry${
+                      entry.committed ? '' : ' history-entry-staging'
+                    }${
+                      isExpanded ? ' history-entry-expanded' : ''
+                    }`}
+                    onClick={() => handleCardClick(entry.entry_id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleCardClick(entry.entry_id);
+                      }
+                    }}
+                  >
+                    {/* Status badge */}
+                    <div className="history-entry-status">
+                      {entry.committed ? (
+                        <span className="badge-committed" title={`Committed in block ${entry.block_index}`}>
+                          <Icons.syncReady size={14} /> Committed
+                        </span>
+                      ) : (
+                        <span className="badge-staging">
+                          <Icons.history size={14} /> Not Committed
+                          {isExpanded && (
+                            <span className="badge-selected-indicator"> ✓</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="history-entry-main">
+                      <span className="history-entry-title">{entry.title}</span>
+                      <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
+                    </div>
+
+                    {isExpanded && (
+                      <>
+                        {entry.tags?.length > 0 && (
+                          <div className="history-entry-tags">
+                            {entry.tags.map((tag, i) => (
+                              <span key={i} className="tag-badge">#{tag}</span>
+                            ))}
+                          </div>
                         )}
-                      </span>
+                        {entry.comment && (
+                          <p className="history-entry-comment">{entry.comment}</p>
+                        )}
+                      </>
                     )}
                   </div>
-
-                  <div className="history-entry-main">
-                    <span className="history-entry-title">{entry.title}</span>
-                    <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
-                  </div>
-                  {expandedIds.has(entry.entry_id) && (
-                    <>
-                      {entry.tags?.length > 0 && (
-                        <div className="history-entry-tags">
-                          {entry.tags.map((tag, i) => (
-                            <span key={i} className="tag-badge">#{tag}</span>
-                          ))}
-                        </div>
-                      )}
-                      {entry.comment && (
-                        <p className="history-entry-comment">{entry.comment}</p>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

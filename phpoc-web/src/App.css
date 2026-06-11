@@ -921,10 +921,10 @@ a { color: var(--accent-blue); text-decoration: none; }
   white-space: nowrap;
 }
 
-/* Expand/collapse details */
+/* Expand/collapse details — tags & comments hidden by default */
 .history-entry {
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 .history-entry:hover {
   background: var(--bg-hover);
@@ -943,25 +943,19 @@ a { color: var(--accent-blue); text-decoration: none; }
   font-weight: 700;
 }
 
+/* Staging card: red border collapsed, blue border expanded */
 .history-entry-staging {
-  cursor: pointer;
-  transition: background 0.15s;
   border: 1px solid var(--accent-red);
   border-radius: var(--border-radius);
   padding: 0.6rem 0.8rem;
   margin-bottom: 0.3rem;
 }
-.history-entry-staging:hover {
-  background: var(--bg-hover);
+.history-entry-staging.history-entry-expanded {
+  border-color: var(--accent-blue);
 }
 .history-entry-staging:focus {
   outline: 1px solid var(--accent-blue);
   outline-offset: -1px;
-}
-
-.btn-sm {
-  font-size: 0.78rem;
-  padding: 0.3rem 0.7rem;
 }
 
 /* ===================================================================
