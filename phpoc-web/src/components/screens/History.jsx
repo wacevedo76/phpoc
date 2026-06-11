@@ -135,7 +135,7 @@ export default function History() {
                 onClick={handleCommit}
                 disabled={selectedIds.size === 0 || committing}
                 title={selectedIds.size > 0
-                  ? `Commit ${selectedIds.size} selected staging entr${selectedIds.size === 1 ? 'y' : 'ies'}`
+                  ? `Commit ${selectedIds.size} selected entr${selectedIds.size === 1 ? 'y' : 'ies'}`
                   : 'Select entries to commit'}
               >
                 {committing ? 'Committing…' : `Commit (${selectedIds.size})`}
@@ -144,7 +144,7 @@ export default function History() {
                 className="btn btn-ghost btn-sm"
                 onClick={handleCommitAll}
                 disabled={committing}
-                title={`Commit all ${uncommittedCount} staging entr${uncommittedCount === 1 ? 'y' : 'ies'}`}
+                title={`Commit all ${uncommittedCount} uncommitted entr${uncommittedCount === 1 ? 'y' : 'ies'}`}
               >
                 Commit All
               </button>
@@ -216,7 +216,7 @@ export default function History() {
                       </span>
                     ) : (
                       <span className="badge-staging">
-                        <Icons.history size={14} /> Staging
+                        <Icons.history size={14} /> Not Committed
                         {selectedIds.has(entry.entry_id) && (
                           <span className="badge-selected-indicator"> ✓</span>
                         )}

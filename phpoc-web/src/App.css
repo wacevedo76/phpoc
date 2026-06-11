@@ -929,6 +929,10 @@ a { color: var(--accent-blue); text-decoration: none; }
 .history-entry-staging {
   cursor: pointer;
   transition: background 0.15s;
+  border: 1px solid var(--accent-red);
+  border-radius: var(--border-radius);
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.3rem;
 }
 .history-entry-staging:hover {
   background: var(--bg-hover);
