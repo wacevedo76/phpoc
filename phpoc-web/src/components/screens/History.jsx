@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
 
 /**
- * History — completed entries with date/tag filter.
+ * History — completed entries with date/tag filter, inline editing for staging.
  *
- * Display-only: shows ended tasks from local staging, grouped by date.
+ * Shows ended tasks from local staging, grouped by date.
  * Differentiates between not-committed (staging) and committed-to-ledger entries.
- * Tags and comments are hidden by default — click a card to expand and reveal them.
+ * Tags and comments are hidden by default — click a card to expand.
+ * Staging entries can have tags added/removed and comments edited inline.
  *
  * Committing entries to the ledger is handled by the Sync screen.
  */
@@ -21,12 +22,25 @@ export default function History() {
   const [filterDate, setFilterDate] = useState('');
   const [filterTag, setFilterTag] = useState('');
 
+  // Inline editing state (staging entries only, keyed by entry_id)
+  const [editTags, setEditTags] = useState({});
+  const [editTagInputs, setEditTagInputs] = useState({});
+  const [editComments, setEditComments] = useState({});
+  const [saving, setSaving] = useState({});
+  const saveTimers = useRef({});
+
+  // ── Data loading ──────────────────────────────────────────────────
+
   const refresh = useCallback(async () => {
     if (!sync) return;
     setLoading(true);
     try {
       const completed = await sync.getCompleted();
       setEntries(completed);
+      // Reset all editing state on refresh
+      setEditTags({});
+      setEditTagInputs({});
+      setEditComments({});
     } catch (err) {
       console.warn('History: failed to load entries', err);
     } finally {
@@ -36,13 +50,20 @@ export default function History() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // ── Expand/collapse details ───────────────────────────────────────
+  // ── Expand/collapse — initialise / clear editing state ────────────
 
-  const toggleExpand = useCallback((id) => {
+  const toggleExpand = useCallback((entryId) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(entryId)) {
+        // Collapsing — clear any editing state for this entry
+        next.delete(entryId);
+        setEditTags((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        setEditTagInputs((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        setEditComments((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      } else {
+        next.add(entryId);
+      }
       return next;
     });
   }, []);
@@ -50,6 +71,113 @@ export default function History() {
   const handleCardClick = useCallback((entryId) => {
     toggleExpand(entryId);
   }, [toggleExpand]);
+
+  // Initialise editing state when an entry is first expanded
+  useEffect(() => {
+    for (const entry of entries) {
+      if (expandedIds.has(entry.entry_id) && !entry.committed) {
+        setEditTags((prev) => {
+          if (prev[entry.entry_id] !== undefined) return prev;
+          return { ...prev, [entry.entry_id]: [...(entry.tags || [])] };
+        });
+        setEditComments((prev) => {
+          if (prev[entry.entry_id] !== undefined) return prev;
+          return { ...prev, [entry.entry_id]: entry.comment || '' };
+        });
+      }
+    }
+  }, [entries, expandedIds]);
+
+  // ── Sync helpers ──────────────────────────────────────────────────
+
+  /**
+   * Save tags for an entry via sync.modify().
+   */
+  const saveTags = useCallback(async (entryId, tags) => {
+    const entry = entries.find((e) => e.entry_id === entryId);
+    if (!entry || entry.committed) return;
+    setSaving((s) => ({ ...s, [entryId]: true }));
+    try {
+      await sync.modify(entry.entry_index, { tags });
+      // Update local entry state
+      setEntries((prev) => prev.map((e) =>
+        e.entry_id === entryId ? { ...e, tags } : e
+      ));
+    } catch (err) {
+      console.warn('Failed to save tags:', err);
+    } finally {
+      setSaving((s) => ({ ...s, [entryId]: false }));
+    }
+  }, [entries, sync]);
+
+  /**
+   * Save comment for an entry via sync.modify() — debounced.
+   */
+  const saveComment = useCallback(async (entryId, comment) => {
+    const entry = entries.find((e) => e.entry_id === entryId);
+    if (!entry || entry.committed) return;
+    setSaving((s) => ({ ...s, [entryId]: true }));
+    try {
+      const finalComment = comment.trim() || null;
+      await sync.modify(entry.entry_index, { comment: finalComment });
+      setEntries((prev) => prev.map((e) =>
+        e.entry_id === entryId ? { ...e, comment: finalComment } : e
+      ));
+    } catch (err) {
+      console.warn('Failed to save comment:', err);
+    } finally {
+      setSaving((s) => ({ ...s, [entryId]: false }));
+    }
+  }, [entries, sync]);
+
+  // ── Tag actions ───────────────────────────────────────────────────
+
+  const removeTag = useCallback((entryId, tagToRemove) => {
+    const current = editTags[entryId];
+    if (!current) return;
+    const updated = current.filter((t) => t !== tagToRemove);
+    setEditTags((prev) => ({ ...prev, [entryId]: updated }));
+    saveTags(entryId, updated);
+  }, [editTags, saveTags]);
+
+  const addTag = useCallback((entryId) => {
+    const input = (editTagInputs[entryId] || '').trim().toLowerCase();
+    if (!input) return;
+    const current = editTags[entryId] || [];
+    if (current.includes(input)) return; // no duplicates
+    const updated = [...current, input].sort();
+    setEditTags((prev) => ({ ...prev, [entryId]: updated }));
+    setEditTagInputs((prev) => ({ ...prev, [entryId]: '' }));
+    saveTags(entryId, updated);
+  }, [editTagInputs, editTags, saveTags]);
+
+  const handleTagInputKeyDown = useCallback((e, entryId) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addTag(entryId);
+    }
+  }, [addTag]);
+
+  // ── Comment change (debounced save on blur) ───────────────────────
+
+  const handleCommentChange = useCallback((entryId, value) => {
+    setEditComments((prev) => ({ ...prev, [entryId]: value }));
+    // Debounced auto-save after 800ms of no typing
+    if (saveTimers.current[entryId]) {
+      clearTimeout(saveTimers.current[entryId]);
+    }
+    saveTimers.current[entryId] = setTimeout(() => {
+      saveComment(entryId, value);
+    }, 800);
+  }, [saveComment]);
+
+  const handleCommentBlur = useCallback((entryId) => {
+    const value = editComments[entryId];
+    if (saveTimers.current[entryId]) {
+      clearTimeout(saveTimers.current[entryId]);
+    }
+    saveComment(entryId, value || '');
+  }, [editComments, saveComment]);
 
   // ── Filter ────────────────────────────────────────────────────────
 
@@ -158,6 +286,16 @@ export default function History() {
             <div className="history-entries">
               {dayEntries.map((entry) => {
                 const isExpanded = expandedIds.has(entry.entry_id);
+                const isEditable = !entry.committed;
+                const currentTags = isEditable
+                  ? (editTags[entry.entry_id] !== undefined ? editTags[entry.entry_id] : entry.tags || [])
+                  : (entry.tags || []);
+                const currentTagInput = editTagInputs[entry.entry_id] || '';
+                const currentComment = isEditable
+                  ? (editComments[entry.entry_id] !== undefined ? editComments[entry.entry_id] : entry.comment || '')
+                  : (entry.comment || '');
+                const isSaving = saving[entry.entry_id] || false;
+
                 return (
                   <div
                     key={entry.entry_id}
@@ -188,6 +326,9 @@ export default function History() {
                           {isExpanded && (
                             <span className="badge-selected-indicator"> ✓</span>
                           )}
+                          {isSaving && (
+                            <span className="saving-spinner" />
+                          )}
                         </span>
                       )}
                     </div>
@@ -197,19 +338,63 @@ export default function History() {
                       <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
                     </div>
 
+                    {/* Expanded details: tags and comment */}
                     {isExpanded && (
-                      <>
-                        {entry.tags?.length > 0 && (
-                          <div className="history-entry-tags">
-                            {entry.tags.map((tag, i) => (
-                              <span key={i} className="tag-badge">#{tag}</span>
-                            ))}
-                          </div>
+                      <div className="history-entry-details" onClick={(e) => e.stopPropagation()}>
+                        {/* Tags — editable for staging, read-only for committed */}
+                        <div className="history-entry-tags">
+                          {currentTags.map((tag, i) => (
+                            <span key={i} className="tag-badge">
+                              #{tag}
+                              {isEditable && (
+                                <button
+                                  className="tag-badge-remove"
+                                  onClick={() => removeTag(entry.entry_id, tag)}
+                                  title={`Remove #${tag}`}
+                                  aria-label={`Remove tag ${tag}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {isEditable && (
+                            <span className="tag-add-wrapper">
+                              <input
+                                type="text"
+                                className="tag-add-input"
+                                placeholder="+tag"
+                                value={currentTagInput}
+                                onChange={(e) =>
+                                  setEditTagInputs((prev) => ({
+                                    ...prev,
+                                    [entry.entry_id]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => handleTagInputKeyDown(e, entry.entry_id)}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Comment — editable textarea for staging, read-only for committed */}
+                        {isEditable ? (
+                          <textarea
+                            className="history-entry-comment-edit"
+                            placeholder="Add a comment…"
+                            value={currentComment}
+                            onChange={(e) => handleCommentChange(entry.entry_id, e.target.value)}
+                            onBlur={() => handleCommentBlur(entry.entry_id)}
+                            onClick={(e) => e.stopPropagation()}
+                            rows={3}
+                          />
+                        ) : (
+                          currentComment && (
+                            <p className="history-entry-comment">{currentComment}</p>
+                          )
                         )}
-                        {entry.comment && (
-                          <p className="history-entry-comment">{entry.comment}</p>
-                        )}
-                      </>
+                      </div>
                     )}
                   </div>
                 );

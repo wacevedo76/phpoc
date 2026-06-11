@@ -929,13 +929,12 @@ a { color: var(--accent-blue); text-decoration: none; }
 .history-entry:hover {
   background: var(--bg-hover);
 }
-.history-entry .history-entry-tags,
-.history-entry .history-entry-comment {
+.history-entry .history-entry-details {
   display: none;
 }
-.history-entry-expanded .history-entry-tags,
-.history-entry-expanded .history-entry-comment {
-  display: flex;
+.history-entry-expanded .history-entry-details {
+  display: block;
+  margin-top: 0.4rem;
 }
 
 .badge-selected-indicator {
@@ -956,6 +955,97 @@ a { color: var(--accent-blue); text-decoration: none; }
 .history-entry-staging:focus {
   outline: 1px solid var(--accent-blue);
   outline-offset: -1px;
+}
+
+/* ── Inline tag editing ────────────────────────────────────────── */
+.history-entry-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.tag-badge-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 50%;
+  padding: 0;
+  margin-left: 0.1rem;
+  transition: background 0.1s, color 0.1s;
+}
+.tag-badge-remove:hover {
+  background: var(--accent-red);
+  color: #fff;
+}
+.tag-add-wrapper {
+  display: inline-flex;
+}
+.tag-add-input {
+  width: 4.5rem;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.tag-add-input:focus {
+  border-color: var(--accent-blue);
+  border-style: solid;
+}
+.tag-add-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── Inline comment editing ────────────────────────────────────── */
+.history-entry-comment-edit {
+  width: 100%;
+  font-size: 0.82rem;
+  font-family: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-secondary);
+  color: var(--text-color);
+  resize: vertical;
+  min-height: 2.5rem;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  margin-top: 0.2rem;
+}
+.history-entry-comment-edit:focus {
+  border-color: var(--accent-blue);
+}
+.history-entry-comment-edit::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── Saving spinner ────────────────────────────────────────────── */
+.saving-spinner {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 1.5px solid var(--accent-yellow);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: saving-spin 0.6s linear infinite;
+}
+@keyframes saving-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ===================================================================
@@ -987,6 +1077,9 @@ a { color: var(--accent-blue); text-decoration: none; }
 }
 
 .tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   font-size: 0.75rem;
   color: var(--accent-blue);
   background: var(--accent-blue-bg);
