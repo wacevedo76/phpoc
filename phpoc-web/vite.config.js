@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: '0.0.0.0',
     open: '/?dev=false',
     fs: {
       // Allow serving files from the parent project root (for phpoc-crypto-core WASM)

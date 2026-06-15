@@ -200,7 +200,7 @@ The Rust crate is compiled per target:
 
 ### 🔵 StoragePlugin — Multi-Deployment Architecture
 
-**Decision (2026-06-09):** phpoc-web supports four deployment targets from a single codebase, selected at startup via config. The `StoragePlugin` interface decouples all sync/ledger logic from the storage backend.
+**Decision (2026-06-09, updated 2026-06-15):** phpoc-web supports four deployment targets from a single codebase, selected at startup via config. The `StoragePlugin` interface decouples all sync/ledger logic from the storage backend.
 
 ```
 phpoc-web (React)
@@ -217,6 +217,7 @@ phpoc-web (React)
 |-----------|----------------|------------|----------|
 | **Standalone PWA** | IndexedDB | Single user | Local machine, no infra needed |
 | **Local network / LAN** | Companion bridge server (HTTP → filesystem) | Single user | Accessible within home/office network |
+| **rclone Cloud Bridge** | Bridge server + rclone FUSE mount → Google Drive, Dropbox, S3, 40+ providers | Single user | Cloud-backed storage via bridge + async rclone sync. Perceived writes: <1ms. See PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.28. |
 | **Docker / LXC** | Bridge server bundled in container | Single user | One-command deploy, repeatable |
 | **SaaS** | Cloudflare Worker → R2 (multi-tenant) | Multi-tenant | Hosted service for non-technical users |
 
@@ -240,7 +241,8 @@ This enables CLI ↔ web app file sharing without a remote Worker. The bridge is
 2. ✅ `HttpBackend` — built, 41 tests, bridges Transport→StorageBackend interface
 3. ✅ `StorageBackend.list()` + `HttpTransport.delete()` + Worker DELETE
 4. ✅ **Browser import/export via File API** — `exportLedger()` (v1, staging-only), `exportLedgerFull()` (v2, committed chain + staging, 72 tests), `importLedger()` (v1/v2 dual-format, genesis-aware), `PassphraseModal`. Auth-gated (passphrase → `crypto.authenticate()` → master key). Export: v1 → `{entries, seal}`, v2 → `{ledger, staging, seal}`. Import: verifies seal + re-validates entry hashes + extracts genesisHash for merge/replace decision. 3 source files, 122 tests. Commit: `3dd5db4`.
-5. 🔲 Companion bridge server (Python, ~50 lines)
+5. 🔲 Companion bridge server (Python, ~80-100 lines)
+5b. 🔲 **rclone bridge loader** (`rclone_bridge.py`) — interactive setup for Google Drive, Dropbox, and 40+ cloud providers. Combines bridge server with rclone FUSE mount for async cloud sync.
 6. 🔲 Dockerfile (nginx + bridge server)
 7. 🔲 Multi-tenant Worker + registration for SaaS
 

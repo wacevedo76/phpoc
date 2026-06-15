@@ -542,6 +542,21 @@ This server is:
 - **Bundleable** — ships in the Docker image alongside the static web build
 - **Language-agnostic** — can be Python, Node.js, or any HTTP-capable runtime
 
+#### Cloud Backing via rclone
+
+The bridge server can be backed by **any cloud storage provider** through [rclone](https://rclone.org/), a FUSE-based filesystem mount for 40+ providers (Google Drive, Dropbox, OneDrive, Box, Nextcloud, S3, Backblaze B2, etc.):
+
+```
+┌──────────────┐     HTTP (LAN)    ┌──────────────┐    FUSE mount    ┌────────────────┐
+│  Browser      │ ──────────────→ │ Bridge Server │ ──────────────→  │ Cloud Provider  │
+│  (HttpBackend) │                 │ (bridge.py)    │                 │ (via rclone)    │
+└──────────────┘                  └──────────────┘                 └────────────────┘
+```
+
+The browser talks to the bridge over LAN (sub-ms latency). The bridge writes to a local path. rclone syncs changes to the cloud **asynchronously** — the user never waits on cloud latency for any operation.
+
+See §11.28 for the full architecture and `rclone_bridge.py` loader script design.
+
 ### 11.7 SaaS: Multi-Tenant Architecture
 
 The SaaS deployment uses the same stack with user isolation layered in:
@@ -689,15 +704,17 @@ This is only needed when verifying Python-computed hashes (raw chain import). Th
 
 ### 11.8 Data Layer Per Deployment
 
-| Layer | PWA | Self-Hosted | Docker | SaaS |
-|---|---|---|---|---|
-| UI rendering | Browser | Browser | Browser | Browser |
-| Local cache | IndexedDB | IndexedDB | IndexedDB | IndexedDB |
-| Remote storage | _(none)_ | Local filesystem | Container volume | R2 bucket |
-| Sync endpoint | _(none)_ | `http://host:port/` | `http://container:port/` | `https://api.phpoc.app/` |
-| Auth | Client-only | Client-only + LAN opt | Client-only + proxy opt | Registration + API keys |
-| Import/Export | File API | File API + bridge FS | File API + volume | File API |
-| Multi-user | No | No (file-per-user) | No (file-per-user) | Yes (path-prefix) |
+| Layer | PWA | Self-Hosted (Local) | Self-Hosted (rclone Cloud) | Docker | SaaS |
+|---|---|---|---|---|---|
+| UI rendering | Browser | Browser | Browser | Browser | Browser |
+| Local cache | IndexedDB | IndexedDB | IndexedDB | IndexedDB | IndexedDB |
+| Remote storage | _(none)_ | Local filesystem | rclone mount → cloud (Drive, Dropbox, S3, 40+ providers) | Container volume | R2 bucket |
+| Sync endpoint | _(none)_ | `http://host:port/` | `http://host:port/` | `http://container:port/` | `https://api.phpoc.app/` |
+| Auth | Client-only | Client-only + LAN opt | Client-only + LAN opt | Client-only + proxy opt | Registration + API keys |
+| Import/Export | File API | File API + bridge FS | File API + bridge FS | File API + volume | File API |
+| Multi-user | No | No (file-per-user) | No (file-per-user) | No (file-per-user) | Yes (path-prefix) |
+| Offline-capable | ✅ Always | ✅ Always | ✅ Always (cache), async cloud sync | ✅ Volume-backed | ⚠️ Requires connectivity |
+| Perceived latency | N/A | <1ms (LAN) | <1ms (LAN), cloud sync async | Container-local | 30-80ms (internet) |
 
 ### 11.9 Roadmap
 
@@ -708,10 +725,11 @@ This is only needed when verifying Python-computed hashes (raw chain import). Th
 | 3 | Browser import/export via File API | ✅ Complete (83 tests) — `exportLedger()`, `importLedger()`, `PassphraseModal`. Auth-gated, HMAC-sealed, single `.json` file format. | None |
 | 4 | Ledger engine port to JS | Web becomes self-sufficient (no Python dependency) | Step 1 (storage) |
 | 5 | Staging CRUD (add/edit/delete entries in UI) | Full staging interaction | Step 4 (ledger engine) |
-| 6 | Companion bridge server (Python or Node.js) | Self-hosted + LAN deployments work | Step 1 (interface contract) |
-| 7 | Dockerfile (nginx + bridge server) | One-command self-hosted deployment | Step 6 |
-| 8 | Multi-tenant Worker (user isolation) + registration service | SaaS deployment | Step 1 (transport contract) |
-| 9 | Real crypto (WASM) replaces DummyCryptoService | Production-ready crypto | Step 4 (ledger engine) |
+| 6 | Companion bridge server (Python) | Self-hosted + LAN deployments work | Step 1 (interface contract) |
+| 7 | **rclone bridge loader** (`rclone_bridge.py`) | Zero-code cloud storage (Google Drive, Dropbox, 40+ providers). Single interactive setup script. | Step 6 (bridge server) |
+| 8 | Dockerfile (nginx + bridge server) | One-command self-hosted deployment | Step 6 |
+| 9 | Multi-tenant Worker (user isolation) + registration service | SaaS deployment | Step 1 (transport contract) |
+| 10 | Real crypto (WASM) replaces DummyCryptoService | Production-ready crypto | Step 4 (ledger engine) |
 
 ### 11.12 Ledger Engine JS Port — Design Decisions (2026-06-10)
 
@@ -1187,6 +1205,105 @@ Two safety gates added before the destructive `storage.clear()`:
 ### 11.27 History Calendar Widget + Committed Entry Decryption (2026-06-11)
 
 **Problem:** The History screen used `<input type="date">` which only allows single-date filtering. Imported committed entries from `ledger:blocks` never appeared because `sync.getCompleted()` only read from staging.
+
+### 11.28 rclone Bridge Cloud Storage Architecture (2026-06-15)
+
+**Problem:** The project had three deployment targets (PWA, self-hosted LAN, Docker, SaaS), but no straightforward path to cloud-backed storage that didn't require deploying a Cloudflare Worker. Users wanted Google Drive, Dropbox, or other cloud storage without writing API adapters or managing OAuth flows in the app code.
+
+**Solution:** Combine the existing bridge server with **rclone** — an open-source CLI tool that mounts 40+ cloud storage providers as a local FUSE filesystem. The bridge server reads/writes a local directory; rclone keeps it synced to the cloud asynchronously.
+
+#### Architecture
+
+```
+┌──────────────┐     HTTP (LAN)    ┌──────────────┐    FUSE mount    ┌────────────────┐
+│  Browser      │ ──────────────→ │ Bridge Server │ ──────────────→  │ Google Drive   │
+│  (HttpBackend) │                 │ (bridge.py)    │                  │  (via rclone)   │
+└──────────────┘                  └──────┬───────┘                 └────────────────┘
+                                          │                            │
+                                   ┌──────▼───────┐           ┌────────▼────────┐
+                                   │ rclone_bridge │           │  Dropbox / Box  │
+                                   │  (loader.py)   │           │  OneDrive / S3  │
+                                   └───────────────┘           │  40+ providers  │
+                                                                 └─────────────────┘
+```
+
+#### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `bridge_server.py` | `phpoc-bridge/bridge_server.py` | Minimal HTTP server (same API as Worker). Reads/writes local files. No rclone awareness. |
+| `rclone_bridge.py` | `phpoc-bridge/rclone_bridge.py` | Loader script. Manages rclone install check, interactive provider config, FUSE mount, bridge lifecycle, graceful cleanup. |
+| `phpoc-bridge/setup.py` | `phpoc-bridge/setup.py` | One-time setup: install rclone if missing, run interactive config, create remote folder. |
+
+#### rclone Bridge Lifecycle
+
+```
+# First-time setup (3 minutes)
+$ python rclone_bridge.py setup
+┌─────────────────────────────────────────────┐
+│  Select a cloud provider:                   │
+│    1) Google Drive                          │
+│    2) Dropbox                               │
+│    3) OneDrive                              │
+│    4) Nextcloud (self-hosted)               │
+│    5) Local folder (no cloud)               │
+│  > _                                        │
+└─────────────────────────────────────────────┘
+→ rclone config wizard (guided, provider-specific defaults)
+→ Creates PH-Ledger folder on remote
+→ Saves bridge-config.json
+
+# Daily use
+$ python rclone_bridge.py start
+→ Mounts remote:PH-Ledger to /tmp/phpoc-bridge
+→ Starts bridge server on port 8099
+→ Bridge running at http://192.168.1.50:8099
+
+# Status
+$ python rclone_bridge.py status
+→ Mount: healthy
+→ Last sync: 2s ago
+→ Queue: 0 pending
+
+# Clean shutdown
+$ python rclone_bridge.py stop (or Ctrl+C)
+→ Stops bridge
+→ Unmounts rclone mount
+→ Clean exit
+```
+
+#### Speed Comparison
+
+| Metric | GitHub API (direct) | Google Drive via rclone bridge |
+|--------|--------------------|--------------------------------|
+| Write latency (perceived) | 300-500ms | **<1ms** (local LAN + async sync) |
+| Read latency (perceived) | 200-400ms | **<1ms** (local filesystem) |
+| Background sync | ❌ None | ✅ rclone differential sync |
+| Rate limited | ✅ Yes (5K/hr) | ✅ Yes, but rclone handles gracefully |
+| Offline-capable | ❌ No internet = dead | ✅ Yes (works from LAN cache) |
+| Setup complexity | Medium (API token) | Medium (rclone config once) |
+| Per-write overhead | Git commit (heavy) | File write (lightweight) |
+| Supported providers | GitHub only | **40+** (Drive, Dropbox, S3, etc.) |
+
+#### Why This Works
+
+- **The bridge server doesn't change** — it still just reads/writes files. It has no idea rclone exists.
+- **rclone handles all cloud complexity** — OAuth tokens, refresh, retry, rate limiting, differential sync, encryption at rest. Zero code to write or maintain.
+- **40+ providers for free** — any provider rclone supports is a supported PH Ledger backend.
+- **Offline-safe** — the bridge serves from local files. If the internet drops, the app still works. Sync resumes when connectivity returns.
+- **No OAuth in app code** — rclone manages all token lifecycle. The web app never sees a Google/Dropbox login screen.
+- **Cross-platform** — rclone runs on Linux, macOS, Windows. The loader script can be Python (ships with bridge) or a standalone binary.
+
+#### Comparison to Cloudflare Worker Path
+
+The bridge + rclone path is **faster for LAN users** than the Cloudflare Worker path because there's no internet round-trip:
+
+```
+Bridge + rclone:        Browser → bridge (<1ms) → file (<1ms) → rclone sync (async)
+Cloudflare Worker:      Browser → Worker (20-50ms) → R2 (10-30ms) = 30-80ms per operation
+```
+
+The bridge path also works fully offline, while the Worker path requires internet connectivity.
 
 **A. Custom Month Calendar Widget:**
 Replaces the plain date input with an inline calendar component in `History.jsx`:

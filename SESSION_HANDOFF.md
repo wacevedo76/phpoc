@@ -40,6 +40,7 @@
 | 16 | **History Calendar Widget + Committed Entry Decryption** — Replaced `<input type="date">` with custom inline month calendar (year/month nav, day grid with entry-dot indicators, today highlighting, click-to-filter). Extended `sync.getCompleted()` to decrypt committed entries from `ledger:blocks` via new `_rawCommittedEntryToDTO()` (AES-128-CTR field decryption). Calendar dots and date filtering now work across all committed entries. | ✅ | — |
 | 16 | Staging CRUD in UI (Dashboard) | 🔜 | — |
 | 17 | Companion bridge server (Python) | 🔜 | — |
+| 17b | **rclone bridge loader** (`rclone_bridge.py`) — interactive setup for Google Drive, Dropbox, 40+ cloud providers | 🔜 | Step 17 (bridge server) |
 | 18 | Docker + multi-tenant Worker | 🔜 | — |
 
 ### Ledger Engine — Step 6 Detailed Status
@@ -193,18 +194,40 @@ New method `_rawCommittedEntryToDTO(rawEntry)`:
 - `History.jsx` — calendar state, navigation helpers, `datesWithEntries`, `calendarDays` computation, new calendar JSX
 - `App.css` — `.history-calendar`, `.calendar-week`, `.calendar-day`, `.calendar-day-today`, `.calendar-day-selected`, `.calendar-day-has-entries`, `.calendar-day-dot`, `.calendar-actions`, `.history-tag-filter` styles
 
-### 3. Staging CRUD in UI (Dashboard)
+### 3. rclone Bridge Loader — Cloud Storage via Google Drive, Dropbox, and 40+ Providers
+
+The bridge server (step 6 in the existing roadmap) reads/writes local files. By combining it with [rclone](https://rclone.org/) — a FUSE filesystem that mounts cloud storage as a local directory — the bridge server becomes a **zero-code cloud backend** with zero changes to the bridge server itself.
+
+**What needs to be built:**
+
+| File | Purpose |
+|------|---------|
+| `phpoc-bridge/bridge_server.py` | HTTP server (Worker-compatible API). GET/PUT/DELETE/LIST to local filesystem. ~80-100 lines. |
+| `phpoc-bridge/rclone_bridge.py` | Loader script: interactive provider menu, rclone config, FUSE mount, bridge lifecycle, cleanup. Also provides `status`, `stop`, `reconnect` commands. |
+| `phpoc-bridge/setup.py` | One-time setup: detect/install rclone, run rclone config wizard, create PH-Ledger remote folder, save bridge-config.json. |
+
+**Key design decisions (see PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.28 for full details):**
+
+- **Bridge server has zero rclone awareness** — it reads/writes files. rclone is a separate process managed by the loader.
+- **Async cloud sync** — the browser talks to the bridge over LAN (sub-ms). rclone syncs changes to the cloud in the background. The user never waits on cloud latency.
+- **40+ providers** — Google Drive, Dropbox, OneDrive, Box, Nextcloud, S3, Backblaze B2, etc. All handled by rclone, zero code per provider.
+- **Offline-safe** — the bridge serves from local files. If internet drops, the app still works. Sync resumes when connectivity returns.
+- **Perceived speed: <1ms writes** vs 30-80ms for direct cloud API or Cloudflare Worker.
+
+**Why this is the next priority:** It unlocks cloud-backed multi-device sync without deploying a Cloudflare Worker, without writing API adapters, and without managing OAuth flows. Export/Import works today for manual transfer; the rclone bridge makes it automatic.
+
+### 4. Staging CRUD in UI (Dashboard)
 
 Full staging interaction — add/edit/delete entries directly in the Dashboard UI. Currently the UI allows creating new tasks (timed and one-off) and inline editing of tags/comments on Sync/History screens, but there is no way to delete a staging entry or modify title/duration fields from the UI.
 
-### 4. Wire Device Cookie TTL to Re-auth Overlay
+### 5. Wire Device Cookie TTL to Re-auth Overlay
 
 The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
 - Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
 - Pop the `AuthScreen` overlay when TTL expires (30 min default)
 - Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
 
-### 5. Wire Identity Secret into LedgerEngine for Commit Signing
+### 6. Wire Identity Secret into LedgerEngine for Commit Signing
 
 The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
 
