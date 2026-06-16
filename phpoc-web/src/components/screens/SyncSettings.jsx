@@ -84,8 +84,15 @@ export default function SyncSettings() {
   const [editTags, setEditTags] = useState({});
   const [editTagInputs, setEditTagInputs] = useState({});
   const [editComments, setEditComments] = useState({});
+  const [editEndTimes, setEditEndTimes] = useState({});  // entry_id → end_epoch (ms)
+  const [editPauses, setEditPauses] = useState({});        // entry_id → pauses[]
   const [saving, setSaving] = useState({});
   const saveTimers = useRef({});
+
+  // ── Pause adder state (per-entry inline form) ──────────────────
+  const [addingPauseFor, setAddingPauseFor] = useState(null); // entry_id or null
+  const [newPauseStart, setNewPauseStart] = useState('');     // HH:MM string
+  const [newPauseStop, setNewPauseStop] = useState('');       // HH:MM string (optional)
 
   // ── Sync status ─────────────────────────────────────────────────
   const [remoteStatus, setRemoteStatus] = useState(STATUS_READY);
@@ -135,6 +142,9 @@ export default function SyncSettings() {
       setEditTags({});
       setEditTagInputs({});
       setEditComments({});
+      setEditEndTimes({});
+      setEditPauses({});
+      setAddingPauseFor(null);
     } catch (err) {
       console.warn('Sync: failed to load entries', err);
     } finally {
@@ -178,6 +188,9 @@ export default function SyncSettings() {
         setEditTags((s) => { const { [entryId]: _, ...rest } = s; return rest; });
         setEditTagInputs((s) => { const { [entryId]: _, ...rest } = s; return rest; });
         setEditComments((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        setEditEndTimes((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        setEditPauses((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        if (addingPauseFor === entryId) setAddingPauseFor(null);
       } else {
         next.add(entryId);
       }
@@ -200,6 +213,14 @@ export default function SyncSettings() {
         setEditComments((prev) => {
           if (prev[entry.entry_id] !== undefined) return prev;
           return { ...prev, [entry.entry_id]: entry.comment || '' };
+        });
+        setEditEndTimes((prev) => {
+          if (prev[entry.entry_id] !== undefined) return prev;
+          return { ...prev, [entry.entry_id]: entry.end_epoch };
+        });
+        setEditPauses((prev) => {
+          if (prev[entry.entry_id] !== undefined) return prev;
+          return { ...prev, [entry.entry_id]: (entry.pauses || []).map((p) => ({ ...p })) };
         });
       }
     }
@@ -271,9 +292,250 @@ export default function SyncSettings() {
   const handleTagInputKeyDown = useCallback((e, entryId) => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       addTag(entryId);
     }
   }, [addTag]);
+
+  // ── End time helpers ──────────────────────────────────────────
+
+  /**
+   * Convert epoch ms → HH:MM string (local time).
+   */
+  const epochToTimeStr = useCallback((epoch) => {
+    if (!epoch) return '';
+    const d = new Date(epoch);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }, []);
+
+  /**
+   * Convert HH:MM + start_epoch date → epoch ms.
+   */
+  const timeStrToEpoch = useCallback((timeStr, startEpoch) => {
+    if (!timeStr || !startEpoch) return null;
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return null;
+    const d = new Date(startEpoch);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  }, []);
+
+  /**
+   * Save end time for an entry via sync.modify().
+   * Recalculates duration: duration = (newEnd - start_epoch) - total_pause_ms.
+   */
+  const saveEndTime = useCallback(async (entryId, newEndEpoch) => {
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    if (!entry || entry.is_active) return;
+    if (newEndEpoch === null || newEndEpoch === undefined) return;
+
+    setSaving((s) => ({ ...s, [entryId]: true }));
+    try {
+      // Recalculate duration accounting for pauses
+      const pauses = editPauses[entryId] || entry.pauses || [];
+      let totalPauseMs = 0;
+      for (const p of pauses) {
+        if (p.pause_start != null && p.pause_stop != null) {
+          totalPauseMs += p.pause_stop - p.pause_start;
+        }
+      }
+      const newDuration = Math.max(0, (newEndEpoch - entry.start_epoch) - totalPauseMs);
+
+      await sync.modify(entry.entry_index, {
+        end_epoch: newEndEpoch,
+        duration: newDuration,
+      });
+      setAllEntries((prev) => prev.map((e) =>
+        e.entry_id === entryId ? { ...e, end_epoch: newEndEpoch, duration: newDuration } : e
+      ));
+    } catch (err) {
+      console.warn('Failed to save end time:', err);
+    } finally {
+      setSaving((s) => ({ ...s, [entryId]: false }));
+    }
+  }, [allEntries, editPauses, sync]);
+
+  /**
+   * Quick-adjust end time by an offset in minutes.
+   */
+  const quickAdjustEndTime = useCallback((entryId, offsetMinutes) => {
+    const currentEnd = editEndTimes[entryId];
+    if (currentEnd === undefined || currentEnd === null) return;
+    const newEnd = currentEnd + offsetMinutes * 60000;
+    // Clamp: end time cannot be before start time
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    const earliest = entry ? entry.start_epoch + 60000 : currentEnd - 3600000; // min 1 min duration
+    const clamped = Math.max(newEnd, earliest);
+    setEditEndTimes((prev) => ({ ...prev, [entryId]: clamped }));
+    saveEndTime(entryId, clamped);
+  }, [editEndTimes, allEntries, saveEndTime]);
+
+  const handleEndTimeChange = useCallback((entryId, timeStr) => {
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    if (!entry) return;
+    const newEpoch = timeStrToEpoch(timeStr, entry.start_epoch);
+    if (newEpoch !== null) {
+      setEditEndTimes((prev) => ({ ...prev, [entryId]: newEpoch }));
+      saveEndTime(entryId, newEpoch);
+    }
+  }, [allEntries, timeStrToEpoch, saveEndTime]);
+
+  /**
+   * Format ms duration → editable string like "1h 15m" or "45m".
+   */
+  const formatDurationEditable = useCallback((ms) => {
+    if (!ms || ms <= 0) return '0m';
+    const totalMin = Math.round(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    if (h > 0 && m > 0) return `${h}h ${m}m`;
+    if (h > 0) return `${h}h`;
+    return `${m}m`;
+  }, []);
+
+  /**
+   * Parse a duration string → total ms.
+   * Supports: "1h30m", "1h 30m", "90m", "1.5h", "45", "1:30"
+   * Returns null if unparseable.
+   */
+  const parseDurationStr = useCallback((str) => {
+    const s = str.trim().toLowerCase();
+    if (!s) return null;
+
+    // Raw minutes: "45"
+    if (/^\d+$/.test(s)) {
+      return parseInt(s, 10) * 60000;
+    }
+
+    // HH:MM format: "1:30"
+    const colonMatch = s.match(/^(\d+):(\d{1,2})$/);
+    if (colonMatch) {
+      return (parseInt(colonMatch[1], 10) * 60 + parseInt(colonMatch[2], 10)) * 60000;
+    }
+
+    let total = 0;
+    // Hours: "1.5h", "1h"
+    const hMatch = s.match(/([\d.]+)\s*h/);
+    if (hMatch) {
+      total += Math.round(parseFloat(hMatch[1]) * 60 * 60000);
+    }
+    // Minutes: "30m"
+    const mMatch = s.match(/(\d+)\s*m/);
+    if (mMatch) {
+      total += parseInt(mMatch[1], 10) * 60000;
+    }
+    if (total > 0) return total;
+    return null;
+  }, []);
+
+  /**
+   * Handle duration change: parse string, compute new end_epoch.
+   * end_epoch = start_epoch + duration_ms + total_pause_ms
+   */
+  const handleDurationChange = useCallback((entryId, durationStr) => {
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    if (!entry) return;
+
+    const durationMs = parseDurationStr(durationStr);
+    if (durationMs === null) return;
+
+    // Account for pauses
+    const pauses = editPauses[entryId] || entry.pauses || [];
+    let totalPauseMs = 0;
+    for (const p of pauses) {
+      if (p.pause_start != null && p.pause_stop != null) {
+        totalPauseMs += p.pause_stop - p.pause_start;
+      }
+    }
+
+    const newEnd = entry.start_epoch + durationMs + totalPauseMs;
+    setEditEndTimes((prev) => ({ ...prev, [entryId]: newEnd }));
+    saveEndTime(entryId, newEnd);
+  }, [allEntries, editPauses, parseDurationStr, saveEndTime]);
+
+  // ── Pause helpers ─────────────────────────────────────────────
+
+  /**
+   * Save pauses for an entry via sync.modify().
+   * Recalculates duration.
+   */
+  const savePauses = useCallback(async (entryId, pauses) => {
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    if (!entry || entry.is_active) return;
+    setSaving((s) => ({ ...s, [entryId]: true }));
+    try {
+      // Recalculate duration
+      const endEpoch = editEndTimes[entryId] !== undefined ? editEndTimes[entryId] : entry.end_epoch;
+      let totalPauseMs = 0;
+      for (const p of pauses) {
+        if (p.pause_start != null && p.pause_stop != null) {
+          totalPauseMs += p.pause_stop - p.pause_start;
+        }
+      }
+      const newDuration = endEpoch
+        ? Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs)
+        : 0;
+
+      await sync.modify(entry.entry_index, { pauses, duration: newDuration });
+      setAllEntries((prev) => prev.map((e) =>
+        e.entry_id === entryId ? { ...e, pauses, duration: newDuration } : e
+      ));
+    } catch (err) {
+      console.warn('Failed to save pauses:', err);
+    } finally {
+      setSaving((s) => ({ ...s, [entryId]: false }));
+    }
+  }, [allEntries, editEndTimes, sync]);
+
+  const removePause = useCallback((entryId, pauseIndex) => {
+    const current = editPauses[entryId];
+    if (!current) return;
+    const updated = current.filter((_, i) => i !== pauseIndex);
+    setEditPauses((prev) => ({ ...prev, [entryId]: updated }));
+    savePauses(entryId, updated);
+  }, [editPauses, savePauses]);
+
+  const addPause = useCallback((entryId) => {
+    const entry = allEntries.find((e) => e.entry_id === entryId);
+    if (!entry) return;
+
+    const startStr = newPauseStart.trim();
+    if (!startStr) return;
+
+    const pauseStart = timeStrToEpoch(startStr, entry.start_epoch);
+    if (pauseStart === null) return;
+
+    let pauseStop = null;
+    const stopStr = newPauseStop.trim();
+    if (stopStr) {
+      pauseStop = timeStrToEpoch(stopStr, entry.start_epoch);
+      if (pauseStop === null) return;
+      // Ensure stop > start
+      if (pauseStop <= pauseStart) {
+        pauseStop = pauseStart + 60000; // min 1 min pause
+      }
+    }
+
+    const current = editPauses[entryId] || [];
+    const newPause = { pause_start: pauseStart, pause_stop: pauseStop };
+    // Insert sorted by pause_start
+    const insertIdx = current.findIndex((p) => p.pause_start > pauseStart);
+    const updated = insertIdx === -1
+      ? [...current, newPause]
+      : [...current.slice(0, insertIdx), newPause, ...current.slice(insertIdx)];
+
+    setEditPauses((prev) => ({ ...prev, [entryId]: updated }));
+    setAddingPauseFor(null);
+    setNewPauseStart('');
+    setNewPauseStop('');
+    savePauses(entryId, updated);
+  }, [allEntries, newPauseStart, newPauseStop, editPauses, timeStrToEpoch, savePauses]);
+
+  const cancelAddPause = useCallback(() => {
+    setAddingPauseFor(null);
+    setNewPauseStart('');
+    setNewPauseStop('');
+  }, []);
 
   // ── Comment change (debounced save on blur) ─────────────────────
 
@@ -523,7 +785,7 @@ export default function SyncSettings() {
 
         {/* ── Expanded details: tags and comment (stopped entries only) ── */}
         {canCommit && isExpanded && (
-          <div className="sync-pill-details" onClick={(e) => e.stopPropagation()}>
+          <div className="sync-pill-details" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             {/* Tags — editable */}
             <div className="sync-pill-detail-tags">
               {currentTags.map((tag, i) => (
@@ -565,6 +827,36 @@ export default function SyncSettings() {
               onChange={(e) => handleCommentChange(entry.entry_id, e.target.value)}
               onBlur={() => handleCommentBlur(entry.entry_id)}
               rows={2}
+            />
+
+            {/* ── End time adjustment ─────────────────────────── */}
+            <EndTimeEditor
+              entry={entry}
+              editEndTimes={editEndTimes}
+              editPauses={editPauses}
+              epochToTimeStr={epochToTimeStr}
+              formatDurationEditable={formatDurationEditable}
+              onEndTimeChange={handleEndTimeChange}
+              onDurationChange={handleDurationChange}
+              onQuickAdjust={quickAdjustEndTime}
+              saving={isSaving}
+            />
+
+            {/* ── Pauses section ──────────────────────────────── */}
+            <PausesEditor
+              entry={entry}
+              editPauses={editPauses}
+              addingPauseFor={addingPauseFor}
+              newPauseStart={newPauseStart}
+              newPauseStop={newPauseStop}
+              epochToTimeStr={epochToTimeStr}
+              saving={isSaving}
+              onRemovePause={removePause}
+              onStartAddPause={setAddingPauseFor}
+              onSetPauseStart={setNewPauseStart}
+              onSetPauseStop={setNewPauseStop}
+              onAddPause={addPause}
+              onCancelAddPause={cancelAddPause}
             />
           </div>
         )}
@@ -718,6 +1010,238 @@ export default function SyncSettings() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EndTimeEditor — inline end-time adjustment for a stopped entry
+// ═══════════════════════════════════════════════════════════════════
+
+function EndTimeEditor({
+  entry,
+  editEndTimes,
+  editPauses,
+  epochToTimeStr,
+  formatDurationEditable,
+  onEndTimeChange,
+  onDurationChange,
+  onQuickAdjust,
+  saving,
+}) {
+  const entryId = entry.entry_id;
+  const currentEnd = editEndTimes[entryId];
+  const timeStr = epochToTimeStr(currentEnd);
+
+  // Compute active duration (net of pauses)
+  const pauses = editPauses[entryId] || entry.pauses || [];
+  let totalPauseMs = 0;
+  for (const p of pauses) {
+    if (p.pause_start != null && p.pause_stop != null) {
+      totalPauseMs += p.pause_stop - p.pause_start;
+    }
+  }
+  const endEpoch = currentEnd ?? entry.end_epoch;
+  const activeDurationMs = endEpoch
+    ? Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs)
+    : 0;
+
+  const [durationInput, setDurationInput] = useState(formatDurationEditable(activeDurationMs));
+
+  // Keep duration input in sync when end time changes externally
+  useEffect(() => {
+    setDurationInput(formatDurationEditable(activeDurationMs));
+  }, [activeDurationMs, formatDurationEditable]);
+
+  const handleDurationKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      onDurationChange(entryId, durationInput);
+    }
+  };
+
+  const handleDurationBlur = () => {
+    onDurationChange(entryId, durationInput);
+  };
+
+  return (
+    <div className="sync-pill-endtime">
+      <div className="sync-pill-endtime-row">
+        <span className="sync-pill-endtime-label">End</span>
+        <div className="sync-pill-endtime-controls">
+          <input
+            type="time"
+            className="sync-pill-time-input"
+            value={timeStr}
+            onChange={(e) => onEndTimeChange(entryId, e.target.value)}
+            aria-label={`End time for ${entry.title}`}
+          />
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs sync-pill-quick-btn"
+            onClick={() => onQuickAdjust(entryId, -5)}
+            title="Subtract 5 minutes"
+          >
+            −5m
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs sync-pill-quick-btn"
+            onClick={() => onQuickAdjust(entryId, 5)}
+            title="Add 5 minutes"
+          >
+            +5m
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs sync-pill-quick-btn"
+            onClick={() => onQuickAdjust(entryId, 15)}
+            title="Add 15 minutes"
+          >
+            +15m
+          </button>
+        </div>
+      </div>
+      <div className="sync-pill-endtime-row">
+        <span className="sync-pill-endtime-label">Duration</span>
+        <input
+          type="text"
+          className="sync-pill-time-input sync-pill-duration-input"
+          value={durationInput}
+          onChange={(e) => setDurationInput(e.target.value)}
+          onKeyDown={handleDurationKeyDown}
+          onBlur={handleDurationBlur}
+          placeholder="e.g. 1h30m"
+          aria-label={`Active duration for ${entry.title}`}
+        />
+      </div>
+      {saving && <span className="saving-spinner" />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PausesEditor — inline pause management for a stopped entry
+// ═══════════════════════════════════════════════════════════════════
+
+function PausesEditor({
+  entry,
+  editPauses,
+  addingPauseFor,
+  newPauseStart,
+  newPauseStop,
+  epochToTimeStr,
+  saving,
+  onRemovePause,
+  onStartAddPause,
+  onSetPauseStart,
+  onSetPauseStop,
+  onAddPause,
+  onCancelAddPause,
+}) {
+  const entryId = entry.entry_id;
+  const pauses = editPauses[entryId] || [];
+  const isAdding = addingPauseFor === entryId;
+
+  /**
+   * Format a pause duration in minutes.
+   */
+  const fmtPauseDuration = (start, stop) => {
+    if (stop == null) return 'open';
+    const mins = Math.round((stop - start) / 60000);
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  };
+
+  return (
+    <div className="sync-pill-pauses">
+      <span className="sync-pill-pauses-label">Pauses</span>
+
+      {/* Existing pauses list */}
+      {pauses.length > 0 && (
+        <div className="sync-pill-pauses-list">
+          {pauses.map((p, i) => (
+            <div key={i} className="sync-pill-pause-item">
+              <span className="sync-pill-pause-icon">⏸</span>
+              <span className="sync-pill-pause-times">
+                {epochToTimeStr(p.pause_start)}
+                {p.pause_stop != null
+                  ? ` – ${epochToTimeStr(p.pause_stop)}`
+                  : ' – …'}
+              </span>
+              <span className="sync-pill-pause-dur">
+                ({fmtPauseDuration(p.pause_start, p.pause_stop)})
+              </span>
+              <button
+                type="button"
+                className="sync-pill-pause-remove"
+                onClick={() => onRemovePause(entryId, i)}
+                title="Remove this pause"
+                aria-label={`Remove pause at ${epochToTimeStr(p.pause_start)}`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add pause inline form */}
+      {isAdding ? (
+        <div className="sync-pill-pause-add-form">
+          <span className="sync-pill-pause-add-label">Start</span>
+          <input
+            type="time"
+            className="sync-pill-time-input sync-pill-pause-time-input"
+            value={newPauseStart}
+            onChange={(e) => onSetPauseStart(e.target.value)}
+            aria-label="Pause start time"
+          />
+          <span className="sync-pill-pause-add-label">End</span>
+          <input
+            type="time"
+            className="sync-pill-time-input sync-pill-pause-time-input"
+            value={newPauseStop}
+            onChange={(e) => onSetPauseStop(e.target.value)}
+            placeholder="optional"
+            aria-label="Pause end time (optional)"
+          />
+          <div className="sync-pill-pause-add-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-xs"
+              onClick={() => onAddPause(entryId)}
+              disabled={!newPauseStart.trim()}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              onClick={onCancelAddPause}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs sync-pill-pause-add-btn"
+          onClick={() => {
+            onSetPauseStart('');
+            onSetPauseStop('');
+            onStartAddPause(entryId);
+          }}
+        >
+          + Add pause
+        </button>
+      )}
+
+      {saving && <span className="saving-spinner" />}
     </div>
   );
 }

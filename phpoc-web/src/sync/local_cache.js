@@ -166,14 +166,20 @@ export class LocalCache {
    * @throws {Error} If index is out of range.
    */
   async update(index, fields) {
-    const entries = await this.readEntries();
+    // First read: get current state
+    let entries = await this.readEntries();
     if (index < 0 || index >= entries.length) {
       throw new Error(`No staged entry at index ${index}.`);
     }
 
     const entry = entries[index];
 
-    // Apply field updates
+    // Guard: refuse to modify an already-committed entry
+    if (entry.committed) {
+      return;
+    }
+
+    // Apply field updates to the read snapshot
     for (const [key, value] of Object.entries(fields)) {
       if (key === 'tags') {
         entry.tags = _normalizeTags(value);
@@ -184,14 +190,43 @@ export class LocalCache {
       }
     }
 
-    // Recompute hash
-    const { hash, entry_index, ...dataForHash } = entry;
-    entry.hash = await this._hash(
+    // Re-read from storage right before writing to detect races.
+    // If another operation (like markCommitted) wrote between our first
+    // read and now, the entry might have been committed or its position
+    // might have shifted. Apply changes to the fresh state instead.
+    const fresh = await this.readEntries();
+    if (index >= fresh.length) {
+      return; // Entry was deleted concurrently
+    }
+    const freshEntry = fresh[index];
+
+    // Check: did another operation commit or replace this entry?
+    if (freshEntry.entry_id !== entry.entry_id) {
+      return; // A different entry is now at this index
+    }
+    if (freshEntry.committed) {
+      return; // Already committed by another operation — don't overwrite
+    }
+
+    // Apply the same field updates to the fresh entry
+    for (const [key, value] of Object.entries(fields)) {
+      if (key === 'tags') {
+        freshEntry.tags = _normalizeTags(value);
+      } else if (key === 'pauses') {
+        freshEntry.pauses = value;
+      } else {
+        freshEntry[key] = value;
+      }
+    }
+
+    // Recompute hash from final state
+    const { hash, entry_index, ...dataForHash } = freshEntry;
+    freshEntry.hash = await this._hash(
       JSON.stringify(dataForHash, Object.keys(dataForHash).sort())
     );
 
-    entries[index] = entry;
-    await this.writeEntries(entries);
+    fresh[index] = freshEntry;
+    await this.writeEntries(fresh);
   }
 
   /**

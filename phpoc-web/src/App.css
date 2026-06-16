@@ -1636,6 +1636,167 @@ a { color: var(--accent-blue); text-decoration: none; }
   opacity: 0.6;
 }
 
+/* ── End time editor ──────────────────────────────────────────── */
+
+.sync-pill-endtime {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.3rem 0;
+}
+
+.sync-pill-endtime-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sync-pill-endtime-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  min-width: 3.8rem;
+}
+
+.sync-pill-endtime-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sync-pill-duration-input {
+  width: 6rem;
+}
+
+.sync-pill-time-input {
+  font-size: 0.82rem;
+  font-family: inherit;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  width: 5.2rem;
+  box-sizing: border-box;
+}
+
+.sync-pill-time-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.sync-pill-quick-btn {
+  padding: 0.15rem 0.35rem !important;
+  font-size: 0.7rem !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--border-radius-sm) !important;
+  color: var(--text-muted) !important;
+  background: var(--bg-primary) !important;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.sync-pill-quick-btn:hover {
+  border-color: var(--accent-blue) !important;
+  color: var(--accent-blue) !important;
+}
+
+/* ── Pauses editor ────────────────────────────────────────────── */
+
+.sync-pill-pauses {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sync-pill-pauses-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sync-pill-pauses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sync-pill-pause-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius-sm);
+}
+
+.sync-pill-pause-icon {
+  font-size: 0.75rem;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.sync-pill-pause-times {
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.sync-pill-pause-dur {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.sync-pill-pause-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+  border-radius: var(--border-radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+
+.sync-pill-pause-remove:hover {
+  color: var(--accent-red);
+  background: rgba(var(--accent-red-rgb, 220, 38, 38), 0.1);
+}
+
+.sync-pill-pause-add-btn {
+  align-self: flex-start;
+  font-size: 0.75rem !important;
+  color: var(--accent-blue) !important;
+  padding: 0.15rem 0.5rem !important;
+}
+
+.sync-pill-pause-add-form {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  padding: 0.3rem 0;
+}
+
+.sync-pill-pause-add-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.sync-pill-pause-time-input {
+  width: 4.5rem;
+  font-size: 0.8rem;
+}
+
+.sync-pill-pause-add-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: 0.2rem;
+}
+
 /* ── Commit bar ────────────────────────────────────────────────── */
 .sync-commit-bar {
   flex-shrink: 0;
