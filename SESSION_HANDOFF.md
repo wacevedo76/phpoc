@@ -34,11 +34,12 @@
 | 10 | **Export works in dev mode** — uses cached master key from bootstrap instead of requiring seed authentication. Dev mode: any passphrase works. | ✅ | — |
 | 11 | **Recovery seed display** — after new ledger creation, a full-screen overlay shows the base64 seed in monospace. "I've saved it" confirm button. Only shown once. | ✅ | — |
 | 12 | **Logout button** — renamed from "Lock" to "Logout" with exit-door icon. Clears crypto master key, returns to Landing screen. Fixed blank screen bug (hasExistingData) and in-memory data loss on re-login (FallbackStorage caching). | ✅ | — |
-| 13 | **Sync Screen with Commit UI** — dedicated Sync screen replacing old sync status panel. Shows all uncommitted entries (active + stopped) in compact cards. Stopped entries: yellow border/syncability indicator, expandable inline tag & comment editing (× remove, +input add, debounced comment textarea) + end-time adjustment (time input with −5m/+5m/+15m quick-adjust) + duration editor (1h30m/90m/1.5h formats, accounts for pauses) + pause management (list/add/remove pauses with start/end time, auto-recalculated active duration). Active entries: red border (not syncable), compact non-expandable with lock icon. Commit button bar (Commit Selected / Commit All) between entries and status section. NOT_SYNCED status when staging has entries. Tag-add Enter key no longer collapses card (stopPropagation fix). | ✅ | — |
+| 13 | **Sync Screen with Commit UI** — dedicated Sync screen replacing old sync status panel. Shows all uncommitted entries (active + stopped) in compact cards. Stopped entries: yellow border/syncability indicator, expandable inline tag & comment editing (× remove, +input add, debounced comment textarea) + end-time adjustment (time input with −5m/+5m/+15m quick-adjust) + duration editor (1h30m/90m/1.5h formats, accounts for pauses) + pause management (list/add/remove pauses with start/end time, auto-recalculated active duration) + **delete-from-staging button** for stopped entries. Active entries: red border (not syncable), compact non-expandable with lock icon. Commit button bar (Commit Selected / Commit All) between entries and status section. NOT_SYNCED status when staging has entries. Tag-add Enter key no longer collapses card (stopPropagation fix). | ✅ | — |
 | 14 | **One-off Task Checkbox** — Dashboard "Start New Task" form: ☐ one-off checkbox. Checked → "Log" button, `isActive: false` + `endEpoch: now`. Unchecked → "Start" button, timed task. Resets after submission. | ✅ | — |
 | 15 | **Full Ledger Export + Import Interface** — `exportLedgerFull()` v2 format with committed chain + staging, seal over `{ledger, staging}`. Pure read. 72 tests. Import updated for v1/v2 dual-format with `genesisHash` return. Genesis-aware import: same genesis → reject with merge placeholder, different → replace. | ✅ | 72 |
 | 16 | **History Calendar Widget + Committed Entry Decryption** — Replaced `<input type="date">` with custom inline month calendar (year/month nav, day grid with entry-dot indicators, today highlighting, click-to-filter). Extended `sync.getCompleted()` to decrypt committed entries from `ledger:blocks` via new `_rawCommittedEntryToDTO()` (AES-128-CTR field decryption). Calendar dots and date filtering now work across all committed entries. | ✅ | — |
 | 16 | Staging CRUD in UI (Dashboard) | 🔜 | — |
+| 16b | **Sync Screen Delete-From-Staging Button** — expanded stopped entries show "🗑 Delete from staging" button that calls `sync.remove()` to remove the entry from the staging area. Immediate UI update with all editing/selection state cleaned up. | ✅ | Jun 16 2026 |
 | 17 | Companion bridge server (Python) | 🔜 | — |
 | 17b | **rclone bridge loader** (`rclone_bridge.py`) — interactive setup for Google Drive, Dropbox, 40+ cloud providers | 🔜 | Step 17 (bridge server) |
 | 18 | Docker + multi-tenant Worker | 🔜 | — |
@@ -165,6 +166,20 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 ### ✅ 2. Fix v2 Import Loses Committed Chain
 
 **COMPLETED (2026-06-11).** `importLedger()` now returns `{ledger}` array for v2 files. `confirmImport()` writes it to `ledger:blocks`. Also writes identity info (username, email) from genesis block to storage.
+
+### ✅ 7. Sync Screen — Delete from Staging Button
+
+**COMPLETED (2026-06-16).** Added a "🗑 Delete from staging" button to the expanded details section of stopped (commitable) entries in the Sync screen.
+
+- Button appears only on stopped entries when expanded, between the comment textarea and the EndTimeEditor
+- Calls `sync.remove(entryIndex)` to delete the entry from the staging area
+- Immediately removes the entry from the UI list and cleans up all associated state (selection, expansion, tags, comments, end-time, pauses)
+- Shows `⋯` spinner during the delete operation; button is disabled while deleting
+- Uses `.btn-danger` styling (red background/border)
+
+**Files changed:**
+- `SyncSettings.jsx` — new `handleDelete` callback, `deleting` state map, button JSX in `renderCompactPill()`
+- `App.css` — `.sync-pill-delete-row`, `.sync-pill-delete-btn` styles
 
 ### ✅ 6. History Calendar Widget + Committed Entry Decryption
 

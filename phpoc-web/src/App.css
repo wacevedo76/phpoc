@@ -1797,6 +1797,23 @@ a { color: var(--accent-blue); text-decoration: none; }
   margin-left: 0.2rem;
 }
 
+/* ── Delete from staging button ─────────────────────────────── */
+.sync-pill-delete-row {
+  padding: 0.15rem 0;
+  display: flex;
+}
+
+.sync-pill-delete-btn {
+  font-size: 0.72rem !important;
+  padding: 0.15rem 0.6rem !important;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.sync-pill-delete-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
 /* ── Commit bar ────────────────────────────────────────────────── */
 .sync-commit-bar {
   flex-shrink: 0;

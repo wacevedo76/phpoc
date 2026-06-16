@@ -79,6 +79,7 @@ export default function SyncSettings() {
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState(null);
   const [commitResult, setCommitResult] = useState(null);
+  const [deleting, setDeleting] = useState({});
 
   // ── Inline editing state (stopped entries only, keyed by entry_id) ─
   const [editTags, setEditTags] = useState({});
@@ -537,6 +538,33 @@ export default function SyncSettings() {
     setNewPauseStop('');
   }, []);
 
+  // ── Delete entry from staging ───────────────────────────────
+
+  const handleDelete = useCallback(async (entryId, entryIndex, e) => {
+    e?.stopPropagation();
+    const entry = allEntries.find((x) => x.entry_id === entryId);
+    if (!entry) return;
+
+    setDeleting((s) => ({ ...s, [entryId]: true }));
+    try {
+      await sync.remove(entryIndex);
+      // Remove from local state
+      setAllEntries((prev) => prev.filter((e) => e.entry_id !== entryId));
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(entryId); return n; });
+      setExpandedIds((prev) => { const n = new Set(prev); n.delete(entryId); return n; });
+      // Clean up editing state
+      setEditTags((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      setEditTagInputs((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      setEditComments((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      setEditEndTimes((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      setEditPauses((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+    } catch (err) {
+      console.warn('Failed to delete entry:', err);
+    } finally {
+      setDeleting((s) => ({ ...s, [entryId]: false }));
+    }
+  }, [allEntries, sync]);
+
   // ── Comment change (debounced save on blur) ─────────────────────
 
   const handleCommentChange = useCallback((entryId, value) => {
@@ -828,6 +856,19 @@ export default function SyncSettings() {
               onBlur={() => handleCommentBlur(entry.entry_id)}
               rows={2}
             />
+
+            {/* ── Delete from staging ──────────────────────────── */}
+            <div className="sync-pill-delete-row">
+              <button
+                type="button"
+                className="btn btn-danger btn-xs sync-pill-delete-btn"
+                onClick={(e) => handleDelete(entry.entry_id, entry.entry_index, e)}
+                disabled={deleting[entry.entry_id]}
+                title="Remove this entry from staging (not yet synced)"
+              >
+                {deleting[entry.entry_id] ? '⋯' : '🗑 Delete from staging'}
+              </button>
+            </div>
 
             {/* ── End time adjustment ─────────────────────────── */}
             <EndTimeEditor
