@@ -317,6 +317,49 @@ When porting `HttpTransport` from JS to Dart during Phase 2, two issues from the
 
 2. **No HTTPS certificate validation control** — The JS transport delegates to the browser/Node.js trust store, which is fine for standard public CAs. Flutter's `http` package also uses the platform trust store, so this is acceptable for standard deployments. If enterprise deployment requires custom CAs (MITM proxies, internal PKI), Flutter supports `SecurityContext` for pinned certificates or custom roots via `dart:io`'s `HttpClient`. No change needed at the protocol level — just a Flutter configuration detail.
 
+#### 8b. Multi-Device Storage Strategy for Flutter (2026-06-17)
+
+**The mass-adoption hurdle:** The Cloudflare Worker path requires the user to deploy infrastructure — create a Cloudflare account, create an R2 bucket, deploy a Worker, and configure an API key. This is a 15-30 minute deployment task. For mass adoption, onboarding must be a **consent screen**, not a deployment task — users should tap a button they've already tapped a hundred times.
+
+The OAuth path ("Sign in with Google") takes 5 seconds. The user already has a Google account. This is the conversion gap.
+
+**Six multi-device options analyzed:**
+
+| Option | Server needed | Offline | Cross-ecosystem | Effort | Risk |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| **A: Worker → R2** | ✅ (deploy once) | ❌ | ✅ | Low (Dart HTTP client, ~200 lines) | Low |
+| **B: Platform cloud folders** | ❌ | ✅ | ❌ (Apple↔Google barrier) | Low-Med (2 platform channels) | Low |
+| **C: Direct OAuth → Google Drive API** | ❌ | ❌ | ✅ | Medium (OAuth + API) | Medium |
+| **D: rclone serve http** | ✅ (one always-on machine) | ❌ (if host unreachable) | ✅ | Low (document + test) | Low |
+| **E: Embedded rclone via FFI** | ❌ | ✅ (local, sync when online) | ✅ | High | High |
+| **F: P2P/CRDT sync** | ❌ (signaling only) | ✅ | ✅ | Very High | Very High |
+
+**Detailed breakdown:**
+
+**Option A — Worker → R2 (already built):** The designed solution. Worker already handles multi-device — stateless, atomic R2 operations. Flutter only needs an HTTP client porting `HttpTransport` logic (GET/PUT/DELETE/LIST with ETag caching). `package:http` or `dio`. ~200 lines. Already tested (49 tests in JS).
+
+**Option B — Platform cloud folders (zero infra):** iOS writes to iCloud Drive container via `FileManager`. Android writes to Google Drive app folder via Scoped Storage. OS-level sync handles the rest. Zero infrastructure, zero cost, works offline. Limitation: doesn't sync Apple devices with Android devices — data stays within each ecosystem.
+
+**Option C — Direct OAuth → Google Drive API (primary mass-adoption path):** Flutter uses `google_sign_in` + `googleapis` packages. App gets OAuth token, uses Drive API for GET/PUT/LIST. Uses `drive.file` scope — app can only see files it created (zero-knowledge). Google sees opaque encrypted bytes, same as the Worker. Token stored in platform keychain. After first sign-in, refresh token works silently. Cross-platform (iOS, Android, web, desktop). Latency: 200-400ms per operation (vs <1ms for Worker).
+
+**Option D — rclone serve http (self-hosted alternative):** rclone can act as an HTTP server directly: `rclone serve http gdrive:PH-Ledger --addr :8099`. Eliminates both the bridge server AND FUSE. One binary, one command. Same HTTP API as the Worker. Requires one always-on machine (home desktop, NAS, $5 VPS).
+
+**Option E — Embedded rclone (not recommended):** Compile rclone (Go) to a C shared library via `CGO_ENABLED=1 go build -buildmode=c-shared`. Call from Flutter via FFI. High complexity (Go runtime + Dart FFI, memory management, threading). rclone wasn't designed as a library.
+
+**Option F — P2P/CRDT (future vision):** Devices sync directly via WebRTC. CRDTs handle concurrent edits. Fully decentralized, no servers ever. Fundamental architecture change from blob-based staging to CRDT/log-based model. Phase 3+ territory.
+
+**Recommended tiered rollout for mass adoption:**
+
+1. **Ship with Worker → R2 (Option A)** — already built, tested, multi-device. Flutter just needs a Dart HTTP client.
+2. **Add Google Drive OAuth (Option C)** — the mass-adoption path. One tap, no infrastructure, works on all platforms.
+3. **Platform cloud folders (Option B)** — zero-infrastructure fallback for single-ecosystem users.
+4. **Self-hosted options (D, rclone bridge)** — for privacy absolutists and technical users.
+5. **P2P sync (Option F)** — the decentralized endgame, long-term vision.
+
+Options A + C together cover ~95% of users with minimal effort. The onboarding narrative: "Your passphrase encrypts your data. Google Drive stores the encrypted files — Google can't read them. Sign in once, and your ledger follows you to every device." This is the same model used by 1Password, Bitwarden, and Standard Notes — proven in the market, requires no new concepts for users, and scales to millions without running a single server.
+
+See `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.29 for the full OAuth strategy and onboarding flow design.
+
 ---
 
 ### 🟢 Phase 3 — Parity & Contingency (Nice to Have)

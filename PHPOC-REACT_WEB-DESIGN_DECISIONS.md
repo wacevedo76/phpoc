@@ -1305,6 +1305,115 @@ Cloudflare Worker:      Browser → Worker (20-50ms) → R2 (10-30ms) = 30-80ms 
 
 The bridge path also works fully offline, while the Worker path requires internet connectivity.
 
+#### Clarifying Discussion (2026-06-17)
+
+**Does rclone interact with the CLI, phpoc-web, or both?** Both. The bridge server exposes the same HTTP API as the Worker. The CLI's `HttpStagingTransport` (`core/sync/http_transport.py`) and phpoc-web's `HttpTransport` + `HttpBackend` stack both speak this protocol. Point either at the bridge URL and it works identically. However, the CLI already writes to `~/.local/share/phpoc/` directly — the bridge is only needed when the CLI wants a remote sync target that isn't a Cloudflare Worker. For phpoc-web, the bridge is **essential** for any browser-based sync that isn't Cloudflare-hosted, because browsers cannot write to the local filesystem.
+
+**How does rclone work with 2FA?** rclone uses standard OAuth 2.0. During setup (`rclone config`), the user authenticates once (with 2FA if enabled). rclone stores a long-lived OAuth refresh token. Subsequent operations use this refresh token silently — no 2FA prompt. If the token is revoked, the user re-runs `rclone config`.
+
+**Does this break the zero-dependency architecture?** Yes, it introduces external dependencies. The rclone bridge is an **optional** cloud storage backend — not a core dependency. The standalone PWA (IndexedDB) and Cloudflare Worker (SaaS) paths remain available with zero additional dependencies. rclone requires: the `rclone` binary (single binary, curl-installable), and FUSE support (Linux: `fuse` group membership; macOS: macFUSE requires admin install; Windows: WinFsp requires admin install). The loader script should detect and guide the user through these requirements.
+
+**Does the browser interact with the filesystem?** No. The browser talks HTTP to the bridge server. The bridge server writes to the local filesystem. The browser never touches the filesystem directly — that's the entire reason the bridge exists. rclone setup/management happens entirely in a terminal on the host machine.
+
+**Does rclone enable multi-device?** Partially. It enables LAN multi-device (two devices on the same network point at the bridge) and adds cloud backup. It does NOT enable the "my phone and laptop sync independently through the cloud without a central server" scenario — that requires the Cloudflare Worker (centralized, always-on, atomic writes) or an OAuth-based cloud backend (see §11.29). Two devices each running their own rclone mount of the same cloud remote creates concurrent-writer race conditions.
+
+### 11.29 OAuth Cloud Backend Strategy — Mass-Adoption Multi-Device (2026-06-17)
+
+**Problem:** The Cloudflare Worker path requires the user to deploy infrastructure (create Cloudflare account, create R2 bucket, deploy Worker, configure API key). This is a 15-30 minute deployment task. For mass adoption, the onboarding must be a **consent screen**, not a deployment task — users should tap a button they've already tapped a hundred times.
+
+**Friction comparison:**
+
+| Onboarding step | Worker → R2 | OAuth → Google Drive |
+|-----------------|:-----------:|:---------------------:|
+| Create Cloudflare account | ✋ Required | — |
+| Create R2 bucket | ✋ Required | — |
+| Deploy Worker | ✋ Required | — |
+| Configure API key | ✋ Required | — |
+| Enter Worker URL in app | ✋ Required | — |
+| "Sign in with Google" | — | ✅ One tap (5 seconds) |
+| User already has account? | Probably not | Almost certainly (~2B active Google accounts) |
+
+**Solution:** A tiered cloud provider strategy using OAuth, where the `StorageBackend` interface absorbs each provider as a ~200-line implementation.
+
+**Tier 1 — Universal default: Google Drive**
+- ~2 billion active accounts. Works on iOS, Android, web, desktop.
+- Uses `drive.file` scope — app can only see files it created. Zero-knowledge: Google sees opaque encrypted bytes, same as the Worker.
+- Flutter: `google_sign_in` + `googleapis` packages (first-party, battle-tested).
+- Web: `@react-oauth/google` + `gapi.client.drive`. Note: `drive.file` scope requires app verification for >100 users on web.
+- Token stored in platform keychain. After first sign-in, refresh token works silently.
+
+**Tier 2 — Platform-native (zero OAuth):**
+- iOS: iCloud Drive (entitlement-based, no OAuth). Covers Apple-only users.
+- Android: Google Drive app folder (Scoped Storage, no OAuth). Covers Android-only users.
+- Limitation: doesn't solve cross-ecosystem sync (iPhone + Android tablet).
+
+**Tier 3 — Alternative providers:**
+- Dropbox (~700M users).
+- OneDrive / Microsoft (~1B users). Good for enterprise.
+- Each is a ~200-line `StorageBackend` implementation sharing the same OAuth pattern.
+
+**Tier 4 — Self-hosted (privacy absolutists):**
+- Cloudflare Worker → R2 (already built).
+- rclone bridge (self-hosted, 40+ providers via rclone).
+- WebDAV / Nextcloud.
+
+**Recommended onboarding flow:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│   Welcome to PH Ledger                                  │
+│                                                         │
+│   Create a passphrase to encrypt your data:             │
+│   [••••••••••••••••]                                    │
+│                                                         │
+│   Where should your ledger live?                        │
+│                                                         │
+│   ┌──────────────────────────────────────┐              │
+│   │  🔵 Sign in with Google              │              │
+│   │     Your ledger syncs across all     │              │
+│   │     your devices via Google Drive.   │              │
+│   │     Google cannot read it.           │              │
+│   └──────────────────────────────────────┘              │
+│                                                         │
+│   ┌──────────────────────────────────────┐              │
+│   │  📱 Stay on this device only         │              │
+│   │     No sync, no cloud. Fully local.  │              │
+│   └──────────────────────────────────────┘              │
+│                                                         │
+│   ┌──────────────────────────────────────┐              │
+│   │  ⚙️ Advanced: self-hosted            │              │
+│   │     Cloudflare Worker, rclone,       │              │
+│   │     Dropbox, S3, or WebDAV           │              │
+│   └──────────────────────────────────────┘              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**What this means for the `StorageBackend` interface:** The existing `StorageBackend` already decouples the app from storage. Today it has `IndexedDBBackend`, `HttpBackend`, and `MemoryBackend`. The OAuth path adds `GoogleDriveBackend`, `DropboxBackend`, and `ICloudBackend`. The `SyncService` and `LedgerEngine` don't change. The merge engine doesn't change. The passphrase-based encryption doesn't change. The only thing that changes is **where the bytes go**.
+
+**Why this works for mass adoption:** The narrative is familiar and proven in the market (1Password, Bitwarden, Standard Notes all use this model): "Your passphrase encrypts your data. Google Drive stores the encrypted files — Google can't read them. Sign in once, and your ledger follows you to every device." This requires **no new concepts** for users and **scales to millions** without us running a single server.
+
+#### Flutter Multi-Device Options Analysis (2026-06-17)
+
+Six options were analyzed for multi-device sync in Flutter, ranked by effort and suitability for mass adoption:
+
+| Option | Server needed | Offline | Cross-ecosystem | Effort | Risk |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| **A: Worker → R2** (already built) | ✅ (deploy once) | ❌ | ✅ | Low | Low |
+| **B: Platform cloud folders** (iCloud/Drive) | ❌ | ✅ | ❌ (ecosystem barrier) | Low-Med | Low |
+| **C: Direct OAuth → Google Drive API** | ❌ | ❌ | ✅ | Medium | Medium |
+| **D: rclone serve http** (one always-on machine) | ✅ (self-hosted) | ❌ | ✅ | Low | Low |
+| **E: Embedded rclone via FFI** | ❌ | ✅ (local, sync when online) | ✅ | High | High |
+| **F: P2P/CRDT sync** (decentralized) | ❌ (signaling only) | ✅ | ✅ | Very High | Very High |
+
+**Recommended strategy:**
+1. **Ship with Worker → R2 (Option A)** — already built, tested, multi-device. Flutter just needs a Dart HTTP client (~200 lines).
+2. **Add Google Drive OAuth (Option C)** — the mass-adoption path. Users tap "Sign in with Google" and get cross-device sync with zero infrastructure.
+3. **Platform cloud folders (Option B)** — zero-infrastructure fallback for users who don't want to sign into anything.
+4. **Self-hosted options (D, rclone bridge)** — for the privacy absolutists and technical users.
+5. **P2P sync (Option F)** — the decentralized endgame, Phase 3+ territory.
+
+Options A + C together cover ~95% of users with minimal effort: A for tech-savvy users who can deploy a Worker, C for everyone else who just wants their data on their phone and laptop without thinking about it.
+
 **A. Custom Month Calendar Widget:**
 Replaces the plain date input with an inline calendar component in `History.jsx`:
 - **State:** `calendarYear`, `calendarMonth` — tracks which month is displayed

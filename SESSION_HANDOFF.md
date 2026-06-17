@@ -231,6 +231,27 @@ The bridge server (step 6 in the existing roadmap) reads/writes local files. By 
 
 **Why this is the next priority:** It unlocks cloud-backed multi-device sync without deploying a Cloudflare Worker, without writing API adapters, and without managing OAuth flows. Export/Import works today for manual transfer; the rclone bridge makes it automatic.
 
+#### rclone Bridge Discussion (2026-06-17)
+
+Full architectural discussion in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.28 (clarifying questions) and §11.29 (OAuth strategy). Key outcomes:
+
+- **Scope:** The bridge serves both CLI and phpoc-web as a Worker-compatible HTTP endpoint. For phpoc-web it's essential (browsers can't write to the filesystem); for CLI it's an alternative remote sync target.
+- **2FA:** rclone's OAuth flow handles 2FA once during setup. A refresh token is stored; subsequent operations are silent.
+- **Dependencies:** rclone + FUSE introduce external dependencies. This is an **optional** backend — standalone PWA (IndexedDB) and SaaS (Worker) remain zero-dependency paths. FUSE may require admin privileges for one-time install on macOS/Windows.
+- **Browser/filesystem:** The browser never touches the filesystem. It talks HTTP to the bridge server, which writes to the filesystem. rclone management is terminal-only.
+- **Multi-device:** The bridge enables LAN multi-device + cloud backup. For true multi-device (independent devices syncing through the cloud), the Worker or an OAuth-based cloud backend (Google Drive) is needed. Two concurrent rclone mounts of the same remote risk write conflicts.
+
+**Mass-adoption pivot — OAuth Cloud Backend Strategy:**
+
+The bridge is **Tier 4** (self-hosted, for technical users). For mass adoption, the primary path is **OAuth → Google Drive** (Tier 1). The Cloudflare Worker asks the user to deploy infrastructure (15-30 min). OAuth asks them to tap "Sign in with Google" (5 seconds, account they already have). The same zero-knowledge model applies: the passphrase encrypts the data; Google stores opaque bytes it cannot read.
+
+Tiered provider strategy for Flutter (see `MOBILE_ROADMAP.md` §8b and `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.29):
+1. **Worker → R2** (already built) — multi-device, just needs Dart HTTP client.
+2. **Google Drive OAuth** — mass-adoption path. One tap, zero infrastructure, cross-platform.
+3. **Platform cloud folders** (iCloud/Google Drive) — zero-infra, single-ecosystem.
+4. **rclone bridge / self-hosted** — privacy absolutists, technical users.
+5. **P2P/CRDT** — decentralized endgame, long-term vision.
+
 ### 4. Staging CRUD in UI (Dashboard)
 
 Full staging interaction — add/edit/delete entries directly in the Dashboard UI. Currently the UI allows creating new tasks (timed and one-off) and inline editing of tags/comments on Sync/History screens, but there is no way to delete a staging entry or modify title/duration fields from the UI.
