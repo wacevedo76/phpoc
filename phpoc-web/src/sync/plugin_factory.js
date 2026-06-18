@@ -1,14 +1,30 @@
 /**
- * createStoragePlugin — factory that selects a StoragePlugin at startup.
+ * plugin_factory — deployment-aware factory functions.
  *
- * Decision tree (from config or auto-detection):
+ * Two exports:
+ *   createStoragePlugin()  — local storage backend (IndexedDB / HttpBackend / Mock / Memory)
+ *   createRemoteTransport() — remote transport for SyncService (HttpTransport | null)
  *
- *   deployment        → Backend
- *   "standalone"      → IndexedDBBackend  (PWA, local-only)
- *   "lan"             → HttpBackend       (bridge server on LAN)
- *   "saas"             → HttpBackend       (Cloudflare Worker → R2)
- *   "mock"            → MockRemoteBackend  (dev simulation)
- *   "memory"          → MemoryBackend     (testing / WASM-free)
+ * These are separate concerns:
+ *   - Storage handles local persistence (get/set/remove/list/clear).
+ *   - Transport handles the wire protocol (GET/PUT/DELETE/LIST over HTTP).
+ *
+ * Both are constructed from the same deployment config, but independently —
+ * a SaaS deployment gets IndexedDB (local) + HttpTransport (remote), not an
+ * HttpBackend that replaces local storage.
+ *
+ * Deployment decision tree (from config or auto-detection):
+ *
+ *   deployment        → StorageBackend         Transport
+ *   "standalone"      → IndexedDBBackend       null
+ *   "lan"             → HttpBackend *          HttpTransport (if baseUrl)
+ *   "saas"            → HttpBackend *          HttpTransport (if baseUrl)
+ *   "mock"            → MockRemoteBackend      null
+ *   "memory"          → MemoryBackend          null
+ *
+ *   * createStoragePlugin currently returns HttpBackend for lan/saas.
+ *     The target architecture is IndexedDBBackend + HttpTransport — see
+ *     SESSION_HANDOFF.md §Remote Sync Wiring.
  *
  * The deployment is determined by (in priority order):
  *   1. Explicit config key in localStorage:  phpoc_deployment
@@ -17,14 +33,17 @@
  *   4. Default:                              → "standalone"
  *
  * Usage:
- *   import { createStoragePlugin } from '@sync/plugin_factory.js';
- *   const storage = await createStoragePlugin();
- *   // storage is an IndexedDBBackend, HttpBackend, MockRemoteBackend, or MemoryBackend
+ *   import { createStoragePlugin, createRemoteTransport } from '@sync/plugin_factory.js';
+ *   const { deployment, config } = detectDeployment();
+ *   const storage = await createStoragePlugin({ deployment, config });
+ *   const transport = createRemoteTransport({ deployment, config });
+ *   const sync = new SyncService(storage, crypto, transport);
  */
 
 import { MemoryBackend } from './storage.js';
 import { IndexedDBBackend } from './indexeddb_storage.js';
 import { HttpBackend } from './http_backend.js';
+import { HttpTransport } from './transport.js';
 import { MockRemoteBackend } from './mock_remote_backend.js';
 
 /**
@@ -129,4 +148,41 @@ export async function createStoragePlugin(override = {}) {
     default:
       return new IndexedDBBackend();
   }
+}
+
+/**
+ * Create a remote transport based on deployment config.
+ *
+ * Only creates an HttpTransport for remote-enabled deployments (saas, lan)
+ * when a baseUrl is provided. Returns null for local-only deployments
+ * (standalone, mock, memory) or when baseUrl is missing.
+ *
+ * This is a separate concern from createStoragePlugin() — transport handles
+ * the wire protocol (GET/PUT/DELETE/LIST) while storage handles local
+ * persistence (IndexedDB, Memory, HttpBackend).
+ *
+ * @param {object} [options]
+ * @param {string} [options.deployment] - Deployment type
+ * @param {object} [options.config] - Configuration
+ * @param {string} [options.config.baseUrl] - Remote server URL
+ * @param {string} [options.config.apiKey] - API key for auth
+ * @returns {HttpTransport|null}
+ */
+export function createRemoteTransport({ deployment, config = {} } = {}) {
+  // Only saas and lan use remote transport
+  if (deployment !== 'saas' && deployment !== 'lan') {
+    return null;
+  }
+
+  const baseUrl = config.baseUrl || '';
+
+  // No baseUrl → no remote transport
+  if (!baseUrl) {
+    return null;
+  }
+
+  return new HttpTransport({
+    baseUrl,
+    apiKey: config.apiKey || null,
+  });
 }

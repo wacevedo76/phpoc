@@ -108,6 +108,8 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
 | `phpoc-web/test/sync_service_test.mjs` | **NEW (2026-06-18)** — 40 tests for `checkAndSync()` auth gate (READY/OFFLINE/REAUTH_NEEDED) + `_reconcileAndClaim()` Case A/B + BLOB_KEY_MISMATCH + edge cases. Uses `MockTransport` with `queueResponse()` for two-phase cookie pulls. |
 | `phpoc-web/test/device_uuid_test.mjs` | **NEW (2026-06-18)** — 22 tests for `getOrCreateDeviceUuid()` and `isWasmDerivedUuid()`. ✅ GREEN — all passing. Tests: UUID4 generation, storage persistence, logout/re-login survival, MK independence, format validation, WASM-derived detection, migration. |
+| `phpoc-web/test/remote_config_test.mjs` | **NEW (2026-06-18)** — 35 tests for `detectDeployment()` config detection: localStorage persistence, URL param priority, auto-detect SaaS from worker URL, invalid deployment fallback, config mutation. ✅ GREEN — all passing. |
+| `phpoc-web/test/remote_transport_test.mjs` | **NEW (2026-06-18)** — 35 tests for `createRemoteTransport()`: null for standalone/mock/memory, HttpTransport for saas/lan with baseUrl, null fallback, instance isolation, ETag cache. 🔴 RED — awaiting `createRemoteTransport` export in `plugin_factory.js`. |
 
 ### Cross-Platform (reference)
 | File | Purpose |
@@ -146,10 +148,7 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ### 🔴 NOW: Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker (2026-06-18)
 
-> **⏭ Next session resume:** Step 3 — Wire `createStoragePlugin()` into `DevModeContext.jsx`.
-> Currently `createStorage()` always returns `IndexedDBBackend` and `SyncService` is always local-only (`null` transport).
-> Settings page already has Worker URL + API Key text boxes persisting to `localStorage`.
-> The gap: boot sequence ignores Settings config. Steps 3+4 make Settings config drive backend/transport creation; Step 5 replaces hardcoded text boxes with service dropdown.
+> **⏭ Next session resume:** TDD GREEN phase — Implement `createRemoteTransport()` in `src/sync/plugin_factory.js`. 35 tests written in `test/remote_transport_test.mjs` (🔴 RED, import fails). Architecture decision: transport is a separate concern from local storage. `createRemoteTransport(config)` → `HttpTransport | null`. `createStoragePlugin()` stays for local storage (IndexedDB/Memory/MockRemote). Both feed into `SyncService(storage, crypto, transport)`. After implementation, wire into `DevModeContext.jsx` boot sequence, then replace Settings text boxes with service dropdown (Step 5).
 
 Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport and backend pieces are built and tested (HttpTransport 49 tests, HttpBackend 41 tests, Worker ~195 lines). The gap is the boot sequence in `DevModeContext.jsx` hardcoding `IndexedDBBackend` instead of using the `createStoragePlugin()` factory, and a Settings UI for configuring remote services.
 
@@ -167,8 +166,8 @@ Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport a
 | `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 | ✅ 40 tests, all passing |
 | `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 | ✅ included above — 2-phase cookie pull pattern with `queueResponse()` mock |
 | `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 | ✅ 22 tests, all passing — `device_uuid.js` module implemented, `_getDeviceId()` wired |
-| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 | 🔜 Pending |
-| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 | 🔜 Pending |
+| `test/remote_transport_test.mjs` | `createRemoteTransport()`: null for standalone/mock/memory, HttpTransport for saas/lan with baseUrl, null fallback without baseUrl. Instance isolation, ETag cache. | P2 | ✅ GREEN — 40 assertions, 0 failures. `createRemoteTransport()` implemented in `plugin_factory.js`. |
+| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; URL param priority; auto-detect saas from worker URL; fallback to standalone on invalid config | P2 | ✅ 35 tests, all passing |
 
 All tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. Pure logic tests against the sync algorithm. SyncService tests pass because the auth gate + reconcile logic already works correctly; the WASM-derived UUID happens to differentiate correctly for test scenarios (different MK → different UUID). The real production fix is in the device UUID tests.
 
@@ -177,10 +176,11 @@ All tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. 
 1. ✅ **Implement `getOrCreateDeviceUuid(storage)`** in new module `src/sync/device_uuid.js` — generate `crypto.randomUUID()`, persist under key `device_uuid`, read on subsequent calls. Handle migration from WASM-derived UUIDs (`isWasmDerivedUuid()` detection). **DONE (2026-06-18)** — 22 tests, all passing.
 2. ✅ **Wire into `SyncService._getDeviceId()`** — read `device_uuid` from storage first, fall back to WASM `getDeviceId(MK)` only as last resort. `_getDeviceId()` now async, all 5 call sites updated. `sync_service_test.mjs` Group E (Case A) tests updated to pre-populate device_uuid in storage. **DONE (2026-06-18)** — 40 sync_service tests + 22 device_uuid tests all passing.
 2b. ✅ **Code review (2026-06-18)** — 14 findings across `device_uuid.js` and `sync.js`. Two fixes applied: (a) removed unused `isWasmDerivedUuid` import, (b) fixed `_reconcileAndClaim()` cookie creation to use per-device UUID4 instead of WASM-derived UUID (was causing permanent Case A/B mismatch — remote cookie always had WASM UUID while local had UUID4).
-3. 🔜 **Wire `createStoragePlugin()` into `DevModeContext.jsx`** for local storage selection.
-4. 🔜 **Construct `HttpTransport` from config** and pass to `SyncService` as remote transport (dual-backend model).
-5. 🔜 **Replace Settings Remote Sync section** with service dropdown + conditional fields.
-6. 🔜 **Add destructive transition warning dialog** with export button.
+3. ✅ **TDD RED phase — `test/remote_transport_test.mjs` (DONE 2026-06-18)** — 35 tests written for `createRemoteTransport()`. Tests cover: standalone/mock/memory → null, saas/lan + baseUrl → HttpTransport, saas/lan without baseUrl → null fallback, instance isolation, ETag cache starts empty, invalid deployment → null. Architecture decision: transport is a separate concern from local storage. `createRemoteTransport(config)` → `HttpTransport | null`. `createStoragePlugin()` stays for local storage (IndexedDB/Memory/MockRemote). Both feed into `SyncService(storage, crypto, transport)`.
+4. ✅ **GREEN phase — Implement `createRemoteTransport()`** in `src/sync/plugin_factory.js` (DONE 2026-06-18). ~25 lines. Returns `null` for local-only deployments (standalone/mock/memory/invalid), `new HttpTransport({baseUrl, apiKey})` for saas/lan with baseUrl, `null` for saas/lan without baseUrl. Trailing slash normalization and protocol validation delegated to HttpTransport constructor. 39 assertions, 0 failures (duplicate test removed). Code review: 13 findings (F1-F13), 4 low-severity fixes applied (F1: JSDoc, F5: duplicate test removal). F2 (HttpBackend for lan/saas) and F7 (apiKey normalization) deferred to Step 5.
+5. 🔜 **Wire into `DevModeContext.jsx`** — call `createRemoteTransport(detectDeployment())` during boot, pass to `SyncService` as transport parameter.
+6. 🔜 **Replace Settings Remote Sync section** with service dropdown + conditional fields.
+7. 🔜 **Add destructive transition warning dialog** with export button.
 
 ### ✅ 1. Import Workflow Enhancement — Destroy Warning + Staging Persistence
 
@@ -229,3 +229,5 @@ Identity secret stored during genesis but not loaded into `LedgerEngine` for com
 - **`isWasmDerivedUuid` regex too broad (2026-06-18):** The hex regex `/^[0-9a-f]{32,}$/` matches MD5 (32 chars), SHA-1 (40), and even dash-stripped UUID4 (32 chars). Should be `{64}` for HMAC-SHA256 which is the actual WASM output. Low risk in practice — worst case is unnecessary migration of a dash-stripped UUID4.
 - **Index-based staging operations have stale-index race (2026-06-18):** `end()`, `pause()`, `unpause()` call `readEntries()` to find an index, then call `update()` by that index. Between the read and write, another operation could change the array order (insert/delete), causing the index to point to the wrong entry. `LocalCache.update()` guards against committed-flag races but not index-shift races.
 - **`_getDeviceId()` called twice in push operations:** `pushToRemote()` calls it for `pushBlob` and again for `_pushCookie`. `_reconcileAndClaim` calls it and then `pushBlobOnly` calls it again internally. Consider caching in a `_deviceUuid` instance variable after first resolution.
+- **`createStoragePlugin` lan/saas branch still creates `HttpBackend` (2026-06-18 code review F2):** The architecture decision says SaaS should be IndexedDB (local) + HttpTransport (remote). But `createStoragePlugin()` for `lan`/`saas` returns `HttpBackend` directly, bypassing local IndexedDB. Resolution belongs in Step 5 (DevModeContext wiring).
+- **apiKey normalization differs between factories (2026-06-18 code review F7):** `createRemoteTransport` uses `|| null` (canonical sentinel for HttpTransport). `createStoragePlugin` uses `|| ''`. Both are intentional but divergent in the same file. Add comment noting HttpTransport expects `null`.
