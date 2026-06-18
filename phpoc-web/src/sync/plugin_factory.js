@@ -51,6 +51,30 @@ import { MockRemoteBackend } from './mock_remote_backend.js';
  */
 
 /**
+ * Read remote config from localStorage for remote deployments.
+ * Returns baseUrl + apiKey if configured, empty object otherwise.
+ *
+ * @param {DeploymentType} deployment
+ * @returns {object}
+ */
+function readRemoteConfig(deployment) {
+  if (deployment !== 'saas' && deployment !== 'lan') {
+    return {};
+  }
+  if (typeof localStorage === 'undefined') {
+    return {};
+  }
+  const baseUrl = localStorage.getItem('phpoc_worker_url') || '';
+  if (!baseUrl) {
+    return {};
+  }
+  return {
+    baseUrl,
+    apiKey: localStorage.getItem('phpoc_api_key') || '',
+  };
+}
+
+/**
  * Determine which deployment to use from config/env.
  *
  * @returns {{ deployment: DeploymentType, config: object }}
@@ -62,14 +86,16 @@ export function detectDeployment() {
     : new URLSearchParams();
   const urlDeploy = urlParams.get('deployment');
   if (urlDeploy) {
-    return { deployment: validateDeployment(urlDeploy), config: {} };
+    const deployment = validateDeployment(urlDeploy);
+    return { deployment, config: readRemoteConfig(deployment) };
   }
 
   // 2. localStorage key
   if (typeof localStorage !== 'undefined') {
     const stored = localStorage.getItem('phpoc_deployment');
     if (stored) {
-      return { deployment: validateDeployment(stored), config: {} };
+      const deployment = validateDeployment(stored);
+      return { deployment, config: readRemoteConfig(deployment) };
     }
   }
 
@@ -185,4 +211,29 @@ export function createRemoteTransport({ deployment, config = {} } = {}) {
     baseUrl,
     apiKey: config.apiKey || null,
   });
+}
+
+/**
+ * Detect deployment from environment and create the appropriate remote transport.
+ *
+ * Combines detectDeployment() + createRemoteTransport() with error handling —
+ * if the transport constructor throws (e.g., invalid baseUrl), falls back to
+ * null transport with a console warning. The app remains functional in
+ * local-only mode.
+ *
+ * This is the single entry point DevModeContext calls during bootstrap.
+ *
+ * @returns {HttpTransport|null}
+ */
+export function createTransportFromDeployment() {
+  const { deployment, config } = detectDeployment();
+  try {
+    return createRemoteTransport({ deployment, config });
+  } catch (err) {
+    console.warn(
+      `createTransportFromDeployment: ${err.message}. ` +
+      'Falling back to local-only mode.'
+    );
+    return null;
+  }
 }

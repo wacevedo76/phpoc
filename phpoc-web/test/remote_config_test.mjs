@@ -275,12 +275,12 @@ console.log(`\n═══ Config Mutation Detection ═══`);
   });
   mockUrlParams();
 
-  // Explicit deployment takes priority over auto-detect
+  // Explicit deployment takes priority over auto-detect, but config
+  // still carries baseUrl/apiKey from localStorage for transport creation.
   let result = detectDeployment();
   t.assertEq(result.deployment, 'saas', 'explicit deployment key takes priority');
-  // When deployment is explicitly set, config is empty — baseUrl/apiKey are
-  // read separately by the transport factory from localStorage
-  t.assertEq(Object.keys(result.config).length, 0, 'explicit deployment → empty config');
+  t.assertEq(result.config.baseUrl, 'https://override.example.com', 'explicit deployment includes baseUrl');
+  t.assertEq(result.config.apiKey, '', 'apiKey empty when not set');
 }
 
 // ══════════════════════════════════════════════════════════════════════

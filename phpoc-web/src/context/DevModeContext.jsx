@@ -18,7 +18,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { DummyCryptoService } from '../services/DummyLedger.js';
-import { SyncService, SyncResult, IndexedDBBackend } from '@sync/index.js';
+import { SyncService, SyncResult, IndexedDBBackend, createTransportFromDeployment } from '@sync/index.js';
 import { exportLedger } from '../services/ledger_export.js';
 import { importLedger } from '../services/ledger_import.js';
 
@@ -295,7 +295,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
    */
   async function bootstrapServices({ crypto, masterKey, storage }) {
     crypto.setMasterKey(masterKey);
-    const sync = new SyncService(storage, crypto, null, {
+
+    // Create remote transport from deployment config.
+    // Falls back to null (local-only) on invalid config.
+    const transport = createTransportFromDeployment();
+
+    const sync = new SyncService(storage, crypto, transport, {
       cookieTtlMinutes: 30,
     });
 
