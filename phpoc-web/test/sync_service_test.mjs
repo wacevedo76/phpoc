@@ -372,7 +372,15 @@ async function run() {
   // re-pulls the remote cookie. If that inner pull finds a cookie with the
   // same device UUID → Case A (push only, no pull/merge).
   //
+  // NOTE: With the per-device UUID (getOrCreateDeviceUuid), the device UUID
+  // is a UUID4 stored in IndexedDB, NOT derived from the master key. Tests
+  // must pre-populate storage with a known UUID4 and use same UUID4 in the
+  // remote cookie to simulate Case A (same device).
+  //
   console.log('\n── Group E: Reconcile — Case A (Same UUID) ──\n');
+
+  // Shared UUID4 for Case A tests
+  const CASE_A_UUID = 'a1b2c3d4-e5f6-4abc-8def-0123456789ab';
 
   // E1. Same device UUID → push blob only (no pull/merge), READY
   {
@@ -383,6 +391,9 @@ async function run() {
       masterKey: mk,
     });
 
+    // Pre-populate per-device UUID in storage (simulates IndexedDB)
+    await storage.set('device_uuid', CASE_A_UUID);
+
     // Local cookie valid
     await storage.set('cookie', {
       device_specifier: 'spec-case-a',
@@ -392,10 +403,9 @@ async function run() {
     // Two-phase cookie pull:
     //   Pull 1 (outer checkAndSync): null → no remote cookie → enters _reconcileAndClaim
     //   Pull 2 (inner _reconcileAndClaim): cookie with SAME device UUID → Case A
-    const sameDeviceUuid = crypto.getDeviceId(mk);
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
-      device_uuid: sameDeviceUuid,
+      device_uuid: CASE_A_UUID,
       device_specifier: 'spec-old-case-a',
     })));
 
@@ -422,22 +432,24 @@ async function run() {
       masterKey: mk,
     });
 
+    // Pre-populate per-device UUID in storage (same device = Case A)
+    await storage.set('device_uuid', CASE_A_UUID);
+
     await storage.set('cookie', {
       device_specifier: 'spec-e2',
       creation_time: Date.now(),
     });
 
-    const sameDeviceUuid = crypto.getDeviceId(mk);
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
-      device_uuid: sameDeviceUuid,
+      device_uuid: CASE_A_UUID,
       device_specifier: 'spec-remote-e2',
     })));
 
     // Pre-populate remote with an entry that should NOT be pulled (Case A)
     await pushRemoteBlob(transport, crypto, [
       { entry_id: 'remote-only', title: 'Remote Entry', start_epoch: 5000 }
-    ], sameDeviceUuid, mk);
+    ], CASE_A_UUID, mk);
 
     await sync.capture({ title: 'Local Case A2', startEpoch: 1000 });
 

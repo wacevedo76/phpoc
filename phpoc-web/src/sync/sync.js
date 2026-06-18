@@ -43,6 +43,7 @@ import { DeviceCookie } from './cookie.js';
 import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
+import { getOrCreateDeviceUuid } from './device_uuid.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'} SyncCheckResult */
 
@@ -90,11 +91,25 @@ export class SyncService {
   // ------------------------------------------------------------------
 
   /**
-   * Resolve the local device UUID from the cached master key.
-   * @returns {string|null}
+   * Resolve the local device UUID.
+   *
+   * First checks storage for a per-device UUID (persisted via
+   * getOrCreateDeviceUuid). If found and not WASM-derived, returns it.
+   * Falls back to WASM getDeviceId(MK) only as last resort (legacy).
+   *
+   * @returns {Promise<string|null>}
    * @private
    */
-  _getDeviceId() {
+  async _getDeviceId() {
+    // Preferred path: per-device UUID from storage (survives logout/re-login)
+    try {
+      const storedUuid = await getOrCreateDeviceUuid(this._storage);
+      return storedUuid;
+    } catch {
+      // Storage read failed — fall through to WASM path
+    }
+
+    // Fallback: WASM-derived UUID (HMAC from master key)
     const mk = this._crypto.getMasterKey();
     if (!mk) return null;
     try {
@@ -117,7 +132,7 @@ export class SyncService {
    * @returns {Promise<string>} Entry hash prefix.
    */
   async capture(params) {
-    const deviceUuid = this._getDeviceId() || '';
+    const deviceUuid = await this._getDeviceId() || '';
     const hash = await this._local.append({ ...params, deviceUuid });
     await this._touchLocalCookie();
     return hash;
@@ -147,7 +162,7 @@ export class SyncService {
       await this._local.closePause(foundIndex, endEpoch);
     }
 
-    const endDeviceUuid = this._getDeviceId() || '';
+    const endDeviceUuid = await this._getDeviceId() || '';
     await this._local.update(foundIndex, {
       end_epoch: endEpoch,
       is_active: false,
@@ -471,7 +486,7 @@ export class SyncService {
       }
     }
 
-    const localDeviceUuid = this._getDeviceId() || '';
+    const localDeviceUuid = await this._getDeviceId() || '';
 
     if (remoteDeviceUuid && remoteDeviceUuid === localDeviceUuid) {
       // Case A — Same device that last wrote: push only, touch cookie
@@ -528,7 +543,7 @@ export class SyncService {
 
       // Create new device cookie (fresh specifier, local + remote)
       try {
-        const deviceId = this._crypto.getDeviceId(masterKeyHex);
+        const deviceId = await this._getDeviceId();
         await DeviceCookie.destroyLocally(this._storage);
         const remoteCookie = await DeviceCookie.create(
           deviceId,
@@ -724,7 +739,7 @@ export class SyncService {
     if (!this._remote) return;
 
     const entries = await this._local.readEntries();
-    const deviceId = this._getDeviceId() || 'unknown';
+    const deviceId = await this._getDeviceId() || 'unknown';
 
     // Push blob FIRST
     await this._remote.pushBlob(entries, deviceId, masterKeyHex);
@@ -777,7 +792,7 @@ export class SyncService {
     if (!this._remote) return;
 
     const entries = await this._local.readEntries();
-    const deviceId = this._getDeviceId() || 'unknown';
+    const deviceId = await this._getDeviceId() || 'unknown';
     await this._remote.pushBlob(entries, deviceId, masterKeyHex);
     this._lastPushAt = Date.now();
   }

@@ -80,7 +80,8 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/ledger/index_manager.js` | `IndexManager` — blind index CRUD |
 | `phpoc-web/src/ledger/summary_policy.js` | Summary policies (YearMonth, YearOnly, NoSummary) |
 | `phpoc-web/src/ledger/utils.js` | Shared utilities: `sortKeys`, `jsonSort`, `computeEntryHash`, `getBlockHash` |
-| `phpoc-web/src/sync/sync.js` | `SyncService` — full `checkAndSync()` auth gate, staging CRUD. `getCompleted()` now includes committed entries from `ledger:blocks` with AES-128-CTR field decryption (`_rawCommittedEntryToDTO`).
+| `phpoc-web/src/sync/sync.js` | `SyncService` — full `checkAndSync()` auth gate, staging CRUD. `_getDeviceId()` now reads per-device UUID4 from storage before falling back to WASM (2026-06-18). `getCompleted()` includes committed entries from `ledger:blocks` with AES-128-CTR field decryption (`_rawCommittedEntryToDTO`).
+| `phpoc-web/src/sync/device_uuid.js` | `getOrCreateDeviceUuid(storage)` + `isWasmDerivedUuid(uuid)` — per-device UUID4 generation with IndexedDB persistence. Migrates WASM-derived hex UUIDs. 22 tests. |
 | `phpoc-web/src/sync/transport.js` | `HttpTransport` — fetch()-based HTTP with ETag caching |
 | `phpoc-web/src/sync/http_backend.js` | `HttpBackend` — Transport→StorageBackend adapter |
 | `phpoc-web/src/sync/storage.js` | `StorageBackend` interface + `MemoryBackend` |
@@ -106,7 +107,7 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/ledger/engine.js` | `commit()` returns `{hashPrefix, committedEntryIds, blockIndex}` for caller tracking. `_commitDay()` returns block index. Staging entry IDs preserved through commit flow. Tests: 114 |
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
 | `phpoc-web/test/sync_service_test.mjs` | **NEW (2026-06-18)** — 40 tests for `checkAndSync()` auth gate (READY/OFFLINE/REAUTH_NEEDED) + `_reconcileAndClaim()` Case A/B + BLOB_KEY_MISMATCH + edge cases. Uses `MockTransport` with `queueResponse()` for two-phase cookie pulls. |
-| `phpoc-web/test/device_uuid_test.mjs` | **NEW (2026-06-18)** — 8 test groups for `getOrCreateDeviceUuid()` and `isWasmDerivedUuid()`. RED phase (stubs throw). Tests: UUID4 generation, storage persistence, logout/re-login survival, MK independence, format validation, WASM-derived detection, migration. |
+| `phpoc-web/test/device_uuid_test.mjs` | **NEW (2026-06-18)** — 22 tests for `getOrCreateDeviceUuid()` and `isWasmDerivedUuid()`. ✅ GREEN — all passing. Tests: UUID4 generation, storage persistence, logout/re-login survival, MK independence, format validation, WASM-derived detection, migration. |
 
 ### Cross-Platform (reference)
 | File | Purpose |
@@ -145,6 +146,11 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ### 🔴 NOW: Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker (2026-06-18)
 
+> **⏭ Next session resume:** Step 3 — Wire `createStoragePlugin()` into `DevModeContext.jsx`.
+> Currently `createStorage()` always returns `IndexedDBBackend` and `SyncService` is always local-only (`null` transport).
+> Settings page already has Worker URL + API Key text boxes persisting to `localStorage`.
+> The gap: boot sequence ignores Settings config. Steps 3+4 make Settings config drive backend/transport creation; Step 5 replaces hardcoded text boxes with service dropdown.
+
 Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport and backend pieces are built and tested (HttpTransport 49 tests, HttpBackend 41 tests, Worker ~195 lines). The gap is the boot sequence in `DevModeContext.jsx` hardcoding `IndexedDBBackend` instead of using the `createStoragePlugin()` factory, and a Settings UI for configuring remote services.
 
 **Architecture decisions from discussion:**
@@ -160,20 +166,21 @@ Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport a
 |-----------|------|:---:|:---:|
 | `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 | ✅ 40 tests, all passing |
 | `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 | ✅ included above — 2-phase cookie pull pattern with `queueResponse()` mock |
-| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 | 🔴 8 groups, all fail — `getOrCreateDeviceUuid`/`isWasmDerivedUuid` stubs throw `NOT YET IMPLEMENTED` |
+| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 | ✅ 22 tests, all passing — `device_uuid.js` module implemented, `_getDeviceId()` wired |
 | `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 | 🔜 Pending |
 | `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 | 🔜 Pending |
 
 All tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. Pure logic tests against the sync algorithm. SyncService tests pass because the auth gate + reconcile logic already works correctly; the WASM-derived UUID happens to differentiate correctly for test scenarios (different MK → different UUID). The real production fix is in the device UUID tests.
 
-**🧩 Phase 2 — Implementation (NEXT):**
+**🧩 Phase 2 — Implementation (IN PROGRESS):**
 
-1. **Implement `getOrCreateDeviceUuid(storage)`** in new module `src/sync/device_uuid.js` — generate `crypto.randomUUID()`, persist under key `device_uuid`, read on subsequent calls. Handle migration from WASM-derived UUIDs (`isWasmDerivedUuid()` detection).
-2. **Wire into `SyncService._getDeviceId()`** — read `device_uuid` from storage first, fall back to WASM `getDeviceId(MK)` only as last resort.
-3. **Wire `createStoragePlugin()` into `DevModeContext.jsx`** for local storage selection.
-4. **Construct `HttpTransport` from config** and pass to `SyncService` as remote transport (dual-backend model).
-5. **Replace Settings Remote Sync section** with service dropdown + conditional fields.
-6. **Add destructive transition warning dialog** with export button.
+1. ✅ **Implement `getOrCreateDeviceUuid(storage)`** in new module `src/sync/device_uuid.js` — generate `crypto.randomUUID()`, persist under key `device_uuid`, read on subsequent calls. Handle migration from WASM-derived UUIDs (`isWasmDerivedUuid()` detection). **DONE (2026-06-18)** — 22 tests, all passing.
+2. ✅ **Wire into `SyncService._getDeviceId()`** — read `device_uuid` from storage first, fall back to WASM `getDeviceId(MK)` only as last resort. `_getDeviceId()` now async, all 5 call sites updated. `sync_service_test.mjs` Group E (Case A) tests updated to pre-populate device_uuid in storage. **DONE (2026-06-18)** — 40 sync_service tests + 22 device_uuid tests all passing.
+2b. ✅ **Code review (2026-06-18)** — 14 findings across `device_uuid.js` and `sync.js`. Two fixes applied: (a) removed unused `isWasmDerivedUuid` import, (b) fixed `_reconcileAndClaim()` cookie creation to use per-device UUID4 instead of WASM-derived UUID (was causing permanent Case A/B mismatch — remote cookie always had WASM UUID while local had UUID4).
+3. 🔜 **Wire `createStoragePlugin()` into `DevModeContext.jsx`** for local storage selection.
+4. 🔜 **Construct `HttpTransport` from config** and pass to `SyncService` as remote transport (dual-backend model).
+5. 🔜 **Replace Settings Remote Sync section** with service dropdown + conditional fields.
+6. 🔜 **Add destructive transition warning dialog** with export button.
 
 ### ✅ 1. Import Workflow Enhancement — Destroy Warning + Staging Persistence
 
@@ -219,3 +226,6 @@ Identity secret stored during genesis but not loaded into `LedgerEngine` for com
 - IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.
 - **Ledger merge not yet implemented:** Importing a file with the same genesis as the existing ledger is rejected with "merge is not yet supported." The import code has an open interface at the genesis-check branch for plugging in merge reconciliation logic (decrypt start times, sort entries, rebuild blocks from fork point). Entry hashes are self-contained (computed from `data` dict only, no genesis hash involvement — PHPSPEC §5.4), so entries from divergent ledgers sharing the same genesis can be merged by discarding divergent block wrappers and rebuilding the chain from the fork point.
 - **Cross-platform JSON:** JavaScript `JSON.stringify()` and Python `json.dumps()` produce different whitespace and key ordering. The `jsonDumps()` helper in `ledger_import.js` bridges this gap for raw chain verification. Long-term, consider using a single library (e.g., a WASM-based Python `json.dumps` or a cross-platform spec for canonical JSON) to avoid per-platform serializers.
+- **`isWasmDerivedUuid` regex too broad (2026-06-18):** The hex regex `/^[0-9a-f]{32,}$/` matches MD5 (32 chars), SHA-1 (40), and even dash-stripped UUID4 (32 chars). Should be `{64}` for HMAC-SHA256 which is the actual WASM output. Low risk in practice — worst case is unnecessary migration of a dash-stripped UUID4.
+- **Index-based staging operations have stale-index race (2026-06-18):** `end()`, `pause()`, `unpause()` call `readEntries()` to find an index, then call `update()` by that index. Between the read and write, another operation could change the array order (insert/delete), causing the index to point to the wrong entry. `LocalCache.update()` guards against committed-flag races but not index-shift races.
+- **`_getDeviceId()` called twice in push operations:** `pushToRemote()` calls it for `pushBlob` and again for `_pushCookie`. `_reconcileAndClaim` calls it and then `pushBlobOnly` calls it again internally. Consider caching in a `_deviceUuid` instance variable after first resolution.

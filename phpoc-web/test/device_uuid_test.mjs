@@ -20,39 +20,14 @@
 
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
+import { getOrCreateDeviceUuid, isWasmDerivedUuid } from '../src/sync/device_uuid.js';
 
 // ══════════════════════════════════════════════════════════════════════
-// Device UUID Manager — the module under test (NOT YET IMPLEMENTED)
+// Device UUID Manager — imported from src/sync/device_uuid.js
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * Get or create the device UUID.
- *
- * On first call: generates a crypto.randomUUID(), persists it in storage
- * under key 'device_uuid', and returns it.
- * On subsequent calls: reads the persisted UUID from storage.
- *
- * The UUID is permanent per device — it survives logout, re-login,
- * passphrase changes, and storage.clear() (the device UUID is excluded
- * from clear operations or re-created if missing after clear).
- *
- * @param {import('../src/sync/storage_plugin.js').StoragePlugin} storage
- * @returns {Promise<string>} The device UUID.
- */
-export async function getOrCreateDeviceUuid(storage) {
-  throw new Error('NOT YET IMPLEMENTED: getOrCreateDeviceUuid');
-}
-
-/**
- * Check if a stored UUID is a WASM-derived (deterministic from MK) UUID.
- * WASM-derived UUIDs have a specific format: hex string, not UUID4.
- *
- * @param {string} uuid
- * @returns {boolean}
- */
-export function isWasmDerivedUuid(uuid) {
-  throw new Error('NOT YET IMPLEMENTED: isWasmDerivedUuid');
-}
+/** @type {typeof import('../src/sync/device_uuid.js').getOrCreateDeviceUuid} */
+/** @type {typeof import('../src/sync/device_uuid.js').isWasmDerivedUuid} */
 
 // ── UUID4 regex for validation ───────────────────────────────────────
 const UUID4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
