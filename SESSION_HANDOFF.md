@@ -141,133 +141,74 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ## Next Steps
 
+### 🔴 NOW: Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker (2026-06-18)
+
+Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport and backend pieces are built and tested (HttpTransport 49 tests, HttpBackend 41 tests, Worker ~195 lines). The gap is the boot sequence in `DevModeContext.jsx` hardcoding `IndexedDBBackend` instead of using the `createStoragePlugin()` factory, and a Settings UI for configuring remote services.
+
+**Architecture decisions from discussion:**
+
+- **Dual-backend model (not single HttpBackend):** phpoc-web follows the same architecture as the CLI — `SyncService` receives `storage` (local IndexedDB) and `transport` (remote HttpTransport) as separate parameters. The factory's `"saas"` mode currently returns a single HttpBackend, but the correct SaaS setup is IndexedDB (local) + HttpTransport (remote). The factory produces a StorageBackend for local use; the remote transport is constructed separately from config.
+- **Device UUID must be per-device, not per-passphrase:** The WASM `get_device_id(MK)` returns `HMAC(MK, "device:id")` — deterministic from the master key (per PHPSPEC §2.8 default). The CLI uses `RandomUUIDDeviceIdentityProvider` which generates and persists a random UUID4. If the web app uses the WASM default, all devices with the same passphrase get the same device ID. The cookie mechanism's Case A/Case B decision (`remote_device_uuid == local_device_uuid`) would incorrectly treat different devices as the same device, skipping the pull+merge path. **Fix:** Generate `crypto.randomUUID()` on first boot, persist in IndexedDB, use that UUID for cookie operations.
+- **Settings UI:** Replace hardcoded "Worker URL" + "API Key" text boxes with a dropdown of storage services (None, Cloudflare Worker, Bridge LAN, Bridge Docker, Google Drive [future]). Conditional fields per service. Destructive transition warning when switching from local-only to remote (no ledger reconciliation yet — export current ledger first).
+- **Auth applies to all remote operations:** Remote staging blob is obfuscated + encrypted with blob sub-key. Entry fields are AES-128-CTR encrypted. Device identity requires master key. Ledger blocks are HMAC-sealed. The auth flow (AuthScreen → PBKDF2 → master key) must complete before any remote data is pulled, decrypted, or loaded into IndexedDB.
+
+**Phase 1 — Tests before implementation (in progress):**
+
+| Test Suite | What | Priority |
+|-----------|------|:---:|
+| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 |
+| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 |
+| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 |
+| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 |
+| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 |
+| `test/sync_service_test.mjs` | Cookie TTL expiry, specifier mismatch, BLOB_KEY_MISMATCH, remote unreachable, empty remote | P2 |
+
+All P1 tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. Pure logic tests against the sync algorithm.
+
+**After tests pass → Phase 2 — Implementation:**
+
+1. Add device UUID persistence to boot sequence
+2. Wire `createStoragePlugin()` into `DevModeContext.jsx` for local storage
+3. Construct `HttpTransport` from config and pass to `SyncService` as remote transport
+4. Replace Settings Remote Sync section with service dropdown + conditional fields
+5. Add destructive transition warning dialog with export button
+6. Wire re-auth overlay trigger on cookie TTL expiry
+
 ### ✅ 1. Import Workflow Enhancement — Destroy Warning + Staging Persistence
 
-**COMPLETED (2026-06-11).** Full two-phase import flow with safety gates:
-
-**A. Destroy warning + export offer:** ✅ Before replacing the existing ledger, confirmation dialog shows:
-- "The ledger currently in use will be destroyed." warning banner (orange)
-- Block count display ("N committed blocks will be replaced")
-- Import summary (entry count, format version, genesis identity check)
-- "📤 Export current ledger before proceeding" button → calls `exportLedgerFull()`
-
-**B. Staging persistence option:** ✅ If staging has uncommitted entries, green banner shows:
-- "You have N uncommitted entries. Keep them staged after import?" checkbox
-- If checked: entries read BEFORE `storage.clear()`, merged into imported staging after write
-- Running entries stay running; stopped entries stay stopped
-- Imported entries take precedence on entry_id collision
-
-**C. Manual testing:** ✅ Import from any `.json` file via file picker (both Settings and Onboarding screens)
-
-**Architecture:** Split into `validateImport()` (read-only, 5 validation gates) + `confirmImport()` (destructive write). Old `importLedgerAction` auto-confirms for backward compat.
-
-**Design constraint met:** All gates are read-only until user explicitly clicks "Confirm Import".
+**COMPLETED (2026-06-11).** Full two-phase import flow with safety gates. See `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.11 for details.
 
 ### ✅ 2. Fix v2 Import Loses Committed Chain
 
-**COMPLETED (2026-06-11).** `importLedger()` now returns `{ledger}` array for v2 files. `confirmImport()` writes it to `ledger:blocks`. Also writes identity info (username, email) from genesis block to storage.
+**COMPLETED (2026-06-11).** `importLedger()` now returns `{ledger}` array. `confirmImport()` writes to `ledger:blocks`.
 
 ### ✅ 7. Sync Screen — Delete from Staging Button
 
-**COMPLETED (2026-06-16).** Added a "🗑 Delete from staging" button to the expanded details section of stopped (commitable) entries in the Sync screen.
-
-- Button appears only on stopped entries when expanded, between the comment textarea and the EndTimeEditor
-- Calls `sync.remove(entryIndex)` to delete the entry from the staging area
-- Immediately removes the entry from the UI list and cleans up all associated state (selection, expansion, tags, comments, end-time, pauses)
-- Shows `⋯` spinner during the delete operation; button is disabled while deleting
-- Uses `.btn-danger` styling (red background/border)
-
-**Files changed:**
-- `SyncSettings.jsx` — new `handleDelete` callback, `deleting` state map, button JSX in `renderCompactPill()`
-- `App.css` — `.sync-pill-delete-row`, `.sync-pill-delete-btn` styles
+**COMPLETED (2026-06-16).** 🗑 button on expanded stopped entries in Sync screen. Calls `sync.remove()`, immediate UI update.
 
 ### ✅ 6. History Calendar Widget + Committed Entry Decryption
 
-**COMPLETED (2026-06-11).** Two-part fix for the History screen:
+**COMPLETED (2026-06-11).** Custom month calendar + committed entry decryption from `ledger:blocks` via `_rawCommittedEntryToDTO()`.
 
-**A. Custom Month Calendar Widget:** Replaced plain `<input type="date">` with:
-- Year/month navigation (`◀◀ ◀ [Month Year] ▶ ▶▶`)
-- 7-column day grid (Su–Sa headers)
-- Green dots on dates with entries
-- Today highlighted with blue border, selected date filled blue
-- Click a date → filter entries; click again → clear filter
-- [Today] and [Clear date] shortcut buttons
-- Tag filter below the calendar
+### Deferred: rclone Bridge Loader
 
-**B. Committed Entry Decryption in `getCompleted()`:** `sync.getCompleted()` previously only read staging entries from IndexedDB. Imported committed entries are stored encrypted in `ledger:blocks` — they use AES-128-CTR hex ciphertext fields (`startTime_enc`, `endTime_enc`, `metadata_enc`) unlike staging entries which use `plain:` prefixed plaintext.
+Discussed 2026-06-17. Deferred in favor of Worker wiring (already built, tested, and available). The rclone bridge remains the Tier 4 self-hosted option. See `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.28-11.29.
 
-New method `_rawCommittedEntryToDTO(rawEntry)`:
-- Decrypts `startTime_enc` via `crypto.decryptWithCachedKey()`
-- Decrypts `endTime_enc` and `metadata_enc`
-- Builds DTO with `committed: true`, `block_index`, and computed `date`
-- Uses `rawEntry.hash` as `entry_id` (committed entries have no separate entry_id field)
+### Deferred: Staging CRUD in UI (Dashboard)
 
-`getCompleted()` now returns `[...committedDTOs, ...stagingCompleted]` — committed entries first. Falls back gracefully (try/catch) if master key isn't cached yet, so staging entries still show.
+Full staging interaction — add/edit/delete entries directly in the Dashboard UI. Currently only inline tag/comment editing on Sync/History screens.
 
-**Files changed:**
-- `sync.js` — new `_rawCommittedEntryToDTO()`, extended `getCompleted()`
-- `History.jsx` — calendar state, navigation helpers, `datesWithEntries`, `calendarDays` computation, new calendar JSX
-- `App.css` — `.history-calendar`, `.calendar-week`, `.calendar-day`, `.calendar-day-today`, `.calendar-day-selected`, `.calendar-day-has-entries`, `.calendar-day-dot`, `.calendar-actions`, `.history-tag-filter` styles
+### Deferred: Wire Device Cookie TTL to Re-auth Overlay
 
-### 3. rclone Bridge Loader — Cloud Storage via Google Drive, Dropbox, and 40+ Providers
+The re-auth overlay exists but isn't triggered. Will be wired as part of the Remote Sync Wiring feature.
 
-The bridge server (step 6 in the existing roadmap) reads/writes local files. By combining it with [rclone](https://rclone.org/) — a FUSE filesystem that mounts cloud storage as a local directory — the bridge server becomes a **zero-code cloud backend** with zero changes to the bridge server itself.
+### Deferred: Wire Identity Secret into LedgerEngine for Commit Signing
 
-**What needs to be built:**
+Identity secret stored during genesis but not loaded into `LedgerEngine` for commits.
 
-| File | Purpose |
-|------|---------|
-| `phpoc-bridge/bridge_server.py` | HTTP server (Worker-compatible API). GET/PUT/DELETE/LIST to local filesystem. ~80-100 lines. |
-| `phpoc-bridge/rclone_bridge.py` | Loader script: interactive provider menu, rclone config, FUSE mount, bridge lifecycle, cleanup. Also provides `status`, `stop`, `reconnect` commands. |
-| `phpoc-bridge/setup.py` | One-time setup: detect/install rclone, run rclone config wizard, create PH-Ledger remote folder, save bridge-config.json. |
+### ✅ Duplicate Entry Race Condition Fix
 
-**Key design decisions (see PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.28 for full details):**
-
-- **Bridge server has zero rclone awareness** — it reads/writes files. rclone is a separate process managed by the loader.
-- **Async cloud sync** — the browser talks to the bridge over LAN (sub-ms). rclone syncs changes to the cloud in the background. The user never waits on cloud latency.
-- **40+ providers** — Google Drive, Dropbox, OneDrive, Box, Nextcloud, S3, Backblaze B2, etc. All handled by rclone, zero code per provider.
-- **Offline-safe** — the bridge serves from local files. If internet drops, the app still works. Sync resumes when connectivity returns.
-- **Perceived speed: <1ms writes** vs 30-80ms for direct cloud API or Cloudflare Worker.
-
-**Why this is the next priority:** It unlocks cloud-backed multi-device sync without deploying a Cloudflare Worker, without writing API adapters, and without managing OAuth flows. Export/Import works today for manual transfer; the rclone bridge makes it automatic.
-
-#### rclone Bridge Discussion (2026-06-17)
-
-Full architectural discussion in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.28 (clarifying questions) and §11.29 (OAuth strategy). Key outcomes:
-
-- **Scope:** The bridge serves both CLI and phpoc-web as a Worker-compatible HTTP endpoint. For phpoc-web it's essential (browsers can't write to the filesystem); for CLI it's an alternative remote sync target.
-- **2FA:** rclone's OAuth flow handles 2FA once during setup. A refresh token is stored; subsequent operations are silent.
-- **Dependencies:** rclone + FUSE introduce external dependencies. This is an **optional** backend — standalone PWA (IndexedDB) and SaaS (Worker) remain zero-dependency paths. FUSE may require admin privileges for one-time install on macOS/Windows.
-- **Browser/filesystem:** The browser never touches the filesystem. It talks HTTP to the bridge server, which writes to the filesystem. rclone management is terminal-only.
-- **Multi-device:** The bridge enables LAN multi-device + cloud backup. For true multi-device (independent devices syncing through the cloud), the Worker or an OAuth-based cloud backend (Google Drive) is needed. Two concurrent rclone mounts of the same remote risk write conflicts.
-
-**Mass-adoption pivot — OAuth Cloud Backend Strategy:**
-
-The bridge is **Tier 4** (self-hosted, for technical users). For mass adoption, the primary path is **OAuth → Google Drive** (Tier 1). The Cloudflare Worker asks the user to deploy infrastructure (15-30 min). OAuth asks them to tap "Sign in with Google" (5 seconds, account they already have). The same zero-knowledge model applies: the passphrase encrypts the data; Google stores opaque bytes it cannot read.
-
-Tiered provider strategy for Flutter (see `MOBILE_ROADMAP.md` §8b and `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.29):
-1. **Worker → R2** (already built) — multi-device, just needs Dart HTTP client.
-2. **Google Drive OAuth** — mass-adoption path. One tap, zero infrastructure, cross-platform.
-3. **Platform cloud folders** (iCloud/Google Drive) — zero-infra, single-ecosystem.
-4. **rclone bridge / self-hosted** — privacy absolutists, technical users.
-5. **P2P/CRDT** — decentralized endgame, long-term vision.
-
-### 4. Staging CRUD in UI (Dashboard)
-
-Full staging interaction — add/edit/delete entries directly in the Dashboard UI. Currently the UI allows creating new tasks (timed and one-off) and inline editing of tags/comments on Sync/History screens, but there is no way to delete a staging entry or modify title/duration fields from the UI.
-
-### 5. Wire Device Cookie TTL to Re-auth Overlay
-
-The re-auth overlay (`reauthOverlay` state in `App.jsx`) exists but isn't triggered yet. Need to:
-- Check `DeviceCookie.isValidLocally()` on app resume / periodic interval
-- Pop the `AuthScreen` overlay when TTL expires (30 min default)
-- Call `login(passphrase)` on re-auth, which re-derives master key and touches cookie
-
-### 6. Wire Identity Secret into LedgerEngine for Commit Signing
-
-The identity secret is stored during genesis creation but not yet loaded into `LedgerEngine` when commits happen. Update `bootstrapServices` to decrypt `identity_secret_enc_fallback` from the genesis block and cache it for the engine.
-
-- **Duplicate entries in ledger (2026-06-16):** ✅ FIXED. Read-modify-write race condition in `LocalCache.update()` caused committed entries to lose their `committed: true` flag when inline edits (end time, duration, pauses, tags, comments) raced with `markCommitted()`. Fix: `update()` now re-reads from storage immediately before writing, applies changes to the fresh state, and skips the write if the entry was committed or replaced between reads. Three guards: early committed check, index-out-of-range check, entry_id + committed race check. Identified duplicate entries in blocks 93, 94, and 98 (same title, different hash/duration).
+**FIXED (2026-06-16).** Three guards in `LocalCache.update()`: early committed check, index-out-of-range, entry_id + committed race check.
 
 ## Known Issues
 - `HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.

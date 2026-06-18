@@ -484,7 +484,7 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 16 | **HttpBackend + StorageBackend.list + Worker DELETE** — Transport→StorageBackend adapter, `delete()` on HttpTransport/MockRemoteBackend, DELETE handler on Worker | 1 day | ✅ GREEN — 41 tests (TDD). `list()` added to StorageBackend + MemoryBackend. Worker now handles DELETE method. Zero regressions (155 web tests, 270 total). | Jun 9 2026 |
 | 17 | **Ledger Engine JS Port + Refactoring** — 4 modules, then 3-phase code review refactoring (16 findings: Modularity, Clarity, Security) | 2-3 days | ✅ DONE — 266 tests, 0 failures. Chain (70), Index (36), Summary (49), Engine (111). Shared utilities, proper async, security hardening. | Jun 10-11 2026 |
 | 18 | **Onboarding Workflow** — Landing screen, onboarding wizard (Import/New/Export), phase-based lifecycle, IndexedDB seed storage, passphrase auth with PBKDF2 | 2-3 days | ✅ DONE — 4 new/modified components, refactored DevModeContext with phase-based lifecycle. Production mode: `?dev=false` or `defaultDevMode={false}`. | Jun 11 2026 |
-| 19 | **Staging CRUD in UI** — full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. | 2-3 days | 🔜 Next | — |
+| 19 | **Staging CRUD in UI** — full staging interaction (add/edit/delete entries directly in UI). Currently wired to dummy data. | 2-3 days | 🔜 Deferred (remote sync wiring in progress) | — |
 | 26 | **Sync Screen with Commit UI** — dedicated Sync screen. Uncommitted entries (active + stopped) as compact pills. Stopped: yellow border/left syncability indicator, expandable inline tag & comment editing, **delete-from-staging button**. Active: red border, lock icon, non-expandable. Commit Selected/Commit All buttons. NOT_SYNCED status when staging has entries. Tag-add input restyled (blue badge, white text, black border). | 0.5 day | ✅ Done | Jun 11 2026 |
 | 27 | **One-off Task Checkbox** — Dashboard "Start New Task" form: ☐ one-off checkbox next to title input. When checked, button shows "Log" and task is captured with isActive=false + endEpoch=now (immediately ended, zero duration). Resets after submission. | 0.25 day | ✅ Done | Jun 11 2026 |
 | 31 | **Sync Screen End-Time + Duration Editing** — Expanded stopped entries now include an `EndTimeEditor` with `type="time"` input + quick-adjust buttons (−5m, +5m, +15m) and a `Duration` text field accepting formats like `1h30m`, `90m`, `1.5h`, `1:30`, `45` (raw minutes). Duration accounts for pauses (active duration = end − start − totalPauseMs). Changing one updates the other. Commits on Enter/blur. | 0.5 day | ✅ Done | Jun 16 2026 |
@@ -501,6 +501,26 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 23 | **Export fix (dev mode)** — export uses cached master key when available, skipping seed authentication. Works in both dev and production. | 0.5 day | ✅ Done | Jun 11 2026 |
 | 24 | **Recovery seed display** — after onboarding, full-screen overlay shows base64 seed with "I've saved it" confirmation. | 0.5 day | ✅ Done | Jun 11 2026 |
 | 25 | **Logout button** — renamed from Lock to Logout, exit-door icon. Fixed blank screen + in-memory data loss on re-login. | 0.5 day | ✅ Done | Jun 11 2026 |
+| 36 | **Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker** — Wire phpoc-web to use the Cloudflare Worker as a remote backend. Dual-backend model (local IndexedDB + remote HttpTransport), device UUID persistence (random UUID4 per device, not HMAC-derived), Settings UI with service dropdown + conditional fields, destructive transition warning. Architecture decisions documented in `SESSION_HANDOFF.md`. | 2-3 days | 🔜 In progress (writing tests) | Jun 18 2026 |
+
+---
+
+### Remote Sync Wiring — Test Plan (2026-06-18)
+
+Before implementing the feature, 6 test suites are planned to cover untested sync paths:
+
+| Suite | What | Priority |
+|-------|------|:---:|
+| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 |
+| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 |
+| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 |
+| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 |
+| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 |
+| `test/sync_service_test.mjs` | Cookie TTL expiry, specifier mismatch, BLOB_KEY_MISMATCH, remote unreachable, empty remote | P2 |
+
+**Device UUID bug discovered:** The WASM `get_device_id(MK)` returns `HMAC(MK, "device:id")` — deterministic from passphrase (per PHPSPEC §2.8 default). The CLI uses `RandomUUIDDeviceIdentityProvider` which generates and persists a random UUID4. If the web app uses WASM's default, all devices with the same passphrase produce the same device UUID, causing the cookie mechanism to incorrectly treat different devices as the same device (Case A — push only, no merge). Fix: generate `crypto.randomUUID()` on first boot, persist in IndexedDB, use for all cookie operations.
+
+**Existing test coverage:** 512 tests across 14 suites (transport 49, http_backend 41, storage_plugin ~50, sync 60, ledger engine 4 suites 266, mock_remote 46). All green.
 
 ---
 
