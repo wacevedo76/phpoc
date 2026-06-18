@@ -1452,3 +1452,126 @@ Unlike staging entries which use `plain:` prefixed plaintext values, committed b
 | `sync.js` | New `_rawCommittedEntryToDTO()` (58 lines). Extended `getCompleted()` to read + decrypt committed entries. |
 | `History.jsx` | Calendar state + 100 lines of calendar compute/JSX. Entry `date` normalization from `start_epoch`. |
 | `App.css` | ~100 lines of calendar CSS. |
+
+### 11.30 Entry Ordering Within Day Blocks — Privacy-First Design (2026-06-18)
+
+**Decision:** Entries within Day blocks are ordered **alphabetically by title** at commit time. This replaces the previous convention of chronological (start-time) ordering.
+
+**Rationale — privacy as the driver:**
+
+Entry ordering in Day blocks is visible to anyone with the ledger file, even without the Master Key. If entries are sorted by start time, the array position leaks the **daily activity sequence** — an attacker learns "Guitar Practice happened before Coding happened before Reading" for every day. Over weeks of data, this is a detailed habit profile with zero cryptographic effort.
+
+Three ordering strategies were evaluated:
+
+| Ordering | Deterministic? | Privacy impact |
+|----------|:---:|------|
+| By start time (pre-decision) | ✅ | Leaks daily activity sequence → habit profiling |
+| By duration | ✅ | Leaks relative duration ordering (though duration is already plaintext) |
+| **By title, alphabetically** | ✅ | **Leaks nothing beyond what's already plaintext** |
+
+Alphabetical-by-title was chosen because:
+1. **Maximum privacy** — reveals nothing about activity sequence or duration ordering.
+2. **Deterministic** — every client produces identical block seals for the same entries. Critical for cross-device merge and verification.
+3. **Backward compatible** — no migration needed. Existing blocks retain their original ordering and seals. New commits use alphabetical ordering. Mixed chains (old + new blocks) verify cleanly because PHPSPEC §5.4 checks entry hashes individually and the spec never mandated entry ordering within a block.
+4. **UI is separate** — History and Sync screens sort by start time for display. On-chain ordering is an archival concern, not a UX concern.
+5. **Future-proof for encrypted titles** — if `title` becomes `title_enc`, an attacker sees only opaque ciphertexts in random-appearing positions. But authorized clients (with the Master Key) can decrypt, sort alphabetically, and produce deterministic seals. The ordering works with or without plaintext titles.
+
+**What changed / what didn't:**
+
+| Concern | Impact |
+|---------|--------|
+| Entry hash (`entry.hash`) | ✅ Unaffected — per-entry, `sort_keys` is within the entry's data dict, not the entries array |
+| Block seal (`day_hash`) | 🔄 Affected at creation time — seal covers the full `entries` array, so seal reflects the new ordering. Old blocks verify against *their* ordering, new blocks against *theirs*. Both correct. |
+| Content hash (`content_hash`) | ✅ Unaffected — per-entry, computed from plaintext values |
+| `prev_hash` linkage | ✅ Unaffected — links to previous block's seal hash, which is self-consistent |
+| Existing committed blocks | ✅ Immutable — seal was computed with whatever ordering they had. Verification passes because seal and content match. |
+| Merge (two divergent chains) | ✅ Extract all entries, sort all alphabetically, rebuild blocks with new seals |
+
+**Requirement:** The commit pipeline (`LedgerEngine._commitDay()` or equivalent) must sort entries alphabetically by `data.title` before building the Day block. Merge logic must do the same. This is a commit-time rule, not a verification-time rule — the chain verifies regardless of entry ordering.
+
+### 11.31 Ledger Merge Strategy — Divergent Same-Genesis Chains (2026-06-18)
+
+**Problem:** When two devices share the same genesis block but their ledger chains have diverged (different blocks past the fork point), the remote sync wiring's genesis compatibility gate needs a strategy for reconciling them. Without merge, the gate can only warn the user.
+
+**Architecture:** Merge is implemented as a standalone module — `src/ledger/merge.js` (`LedgerMerge`). It is not embedded in `LedgerEngine` or `LedgerChain` because:
+
+1. **Infrequent operation** — merge is triggered by the genesis compatibility gate during remote connection setup, not on every sync. It doesn't belong in the hot path.
+2. **Cross-platform portable** — a standalone module with minimal dependencies (chain, crypto, index) can be ported directly to the CLI Python reference and the Flutter mobile port.
+3. **Bulk-merge ready** — the same function can merge 2+ ledgers (not just local + remote). A user with 3 devices that all diverged can merge all three in one pass.
+4. **Testable in isolation** — merge can be tested with mock chains and a mock crypto service without instantiating the full Engine infrastructure.
+
+**Signature:**
+
+```js
+LedgerMerge.merge(localChain, remoteChain, crypto, masterKey) → { mergedChain, stats }
+// stats: { forkIndex, localEntries, remoteEntries, duplicatesSkipped, mergedEntries, newBlockCount }
+```
+
+Caller (`DevModeContext` or `LedgerEngine`) is responsible for the genesis-hash check before calling merge, and for persisting the result.
+
+#### Merge Algorithm
+
+```
+1. FIND FORK POINT
+   Walk both chains from block 0 upward.
+   Stop at last block i where L[i].{hash_field} == R[i].{hash_field}.
+   Fork block = L[forkIdx] (identical to R[forkIdx]).
+
+2. EXTRACT DIVERGENT ENTRIES
+   For each chain, decrypt all entries from blocks forkIdx+1 onward.
+   Collect into flat arrays: localEntries[], remoteEntries[].
+   (Skip summary blocks — they carry no entries.)
+
+3. DE-DUPLICATE (strict content_hash only)
+   Build a Set of local content_hashes.
+   For each remoteEntry:
+     if remoteEntry.content_hash ∈ localSet → skip (duplicate)
+     else → add to merged set.
+   Result: mergedEntries[] = localEntries + uniqueRemoteEntries.
+
+4. SORT
+   Sort mergedEntries[] alphabetically by data.title.
+   (Per §11.30 — privacy-first ordering.)
+
+5. REBUILD CHAIN FROM FORK POINT
+   Start with L[0..forkIdx] (common prefix, unmodified).
+   Group entries by date (from decrypted startTime).
+   For each date group:
+     - Build Day block with entries, proper date, bumping dayIndex.
+     - prevHash = hash_field of previous block.
+     - Compute day_hash seal.
+     - Append to chain.
+   Insert summary blocks as needed (year/month boundaries).
+
+6. REBUILD INDEX
+   Regenerate blind index from merged chain.
+
+7. VERIFY
+   Run full chain verification on merged chain.
+```
+
+#### Design Decisions (Settled)
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| A | Fork detection direction | Forward (block 0 →) | O(min(L,R)). Backward traversal complicated by mismatched chain lengths and summary blocks. |
+| B | Staging entries during merge | Handled separately by `_reconcileAndClaim()` | Merge operates on committed chains. Staging merge already works via `MergeEngine.dedupByEntryId()` in the sync path. |
+| C | Dedup strategy | Strict `content_hash` only | No fuzzy/proximity matching. Fuzzy dedup ("same task within N seconds") has no spec-defined similarity metric, risks false positives, and is obviated by the pull+merge sync protocol preventing near-duplicates from being created in the first place. |
+| D | Entry ordering in rebuilt blocks | Alphabetical by title (§11.30) | Maximum privacy, deterministic, backward-compatible. |
+| E | Summary block regeneration | Regenerate via `SummaryPolicy` | Both chains may have different summary blocks after the fork point. Regenerate based on actual date boundaries in merged entries. |
+| F | `dayIndex` after rebuild | Start from `forkBlock.dayIndex + 1` | Resets to 1 if fork point is a summary block (per PHPSPEC §4.4). |
+| G | Module location | New `src/ledger/merge.js` | Standalone, portable, bulk-merge ready, testable in isolation. |
+
+#### Why Strict Dedup Is Sufficient
+
+Three scenarios that can arise in practice:
+
+| Scenario | Same `content_hash`? | Merge behavior | Correct? |
+|----------|:---:|------|:---:|
+| Same entry committed on two devices (identical millisecond start, same duration, same tags) | ✅ Yes | Skipped as duplicate | ✅ Yes |
+| "Same" task started on two devices a few seconds apart (different milliseconds) | ❌ No | Both kept → two near-duplicate entries | 🟡 User-visible oddity, but cryptographically correct. Self-limiting — the sync protocol prevents this in normal use. |
+| Two genuinely different sessions of the same activity (e.g., Guitar 10am and Guitar 2pm) | ❌ No | Both kept | ✅ Yes |
+
+#### Backward Compatibility
+
+No migration needed. The merged chain is a new chain — new blocks, new seals. The original chains are unmodified. The genesis block and common prefix are referenced, not rewritten. Verification passes because all seals and hashes are internally consistent.
