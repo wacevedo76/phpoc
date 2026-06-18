@@ -105,6 +105,8 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/sync/sync.js` | Exposes `markCommitted()` from LocalCache |
 | `phpoc-web/src/ledger/engine.js` | `commit()` returns `{hashPrefix, committedEntryIds, blockIndex}` for caller tracking. `_commitDay()` returns block index. Staging entry IDs preserved through commit flow. Tests: 114 |
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
+| `phpoc-web/test/sync_service_test.mjs` | **NEW (2026-06-18)** — 40 tests for `checkAndSync()` auth gate (READY/OFFLINE/REAUTH_NEEDED) + `_reconcileAndClaim()` Case A/B + BLOB_KEY_MISMATCH + edge cases. Uses `MockTransport` with `queueResponse()` for two-phase cookie pulls. |
+| `phpoc-web/test/device_uuid_test.mjs` | **NEW (2026-06-18)** — 8 test groups for `getOrCreateDeviceUuid()` and `isWasmDerivedUuid()`. RED phase (stubs throw). Tests: UUID4 generation, storage persistence, logout/re-login survival, MK independence, format validation, WASM-derived detection, migration. |
 
 ### Cross-Platform (reference)
 | File | Purpose |
@@ -152,27 +154,26 @@ Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport a
 - **Settings UI:** Replace hardcoded "Worker URL" + "API Key" text boxes with a dropdown of storage services (None, Cloudflare Worker, Bridge LAN, Bridge Docker, Google Drive [future]). Conditional fields per service. Destructive transition warning when switching from local-only to remote (no ledger reconciliation yet — export current ledger first).
 - **Auth applies to all remote operations:** Remote staging blob is obfuscated + encrypted with blob sub-key. Entry fields are AES-128-CTR encrypted. Device identity requires master key. Ledger blocks are HMAC-sealed. The auth flow (AuthScreen → PBKDF2 → master key) must complete before any remote data is pulled, decrypted, or loaded into IndexedDB.
 
-**Phase 1 — Tests before implementation (in progress):**
+**Phase 1 — Tests (DONE 2026-06-18):**
 
-| Test Suite | What | Priority |
-|-----------|------|:---:|
-| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 |
-| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 |
-| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 |
-| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 |
-| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 |
-| `test/sync_service_test.mjs` | Cookie TTL expiry, specifier mismatch, BLOB_KEY_MISMATCH, remote unreachable, empty remote | P2 |
+| Test Suite | What | Priority | Status |
+|-----------|------|:---:|:---:|
+| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 | ✅ 40 tests, all passing |
+| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 | ✅ included above — 2-phase cookie pull pattern with `queueResponse()` mock |
+| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 | 🔴 8 groups, all fail — `getOrCreateDeviceUuid`/`isWasmDerivedUuid` stubs throw `NOT YET IMPLEMENTED` |
+| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 | 🔜 Pending |
+| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 | 🔜 Pending |
 
-All P1 tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. Pure logic tests against the sync algorithm.
+All tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. Pure logic tests against the sync algorithm. SyncService tests pass because the auth gate + reconcile logic already works correctly; the WASM-derived UUID happens to differentiate correctly for test scenarios (different MK → different UUID). The real production fix is in the device UUID tests.
 
-**After tests pass → Phase 2 — Implementation:**
+**🧩 Phase 2 — Implementation (NEXT):**
 
-1. Add device UUID persistence to boot sequence
-2. Wire `createStoragePlugin()` into `DevModeContext.jsx` for local storage
-3. Construct `HttpTransport` from config and pass to `SyncService` as remote transport
-4. Replace Settings Remote Sync section with service dropdown + conditional fields
-5. Add destructive transition warning dialog with export button
-6. Wire re-auth overlay trigger on cookie TTL expiry
+1. **Implement `getOrCreateDeviceUuid(storage)`** in new module `src/sync/device_uuid.js` — generate `crypto.randomUUID()`, persist under key `device_uuid`, read on subsequent calls. Handle migration from WASM-derived UUIDs (`isWasmDerivedUuid()` detection).
+2. **Wire into `SyncService._getDeviceId()`** — read `device_uuid` from storage first, fall back to WASM `getDeviceId(MK)` only as last resort.
+3. **Wire `createStoragePlugin()` into `DevModeContext.jsx`** for local storage selection.
+4. **Construct `HttpTransport` from config** and pass to `SyncService` as remote transport (dual-backend model).
+5. **Replace Settings Remote Sync section** with service dropdown + conditional fields.
+6. **Add destructive transition warning dialog** with export button.
 
 ### ✅ 1. Import Workflow Enhancement — Destroy Warning + Staging Persistence
 

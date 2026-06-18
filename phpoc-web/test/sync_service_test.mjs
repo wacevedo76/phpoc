@@ -1,0 +1,699 @@
+/**
+ * sync_service_test.mjs — SyncService auth gate + reconcile tests.
+ *
+ * TDD RED phase: Tests the SyncService.checkAndSync() auth gate and
+ * _reconcileAndClaim() using mock transport and in-memory storage.
+ * No real Worker or network — pure logic tests against the sync algorithm.
+ *
+ * Test categories:
+ *   A. Auth gate — READY / OFFLINE / REAUTH_NEEDED
+ *   B. _reconcileAndClaim — Case A (same UUID) / Case B (different UUID)
+ *   C. Edge cases — cookie TTL expiry, specifier mismatch, BLOB_KEY_MISMATCH
+ *
+ * In the RED phase, tests that exercise new/refactored behavior should FAIL
+ * because the implementation hasn't been built yet. Tests that exercise
+ * existing behavior should pass.
+ *
+ * Usage:
+ *   node test/sync_service_test.mjs
+ */
+
+import { createHash } from 'crypto';
+
+import { SyncService, SyncResult } from '../src/sync/sync.js';
+import { MemoryBackend } from '../src/sync/storage.js';
+import { TestHelpers } from './test_helpers.mjs';
+
+// ══════════════════════════════════════════════════════════════════════
+// Mock Transport — simulates remote R2 storage in memory
+// ══════════════════════════════════════════════════════════════════════
+// Mock Transport — simulates remote R2 storage in memory.
+// Supports sequential responses via queueResponse() for multi-pull tests.
+// ══════════════════════════════════════════════════════════════════════
+
+class MockTransport {
+  constructor() {
+    /** @type {Map<string, Uint8Array>} */
+    this._store = new Map();
+    /** @type {Map<string, Array<Uint8Array|null>>} queue for sequential pulls */
+    this._queue = new Map();
+    this._offline = false;
+    this._corrupt = false;
+  }
+
+  /** Queue a response value (or null) for the next pull() of this path. FIFO. */
+  queueResponse(path, value) {
+    const arr = this._queue.get(path) || [];
+    arr.push(value);
+    this._queue.set(path, arr);
+  }
+
+  async pull(path) {
+    if (this._offline) throw new Error('Network failure');
+    const queue = this._queue.get(path);
+    if (queue && queue.length > 0) return queue.shift();
+    const val = this._store.get(path);
+    return val !== undefined ? val : null;
+  }
+
+  async push(path, data) {
+    if (this._offline) throw new Error('Network failure');
+    this._store.set(path, data);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Mock CryptoService (matches the one in sync_test.mjs + new device UUID)
+// ══════════════════════════════════════════════════════════════════════
+
+class MockCrypto {
+  constructor() {
+    this._uuidCounter = 0;
+    this._specCounter = 0;
+    this._mk = null;
+  }
+
+  sha256(data) {
+    return createHash('sha256').update(data, 'utf-8').digest('hex');
+  }
+
+  generateUuid() {
+    this._uuidCounter++;
+    return `00000000-0000-0000-0000-${String(this._uuidCounter).padStart(12, '0')}`;
+  }
+
+  generateDeviceSpecifier() {
+    this._specCounter++;
+    return `spec${String(this._specCounter).padStart(31, '0')}`;
+  }
+
+  getMasterKey() { return this._mk; }
+  setMasterKey(k) { this._mk = k; }
+  hasMasterKey() { return !!this._mk; }
+
+  /**
+   * WASM default: HMAC-derived from master key.
+   * This is what the CURRENT implementation returns. After the fix,
+   * the SyncService will use a stored device UUID instead.
+   */
+  getDeviceId(mk) {
+    return `dev-${(mk || '').slice(0, 8)}`;
+  }
+
+  obfuscateBlob(plaintext, mk) {
+    const plainBytes = Buffer.from(plaintext, 'utf-8');
+    const keyFingerprint = mk
+      ? createHash('sha256').update(mk).digest().slice(0, 4)
+      : Buffer.alloc(4);
+    const obfuscated = Buffer.concat([keyFingerprint, plainBytes]);
+    return obfuscated.toString('base64');
+  }
+
+  deobfuscateBlob(b64, mk) {
+    try {
+      const obfuscated = Buffer.from(b64, 'base64');
+      const storedFingerprint = obfuscated.slice(0, 4);
+      if (mk) {
+        const expectedFingerprint = createHash('sha256').update(mk).digest().slice(0, 4);
+        if (!storedFingerprint.equals(expectedFingerprint)) {
+          throw new Error('key mismatch');
+        }
+      }
+      return obfuscated.slice(4).toString('utf-8');
+    } catch {
+      throw new Error('deobfuscation failed');
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════════════════════
+
+const BLOB_PATH = 'staging/blobs/current.json';
+const COOKIE_PATH = 'staging/blobs/device_cookie.bin';
+
+/**
+ * Create a SyncService with mock transport and crypto.
+ * The crypto has no master key set unless setMasterKey is called.
+ */
+function createSyncService({ withTransport = true, withMasterKey = false, masterKey = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111', cookieTtl = 30 } = {}) {
+  const storage = new MemoryBackend();
+  const crypto = new MockCrypto();
+  const transport = withTransport ? new MockTransport() : null;
+
+  if (withMasterKey) {
+    crypto.setMasterKey(masterKey);
+  }
+
+  const sync = new SyncService(storage, crypto, transport, {
+    cookieTtlMinutes: cookieTtl,
+  });
+
+  return { sync, storage, crypto, transport };
+}
+
+/**
+ * Push a remote cookie directly to the mock transport.
+ */
+async function pushRemoteCookie(transport, deviceUuid, specifier) {
+  const cookieJson = JSON.stringify({
+    device_uuid: deviceUuid,
+    device_specifier: specifier,
+  });
+  await transport.push(COOKIE_PATH, new TextEncoder().encode(cookieJson));
+}
+
+/**
+ * Push a remote staging blob to the mock transport.
+ *
+ * Remote blob entries must be in the raw format expected by _rawEntryToDTO():
+ * { entry_id, hash, data: { title, startTime_enc, endTime_enc, duration,
+ *   is_active, is_paused, pauses_enc, tags, comment, device_uuid, ... } }
+ * Timestamps use 'plain:' prefix convention from the CLI.
+ */
+async function pushRemoteBlob(transport, crypto, entries, deviceId, mk) {
+  const rawEntries = entries.map(e => ({
+    entry_id: e.entry_id || `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    hash: e.hash || `h-${e.entry_id}`,
+    data: {
+      entry_id: e.entry_id,
+      title: e.title,
+      startTime_enc: `plain:${e.start_epoch}`,
+      endTime_enc: e.end_epoch != null ? `plain:${e.end_epoch}` : undefined,
+      duration: e.duration || 0,
+      is_active: e.is_active || false,
+      is_paused: e.is_paused || false,
+      pauses_enc: 'plain:[]',
+      metadata_enc: 'plain:{}',
+      tags: e.tags || [],
+      comment: e.comment || null,
+      media: e.media || [],
+      device_uuid: deviceId,
+      end_device_uuid: '',
+    },
+  }));
+
+  const blob = JSON.stringify({
+    device_id: deviceId,
+    device_proof: '',
+    entries: rawEntries,
+    updated_at: Date.now(),
+  });
+  const obfuscated = crypto.obfuscateBlob(blob, mk);
+  const bytes = new Uint8Array(Buffer.from(obfuscated, 'base64'));
+  await transport.push(BLOB_PATH, bytes);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TESTS
+// ══════════════════════════════════════════════════════════════════════
+
+const t = new TestHelpers();
+
+async function run() {
+  console.log('══ SyncService Auth Gate & Reconcile Test Suite ══\n');
+
+  // ── Group A: Auth Gate — Basic States ──────────────────────────
+  console.log('── Group A: Auth Gate Basic States ──\n');
+
+  // A1. No transport configured → READY (local-only mode)
+  {
+    const { sync } = createSyncService({ withTransport: false, withMasterKey: true });
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'A1. no transport → READY');
+  }
+
+  // A2. No local cookie, no remote cookie → REAUTH_NEEDED
+  {
+    const { sync } = createSyncService({ withTransport: true });
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'A2. no cookie at all → REAUTH_NEEDED');
+  }
+
+  // A3. Local cookie valid + no remote cookie + no master key → REAUTH_NEEDED
+  {
+    const { sync, storage, crypto } = createSyncService({ withTransport: true });
+    // Create a valid local cookie
+    await crypto.setMasterKey('temp-key-for-cookie-creation-only');
+    // Use DeviceCookie.create() directly... but we need crypto.generateDeviceSpecifier()
+    // Instead, manually set a local cookie
+    await storage.set('cookie', {
+      device_specifier: 'spec-a',
+      creation_time: Date.now(),
+    });
+    crypto.setMasterKey(null); // No master key
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'A3. local cookie valid + no remote cookie + no MK → REAUTH_NEEDED');
+  }
+
+  // A4. Local cookie expired → REAUTH_NEEDED
+  {
+    const { sync, storage, crypto } = createSyncService({ withTransport: true, cookieTtl: 1 });
+    // Set a stale cookie (2 minutes old, TTL is 1 minute)
+    await storage.set('cookie', {
+      device_specifier: 'spec-old',
+      creation_time: Date.now() - 3 * 60 * 1000,
+    });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'A4. expired cookie → REAUTH_NEEDED');
+
+    // Cookie should be cleaned up
+    const cookieAfter = await storage.get('cookie');
+    t.assertEq(cookieAfter, undefined, 'A4b. expired cookie removed from storage');
+  }
+
+  // ── Group B: Fast Path — Cookie Match ──────────────────────────
+  console.log('\n── Group B: Fast Path (Cookie Match) ──\n');
+
+  // B1. Local cookie valid + remote cookie matches → READY (fast path)
+  {
+    const { sync, storage, crypto, transport } = createSyncService({ withTransport: true, withMasterKey: true });
+
+    // Create a local cookie
+    await storage.set('cookie', {
+      device_specifier: 'spec-match',
+      creation_time: Date.now(),
+    });
+
+    // Push matching remote cookie
+    await pushRemoteCookie(transport, 'dev-aaaa111', 'spec-match');
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'B1. matching cookies → READY (fast path)');
+
+    // Fast path should push blob and touch local cookie
+    // Verify local cookie creation_time was updated
+    const cookieAfter = await storage.get('cookie');
+    t.assert(cookieAfter.creation_time >= Date.now() - 5000, 'B1b. local cookie creation_time touched');
+
+    // Verify blob was pushed to remote
+    const blobBytes = await transport.pull(BLOB_PATH);
+    t.assert(blobBytes !== null, 'B1c. blob pushed to remote on fast path');
+  }
+
+  // ── Group C: Specifier Mismatch → REAUTH_NEEDED ──────────────────
+  console.log('\n── Group C: Specifier Mismatch ──\n');
+
+  // C1. Cookie specifier mismatch → REAUTH_NEEDED (even with master key)
+  {
+    const { sync, storage, crypto, transport } = createSyncService({ withTransport: true, withMasterKey: true });
+
+    // Local cookie with specifier 'spec-local'
+    await storage.set('cookie', {
+      device_specifier: 'spec-local',
+      creation_time: Date.now(),
+    });
+
+    // Remote cookie with different specifier
+    await pushRemoteCookie(transport, 'dev-cccc111', 'spec-remote-different');
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'C1. specifier mismatch → REAUTH_NEEDED');
+
+    // Master key should still be set (not cleared)
+    t.assert(crypto.hasMasterKey(), 'C1b. master key preserved after REAUTH_NEEDED');
+  }
+
+  // C2. Specifier mismatch forces auth regardless of cached master key
+  {
+    const { sync, storage, transport } = createSyncService({ withTransport: true, withMasterKey: true });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-mine',
+      creation_time: Date.now(),
+    });
+    await pushRemoteCookie(transport, 'dev-other', 'spec-theirs');
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'C2. specifier mismatch with valid MK → REAUTH_NEEDED');
+  }
+
+  // ── Group D: Remote Unreachable → OFFLINE ──────────────────────
+  console.log('\n── Group D: Remote Unreachable ──\n');
+
+  // D1. Remote transport throws on cookie pull → OFFLINE
+  {
+    const { sync, storage, transport } = createSyncService({ withTransport: true });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-1',
+      creation_time: Date.now(),
+    });
+    transport._offline = true;
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.OFFLINE, 'D1. remote unreachable on cookie pull → OFFLINE');
+  }
+
+  // D2. Remote unreachable during reconcile pull → OFFLINE
+  {
+    const { sync, storage, crypto, transport } = createSyncService({ withTransport: true, withMasterKey: true });
+
+    // Set up: local cookie valid, no remote cookie, master key set
+    await storage.set('cookie', {
+      device_specifier: 'spec-2',
+      creation_time: Date.now(),
+    });
+    // No remote cookie → should enter _reconcileAndClaim
+    // But make transport fail during the reconcile
+    transport._offline = true;
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.OFFLINE, 'D2. remote offline during reconcile → OFFLINE');
+  }
+
+  // ── Group E: _reconcileAndClaim — Case A (Same Device UUID → Push Only) ──
+  //
+  // _reconcileAndClaim is reached when the outer checkAndSync sees NO remote
+  // cookie but we have a valid local cookie + master key. It internally
+  // re-pulls the remote cookie. If that inner pull finds a cookie with the
+  // same device UUID → Case A (push only, no pull/merge).
+  //
+  console.log('\n── Group E: Reconcile — Case A (Same UUID) ──\n');
+
+  // E1. Same device UUID → push blob only (no pull/merge), READY
+  {
+    const mk = 'same-devuuid-same-devuuid-same-devuuid-same1234';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Local cookie valid
+    await storage.set('cookie', {
+      device_specifier: 'spec-case-a',
+      creation_time: Date.now(),
+    });
+
+    // Two-phase cookie pull:
+    //   Pull 1 (outer checkAndSync): null → no remote cookie → enters _reconcileAndClaim
+    //   Pull 2 (inner _reconcileAndClaim): cookie with SAME device UUID → Case A
+    const sameDeviceUuid = crypto.getDeviceId(mk);
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: sameDeviceUuid,
+      device_specifier: 'spec-old-case-a',
+    })));
+
+    await sync.capture({ title: 'Case A task', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'E1. same device UUID → READY');
+
+    // Verify blob was pushed (not pulled/merged)
+    const blobBytes = await transport.pull(BLOB_PATH);
+    t.assert(blobBytes !== null, 'E1b. blob pushed to remote');
+
+    // Local cookie should be touched with updated creation_time
+    const localCookieAfter = await storage.get('cookie');
+    t.assert(localCookieAfter.creation_time >= Date.now() - 5000, 'E1c. local cookie touched');
+  }
+
+  // E2. Same UUID: remote blob is NOT pulled (Case A = push only)
+  {
+    const mk = 'case-a-2--case-a-2--case-a-2--case-a-2--aa';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-e2',
+      creation_time: Date.now(),
+    });
+
+    const sameDeviceUuid = crypto.getDeviceId(mk);
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: sameDeviceUuid,
+      device_specifier: 'spec-remote-e2',
+    })));
+
+    // Pre-populate remote with an entry that should NOT be pulled (Case A)
+    await pushRemoteBlob(transport, crypto, [
+      { entry_id: 'remote-only', title: 'Remote Entry', start_epoch: 5000 }
+    ], sameDeviceUuid, mk);
+
+    await sync.capture({ title: 'Local Case A2', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'E2. Case A READY (push only)');
+
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 1, 'E2b. still one local entry (Case A did not pull)');
+    t.assertEq(entries[0].title, 'Local Case A2', 'E2c. local entry preserved');
+  }
+
+  // ── Group F: _reconcileAndClaim — Case B (Different UUID → Pull + Merge) ──
+  console.log('\n── Group F: Reconcile — Case B (Different UUID) ──\n');
+
+  // F1. Different device UUID → pull remote blob, merge, push merged, READY
+  {
+    const mkLocal = 'local-mk-local-mk-local-mk-local-mk-local12';
+    const mkRemote = 'other-mk-other-mk-other-mk-other-mk-other12';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-local-f1',
+      creation_time: Date.now(),
+    });
+
+    // Two-phase: outer sees null → enters reconcile; inner sees different UUID → Case B
+    const remoteDeviceUuid = `dev-${mkRemote.slice(0, 8)}`;
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-f1',
+    })));
+
+    // Push remote blob with an entry from the other device
+    await pushRemoteBlob(transport, crypto, [
+      { entry_id: 'remote-e1', title: 'Remote Task', start_epoch: 5000 }
+    ], remoteDeviceUuid, mkLocal);
+
+    await sync.capture({ title: 'Local Task F1', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'F1. different device UUID → READY (merge)');
+
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 2, 'F1b. two entries after merge');
+    const titles = entries.map(e => e.title).sort();
+    t.assertDeepEq(titles, ['Local Task F1', 'Remote Task'], 'F1c. both entries present after merge');
+  }
+
+  // F2. Case B first-time: no remote cookie at all → push local + new cookie
+  {
+    const mkLocal = 'first-time--first-time--first-time--first-time';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-f2',
+      creation_time: Date.now(),
+    });
+
+    // No remote cookie at all (both pulls return null) → first-time Case B
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.capture({ title: 'First Time Task', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'F2. no remote cookie at all → READY');
+
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 1, 'F2b. local entry survived');
+
+    const blobBytes = await transport.pull(BLOB_PATH);
+    t.assert(blobBytes !== null, 'F2c. blob pushed to remote');
+
+    const newCookie = await storage.get('cookie');
+    t.assert(!!newCookie, 'F2d. new local cookie created');
+  }
+
+  // ── Group G: BLOB_KEY_MISMATCH → OFFLINE ───────────────────────
+  console.log('\n── Group G: BLOB_KEY_MISMATCH Handling ──\n');
+
+  // G1. Remote blob exists but can't be decrypted → OFFLINE (data preserved)
+  {
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'my-keykk-my-keykk-my-keykk-my-keykk-my-keykk',
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-g1',
+      creation_time: Date.now(),
+    });
+
+    // Two-phase: outer sees null → enters reconcile; inner sees different UUID → Case B
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'dev-other-g1',
+      device_specifier: 'spec-other-g1',
+    })));
+
+    // Push a remote blob encrypted with a DIFFERENT key (simulating wrong passphrase)
+    const otherKey = 'wrong-key-wrong-key-wrong-key-wrong-key1';
+    const otherCrypto = new MockCrypto();
+    otherCrypto.setMasterKey(otherKey);
+    await pushRemoteBlob(transport, otherCrypto, [
+      { entry_id: 'undecryptable', title: 'Secret', start_epoch: 5000 }
+    ], 'dev-other-g1', otherKey);
+
+    await sync.capture({ title: 'My Task G1', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.OFFLINE, 'G1. BLOB_KEY_MISMATCH → OFFLINE (data safety)');
+
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 1, 'G1b. local entries preserved');
+    t.assertEq(entries[0].title, 'My Task G1', 'G1c. local data intact');
+  }
+
+  // ── Group H: Edge Cases ─────────────────────────────────────────
+  console.log('\n── Group H: Edge Cases ──\n');
+
+  // H1. No local cookie + remote reachable + no master key → REAUTH_NEEDED
+  {
+    const { sync } = createSyncService({ withTransport: true, withMasterKey: false });
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'H1. no cookie + no MK → REAUTH_NEEDED');
+  }
+
+  // H2. Local cookie with empty specifier → treated as invalid → REAUTH_NEEDED
+  {
+    const { sync, storage } = createSyncService({ withTransport: true });
+    await storage.set('cookie', {
+      device_specifier: '',
+      creation_time: Date.now(),
+    });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'H2. empty specifier → REAUTH_NEEDED');
+
+    const cookieAfter = await storage.get('cookie');
+    t.assertEq(cookieAfter, undefined, 'H2b. corrupt cookie removed');
+  }
+
+  // H3. Remote cookie parse fails → fall through to auth gate
+  {
+    const { sync, storage, transport } = createSyncService({ withTransport: true });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-h3',
+      creation_time: Date.now(),
+    });
+
+    await transport.push(COOKIE_PATH, new TextEncoder().encode('not-valid-json!!!'));
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'H3. unparseable remote cookie → REAUTH_NEEDED');
+  }
+
+  // H4. Cookie TTL exactly at boundary
+  {
+    const { sync, storage } = createSyncService({ withTransport: true, cookieTtl: 1 });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-boundary',
+      creation_time: Date.now() - 30 * 1000,
+    });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'H4. cookie within TTL but no MK → REAUTH_NEEDED');
+
+    const cookieAfter = await storage.get('cookie');
+    t.assert(!!cookieAfter, 'H4b. cookie within TTL preserved');
+  }
+
+  // H5. Empty remote (no cookie, no blob) + valid MK + valid local cookie → reconcile
+  {
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'empty-remote-empty-remote-empty-remote-mk99',
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-h5',
+      creation_time: Date.now(),
+    });
+
+    // Empty remote — both pulls return null → first-time Case B
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.capture({ title: 'Empty Remote Task', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'H5. empty remote + valid local → READY');
+
+    const newCookie = await storage.get('cookie');
+    t.assert(!!newCookie && !!newCookie.device_specifier, 'H5b. new cookie created');
+  }
+
+  // H6. Multiple entries merged correctly in Case B
+  {
+    const mkLocal = 'multi-merge-multi-merge-multi-merge-multi1234';
+    const mkRemote = 'multi-other-multi-other-multi-other-multi9876';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-h6',
+      creation_time: Date.now(),
+    });
+
+    const remoteUuid = `dev-${mkRemote.slice(0, 8)}`;
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteUuid,
+      device_specifier: 'spec-remote-h6',
+    })));
+
+    // Push remote blob with 3 entries
+    await pushRemoteBlob(transport, crypto, [
+      { entry_id: 'r1', title: 'Remote A', start_epoch: 5000 },
+      { entry_id: 'r2', title: 'Remote B', start_epoch: 7000 },
+      { entry_id: 'r3', title: 'Remote C', start_epoch: 9000 },
+    ], remoteUuid, mkLocal);
+
+    await sync.capture({ title: 'Local A', startEpoch: 1000 });
+    await sync.capture({ title: 'Local B', startEpoch: 3000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'H6. multi-entry merge → READY');
+
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 5, 'H6b. 5 entries after merge (2 local + 3 remote)');
+
+    const starts = entries.map(e => e.start_epoch);
+    t.assertDeepEq(starts, [1000, 3000, 5000, 7000, 9000], 'H6c. entries sorted by start_epoch');
+  }
+
+  // ── Results ───────────────────────────────────────────────────────
+  t.summary('SyncService Auth Gate & Reconcile');
+}
+
+run().catch(err => {
+  console.error('Test suite crashed:', err);
+  process.exit(1);
+});

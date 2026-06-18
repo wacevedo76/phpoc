@@ -501,22 +501,21 @@ This is the same philosophy as the current design: the server is a dumb store; c
 | 23 | **Export fix (dev mode)** — export uses cached master key when available, skipping seed authentication. Works in both dev and production. | 0.5 day | ✅ Done | Jun 11 2026 |
 | 24 | **Recovery seed display** — after onboarding, full-screen overlay shows base64 seed with "I've saved it" confirmation. | 0.5 day | ✅ Done | Jun 11 2026 |
 | 25 | **Logout button** — renamed from Lock to Logout, exit-door icon. Fixed blank screen + in-memory data loss on re-login. | 0.5 day | ✅ Done | Jun 11 2026 |
-| 36 | **Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker** — Wire phpoc-web to use the Cloudflare Worker as a remote backend. Dual-backend model (local IndexedDB + remote HttpTransport), device UUID persistence (random UUID4 per device, not HMAC-derived), Settings UI with service dropdown + conditional fields, destructive transition warning. Architecture decisions documented in `SESSION_HANDOFF.md`. | 2-3 days | 🔜 In progress (writing tests) | Jun 18 2026 |
+| 36 | **Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker** — Wire phpoc-web to use the Cloudflare Worker as a remote backend. Dual-backend model (local IndexedDB + remote HttpTransport), device UUID persistence (random UUID4 per device, not HMAC-derived), Settings UI with service dropdown + conditional fields, destructive transition warning. Architecture decisions documented in `SESSION_HANDOFF.md`. | 2-3 days | 🔜 In progress — Phase 1 (tests) complete, Phase 2 (implementation) next | Jun 18 2026 |
 
 ---
 
 ### Remote Sync Wiring — Test Plan (2026-06-18)
 
-Before implementing the feature, 6 test suites are planned to cover untested sync paths:
+Phase 1 tests written. P1 suites complete, P2 suites pending.
 
-| Suite | What | Priority |
-|-------|------|:---:|
-| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 |
-| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 |
-| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 |
-| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 |
-| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 |
-| `test/sync_service_test.mjs` | Cookie TTL expiry, specifier mismatch, BLOB_KEY_MISMATCH, remote unreachable, empty remote | P2 |
+| Suite | What | Priority | Status |
+|-------|------|:---:|:---:|
+| `test/sync_service_test.mjs` | `SyncService.checkAndSync()` auth gate: READY/OFFLINE/REAUTH_NEEDED with mock transport | P1 | ✅ 40 tests written, all pass (auth gate + reconcile Case A/B + BLOB_KEY_MISMATCH + edge cases) |
+| `test/sync_service_test.mjs` | `SyncService._reconcileAndClaim()`: Case A (same UUID → push only) vs Case B (different UUID → pull+merge) | P1 | ✅ Included above |
+| `test/device_uuid_test.mjs` | Device UUID generation, IndexedDB persistence, survives refresh/re-login, not derived from master key | P1 | 🔴 8 test groups written, all fail (stubs throw `NOT YET IMPLEMENTED` — RED phase) |
+| `test/factory_sync_wiring_test.mjs` | Factory produces correct dual-setup (local IndexedDB + remote HttpTransport) for each deployment mode | P2 | 🔜 Pending |
+| `test/remote_config_test.mjs` | localStorage persistence for deployment, baseUrl, apiKey; fallback to standalone on invalid config | P2 | 🔜 Pending |
 
 **Device UUID bug discovered:** The WASM `get_device_id(MK)` returns `HMAC(MK, "device:id")` — deterministic from passphrase (per PHPSPEC §2.8 default). The CLI uses `RandomUUIDDeviceIdentityProvider` which generates and persists a random UUID4. If the web app uses WASM's default, all devices with the same passphrase produce the same device UUID, causing the cookie mechanism to incorrectly treat different devices as the same device (Case A — push only, no merge). Fix: generate `crypto.randomUUID()` on first boot, persist in IndexedDB, use for all cookie operations.
 
