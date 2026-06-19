@@ -1345,6 +1345,98 @@ console.log('\n=== Group J — Input Chain Validation ===');
   }
 }
 
+{
+  // J8: Both chains invalid → local fires first, remote never reached
+  console.log('\n  --- J8: Both chains invalid → local error fires first ---');
+  const goodChain = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const badLocal = JSON.parse(JSON.stringify(goodChain));
+  const badRemote = JSON.parse(JSON.stringify(goodChain));
+  badLocal[0].day_hash = 'b' + badLocal[0].day_hash.slice(1);   // break local genesis
+  badRemote[0].day_hash = 'c' + badRemote[0].day_hash.slice(1); // break remote genesis too
+
+  if (hasMerge) {
+    let threwLocal = false;
+    let threwRemote = false;
+    try {
+      await LedgerMerge.merge(badLocal, badRemote, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threwLocal = e.message.includes('local chain validation failed');
+      threwRemote = e.message.includes('remote');
+    }
+    t.assert(threwLocal && !threwRemote,
+      'local validation fires first — remote is never checked when local fails');
+  } else {
+    t.assert(false, 'both invalid — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J9: Invalid remote + genesis mismatch → validation fires, not genesis error
+  console.log('\n  --- J9: Invalid remote + genesis mismatch → validation before genesis check ---');
+  const goodLocal = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  // Build a chain with a DIFFERENT genesis (matching I2 pattern)
+  const genesis2 = {
+    type: 'genesis',
+    format_version: '0.3.0',
+    day_index: 0,
+    date: '2026-06-01',
+    identity: {
+      username: 'otheruser',
+      email: 'other@example.com',
+      recovery_seed_enc: 'enc:otherseed',
+      identity_pub_key: 'otherpubkey000000000000000000000000000000000000000000000000000',
+      identity_secret_enc_fallback: 'enc:othersecret',
+    },
+    prev_hash: ZERO_HASH,
+    entries: [],
+  };
+  genesis2.day_hash = crypto.seal(sortKeysJSON(genesis2), MASTER_KEY);
+  if (IDENTITY_SECRET) {
+    genesis2.signature = crypto.sign(genesis2.day_hash, IDENTITY_SECRET);
+  }
+  const badRemote = [genesis2, buildDayBlock([ENTRY_B], getBlockHash(genesis2), '2026-06-10', 1)];
+  // Tamper the remote's day block seal (block 1)
+  badRemote[1].day_hash = 'b' + badRemote[1].day_hash.slice(1);
+
+  if (hasMerge) {
+    let threwValidation = false;
+    let threwGenesis = false;
+    try {
+      await LedgerMerge.merge(goodLocal, badRemote, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threwValidation = e.message.includes('remote chain validation failed');
+      threwGenesis = e.message.includes('genesis') || e.message.includes('mismatch');
+    }
+    t.assert(threwValidation && !threwGenesis,
+      'remote validation fires before genesis mismatch check');
+  } else {
+    t.assert(false, 'invalid remote + genesis mismatch — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J10: Invalid local + genesis mismatch → validation fires, not genesis error
+  console.log('\n  --- J10: Invalid local + genesis mismatch → validation before genesis check ---');
+  const goodRemote = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const badLocal = JSON.parse(JSON.stringify(goodRemote));
+  badLocal[0].day_hash = 'b' + badLocal[0].day_hash.slice(1); // break genesis seal
+
+  if (hasMerge) {
+    let threwValidation = false;
+    let threwGenesis = false;
+    try {
+      await LedgerMerge.merge(badLocal, goodRemote, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threwValidation = e.message.includes('local chain validation failed');
+      threwGenesis = e.message.includes('genesis') || e.message.includes('mismatch');
+    }
+    t.assert(threwValidation && !threwGenesis,
+      'local validation fires before genesis mismatch check');
+  } else {
+    t.assert(false, 'invalid local + genesis mismatch — SKIP: merge not implemented');
+  }
+}
+
 // ── Summary ───────────────────────────────────────────────────────────
 const failures = t.summary('ledger_merge_test.mjs');
 process.exitCode = failures > 0 ? 1 : 0;
