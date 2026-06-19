@@ -18,25 +18,8 @@
  * Architecture: PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.31
  */
 
-import { getBlockHash } from './utils.js';
+import { getBlockHash, jsonSort, computeEntryHash } from './utils.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
-
-/**
- * Build a JSON string with top-level sorted keys for seal computation.
- *
- * Uses explicit key sorting rather than JSON.stringify's replacer array
- * (which acts as a property whitelist, stripping nested data).
- *
- * @param {object} obj
- * @returns {string} JSON with top-level keys sorted.
- */
-function sealJson(obj) {
-  const sorted = {};
-  for (const k of Object.keys(obj).sort()) {
-    sorted[k] = obj[k];
-  }
-  return JSON.stringify(sorted);
-}
 
 export class LedgerMerge {
   /**
@@ -56,13 +39,18 @@ export class LedgerMerge {
    * @param {object} crypto - CryptoService-like object with seal/sign/decrypt methods.
    * @param {string} masterKey - Hex master key for sealing and decryption.
    * @param {string|null} [identitySecret=null] - Optional identity secret for block signatures.
+   *   Also used for validating input chain signatures.
    * @param {object|null} [summaryPolicy=null] - Summary policy for rebuild.
    *   Defaults to YearMonthSummaryPolicy.
    * @returns {Promise<{mergedChain: object[], stats: object, index: object}>}
-   * @throws {Error} If genesis blocks don't match.
+   * @throws {Error} If either chain fails validation, or if genesis blocks don't match.
    */
   static async merge(localChain, remoteChain, crypto, masterKey,
                      identitySecret = null, summaryPolicy = null) {
+    // ── 0. VALIDATE EACH CHAIN INDEPENDENTLY ─────────────────────────
+    await LedgerMerge._verifyChain('local', localChain, crypto, masterKey, identitySecret);
+    await LedgerMerge._verifyChain('remote', remoteChain, crypto, masterKey, identitySecret);
+
     // ── 1. FIND FORK POINT ────────────────────────────────────────────
     let forkIndex = -1;
     const minLen = Math.min(localChain.length, remoteChain.length);
@@ -217,7 +205,7 @@ export class LedgerMerge {
         };
 
         // Compute block seal
-        const dayJson = sealJson(dayContent);
+        const dayJson = jsonSort(dayContent);
         dayContent.day_hash = await crypto.seal(dayJson, masterKey);
 
         // Sign with identity secret if available
@@ -267,5 +255,114 @@ export class LedgerMerge {
     };
 
     return { mergedChain, stats, index };
+  }
+
+  /**
+   * Verify a single ledger chain: seal integrity, prev_hash linkage,
+   * entry hashes, and optional identity signatures for every block.
+   *
+   * Mirrors LedgerChain._verifyBlockData() but operates on raw arrays
+   * so the merge module stays standalone (no StorageBackend dependency).
+   *
+   * @param {string} label - "local" or "remote" for error messages.
+   * @param {object[]} chain - Array of block dicts.
+   * @param {object} crypto - CryptoService-like object.
+   * @param {string} masterKey - Hex master key.
+   * @param {string|null} [identitySecret=null]
+   * @throws {Error} If any block fails validation.
+   */
+  static async _verifyChain(label, chain, crypto, masterKey, identitySecret = null) {
+    if (!Array.isArray(chain) || chain.length === 0) {
+      return;  // Empty chain is valid (trivially)
+    }
+
+    // Block 0: seal + entry hashes
+    if (!LedgerMerge._verifyBlockData(chain[0], crypto, masterKey, identitySecret)) {
+      throw new Error(
+        `${label} chain validation failed: block 0 seal or entry hash is invalid`
+      );
+    }
+
+    // Blocks 1+: prev_hash linkage + seal + entry hashes
+    for (let i = 1; i < chain.length; i++) {
+      const current = chain[i];
+      const prev = chain[i - 1];
+
+      // Check prev_hash linkage
+      if (current.prev_hash !== getBlockHash(prev)) {
+        throw new Error(
+          `${label} chain validation failed: prev_hash mismatch at block ${i}`
+        );
+      }
+
+      if (!LedgerMerge._verifyBlockData(current, crypto, masterKey, identitySecret)) {
+        throw new Error(
+          `${label} chain validation failed: block ${i} seal, signature, or entry hash is invalid`
+        );
+      }
+    }
+  }
+
+  /**
+   * Verify a single block's data: seal, optional signature, and entry hashes.
+   *
+   * Matches the same checks performed by LedgerChain._verifyBlockData():
+   *   1. Seal = HMAC of sorted keys (minus seal key + signature)
+   *   2. Signature over seal (if identitySecret is provided)
+   *   3. Entry hash = SHA-256 of pretty-printed entry data
+   *
+   * @param {object} block - Block dict.
+   * @param {object} crypto - CryptoService-like object.
+   * @param {string} masterKey - Hex master key.
+   * @param {string|null} [identitySecret=null]
+   * @returns {boolean} True if the block is valid.
+   */
+  static _verifyBlockData(block, crypto, masterKey, identitySecret = null) {
+    const type = block.type || 'day';
+    let hashKey;
+    if (type === 'day') {
+      hashKey = 'day_hash';
+    } else if (type === 'month_summary') {
+      hashKey = 'month_hash';
+    } else if (type === 'year_summary') {
+      hashKey = 'year_hash';
+    } else {
+      hashKey = 'day_hash';
+    }
+
+    // Build check data: everything except the hash key and signature
+    const checkData = {};
+    for (const [k, v] of Object.entries(block)) {
+      if (k !== hashKey && k !== 'signature') {
+        checkData[k] = v;
+      }
+    }
+
+    // 1. Block seal
+    if (!crypto.verifySeal(jsonSort(checkData), block[hashKey], masterKey)) {
+      return false;
+    }
+
+    // 2. Identity signature (only if identity secret is set)
+    if (identitySecret) {
+      if (!block.signature) {
+        return false;
+      }
+      if (!crypto.verifySignature(block[hashKey], block.signature, identitySecret)) {
+        return false;
+      }
+    }
+
+    // 3. Entry hashes for day blocks
+    if (type === 'day' && block.entries) {
+      for (const entry of block.entries) {
+        const expectedHash = computeEntryHash(entry.data, crypto);
+        if (expectedHash !== entry.hash) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 }

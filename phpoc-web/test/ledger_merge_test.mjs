@@ -27,6 +27,7 @@
 import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
+import { sortKeys } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -36,11 +37,7 @@ const t = new TestHelpers();
  * acts as a property whitelist that strips nested data — use this instead.
  */
 function sortKeysJSON(obj) {
-  const sorted = {};
-  for (const k of Object.keys(obj).sort()) {
-    sorted[k] = obj[k];
-  }
-  return JSON.stringify(sorted);
+  return JSON.stringify(sortKeys(obj));
 }
 
 // ── Import module under test ──
@@ -1192,6 +1189,159 @@ console.log('\n=== Group I — Edge Cases ===');
     t.assert(result.stats.newBlockCount >= 1, 'new blocks from remote\'s unique entries');
   } else {
     t.assert(false, 'local subset of remote — SKIP: merge not implemented');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Group J — Input Chain Validation (independently verify each chain)
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n=== Group J — Input Chain Validation ===');
+
+{
+  // J1: Tampered block seal → local validation rejects
+  console.log('\n  --- J1: Tampered block seal → rejects ---');
+  const goodChain = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const tamperedChain = JSON.parse(JSON.stringify(goodChain));
+
+  // Flip the first byte of the day_hash on block 1
+  const hash = tamperedChain[1].day_hash;
+  tamperedChain[1].day_hash = 'f' + hash.slice(1);
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('local', tamperedChain, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('validation failed') && e.message.includes('seal');
+    }
+    t.assert(threw, 'tampered block seal throws validation error');
+  } else {
+    t.assert(false, 'tampered seal — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J2: Broken prev_hash linkage → validation rejects
+  console.log('\n  --- J2: Broken prev_hash → rejects ---');
+  const chain = buildChain([
+    { date: '2026-06-10', entries: [ENTRY_A] },
+    { date: '2026-06-11', entries: [ENTRY_B] },
+  ]);
+  const tampered = JSON.parse(JSON.stringify(chain));
+  // Break prev_hash on block 2
+  tampered[2].prev_hash = tampered[1].prev_hash; // wrong prev hash
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('local', tampered, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('prev_hash mismatch');
+    }
+    t.assert(threw, 'broken prev_hash linkage throws validation error');
+  } else {
+    t.assert(false, 'broken prev_hash — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J3: Tampered entry hash → validation rejects
+  console.log('\n  --- J3: Tampered entry hash → rejects ---');
+  const chain = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const tampered = JSON.parse(JSON.stringify(chain));
+  // Tamper entry hash on block 1
+  const hash = tampered[1].entries[0].hash;
+  tampered[1].entries[0].hash = 'b' + hash.slice(1);
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('local', tampered, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('entry hash');
+    }
+    t.assert(threw, 'tampered entry hash throws validation error');
+  } else {
+    t.assert(false, 'tampered entry hash — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J4: Empty chain passes validation (trivially valid)
+  console.log('\n  --- J4: Empty chain passes validation ---');
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('local', [], crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = true;
+    }
+    t.assert(!threw, 'empty chain passes validation without error');
+  } else {
+    t.assert(false, 'empty chain — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J5: Valid chain passes silently
+  console.log('\n  --- J5: Valid chain passes silently ---');
+  const chain = buildChain([
+    { date: '2026-06-10', entries: [ENTRY_A, ENTRY_B] },
+    { date: '2026-06-11', entries: [ENTRY_C] },
+  ]);
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('remote', chain, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = true;
+    }
+    t.assert(!threw, 'valid chain passes validation without error');
+  } else {
+    t.assert(false, 'valid chain — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J6: merge() itself rejects invalid local chain
+  console.log('\n  --- J6: merge rejects invalid local chain ---');
+  const goodChain = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const tampered = JSON.parse(JSON.stringify(goodChain));
+  // Break genesis seal
+  tampered[0].day_hash = 'b' + tampered[0].day_hash.slice(1);
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge.merge(tampered, goodChain, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('local chain validation failed');
+    }
+    t.assert(threw, 'merge throws when local chain fails validation');
+  } else {
+    t.assert(false, 'invalid local — SKIP: merge not implemented');
+  }
+}
+
+{
+  // J7: merge() itself rejects invalid remote chain
+  console.log('\n  --- J7: merge rejects invalid remote chain ---');
+  const goodChain = buildChain([{ date: '2026-06-10', entries: [ENTRY_A] }]);
+  const tampered = JSON.parse(JSON.stringify(goodChain));
+  // Break genesis seal
+  tampered[0].day_hash = 'b' + tampered[0].day_hash.slice(1);
+
+  if (hasMerge) {
+    let threw = false;
+    try {
+      await LedgerMerge.merge(goodChain, tampered, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('remote chain validation failed');
+    }
+    t.assert(threw, 'merge throws when remote chain fails validation');
+  } else {
+    t.assert(false, 'invalid remote — SKIP: merge not implemented');
   }
 }
 
