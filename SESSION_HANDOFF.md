@@ -40,7 +40,7 @@
 | 16 | **History Calendar Widget + Committed Entry Decryption** — Replaced `<input type="date">` with custom inline month calendar (year/month nav, day grid with entry-dot indicators, today highlighting, click-to-filter). Extended `sync.getCompleted()` to decrypt committed entries from `ledger:blocks` via new `_rawCommittedEntryToDTO()` (AES-128-CTR field decryption). Calendar dots and date filtering now work across all committed entries. | ✅ | — |
 | 16 | Staging CRUD in UI (Dashboard) | 🔜 | — |
 | 16b | **Sync Screen Delete-From-Staging Button** — expanded stopped entries show "🗑 Delete from staging" button that calls `sync.remove()` to remove the entry from the staging area. Immediate UI update with all editing/selection state cleaned up. | ✅ | Jun 16 2026 |
-| 17 | **Ledger Merge — TDD RED** — 36 tests written in `test/ledger_merge_test.mjs`. Covers fork detection, dedup, summary blocks, alphabetical ordering, chain integrity, index rebuild, stats, and edge cases. All 38 assertions RED — `LedgerMerge` module not yet implemented. | 🔴 RED | Jun 19 2026 |
+| 17 | **Ledger Merge — TDD GREEN** — 36 tests written, module implemented in `src/ledger/merge.js`. Covers fork detection, dedup, summary blocks, alphabetical ordering, chain integrity, index rebuild, stats, and edge cases. All 89 assertions GREEN. `LedgerMerge.merge()` standalone with 7-step algorithm per §11.31. | ✅ GREEN | Jun 19 2026 |
 | 17b | Companion bridge server (Python) | 🔜 | — |
 | 17b | **rclone bridge loader** (`rclone_bridge.py`) — interactive setup for Google Drive, Dropbox, 40+ cloud providers | 🔜 | Step 17 (bridge server) |
 | 18 | Docker + multi-tenant Worker | 🔜 | — |
@@ -104,6 +104,7 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/src/components/screens/History.jsx` | History — custom month calendar widget with entry-dot indicators, day grid, year/month navigation. Click-to-filter date. Staging/committed badges, expand/collapse details, tag/comment inline editing for staging entries. |
 | `phpoc-web/src/sync/local_cache.js` | `StagingEntry` now tracks `committed` (boolean) and `block_index` (number). Added `markCommitted()`. |
 | `phpoc-web/test/ledger_export_full_test.mjs` | 72 tests for `exportLedgerFull()` — v2 format, seal integrity, data preservation, real mock ledger data (97 blocks, 205 entries), error handling |
+| `phpoc-web/src/ledger/merge.js` | **NEW (2026-06-19)** — `LedgerMerge.merge()` standalone module. 7-step merge algorithm: fork detection, entry extraction, content_hash dedup, alphabetical sort, chain rebuild with summary inserts, index rebuild, verification. 89 tests green. |
 | `phpoc-web/src/sync/sync.js` | Exposes `markCommitted()` from LocalCache |
 | `phpoc-web/src/ledger/engine.js` | `commit()` returns `{hashPrefix, committedEntryIds, blockIndex}` for caller tracking. `_commitDay()` returns block index. Staging entry IDs preserved through commit flow. Tests: 114 |
 | `phpoc-web/test/*.mjs` | Test suites — ledger (4 suites), sync, transport, import/export, etc. |
@@ -111,7 +112,7 @@ Four modules all green. Completed a 3-phase code review refactoring (2026-06-11)
 | `phpoc-web/test/device_uuid_test.mjs` | **NEW (2026-06-18)** — 22 tests for `getOrCreateDeviceUuid()` and `isWasmDerivedUuid()`. ✅ GREEN — all passing. Tests: UUID4 generation, storage persistence, logout/re-login survival, MK independence, format validation, WASM-derived detection, migration. |
 | `phpoc-web/test/remote_config_test.mjs` | **NEW (2026-06-18)** — 35 tests for `detectDeployment()` config detection: localStorage persistence, URL param priority, auto-detect SaaS from worker URL, invalid deployment fallback, config mutation. ✅ GREEN — all passing. |
 | `phpoc-web/test/remote_transport_test.mjs` | **NEW (2026-06-18)** — 35 tests for `createRemoteTransport()`: null for standalone/mock/memory, HttpTransport for saas/lan with baseUrl, null fallback, instance isolation, ETag cache. ✅ GREEN — 40 assertions, 0 failures. `createRemoteTransport()` implemented in `plugin_factory.js`. |
-| `phpoc-web/test/ledger_merge_test.mjs` | **NEW (2026-06-19)** — 36 tests for `LedgerMerge.merge()`: fork detection (4), simple merge (4), content_hash dedup (6), summary blocks (3), alphabetical ordering (3), chain integrity (5), index rebuild (2), stats accuracy (5), edge cases (4). 🔴 RED — awaiting `LedgerMerge` module implementation in `src/ledger/merge.js`. |
+| `phpoc-web/test/ledger_merge_test.mjs` | **NEW (2026-06-19)** — 36 tests for `LedgerMerge.merge()`: fork detection (4), simple merge (4), content_hash dedup (6), summary blocks (3), alphabetical ordering (3), chain integrity (5), index rebuild (2), stats accuracy (5), edge cases (4). ✅ GREEN — 89 assertions, 0 failures. Module implemented in `src/ledger/merge.js`. |
 
 ### Cross-Platform (reference)
 | File | Purpose |
@@ -150,7 +151,7 @@ Also relevant: `MAP.md` (file inventory), `ROADMAP.md`, `BACKLOG.md`, `CHANGELOG
 
 ### 🔴 NOW: Remote Sync Wiring — phpoc-web ↔ Cloudflare Worker (2026-06-18)
 
-> **⏭ Next session resume:** TDD GREEN phase — Implement `LedgerMerge.merge()` in `src/ledger/merge.js`. 36 tests written in `test/ledger_merge_test.mjs` (🔴 RED, 38 assertions, module doesn't exist). Architecture: standalone module, 7-step algorithm per `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.31. Signature: `LedgerMerge.merge(localChain, remoteChain, crypto, masterKey, summaryPolicy?) → { mergedChain, stats }`. Stats: `{ forkIndex, localEntries, remoteEntries, duplicatesSkipped, mergedEntries, newBlockCount }`. After GREEN, wire into genesis compatibility gate (Step 7).
+> **⏭ Next session resume:** Step 7 — Settings genesis compatibility gate. LedgerMerge is GREEN (89 tests, 0 failures). Wire merge into the Settings UI's remote connection flow: pull genesis from remote, compare hashes, use merge for same-genesis divergent chains, block connection for different genesis.
 
 Wire phpoc-web to use the Cloudflare Worker as a remote backend. All transport and backend pieces are built and tested (HttpTransport 49 tests, HttpBackend 41 tests, Worker ~195 lines). The gap is the boot sequence in `DevModeContext.jsx` hardcoding `IndexedDBBackend` instead of using the `createStoragePlugin()` factory, and a Settings UI for configuring remote services.
 
@@ -183,21 +184,7 @@ All tests use `MemoryBackend` + `MockTransport` — no real Worker, no network. 
 5. ✅ **Wired into `DevModeContext.jsx`** — DONE (2026-06-18). Added `createTransportFromDeployment()` helper to `plugin_factory.js` that wraps `detectDeployment()` + `createRemoteTransport()` with try/catch fallback (bad URL → null transport + console.warn). `bootstrapServices()` in `DevModeContext.jsx` now calls `createTransportFromDeployment()` instead of hardcoding `null`. `detectDeployment()` fixed: explicit deployment keys now include `baseUrl`/`apiKey` from localStorage via `readRemoteConfig()`. 19 new integration tests (`transport_wiring_test.mjs`). Exports added to barrel.
 ### ⏭ Next Steps (2026-06-18)
 
-6. 🔴 **Ledger merge strategy** — TDD RED phase **COMPLETE (2026-06-19)**. Architecture settled (2026-06-18). New `LedgerMerge` module (`src/ledger/merge.js`). Decisions documented in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.30 (alphabetical entry ordering) and §11.31 (merge algorithm). **36 tests written in `test/ledger_merge_test.mjs` — all 38 assertions RED (module doesn't exist yet).** ⏭ Next: Implement `LedgerMerge.merge()` to turn them GREEN. This must be done before Step 7 so the genesis compatibility gate has a merge strategy to offer when chains diverge.
-
-   **Test plan — 36 tests in `test/ledger_merge_test.mjs`:**
-
-   | Group | Tests | Description |
-   |-------|:-----:|-------------|
-   | A — Fork detection | 4 | Fork at genesis, after N blocks, after summary, identical chains |
-   | B — Simple merge, no duplicates | 4 | Remote empty, local empty, non-overlapping entries, different dates |
-   | C — Dedup via content_hash | 6 | Exact duplicate, multiple dupes, all-remote-dupes, same-title-different-times, same-title-different-tags, same-title-different-durations |
-   | D — Summary block handling | 3 | Divergent summaries, year boundary, empty day blocks |
-   | E — Alphabetical ordering | 3 | Sort order, same-title stability, mixed-case |
-   | F — Chain integrity after merge | 5 | Full verify, prev_hash linkage, entry hashes preserved, content_hash unchanged, block seals verify |
-   | G — Index rebuild | 2 | Index contains both chains' entries, durations summed |
-   | H — Stats accuracy | 5 | Counts match, zero-dupe, all-dupe, forkIndex, newBlockCount |
-   | I — Edge cases | 4 | Genesis-only, genesis mismatch, remote subset, local subset |
+6. ✅ **Ledger merge strategy** — TDD GREEN phase **COMPLETE (2026-06-19)**. `LedgerMerge.merge()` implemented in `src/ledger/merge.js`. Standalone module with 7-step algorithm per `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.31. **89 assertions, 0 failures.** Fork detection walks both chains forward; content_hash dedup uses Set from all local entries; alphabetical sort by title per §11.30; chain rebuild inserts summary blocks via YearMonthSummaryPolicy; only rebuilds when unique remote entries exist (local chain used as-is for subset/identical cases). **Test infrastructure bug fixed:** `buildDayBlock` seal computation in `ledger_merge_test.mjs` now uses proper sorted-key JSON instead of `JSON.stringify(obj, replacerArray)` which acted as a property whitelist, stripping nested entry data and making all same-position blocks appear identical.
 
 7. 🔜 **Settings service dropdown with genesis compatibility gate** — Replace hardcoded text boxes with deployment picker. On remote connection, pull genesis block from remote (`GET /ledger/blocks/0.json`), decrypt with master key, compare against local genesis hash:
    - **G₁ ≠ G₂ (different ledgers):** Block connection. Show clear message: "This remote contains a different ledger. Export your current ledger from Data Management, then import the remote ledger."
@@ -247,7 +234,7 @@ Identity secret stored during genesis but not loaded into `LedgerEngine` for com
 - ETag caching stale in long-running daemon mode (CLI-only, low priority).
 - WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.
 - IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.
-- **Ledger merge — TDD RED complete (2026-06-19):** Architecture settled — standalone `LedgerMerge` module, 7-step algorithm, strict `content_hash` dedup, alphabetical entry ordering. Design decisions in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.30 and §11.31. 36 tests written in `test/ledger_merge_test.mjs` — all 38 assertions RED. ⏭ Next: GREEN phase — implement `LedgerMerge.merge()` in `src/ledger/merge.js`.
+- **Ledger merge — GREEN (2026-06-19):** `LedgerMerge.merge()` implemented in `src/ledger/merge.js`. Standalone module, 7-step algorithm per §11.31. 89 assertions, 0 failures. Fork detection walks both chains forward; content_hash dedup uses Set from all local entries; alphabetical sort by title per §11.30; only rebuilds when unique remote entries exist. Test infrastructure seal-computation bug fixed (replacer-array whitelist → proper sorted-key JSON). ⏭ Next: Wire into genesis compatibility gate (Step 7).
 - **No genesis gate on remote connection (2026-06-18):** The Settings screen lets users configure a Worker URL without verifying it belongs to the same ledger. A user could silently connect to the wrong Worker and sync staging entries to an unrelated ledger. Step 6 addresses this with a genesis compatibility gate: pull remote block 0, decrypt, compare hashes. G₁≠G₂ → block connection.
 - **Cross-platform JSON:** JavaScript `JSON.stringify()` and Python `json.dumps()` produce different whitespace and key ordering. The `jsonDumps()` helper in `ledger_import.js` bridges this gap for raw chain verification. Long-term, consider using a single library (e.g., a WASM-based Python `json.dumps` or a cross-platform spec for canonical JSON) to avoid per-platform serializers.
 - **`isWasmDerivedUuid` regex too broad (2026-06-18):** The hex regex `/^[0-9a-f]{32,}$/` matches MD5 (32 chars), SHA-1 (40), and even dash-stripped UUID4 (32 chars). Should be `{64}` for HMAC-SHA256 which is the actual WASM output. Low risk in practice — worst case is unnecessary migration of a dash-stripped UUID4.
