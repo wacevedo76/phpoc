@@ -227,6 +227,83 @@ class TestLocalStagingCache(unittest.TestCase):
         self.cache.append("T", 1000, end_epoch=2000)
         self.assertEqual(self.store.read_entries()[0]["data"]["tags"], [])
 
+    # -- entry_id-based operations (stale-index race fix) -------------------
+
+    def test_update_by_entry_id_updates_correct_entry(self):
+        """update_by_entry_id targets the right entry even with multiple entries."""
+        self.cache.append("Task A", 1000, is_active=True)
+        self.cache.append("Task B", 3000, is_active=True)
+        entries = self.cache.read_entries()
+        entry_b_id = entries[1]["entry_id"]
+
+        self.cache.update_by_entry_id(entry_b_id, {"title": "Task B Updated"})
+
+        updated = self.cache.read_entries()
+        self.assertEqual(updated[0]["title"], "Task A")
+        self.assertEqual(updated[1]["title"], "Task B Updated")
+
+    def test_update_by_entry_id_after_index_shift(self):
+        """update_by_entry_id still finds the correct entry after index shifts."""
+        self.cache.append("Task A", 1000, is_active=True)
+        self.cache.append("Task B", 3000, is_active=True)
+        entries = self.cache.read_entries()
+        entry_b_id = entries[1]["entry_id"]
+
+        # Delete Task A — Task B shifts from index 1 to index 0
+        self.cache.delete(0)
+
+        # Should still update Task B via its stable entry_id
+        self.cache.update_by_entry_id(entry_b_id, {"title": "Task B Renamed"})
+
+        updated = self.cache.read_entries()
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated[0]["title"], "Task B Renamed")
+
+    def test_update_by_entry_id_raises_on_unknown_id(self):
+        """update_by_entry_id raises ValueError for a nonexistent entry_id."""
+        self.cache.append("Task A", 1000, is_active=True)
+        with self.assertRaises(ValueError):
+            self.cache.update_by_entry_id("nonexistent-id", {"title": "X"})
+
+    def test_add_pause_by_entry_id_targets_correct_entry(self):
+        """add_pause_by_entry_id pauses the correct entry via stable entry_id."""
+        self.cache.append("Task A", 1000, is_active=True)
+        self.cache.append("Task B", 3000, is_active=True)
+        entries = self.cache.read_entries()
+        entry_b_id = entries[1]["entry_id"]
+
+        self.cache.add_pause_by_entry_id(entry_b_id, 3500)
+
+        updated = self.cache.read_entries()
+        self.assertFalse(updated[0]["is_paused"])
+        self.assertTrue(updated[1]["is_paused"])
+
+    def test_add_pause_by_entry_id_raises_on_unknown_id(self):
+        """add_pause_by_entry_id raises ValueError for a nonexistent entry_id."""
+        self.cache.append("Task A", 1000, is_active=True)
+        with self.assertRaises(ValueError):
+            self.cache.add_pause_by_entry_id("nonexistent-id", 1500)
+
+    def test_close_pause_by_entry_id_targets_correct_entry(self):
+        """close_pause_by_entry_id closes the correct entry's pause via stable entry_id."""
+        self.cache.append("Task A", 1000, is_active=True)
+        self.cache.append("Task B", 3000, is_active=True)
+        # Add a pause to Task B
+        self.cache.add_pause(1, 3500)
+        entries = self.cache.read_entries()
+        entry_b_id = entries[1]["entry_id"]
+
+        self.cache.close_pause_by_entry_id(entry_b_id, 4000)
+
+        updated = self.cache.read_entries()
+        self.assertEqual(updated[1]["pauses"][0]["pause_stop"], 4000)
+
+    def test_close_pause_by_entry_id_raises_on_unknown_id(self):
+        """close_pause_by_entry_id raises ValueError for a nonexistent entry_id."""
+        self.cache.append("Task A", 1000, is_active=True)
+        with self.assertRaises(ValueError):
+            self.cache.close_pause_by_entry_id("nonexistent-id", 1500)
+
     def test_duration_no_pauses(self):
         self.assertEqual(self.cache._compute_duration(1000, 5000, []), 4000)
 
@@ -553,6 +630,46 @@ class TestStagingService(unittest.TestCase):
         self.assertEqual(len(pauses), 2)
         self.assertEqual(pauses[0]["pause_stop"], 2500)
         self.assertEqual(pauses[1]["pause_stop"], 3500)
+
+    # -- stale-index race regression: end/pause/unpause target correct entry ---
+
+    def test_end_correct_entry_with_multiple_active(self):
+        """end() targets the correct entry when multiple active entries exist."""
+        self.service.capture("Task A", 1000, is_active=True)
+        self.service.capture("Task B", 2000, is_active=True)
+        self.service.end("Task B", 5000)
+
+        entries = self.service.get_entries()
+        task_a = [e for e in entries if e["title"] == "Task A"][0]
+        task_b = [e for e in entries if e["title"] == "Task B"][0]
+        self.assertTrue(task_a["is_active"], "Task A should remain active")
+        self.assertFalse(task_b["is_active"], "Task B should be ended")
+
+    def test_pause_correct_entry_with_multiple_active(self):
+        """pause() targets the correct entry when multiple active entries exist."""
+        self.service.capture("Task A", 1000, is_active=True)
+        self.service.capture("Task B", 2000, is_active=True)
+        self.service.pause("Task B", 2500)
+
+        entries = self.service.get_entries()
+        task_a = [e for e in entries if e["title"] == "Task A"][0]
+        task_b = [e for e in entries if e["title"] == "Task B"][0]
+        self.assertFalse(task_a["is_paused"], "Task A should not be paused")
+        self.assertTrue(task_b["is_paused"], "Task B should be paused")
+
+    def test_unpause_correct_entry_with_multiple_paused(self):
+        """unpause() targets the correct entry when multiple entries are paused."""
+        self.service.capture("Task A", 1000, is_active=True)
+        self.service.capture("Task B", 2000, is_active=True)
+        self.service.pause("Task A", 1200)
+        self.service.pause("Task B", 2200)
+        self.service.unpause("Task A", 1500)
+
+        entries = self.service.get_entries()
+        task_a = [e for e in entries if e["title"] == "Task A"][0]
+        task_b = [e for e in entries if e["title"] == "Task B"][0]
+        self.assertFalse(task_a["is_paused"], "Task A should be unpaused")
+        self.assertTrue(task_b["is_paused"], "Task B should remain paused")
 
     # --- modify ---
 

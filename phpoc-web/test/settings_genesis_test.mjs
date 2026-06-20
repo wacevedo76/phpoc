@@ -21,6 +21,7 @@
 import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
 import { GenesisGate } from '../src/sync/genesis_gate.js';
+import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -99,15 +100,6 @@ class MockStorage {
 
 const ZERO_HASH = '0'.repeat(64);
 
-function sortKeysJSON(obj) {
-  const sortKeys = (o) => {
-    if (o === null || o === undefined || typeof o !== 'object') return o;
-    if (Array.isArray(o)) return o.map(sortKeys);
-    return Object.keys(o).sort().reduce((acc, k) => { acc[k] = sortKeys(o[k]); return acc; }, {});
-  };
-  return JSON.stringify(sortKeys(obj));
-}
-
 function buildGenesisBlock(opts = {}) {
   const {
     username = 'testuser',
@@ -133,7 +125,7 @@ function buildGenesisBlock(opts = {}) {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = sortKeysJSON(content);
+  const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, masterKey);
   return content;
 }
@@ -152,7 +144,7 @@ function buildChain(genesisOpts = {}) {
     entries: [],
   };
   const crypto = new MockCrypto();
-  const sealJson = sortKeysJSON(dayContent);
+  const sealJson = jsonSort(dayContent);
   dayContent.day_hash = crypto.seal(sealJson, genesisOpts.masterKey || 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
   return [genesis, dayContent];
 }

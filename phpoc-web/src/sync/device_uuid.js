@@ -74,14 +74,14 @@ export function isWasmDerivedUuid(uuid) {
   // UUID4 format means it's not WASM-derived
   if (UUID4_REGEX.test(uuid)) return false;
 
-  // WASM-derived UUIDs are long hex strings (32+ characters, no dashes
-  // or with dashes in a non-UUID4 pattern). The WASM getDeviceId returns
-  // a hex string like "a1b2c3d4..." — check for pure hex.
-  if (/^[0-9a-f]{32,}$/i.test(uuid)) return true;
+  // WASM-derived UUIDs from HMAC-SHA256 are exactly 64 hex characters.
+  // Match pure hex strings of exactly 64 chars.
+  if (/^[0-9a-f]{64}$/i.test(uuid)) return true;
 
-  // Also match hyphenated hex that isn't UUID4 (e.g., HMAC output
-  // formatted with dashes but wrong version/variant nibbles)
-  if (/^[0-9a-f-]+$/i.test(uuid) && uuid.length > 36) return true;
+  // Also match hyphenated hex: strip dashes and check for exactly 64 hex chars
+  // (e.g., HMAC-SHA256 output formatted with dashes in a non-UUID4 pattern)
+  const stripped = uuid.replace(/-/g, '');
+  if (/^[0-9a-f]{64}$/i.test(stripped)) return true;
 
   // Default: if it doesn't look like UUID4 and isn't a known hex format,
   // conservatively treat it as not WASM-derived (don't trigger migration)

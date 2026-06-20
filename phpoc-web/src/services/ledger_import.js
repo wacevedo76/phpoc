@@ -32,6 +32,8 @@
  * @module ledger_import
  */
 
+import { jsonSort } from '../ledger/utils.js';
+
 /**
  * Import entries from an exported ledger file.
  *
@@ -108,7 +110,7 @@ export async function importLedger(file, crypto, masterKey) {
     // v2 entries = staging entries (committed blocks stay as ledger)
     entries = parsed.staging;
     ledger = parsed.ledger;
-    sealPayload = JSON.stringify({ ledger: parsed.ledger, staging: parsed.staging });
+    sealPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
   } else {
     // v1 (and any future unrecognized version): staging-only
     if (!Array.isArray(parsed.entries)) {
@@ -121,7 +123,7 @@ export async function importLedger(file, crypto, masterKey) {
     }
 
     entries = parsed.entries;
-    sealPayload = JSON.stringify(entries);
+    sealPayload = jsonSort(entries);
     // v1: no genesis info — genesisHash stays null
   }
 
@@ -146,7 +148,7 @@ export async function importLedger(file, crypto, masterKey) {
         hashData[key] = entry[key];
       }
     }
-    const expectedHash = crypto.sha256(JSON.stringify(hashData));
+    const expectedHash = crypto.sha256(jsonSort(hashData));
 
     if (entry.hash !== expectedHash) {
       throw new Error(
@@ -173,32 +175,6 @@ const BLOCK_HASH_FIELD = {
   month_summary: 'month_hash',
   day: 'day_hash',
 };
-
-// ── Canonical JSON stringify (sorted keys, Python-compatible spacing) ──
-// Python's json.dumps(obj, sort_keys=True) sorts keys at ALL nesting levels
-// recursively and uses ": " and ", " separators. JavaScript's JSON.stringify
-// uses no spaces and preserves insertion order. For cross-platform hash
-// compatibility, we must match Python's output exactly.
-function jsonDumps(obj, sortedKeys = null) {
-  if (obj === null) return 'null';
-  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
-  if (typeof obj === 'number') return String(obj);
-  if (typeof obj === 'string') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    const items = obj.map(v => jsonDumps(v));
-    return '[' + items.join(', ') + ']';
-  }
-  // Object: sort keys recursively
-  const keys = sortedKeys || Object.keys(obj).sort();
-  const pairs = keys.map(k => {
-    return JSON.stringify(k) + ': ' + jsonDumps(obj[k]);
-  });
-  return '{' + pairs.join(', ') + '}';
-}
-
-function jsonSort(obj) {
-  return jsonDumps(obj, Object.keys(obj).sort());
-}
 
 /**
  * Import a raw ledger chain (CLI ledger.json format — JSON array of blocks).
@@ -258,7 +234,7 @@ function _importRawChain(blocks, crypto, masterKey) {
         checkData[key] = block[key];
       }
     }
-    const sealPayload = jsonSort(checkData);
+    const sealPayload = jsonSort(checkData); // Python-compatible via utils.js
     const sealValid = crypto.verifySeal(sealPayload, blockHash, masterKey);
 
     if (!sealValid) {
@@ -302,7 +278,7 @@ function _importRawChain(blocks, crypto, masterKey) {
         );
       }
       // Verify entry hash (over the data dict, sorted keys, Python-compatible spacing)
-      const expectedHash = crypto.sha256(jsonDumps(entry.data, Object.keys(entry.data).sort()));
+      const expectedHash = crypto.sha256(jsonSort(entry.data));
       if (entry.hash !== expectedHash) {
         throw new Error(
           `importLedger: entry hash mismatch at block ${i}, entry ${j} ` +

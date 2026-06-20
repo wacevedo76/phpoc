@@ -21,6 +21,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { TestHelpers } from './test_helpers.mjs';
+import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -220,9 +221,9 @@ if (typeof exportLedgerFull === 'function') {
   const parsed = JSON.parse(await blob.text());
 
   // Seal covers {ledger, staging} only — NOT wrapper metadata
-  const sealData = JSON.stringify({ ledger: SAMPLE_BLOCKS, staging: SAMPLE_STAGING });
+  const sealData = jsonSort({ ledger: SAMPLE_BLOCKS, staging: SAMPLE_STAGING });
   const expectedSeal = crypto.seal(sealData, MASTER_KEY);
-  t.assertEq(parsed.seal, expectedSeal, 'seal = HMAC(JSON.stringify({ledger, staging}), masterKey)');
+  t.assertEq(parsed.seal, expectedSeal, 'seal = HMAC(jsonSort({ledger, staging}), masterKey)');
 
   // Seal does NOT cover wrapper metadata (format_version, exported_at)
   const withMeta = JSON.stringify({
@@ -370,7 +371,7 @@ if (typeof exportLedgerFull === 'function' && realLedgerBlocks.length > 0) {
   }
 
   // Verify seal is valid
-  const sealDataReal = JSON.stringify({ ledger: realLedgerBlocks, staging: mockStaging });
+  const sealDataReal = jsonSort({ ledger: realLedgerBlocks, staging: mockStaging });
   const expectedSealReal = crypto.seal(sealDataReal, MASTER_KEY);
   t.assertEq(parsed.seal, expectedSealReal, 'real data: seal validates');
 
@@ -480,7 +481,7 @@ if (typeof exportLedgerFull === 'function') {
   t.assertEq(parsed.ledger[99].day_index, 99, 'large export: last block day_index is 99');
 
   // Verify seal on large data
-  const sealData = JSON.stringify({ ledger: largeBlocks, staging: [] });
+  const sealData = jsonSort({ ledger: largeBlocks, staging: [] });
   const expectedSeal = crypto.seal(sealData, MASTER_KEY);
   t.assertEq(parsed.seal, expectedSeal, 'large export: seal validates on 100 blocks');
 }

@@ -30,6 +30,8 @@
  *   entry_index    — position in array (computed on read)
  */
 
+import { jsonSort } from '../ledger/utils.js';
+
 /**
  * @typedef {Object} StagingEntry
  * @property {string} entry_id
@@ -149,7 +151,7 @@ export class LocalCache {
     if (comment != null) data.comment = comment;
 
     const hash = await this._hash(
-      JSON.stringify(data, Object.keys(data).sort())
+      jsonSort(data)
     );
 
     const entry = { ...data, hash, committed: false, block_index: null };
@@ -222,7 +224,7 @@ export class LocalCache {
     // Recompute hash from final state
     const { hash, entry_index, ...dataForHash } = freshEntry;
     freshEntry.hash = await this._hash(
-      JSON.stringify(dataForHash, Object.keys(dataForHash).sort())
+      jsonSort(dataForHash)
     );
 
     fresh[index] = freshEntry;
@@ -316,7 +318,7 @@ export class LocalCache {
     // Recompute hash
     const { hash, entry_index, ...dataForHash } = entry;
     entry.hash = await this._hash(
-      JSON.stringify(dataForHash, Object.keys(dataForHash).sort())
+      jsonSort(dataForHash)
     );
     entries[index] = entry;
     await this.writeEntries(entries);
@@ -351,7 +353,7 @@ export class LocalCache {
     // Recompute hash
     const { hash, entry_index, ...dataForHash } = entry;
     entry.hash = await this._hash(
-      JSON.stringify(dataForHash, Object.keys(dataForHash).sort())
+      jsonSort(dataForHash)
     );
     entries[index] = entry;
     await this.writeEntries(entries);

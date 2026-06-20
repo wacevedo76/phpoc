@@ -18,6 +18,7 @@
  */
 
 import { DummyCryptoService } from './DummyLedger.js';
+import { jsonSort } from '../ledger/utils.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ function buildEntry({ title, startEpoch, durationMin, tags, deviceUuid }) {
     end_device_uuid: deviceUuid,
     metadata: {},
   };
-  data.hash = deterministicHash(JSON.stringify(data, Object.keys(data).sort()));
+  data.hash = deterministicHash(jsonSort(data));
   return data;
 }
 
@@ -177,9 +178,7 @@ function generateStagingBlob(opts = {}) {
     activeEntry.is_active = true;
     activeEntry.end_epoch = null;
     activeEntry.duration = 0;
-    activeEntry.hash = deterministicHash(
-      JSON.stringify(activeEntry, Object.keys(activeEntry).sort())
-    );
+    activeEntry.hash = deterministicHash(jsonSort(activeEntry));
     entries.push(activeEntry);
   }
 

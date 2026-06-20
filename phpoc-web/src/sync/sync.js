@@ -535,7 +535,7 @@ export class SyncService {
 
     if (remoteDeviceUuid && remoteDeviceUuid === localDeviceUuid) {
       // Case A — Same device that last wrote: push only, touch cookie
-      await this.pushBlobOnly(masterKeyHex);
+      await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
 
       // Touch local cookie: update creation_time, keep specifier,
       // no remote cookie push (remote already has matching specifier).
@@ -584,14 +584,13 @@ export class SyncService {
       }
 
       // Push the (merged or local) blob to remote
-      await this.pushBlobOnly(masterKeyHex);
+      await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
 
       // Create new device cookie (fresh specifier, local + remote)
       try {
-        const deviceId = await this._getDeviceId();
         await DeviceCookie.destroyLocally(this._storage);
         const remoteCookie = await DeviceCookie.create(
-          deviceId,
+          localDeviceUuid,
           this._storage,
           this._crypto
         );
@@ -832,13 +831,15 @@ export class SyncService {
    * by real write operations.
    *
    * @param {string} masterKeyHex - 64-char hex master key.
+   * @param {string} [deviceId] - Optional device ID. When provided, skips
+   *   the internal _getDeviceId() call (avoiding redundant lookups).
    */
-  async pushBlobOnly(masterKeyHex) {
+  async pushBlobOnly(masterKeyHex, deviceId) {
     if (!this._remote) return;
 
     const entries = await this._local.readEntries();
-    const deviceId = await this._getDeviceId() || 'unknown';
-    await this._remote.pushBlob(entries, deviceId, masterKeyHex);
+    const effectiveDeviceId = deviceId || (await this._getDeviceId()) || 'unknown';
+    await this._remote.pushBlob(entries, effectiveDeviceId, masterKeyHex);
     this._lastPushAt = Date.now();
   }
 

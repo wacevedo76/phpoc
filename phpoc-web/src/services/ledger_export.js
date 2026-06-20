@@ -16,8 +16,8 @@
  *   { format_version, exported_at, ledger, staging, seal }
  *
  * Integrity:
- *   - v1: Seal = HMAC of JSON.stringify(entries) using master key
- *   - v2: Seal = HMAC of JSON.stringify({ledger, staging}) using master key
+ *   - v1: Seal = HMAC of jsonSort(entries) using master key
+ *   - v2: Seal = HMAC of jsonSort({ledger, staging}) using master key
  *   - Seal covers the data only — wrapper metadata (exported_at,
  *     format_version) sits outside the sealed region
  *   - Entry/block hashes are preserved as-is
@@ -25,6 +25,8 @@
  *
  * @module ledger_export
  */
+
+import { jsonSort } from '../ledger/utils.js';
 
 /**
  * Export a list of staging entries to a signed JSON Blob suitable for
@@ -60,8 +62,8 @@ export async function exportLedger(entries, crypto, masterKey) {
     seal: '', // placeholder, computed below
   };
 
-  // Seal covers JSON.stringify(entries) only — NOT the wrapper metadata
-  const entriesJson = JSON.stringify(entries);
+  // Seal covers jsonSort(entries) only — NOT the wrapper metadata
+  const entriesJson = jsonSort(entries);
   payload.seal = crypto.seal(entriesJson, masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────
@@ -116,7 +118,7 @@ export async function exportLedgerFull(blocks, staging, crypto, masterKey) {
 
   // Seal covers BOTH ledger and staging — the combined state
   const sealData = { ledger: blocks, staging: staging };
-  payload.seal = crypto.seal(JSON.stringify(sealData), masterKey);
+  payload.seal = crypto.seal(jsonSort(sealData), masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────
   const json = JSON.stringify(payload, null, 2);

@@ -15,7 +15,7 @@
  *   const valid = await chain.verify();
  */
 
-import { sortKeys, jsonSort, computeEntryHash, getBlockHash } from './utils.js';
+import { jsonSort, computeEntryHash, getBlockHash } from './utils.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
 
@@ -57,12 +57,28 @@ export class LedgerChain {
 
   /**
    * Verify an HMAC-like seal over a dict.
+   * Tries Python-compatible JSON serialization first, then falls back
+   * to the pre-migration compact JSON format for existing ledgers.
    * @param {object} data - The data to verify.
    * @param {string} sealHex - The seal hex string.
    * @returns {boolean} True if the seal is valid.
    */
   verifySeal(data, sealHex) {
-    return this.crypto.verifySeal(jsonSort(data), sealHex, this.masterKey);
+    // Primary: Python-compatible JSON format (cross-platform)
+    if (this.crypto.verifySeal(jsonSort(data), sealHex, this.masterKey)) {
+      return true;
+    }
+    // Fallback: pre-migration compact JSON format (JS-only)
+    const _sortObj = (obj) => {
+      if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map(_sortObj);
+      return Object.keys(obj).sort().reduce((acc, k) => {
+        acc[k] = _sortObj(obj[k]);
+        return acc;
+      }, {});
+    };
+    const compactJson = JSON.stringify(_sortObj(data));
+    return this.crypto.verifySeal(compactJson, sealHex, this.masterKey);
   }
 
   /**

@@ -8,6 +8,9 @@ All notable changes to the PH Ledger (phpoc) project.
 
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
+### Changed
+- **Cross-platform JSON serialization** — `jsonSort()` in `src/ledger/utils.js` now produces output byte-identical to Python's `json.dumps(obj, sort_keys=True)` (sorted keys at all nesting levels, `": "` and `", "` separators). All seal/hash computation across the web codebase uses this canonical format: `ledger_export.js`, `ledger_import.js`, `summary_policy.js`, `local_cache.js`, `MockDataSeeder.js`. `LedgerChain.verifySeal()` has dual-verification fallback for pre-migration compact-JSON ledgers. New `utils_test.mjs` (27 tests) validates Python parity. (2026-06-20)
+
 ### Added
 - **Genesis compatibility gate** (`GenesisGate.check()`) — verifies remote ledger shares same genesis before syncing. 8 reason codes, in-flight dedup, ~90 tests.
 - **Settings UI genesis indicator** — Worker URL save triggers genesis check with visual status (compatible/incompatible/offline/checking). Resets on URL clear; re-checks on API key change.

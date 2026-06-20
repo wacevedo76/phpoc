@@ -6,26 +6,33 @@
  */
 
 /**
- * Recursively sort the keys of an object for deterministic JSON serialization.
- */
-export function sortKeys(obj) {
-  if (obj === null || obj === undefined || typeof obj !== 'object') {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(sortKeys);
-  }
-  return Object.keys(obj).sort().reduce((acc, key) => {
-    acc[key] = sortKeys(obj[key]);
-    return acc;
-  }, {});
-}
-
-/**
- * Deterministic JSON serialization: compact, with sorted keys.
+ * Deterministic JSON serialization matching Python's json.dumps(obj, sort_keys=True).
+ *
+ * Produces compact output with sorted keys at all nesting levels,
+ * using ": " and ", " separators matching Python's output exactly.
+ * This ensures SHA-256 hashes and HMAC seals are identical across
+ * JavaScript and Python runtimes.
+ *
+ * @param {*} data - Any JSON-serializable value.
+ * @returns {string} Python-compatible JSON string.
  */
 export function jsonSort(data) {
-  return JSON.stringify(sortKeys(data));
+  return _jsonDumps(data);
+}
+
+function _jsonDumps(obj) {
+  if (obj === null) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    const items = obj.map(v => _jsonDumps(v));
+    return '[' + items.join(', ') + ']';
+  }
+  // Object: sort keys recursively
+  const keys = Object.keys(obj).sort();
+  const pairs = keys.map(k => JSON.stringify(k) + ': ' + _jsonDumps(obj[k]));
+  return '{' + pairs.join(', ') + '}';
 }
 
 /**

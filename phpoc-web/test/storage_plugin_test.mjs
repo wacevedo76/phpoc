@@ -318,44 +318,59 @@ console.log(`\n═══ MockRemoteBackend ═══`);
 console.log(`\n═══ HttpBackend ═══`);
 
 {
+  // In-memory mock transport for HttpBackend testing
+  class MockHttpTransport {
+    constructor() { this._store = new Map(); }
+    async pull(path) { return this._store.get(path) ?? null; }
+    async push(path, data) { this._store.set(path, data); }
+    async delete(path) { this._store.delete(path); }
+    async listFiles(prefix = '') {
+      const keys = [];
+      for (const k of this._store.keys()) {
+        if (!prefix || k.startsWith(prefix)) keys.push(k);
+      }
+      return keys.sort();
+    }
+    resetCache() {}
+    evictStale() {}
+  }
+
   // Constructor validation
-  assertThrows(() => new HttpBackend(), 'HttpBackend() throws without baseUrl');
-  assertThrows(() => new HttpBackend({}), 'HttpBackend({}) throws without baseUrl');
+  assertThrows(() => new HttpBackend(), 'HttpBackend() throws without transport');
+  assertThrows(() => new HttpBackend({}), 'HttpBackend({}) throws without transport');
+  assertThrows(() => new HttpBackend({ transport: {} }),
+    'HttpBackend({transport:{}}) throws when transport lacks required methods');
 
-  const http = new HttpBackend({ baseUrl: 'http://localhost:9999', apiKey: 'test-key' });
-  assertEq(http.name, 'HTTP Backend', 'name returns HTTP Backend');
-  assertEq(http.deployment, 'saas', 'deployment returns saas');
-  assertEq(http.isRemote, true, 'isRemote returns true');
-  assert(http.transport instanceof HttpTransport, '.transport returns HttpTransport instance');
+  const mockTransport = new MockHttpTransport();
+  const http = new HttpBackend({ transport: mockTransport });
 
-  // delete and clear are no-ops
-  await http.delete('any/key');
-  await http.clear();
-  assert(true, 'delete and clear are no-ops (don\'t throw)');
+  // get/set round-trip
+  await http.set('test:obj', { foo: 'bar', n: 42 });
+  const gotObj = await http.get('test:obj');
+  assertEq(JSON.stringify(gotObj), JSON.stringify({ foo: 'bar', n: 42 }),
+    'HttpBackend get/set round-trip (object)');
 
-  // remove() alias is also a no-op
-  await http.remove('any/key');
-  assert(true, 'remove() alias is no-op');
+  // get on missing key returns undefined
+  const missing = await http.get('nonexistent');
+  assertEq(missing, undefined, 'HttpBackend get missing → undefined');
 
-  // resetCache delegates to transport
-  http.resetCache();
-  assert(true, 'resetCache delegates to transport');
+  // remove
+  await http.set('to_remove', 'temp');
+  await http.remove('to_remove');
+  assertEq(await http.get('to_remove'), undefined, 'HttpBackend remove works');
 
-  // list on unreachable server throws
-  try {
-    await http.list('test/');
-    assert(true, 'list on unreachable server throws (expected) — non-blocking');
-  } catch (_) {
-    assert(true, 'list on unreachable server throws');
-  }
+  // list with prefix
+  await http.set('prefix:a', 1);
+  await http.set('prefix:b', 2);
+  await http.set('other:x', 3);
+  const prefixed = await http.list('prefix:');
+  assertEq(prefixed.sort(), ['prefix:a', 'prefix:b'], 'HttpBackend list with prefix');
 
-  // get on unreachable server throws
-  try {
-    await http.get('test/key');
-    assert(true, 'get on unreachable server throws (expected) — non-blocking');
-  } catch (_) {
-    assert(true, 'get on unreachable server throws');
-  }
+  const all = await http.list();
+  assert(all.length >= 3, `HttpBackend list() returns keys (got ${all.length})`);
+
+  // clear() is not supported for remote storage
+  await assertRejects(http.clear(), 'HttpBackend.clear() throws (not supported for remote)');
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -385,23 +400,38 @@ console.log(`\n═══ createStoragePlugin (factory) ═══`);
     deployment: 'saas',
     config: { baseUrl: 'http://localhost:8888', apiKey: 'k' },
   });
-  assert(saasBackend instanceof HttpBackend,
-    'createStoragePlugin({deployment:"saas", config}) → HttpBackend');
-  assertEq(saasBackend.name, 'HTTP Backend', 'HttpBackend via factory');
+  // Target architecture: saas → local IndexedDB + separate HttpTransport.
+  // createStoragePlugin returns local IndexedDB regardless of deployment;
+  // remote transport is created separately via createRemoteTransport().
+  if (hasIDB) {
+    assert(saasBackend instanceof IndexedDBBackend,
+      'createStoragePlugin({deployment:"saas", config}) → IndexedDBBackend');
+  } else {
+    assert(saasBackend instanceof IndexedDBBackend || saasBackend instanceof MemoryBackend,
+      'createStoragePlugin({deployment:"saas", config}) → local backend');
+  }
+  assertEq(saasBackend.deployment, 'standalone', 'saas backend is local (standalone deployment)');
+  assertEq(saasBackend.isRemote, false, 'saas backend is not remote');
 
   // LAN also returns HttpBackend
+  // LAN also returns a local backend (IndexedDB)
   const lanBackend = await createStoragePlugin({
     deployment: 'lan',
     config: { baseUrl: 'http://bridge:8080' },
   });
-  assert(lanBackend instanceof HttpBackend,
-    'createStoragePlugin({deployment:"lan"}) → HttpBackend');
+  if (hasIDB) {
+    assert(lanBackend instanceof IndexedDBBackend,
+      'createStoragePlugin({deployment:"lan"}) → IndexedDBBackend');
+  } else {
+    assert(lanBackend instanceof IndexedDBBackend || lanBackend instanceof MemoryBackend,
+      'createStoragePlugin({deployment:"lan"}) → local backend');
+  }
 
-  // Saas without baseUrl falls back to IndexedDB
+  // Saas without baseUrl still returns IndexedDB (same as any saas deployment)
   if (hasIDB) {
     const noUrlBackend = await createStoragePlugin({ deployment: 'saas' });
     assert(noUrlBackend instanceof IndexedDBBackend,
-      'SaaS without baseUrl → falls back to IndexedDB');
+      'SaaS → IndexedDBBackend (local storage, remote transport separate)');
   }
 
   // Invalid deployment defaults to standalone

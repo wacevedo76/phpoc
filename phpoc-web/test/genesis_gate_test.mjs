@@ -21,6 +21,7 @@
 import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
 import { MockCrypto } from './mock_crypto.mjs';
+import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -114,15 +115,6 @@ function getBlockHash(block) {
   return block.day_hash || block.month_hash || block.year_hash;
 }
 
-function sortKeysJSON(obj) {
-  const sortKeys = (o) => {
-    if (o === null || o === undefined || typeof o !== 'object') return o;
-    if (Array.isArray(o)) return o.map(sortKeys);
-    return Object.keys(o).sort().reduce((acc, k) => { acc[k] = sortKeys(o[k]); return acc; }, {});
-  };
-  return JSON.stringify(sortKeys(obj));
-}
-
 function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
   const sortedEntries = entries.map(e => {
     const data = e.data !== undefined ? e.data : Object.assign({}, e);
@@ -137,7 +129,7 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
     prev_hash: prevHash,
     entries: sortedEntries,
   };
-  const sealJson = sortKeysJSON(content);
+  const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
@@ -168,7 +160,7 @@ function buildGenesisBlock(opts = {}) {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = sortKeysJSON(content);
+  const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
@@ -682,7 +674,7 @@ console.log('\n=== Group B — Merge on Genesis Match ===');
       for (const [k, v] of Object.entries(block)) {
         if (k !== hashKey && k !== 'signature') checkData[k] = v;
       }
-      if (!crypto.verifySeal(sortKeysJSON(checkData), block[hashKey], MASTER_KEY)) {
+      if (!crypto.verifySeal(jsonSort(checkData), block[hashKey], MASTER_KEY)) {
         sealsValid = false;
         break;
       }

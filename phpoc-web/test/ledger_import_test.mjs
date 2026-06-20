@@ -16,6 +16,7 @@
  */
 
 import { createHash } from 'crypto';
+import { jsonSort } from '../src/ledger/utils.js';
 
 // ── Import the module under test (WILL FAIL — file doesn't exist yet) ──
 let importLedger;
@@ -169,13 +170,13 @@ function buildEntry(overrides = {}) {
     for (const k of Object.keys(entry).sort()) {
       if (k !== 'hash') hashData[k] = entry[k];
     }
-    entry.hash = realSha256(JSON.stringify(hashData));
+    entry.hash = realSha256(jsonSort(hashData));
   }
   return entry;
 }
 
 function makeExportFile(entries, mk, overrides = {}) {
-  const entriesJson = JSON.stringify(entries);
+  const entriesJson = jsonSort(entries);
   const seal = overrides.seal !== undefined
     ? overrides.seal
     : crypto.seal(entriesJson, mk);

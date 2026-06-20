@@ -17,14 +17,10 @@
  *
  *   deployment        → StorageBackend         Transport
  *   "standalone"      → IndexedDBBackend       null
- *   "lan"             → HttpBackend *          HttpTransport (if baseUrl)
- *   "saas"            → HttpBackend *          HttpTransport (if baseUrl)
+ *   "lan"             → IndexedDBBackend       HttpTransport (if baseUrl)
+ *   "saas"            → IndexedDBBackend       HttpTransport (if baseUrl)
  *   "mock"            → MockRemoteBackend      null
  *   "memory"          → MemoryBackend          null
- *
- *   * createStoragePlugin currently returns HttpBackend for lan/saas.
- *     The target architecture is IndexedDBBackend + HttpTransport — see
- *     SESSION_HANDOFF.md §Remote Sync Wiring.
  *
  * The deployment is determined by (in priority order):
  *   1. Explicit config key in localStorage:  phpoc_deployment
@@ -42,7 +38,6 @@
 
 import { MemoryBackend } from './storage.js';
 import { IndexedDBBackend } from './indexeddb_storage.js';
-import { HttpBackend } from './http_backend.js';
 import { HttpTransport } from './transport.js';
 import { MockRemoteBackend } from './mock_remote_backend.js';
 
@@ -70,7 +65,7 @@ function readRemoteConfig(deployment) {
   }
   return {
     baseUrl,
-    apiKey: localStorage.getItem('phpoc_api_key') || '',
+    apiKey: localStorage.getItem('phpoc_api_key') || null,
   };
 }
 
@@ -107,7 +102,7 @@ export function detectDeployment() {
         deployment: 'saas',
         config: {
           baseUrl: workerUrl,
-          apiKey: localStorage.getItem('phpoc_api_key') || '',
+          apiKey: localStorage.getItem('phpoc_api_key') || null,
         },
       };
     }
@@ -158,17 +153,11 @@ export async function createStoragePlugin(override = {}) {
 
     case 'lan':
     case 'saas': {
-      const ls = typeof localStorage !== 'undefined' ? localStorage : null;
-      const baseUrl = config.baseUrl || (ls ? ls.getItem('phpoc_worker_url') : '') || '';
-      const apiKey = config.apiKey || (ls ? ls.getItem('phpoc_api_key') : '') || '';
-      if (!baseUrl) {
-        console.warn(
-          `createStoragePlugin: deployment "${deployment}" requires a baseUrl. ` +
-          'Falling back to standalone IndexedDB.'
-        );
-        return new IndexedDBBackend();
-      }
-      return new HttpBackend({ baseUrl, apiKey });
+      // Target architecture: local IndexedDB for persistence +
+      // HttpTransport for remote sync. Storage and transport are
+      // separate concerns — createStoragePlugin handles storage,
+      // createRemoteTransport handles the wire protocol.
+      return new IndexedDBBackend();
     }
 
     default:
@@ -185,7 +174,7 @@ export async function createStoragePlugin(override = {}) {
  *
  * This is a separate concern from createStoragePlugin() — transport handles
  * the wire protocol (GET/PUT/DELETE/LIST) while storage handles local
- * persistence (IndexedDB, Memory, HttpBackend).
+ * persistence (IndexedDB, Memory).
  *
  * @param {object} [options]
  * @param {string} [options.deployment] - Deployment type

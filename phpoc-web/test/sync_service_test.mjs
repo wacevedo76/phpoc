@@ -23,6 +23,7 @@ import { createHash } from 'crypto';
 import { SyncService, SyncResult } from '../src/sync/sync.js';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
+import { jsonSort } from '../src/ledger/utils.js';
 
 // ══════════════════════════════════════════════════════════════════════
 // Mock Transport — simulates remote R2 storage in memory
@@ -112,23 +113,13 @@ class MockCrypto {
   }
 
   sealBlock(blockData) {
-    // Sort keys to match jsonSort() behavior used by LedgerMerge verification
-    const sortKeys = (obj) => {
-      if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
-      if (Array.isArray(obj)) return obj.map(sortKeys);
-      const sorted = {};
-      for (const key of Object.keys(obj).sort()) {
-        sorted[key] = sortKeys(obj[key]);
-      }
-      return sorted;
-    };
     const copy = {};
     for (const [k, v] of Object.entries(blockData)) {
       if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature') {
         copy[k] = v;
       }
     }
-    return this.seal(JSON.stringify(sortKeys(copy)));
+    return this.seal(jsonSort(copy));
   }
 
   obfuscateBlob(plaintext, mk) {
@@ -875,6 +866,160 @@ async function run() {
     const result2 = await sync.checkAndSync();
     t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
       'I3b. after reset → re-checks and detects mismatch');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group J: _getDeviceId() call-count optimization
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group J: _getDeviceId() Call Optimization ──\n');
+
+  /**
+   * SpySyncService — extends SyncService to count _getDeviceId() calls.
+   */
+  class SpySyncService extends SyncService {
+    constructor(storage, crypto, transport, options) {
+      super(storage, crypto, transport, options);
+      this._getDeviceIdCallCount = 0;
+    }
+    async _getDeviceId() {
+      this._getDeviceIdCallCount++;
+      return super._getDeviceId();
+    }
+    resetDeviceIdCount() {
+      this._getDeviceIdCallCount = 0;
+    }
+  }
+
+  function createSpySync({ withTransport = true, withMasterKey = false, masterKey = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111' } = {}) {
+    const storage = new MemoryBackend();
+    const crypto = new MockCrypto();
+    const transport = withTransport ? new MockTransport() : null;
+    if (withMasterKey) {
+      crypto.setMasterKey(masterKey);
+    }
+    const sync = new SpySyncService(storage, crypto, transport, { cookieTtlMinutes: 30 });
+    return { sync, storage, crypto, transport };
+  }
+
+  // J1. _reconcileAndClaim Case A: _getDeviceId() called exactly once
+  {
+    const mk = 'j1-casea--j1-casea--j1-casea--j1-casea--aa';
+    const { sync, storage, transport } = createSpySync({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('device_uuid', CASE_A_UUID);
+    await storage.set('cookie', {
+      device_specifier: 'spec-j1',
+      creation_time: Date.now(),
+    });
+
+    // Two-phase: outer sees null, inner sees same UUID → Case A
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: CASE_A_UUID,
+      device_specifier: 'spec-remote-j1',
+    })));
+
+    await sync.capture({ title: 'J1 task', startEpoch: 1000 });
+    sync.resetDeviceIdCount(); // reset after capture
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'J1. Case A → READY');
+    t.assertEq(sync._getDeviceIdCallCount, 1,
+      'J1b. _getDeviceId called exactly once in _reconcileAndClaim Case A');
+  }
+
+  // J2. _reconcileAndClaim Case B: _getDeviceId() called exactly once
+  {
+    const mk = 'j2-caseb--j2-caseb--j2-caseb--j2-caseb--bb';
+    const { sync, storage, transport } = createSpySync({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-j2',
+      creation_time: Date.now(),
+    });
+
+    // Two-phase: outer sees null, inner sees different UUID → Case B
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'dev-other-j2',
+      device_specifier: 'spec-remote-j2',
+    })));
+
+    await sync.capture({ title: 'J2 task', startEpoch: 1000 });
+    sync.resetDeviceIdCount(); // reset after capture
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'J2. Case B → READY');
+    t.assertEq(sync._getDeviceIdCallCount, 1,
+      'J2b. _getDeviceId called exactly once in _reconcileAndClaim Case B');
+  }
+
+  // J3. pushBlobOnly with explicit deviceId skips internal _getDeviceId call
+  {
+    const mk = 'j3-pbo---j3-pbo---j3-pbo---j3-pbo---cc';
+    const { sync, storage, crypto } = createSpySync({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('device_uuid', CASE_A_UUID);
+    await sync.capture({ title: 'J3 task', startEpoch: 1000 });
+    sync.resetDeviceIdCount();
+
+    // Call pushBlobOnly with explicit deviceId → should NOT call _getDeviceId
+    await sync.pushBlobOnly(mk, CASE_A_UUID);
+    t.assertEq(sync._getDeviceIdCallCount, 0,
+      'J3. pushBlobOnly with explicit deviceId → _getDeviceId NOT called');
+  }
+
+  // J4. pushBlobOnly without explicit deviceId still works (backward compat)
+  {
+    const mk = 'j4-pbo---j4-pbo---j4-pbo---j4-pbo---dd';
+    const { sync, storage, transport } = createSpySync({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('device_uuid', CASE_A_UUID);
+    await sync.capture({ title: 'J4 task', startEpoch: 1000 });
+    sync.resetDeviceIdCount();
+
+    // Call pushBlobOnly without deviceId → should call _getDeviceId once
+    await sync.pushBlobOnly(mk);
+    t.assertEq(sync._getDeviceIdCallCount, 1,
+      'J4. pushBlobOnly without deviceId → _getDeviceId called once');
+
+    // Verify blob was pushed correctly
+    const blobBytes = await transport.pull(BLOB_PATH);
+    t.assert(blobBytes !== null, 'J4b. blob pushed to remote');
+  }
+
+  // J5. pushToRemote calls _getDeviceId exactly once
+  {
+    const mk = 'j5-ptr---j5-ptr---j5-ptr---j5-ptr---ee';
+    const { sync, storage } = createSpySync({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('device_uuid', CASE_A_UUID);
+    await sync.capture({ title: 'J5 task', startEpoch: 1000 });
+    sync.resetDeviceIdCount();
+
+    await sync.pushToRemote(mk);
+    t.assertEq(sync._getDeviceIdCallCount, 1,
+      'J5. pushToRemote → _getDeviceId called exactly once');
   }
 
   // ── Results ───────────────────────────────────────────────────────

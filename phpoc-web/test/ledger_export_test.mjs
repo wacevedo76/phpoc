@@ -16,6 +16,7 @@
  */
 
 import { createHash } from 'crypto';
+import { jsonSort } from '../src/ledger/utils.js';
 
 // ── Import the module under test (WILL FAIL — file doesn't exist yet) ──
 // This import will throw, demonstrating the RED phase of TDD.
@@ -202,14 +203,14 @@ if (typeof exportLedger === 'function') {
   const blob = await exportLedger(SAMPLE_ENTRIES, crypto, MASTER_KEY);
   const parsed = JSON.parse(await blob.text());
 
-  // Test 5: Seal covers JSON.stringify(entries) only
-  const entriesJson = JSON.stringify(SAMPLE_ENTRIES);
+  // Test 5: Seal covers jsonSort(entries) only
+  const entriesJson = jsonSort(SAMPLE_ENTRIES);
   const expectedSeal = crypto.seal(entriesJson, MASTER_KEY);
-  assertEq(parsed.seal, expectedSeal, 'seal = HMAC(JSON.stringify(entries), masterKey)');
+  assertEq(parsed.seal, expectedSeal, 'seal = HMAC(jsonSort(entries), masterKey)');
 
   // Test 6: Seal does NOT cover wrapper metadata (exported_at, format_version)
   // Re-compute seal from entries only — metadata changes must not invalidate it
-  const wrongSeal = crypto.seal(JSON.stringify({ entries: SAMPLE_ENTRIES }), MASTER_KEY);
+  const wrongSeal = crypto.seal(jsonSort({ entries: SAMPLE_ENTRIES }), MASTER_KEY);
   // The correct seal is on entries alone, not wrapped in an object
   assert(parsed.seal !== wrongSeal, 'seal does not cover wrapper metadata');
 

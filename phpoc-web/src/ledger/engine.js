@@ -15,7 +15,7 @@
 import { LedgerChain } from './chain.js';
 import { IndexManager } from './index_manager.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
-import { sortKeys, jsonSort, computeEntryHash, getBlockHash } from './utils.js';
+import { jsonSort, computeEntryHash, getBlockHash } from './utils.js';
 
 export class LedgerEngine {
   /**

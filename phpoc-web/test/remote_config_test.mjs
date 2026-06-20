@@ -179,7 +179,98 @@ console.log(`\n═══ Auto-Detect SaaS from Worker URL ═══`);
   const { deployment, config } = detectDeployment();
   t.assertEq(deployment, 'saas', 'worker URL alone → saas');
   t.assertEq(config.baseUrl, 'https://worker.example.org', 'baseUrl present');
-  t.assertEq(config.apiKey, '', 'apiKey empty string when not set');
+  t.assertEq(config.apiKey, null, 'apiKey null when not set');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 4b. apiKey normalization — absent apiKey → null (not empty string)
+// ══════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ apiKey Normalization ═══`);
+
+{
+  resetGlobals();
+  // Explicit deployment (saas) + worker URL, no apiKey set
+  mockLocalStorage({
+    phpoc_deployment: 'saas',
+    phpoc_worker_url: 'https://worker.example.org',
+  });
+  mockUrlParams();
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'saas', 'explicit saas deployment');
+  t.assertEq(config.baseUrl, 'https://worker.example.org', 'baseUrl present');
+  t.assertEq(config.apiKey, null, 'explicit deployment: apiKey null when absent');
+}
+
+{
+  resetGlobals();
+  // Explicit LAN deployment + baseUrl, no apiKey
+  mockLocalStorage({
+    phpoc_deployment: 'lan',
+    phpoc_worker_url: 'http://192.168.1.100:8099',
+  });
+  mockUrlParams();
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'lan', 'explicit lan deployment');
+  t.assertEq(config.baseUrl, 'http://192.168.1.100:8099', 'baseUrl present');
+  t.assertEq(config.apiKey, null, 'explicit LAN: apiKey null when absent');
+}
+
+{
+  resetGlobals();
+  // URL param path: saas + baseUrl, no apiKey
+  mockLocalStorage({
+    phpoc_worker_url: 'https://url-param.example.com',
+  });
+  mockUrlParams('?deployment=saas');
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'saas', 'URL param saas overrides');
+  t.assertEq(config.baseUrl, 'https://url-param.example.com', 'baseUrl in config');
+  t.assertEq(config.apiKey, null, 'URL param path: apiKey null when absent');
+}
+
+{
+  resetGlobals();
+  // URL param path: lan + baseUrl, no apiKey
+  mockLocalStorage({
+    phpoc_worker_url: 'http://bridge.local:8080',
+  });
+  mockUrlParams('?deployment=lan');
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'lan', 'URL param lan overrides');
+  t.assertEq(config.baseUrl, 'http://bridge.local:8080', 'baseUrl in config');
+  t.assertEq(config.apiKey, null, 'URL param LAN: apiKey null when absent');
+}
+
+{
+  resetGlobals();
+  // Auto-detect path: worker URL only, no deployment key, no apiKey
+  mockLocalStorage({ phpoc_worker_url: 'https://auto-no-key.dev' });
+  mockUrlParams();
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'saas', 'auto-detect saas');
+  t.assertEq(config.baseUrl, 'https://auto-no-key.dev', 'baseUrl in config');
+  t.assertEq(config.apiKey, null, 'auto-detect: apiKey null when absent');
+}
+
+{
+  resetGlobals();
+  // apiKey is present → returned as string (not null)
+  mockLocalStorage({
+    phpoc_deployment: 'saas',
+    phpoc_worker_url: 'https://with-key.example.com',
+    phpoc_api_key: 'sk-abcd1234',
+  });
+  mockUrlParams();
+
+  const { deployment, config } = detectDeployment();
+  t.assertEq(deployment, 'saas', 'saas deployment');
+  t.assertEq(config.apiKey, 'sk-abcd1234', 'apiKey preserved as string when present');
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -280,7 +371,7 @@ console.log(`\n═══ Config Mutation Detection ═══`);
   let result = detectDeployment();
   t.assertEq(result.deployment, 'saas', 'explicit deployment key takes priority');
   t.assertEq(result.config.baseUrl, 'https://override.example.com', 'explicit deployment includes baseUrl');
-  t.assertEq(result.config.apiKey, '', 'apiKey empty when not set');
+  t.assertEq(result.config.apiKey, null, 'apiKey null when not set');
 }
 
 // ══════════════════════════════════════════════════════════════════════

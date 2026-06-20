@@ -174,14 +174,31 @@ async function run() {
   console.log('\n── Group 7: WASM-Derived UUID Detection ──\n');
 
   try {
-    // A WASM-derived UUID from HMAC(mk, "device:id") is a hex string
-    const wasmDerived = 'a1b2c3d4e5f6001234567890abcdef1234567890abcdef1234567890abcdef';
+    // A WASM-derived UUID from HMAC(mk, "device:id") is a 64-char hex string (SHA-256)
+    const wasmDerived = 'a1b2c3d4e5f678901234567890abcdef1234567890abcdef1234567890abcdef';
     const realUuid4 = '550e8400-e29b-41d4-a716-446655440000';
+    const md5Hash = 'd41d8cd98f00b204e9800998ecf8427e';         // 32 chars — NOT HMAC-SHA256
+    const sha1Hash = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'; // 40 chars — NOT HMAC-SHA256
+    const strippedUuid4 = '550e8400e29b41d4a716446655440000';    // 32 chars, no dashes — NOT HMAC-SHA256
+    const sha512Hash = 'cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e'; // 128 chars — NOT HMAC-SHA256
+    const sha256WithDashes = 'a1b2c3d4-e5f6-7890-1234-567890abcdef-1234567890abcdef-1234567890abcdef'; // 64 hex + dashes — IS WASM-derived
+    const sha512WithDashes = 'cf83e135-7eefb8bd-f1542850-d66d8007-d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e'; // 128 hex + dashes — NOT HMAC-SHA256
 
-    t.assert(isWasmDerivedUuid(wasmDerived), '7a. detects hex string as WASM-derived');
+    // 64-char hex (HMAC-SHA256) must be detected
+    t.assert(isWasmDerivedUuid(wasmDerived), '7a. detects 64-char hex string as WASM-derived');
+
+    // Non-HMAC-SHA256 lengths must NOT be detected
     t.assert(!isWasmDerivedUuid(realUuid4), '7b. UUID4 is NOT detected as WASM-derived');
+    t.assert(!isWasmDerivedUuid(md5Hash), '7c. 32-char hex (MD5) is NOT detected as WASM-derived');
+    t.assert(!isWasmDerivedUuid(sha1Hash), '7d. 40-char hex (SHA-1) is NOT detected as WASM-derived');
+    t.assert(!isWasmDerivedUuid(strippedUuid4), '7e. dash-stripped UUID4 is NOT detected as WASM-derived');
+    t.assert(!isWasmDerivedUuid(sha512Hash), '7f. 128-char hex (SHA-512) is NOT detected as WASM-derived');
+
+    // Hyphenated 64-char hex must be detected; longer hyphenated hex must not
+    t.assert(isWasmDerivedUuid(sha256WithDashes), '7g. hyphenated 64-char hex is detected as WASM-derived');
+    t.assert(!isWasmDerivedUuid(sha512WithDashes), '7h. hyphenated 128-char hex is NOT detected as WASM-derived');
   } catch (err) {
-    t.assert(false, `7a-7b. EXCEPTION (expected in RED phase): ${err.message}`);
+    t.assert(false, `7a-7h. EXCEPTION (expected in RED phase): ${err.message}`);
   }
 
   // ── Group 8: Migration — existing WASM-derived UUID replaced on next boot ──

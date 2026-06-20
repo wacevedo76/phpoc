@@ -375,6 +375,42 @@ class LocalStagingCache:
         self._store.write_entries(raw)
 
     # ------------------------------------------------------------------
+    # Entry ID-based operations (stable identifier, no index race)
+    # ------------------------------------------------------------------
+
+    def _find_index_by_entry_id(self, entry_id: str) -> int:
+        """Find the positional index for a given entry_id.
+
+        Reads the current staging array and searches by entry_id (UUID).
+        This is a fresh read each time — no stale-index risk.
+
+        Raises:
+            ValueError: If entry_id is not found.
+        """
+        raw = self._store.read_entries()
+        for i, entry in enumerate(raw):
+            if entry.get("data", {}).get("entry_id") == entry_id:
+                return i
+        raise ValueError(f"No staged entry found for entry_id: {entry_id}")
+
+    def update_by_entry_id(self, entry_id: str, fields: Dict[str, Any]):
+        """Update an entry by its stable entry_id (UUID). Resistant to index shifts."""
+        index = self._find_index_by_entry_id(entry_id)
+        self.update(index, fields)
+
+    def add_pause_by_entry_id(self, entry_id: str, pause_epoch: int,
+                               comment: Optional[str] = None):
+        """Add a pause to an entry by its stable entry_id (UUID)."""
+        index = self._find_index_by_entry_id(entry_id)
+        self.add_pause(index, pause_epoch, comment)
+
+    def close_pause_by_entry_id(self, entry_id: str, stop_epoch: int,
+                                 comment: Optional[str] = None):
+        """Close the last open pause on an entry by its stable entry_id (UUID)."""
+        index = self._find_index_by_entry_id(entry_id)
+        self.close_pause(index, stop_epoch, comment)
+
+    # ------------------------------------------------------------------
     # Duration computation
     # ------------------------------------------------------------------
 

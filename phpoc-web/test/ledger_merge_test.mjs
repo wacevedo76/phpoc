@@ -27,18 +27,9 @@
 import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
-import { sortKeys } from '../src/ledger/utils.js';
+import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
-
-/**
- * Build JSON with top-level keys sorted for seal computation.
- * The replacer-array form JSON.stringify(obj, Object.keys(obj).sort()))
- * acts as a property whitelist that strips nested data — use this instead.
- */
-function sortKeysJSON(obj) {
-  return JSON.stringify(sortKeys(obj));
-}
 
 // ── Import module under test ──
 let LedgerMerge;
@@ -175,7 +166,7 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
     entries: sortedEntries,
   };
   // Building seal: sort keys properly (whitelist-free)
-  const sealJson = sortKeysJSON(content);
+  const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
@@ -202,7 +193,7 @@ function buildGenesisBlock() {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = sortKeysJSON(content);
+  const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
@@ -775,7 +766,7 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
       for (const [k, v] of Object.entries(block)) {
         if (k !== hashKey && k !== 'signature') checkData[k] = v;
       }
-      const sealJson = sortKeysJSON(checkData);
+      const sealJson = jsonSort(checkData);
       if (!crypto.verifySeal(sealJson, block[hashKey], MASTER_KEY)) {
         allSealsValid = false;
         break;
@@ -903,7 +894,7 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
       for (const [k, v] of Object.entries(block)) {
         if (k !== hashKey && k !== 'signature') checkData[k] = v;
       }
-      const sealJson = sortKeysJSON(checkData);
+      const sealJson = jsonSort(checkData);
       const expectedSeal = crypto.seal(sealJson, MASTER_KEY);
       if (block[hashKey] !== expectedSeal) {
         sealsValid = false;
@@ -1121,7 +1112,7 @@ console.log('\n=== Group I — Edge Cases ===');
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson2 = sortKeysJSON(genesis2Content);
+  const sealJson2 = jsonSort(genesis2Content);
   genesis2Content.day_hash = crypto.seal(sealJson2, MASTER_KEY);
   if (IDENTITY_SECRET) {
     genesis2Content.signature = crypto.sign(genesis2Content.day_hash, IDENTITY_SECRET);
@@ -1390,7 +1381,7 @@ console.log('\n=== Group J — Input Chain Validation ===');
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  genesis2.day_hash = crypto.seal(sortKeysJSON(genesis2), MASTER_KEY);
+  genesis2.day_hash = crypto.seal(jsonSort(genesis2), MASTER_KEY);
   if (IDENTITY_SECRET) {
     genesis2.signature = crypto.sign(genesis2.day_hash, IDENTITY_SECRET);
   }

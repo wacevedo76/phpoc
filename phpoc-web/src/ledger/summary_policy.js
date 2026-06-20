@@ -11,7 +11,7 @@
  *   const blocks = policy.getSummaryBlocks(prevBlock, '2026-02-01');
  */
 
-import { getBlockHash } from './utils.js';
+import { getBlockHash, jsonSort } from './utils.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function makeYearSummary(crypto, masterKey, identitySecret, year, prevHash, date
     prev_hash: prevHash,
     date: dateStr,
   };
-  const json = JSON.stringify(summary, Object.keys(summary).sort());
+  const json = jsonSort(summary);
   summary.year_hash = crypto.seal(json, masterKey);
   if (identitySecret) {
     summary.signature = crypto.sign(summary.year_hash, identitySecret);
@@ -52,7 +52,7 @@ function makeMonthSummary(crypto, masterKey, identitySecret, month, prevHash, da
     prev_hash: prevHash,
     date: dateStr,
   };
-  const json = JSON.stringify(summary, Object.keys(summary).sort());
+  const json = jsonSort(summary);
   summary.month_hash = crypto.seal(json, masterKey);
   if (identitySecret) {
     summary.signature = crypto.sign(summary.month_hash, identitySecret);

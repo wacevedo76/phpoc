@@ -158,38 +158,66 @@ class StagingService:
     def end(self, title, end_epoch, comment=None):
         """End an active task. Local-only write."""
         entries = self._local.read_entries()
+        found_entry_id = None
         found_index = None
+        found_start_epoch = None
+        found_is_paused = False
         for i, entry in enumerate(entries):
             if entry["title"] == title and entry.get("is_active"):
+                found_entry_id = entry.get("entry_id", "") or None
                 found_index = i
+                found_start_epoch = entry["start_epoch"]
+                found_is_paused = entry.get("is_paused", False)
                 break
 
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        # Auto-unpause if currently paused
-        if entries[found_index].get("is_paused"):
-            self._local.close_pause(found_index, end_epoch)
+        # Choose stable entry_id path or legacy index path
+        if found_entry_id:
+            # Auto-unpause if currently paused (by stable entry_id)
+            if found_is_paused:
+                self._local.close_pause_by_entry_id(found_entry_id, end_epoch)
+            end_device_uuid = self._get_device_id()
+            self._local.update_by_entry_id(found_entry_id, {
+                "end_epoch": end_epoch,
+                "is_active": False,
+                "end_device_uuid": end_device_uuid or "",
+            })
+            # Recompute duration: re-read to get updated pauses after close_pause
+            updated_entries = self._local.read_entries()
+            pauses = []
+            for e in updated_entries:
+                if e.get("entry_id") == found_entry_id:
+                    pauses = e.get("pauses", [])
+                    break
+            duration = self._local._compute_duration(
+                found_start_epoch, end_epoch, pauses
+            )
+            self._local.update_by_entry_id(found_entry_id, {"duration": duration})
+            if comment is not None:
+                self._local.update_by_entry_id(found_entry_id, {"comment": comment})
+        else:
+            # Legacy path: entries without entry_id (created by compat/v0_3_0)
+            if found_is_paused:
+                self._local.close_pause(found_index, end_epoch)
+            end_device_uuid = self._get_device_id()
+            self._local.update(found_index, {
+                "end_epoch": end_epoch,
+                "is_active": False,
+                "end_device_uuid": end_device_uuid or "",
+            })
+            raw = self._local._store.read_entries()
+            data = raw[found_index]["data"]
+            pauses_enc = data.get("pauses_enc", self._local._encrypt_field(json.dumps([])))
+            pauses = json.loads(self._local._from_plain(pauses_enc) or "[]")
+            duration = self._local._compute_duration(
+                found_start_epoch, end_epoch, pauses
+            )
+            self._local.update(found_index, {"duration": duration})
+            if comment is not None:
+                self._local.update(found_index, {"comment": comment})
 
-        end_device_uuid = self._get_device_id()
-        self._local.update(found_index, {
-            "end_epoch": end_epoch,
-            "is_active": False,
-            "end_device_uuid": end_device_uuid or "",
-        })
-
-        # Recompute duration
-        raw = self._local._store.read_entries()
-        data = raw[found_index]["data"]
-        pauses_enc = data.get("pauses_enc", self._local._encrypt_field(json.dumps([])))
-        pauses = json.loads(self._local._from_plain(pauses_enc) or "[]")
-        duration = self._local._compute_duration(
-            entries[found_index]["start_epoch"], end_epoch, pauses
-        )
-        self._local.update(found_index, {"duration": duration})
-
-        if comment is not None:
-            self._local.update(found_index, {"comment": comment})
         self._touch_local_cookie()
 
     def end_at(
@@ -211,31 +239,41 @@ class StagingService:
     def pause(self, title, pause_epoch):
         """Pause an active task (mark is_paused). Local-only."""
         entries = self._local.read_entries()
+        found_entry_id = None
         found_index = None
         for i, entry in enumerate(entries):
             if entry["title"] == title and entry.get("is_active"):
+                found_entry_id = entry.get("entry_id", "") or None
                 found_index = i
                 break
 
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        self._local.add_pause(found_index, pause_epoch)
+        if found_entry_id:
+            self._local.add_pause_by_entry_id(found_entry_id, pause_epoch)
+        else:
+            self._local.add_pause(found_index, pause_epoch)
         self._touch_local_cookie()
 
     def unpause(self, title, unpause_epoch):
         """Unpause a paused task (resume). Local-only."""
         entries = self._local.read_entries()
+        found_entry_id = None
         found_index = None
         for i, entry in enumerate(entries):
             if entry["title"] == title and entry.get("is_active"):
+                found_entry_id = entry.get("entry_id", "") or None
                 found_index = i
                 break
 
         if found_index is None:
             raise ValueError(f"No active task found for: {title}")
 
-        self._local.close_pause(found_index, unpause_epoch)
+        if found_entry_id:
+            self._local.close_pause_by_entry_id(found_entry_id, unpause_epoch)
+        else:
+            self._local.close_pause(found_index, unpause_epoch)
         self._touch_local_cookie()
 
     def modify(
