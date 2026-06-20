@@ -38,6 +38,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (all GREEN) |
 | `phpoc-web/test/settings_genesis_test.mjs` | HOT | 13-test Settings UI genesis gate integration |
 | `phpoc-web/test/sync_service_test.mjs` | HOT | 45 tests (SyncService auth gate + 3 new genesis gate integration tests) |
+| `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
+| `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | Now 4 onboarding paths including "Connect to existing Worker" |
+| `phpoc-web/src/context/DevModeContext.jsx` | HOT | Added `connectToWorker()` — 8-step auth + storage write + bootstrap |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 

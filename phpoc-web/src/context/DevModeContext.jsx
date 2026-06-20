@@ -18,7 +18,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { DummyCryptoService } from '../services/DummyLedger.js';
-import { SyncService, SyncResult, IndexedDBBackend, createTransportFromDeployment, GenesisGate } from '@sync/index.js';
+import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate } from '@sync/index.js';
 import { exportLedger } from '../services/ledger_export.js';
 import { importLedger } from '../services/ledger_import.js';
 
@@ -57,25 +57,57 @@ class FallbackStorage {
 }
 
 /**
- * Attempt to create an IndexedDBBackend, falling back to in-memory storage.
+ * Attempt to create a storage backend. Cascading fallback:
+ *   1. IndexedDBBackend — persistent, survives browser restart (normal)
+ *   2. SessionStorageBackend — survives page refresh, lost on tab close
+ *      (private/incognito browsing)
+ *   3. In-memory Map — lost on ANY page refresh (last resort)
  *
- * Caches the FallbackStorage instance within the same session so data
- * survives logout/login cycles in private browsing mode.
+ * Caches the fallback instance across calls so data survives
+ * logout/login within the same page session.
  */
-let _fallbackStorage = null;
+let _cachedFallbackStorage = null;
+let _storageStatus = null; // 'persistent' | 'session' | 'memory'
+
 async function createStorage() {
+  // Return cached fallback if already created
+  if (_cachedFallbackStorage) return _cachedFallbackStorage;
+
+  // ── 1. Try IndexedDB (persistent) ──
   try {
     const backend = new IndexedDBBackend('phpoc-sync');
-    // Probe the backend to see if IndexedDB is available
-    await backend.list();
+    await backend.list(); // probe
+    _storageStatus = 'persistent';
     return backend;
   } catch {
-    console.warn('IndexedDB unavailable — using in-memory fallback');
-    if (!_fallbackStorage) {
-      _fallbackStorage = new FallbackStorage();
-    }
-    return _fallbackStorage;
+    // IndexedDB unavailable — try sessionStorage
   }
+
+  // ── 2. Try SessionStorage (survives refresh in private browsing) ──
+  try {
+    const backend = new SessionStorageBackend('phpoc:');
+    await backend.list(); // probe
+    _cachedFallbackStorage = backend;
+    _storageStatus = 'session';
+    console.warn(
+      '[PHPOC] IndexedDB unavailable — using sessionStorage fallback.',
+      'Data will survive page refreshes but is lost when you close this tab/window.',
+    );
+    return backend;
+  } catch {
+    // sessionStorage also unavailable — fall back to in-memory
+  }
+
+  // ── 3. Last resort: in-memory Map ──
+  console.warn(
+    '[PHPOC] IndexedDB and sessionStorage unavailable — using in-memory fallback.',
+    'ALL DATA WILL BE LOST on page refresh.',
+  );
+  if (!_cachedFallbackStorage) {
+    _cachedFallbackStorage = new FallbackStorage();
+  }
+  _storageStatus = 'memory';
+  return _cachedFallbackStorage;
 }
 
 /**
@@ -145,6 +177,14 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // ── Pending import state (carries data from validate to confirm) ──
   const pendingImportRef = useRef(null);
 
+  // Tracks whether real WASM crypto loaded or we fell back to dummy.
+  // 'wasm' = real crypto, 'fallback' = DummyCryptoService (INSECURE).
+  const [cryptoStatus, setCryptoStatus] = useState('wasm');
+
+  // Tracks storage quality: 'persistent' (IndexedDB), 'session' (SessionStorage),
+  // or 'memory' (in-memory Map, data lost on refresh).
+  const [storageStatus, setStorageStatus] = useState('persistent');
+
   useEffect(() => {
     if (bootAttempted.current) return;
     bootAttempted.current = true;
@@ -152,6 +192,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     async function boot() {
       try {
         const storage = await createStorage();
+        setStorageStatus(_storageStatus);
 
         if (isDev) {
           // ── DEV MODE: eager bootstrap with mock data ──
@@ -365,8 +406,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { CryptoService } = await import('../crypto/index.js');
       crypto = await CryptoService.create();
-    } catch {
-      // Fall back to DummyCryptoService if WASM unavailable
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
       crypto = await DummyCryptoService.create();
     }
 
@@ -405,7 +451,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { CryptoService } = await import('../crypto/index.js');
       crypto = await CryptoService.create();
-    } catch {
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
       crypto = await DummyCryptoService.create();
     }
 
@@ -503,7 +555,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { CryptoService } = await import('../crypto/index.js');
       crypto = await CryptoService.create();
-    } catch {
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
       crypto = await DummyCryptoService.create();
     }
 
@@ -631,6 +689,120 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   }, []);
 
   /**
+   * Connect to an existing Worker-hosted ledger.
+   *
+   * Verifies the passphrase against the fetched genesis block, derives
+   * the master key, writes the chain to storage, saves remote config,
+   * and bootstraps all services.
+   *
+   * @param {object} opts
+   * @param {string} opts.baseUrl - Worker URL
+   * @param {string} opts.apiKey - API key
+   * @param {string} opts.passphrase - User's passphrase
+   * @param {object} opts.genesisBlock - Fetched genesis block
+   * @param {object[]} opts.chain - Full remote chain
+   */
+  const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, genesisBlock, chain }) => {
+    setLoading(true);
+
+    // ── 1. Initialize crypto ───────────────────────────────────────
+    let crypto;
+    try {
+      const { CryptoService } = await import('../crypto/index.js');
+      crypto = await CryptoService.create();
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
+      crypto = await DummyCryptoService.create();
+    }
+
+    // ── 2. Derive PDK from passphrase ──────────────────────────────
+    let pdk;
+    try {
+      pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+    } catch (err) {
+      setLoading(false);
+      throw new Error(`Failed to derive key: ${err.message}`);
+    }
+
+    // ── 3. Decrypt recovery seed from genesis ──────────────────────
+    let seed;
+    try {
+      seed = crypto.decrypt(genesisBlock.identity.recovery_seed_enc, pdk);
+      if (!seed || seed.length < 10) {
+        throw new Error('Decrypted seed is invalid');
+      }
+    } catch (err) {
+      setLoading(false);
+      throw new Error('Wrong passphrase for this ledger.');
+    }
+
+    // ── 4. Derive master key ───────────────────────────────────────
+    let masterKey;
+    try {
+      masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+    } catch (err) {
+      setLoading(false);
+      throw new Error(`Authentication failed: ${err.message}`);
+    }
+
+    // ── 5. Verify genesis seal ────────────────────────────────────
+    try {
+      // Build check data: everything except day_hash and signature
+      const checkData = {};
+      for (const [k, v] of Object.entries(genesisBlock)) {
+        if (k !== 'day_hash' && k !== 'signature') {
+          checkData[k] = v;
+        }
+      }
+      // Use deterministic JSON serialization (same as LedgerChain)
+      const { jsonSort } = await import('../ledger/utils.js');
+      const sealData = jsonSort(checkData);
+      const valid = crypto.verifySeal(sealData, genesisBlock.day_hash, masterKey);
+      if (!valid) {
+        throw new Error('Seal verification failed');
+      }
+    } catch (err) {
+      setLoading(false);
+      throw new Error('Wrong passphrase for this ledger.');
+    }
+
+    // ── 6. Write everything to storage ────────────────────────────
+    const storage = await createStorage();
+    await storage.clear();
+
+    // Store seed for future logins
+    await storage.set(STORED_SEED_KEY, seed);
+
+    // Store identity info from genesis
+    if (genesisBlock.identity.username) {
+      await storage.set(USERNAME_KEY, genesisBlock.identity.username);
+    }
+    if (genesisBlock.identity.email) {
+      await storage.set(EMAIL_KEY, genesisBlock.identity.email);
+    }
+
+    // Store the ledger chain
+    await storage.set('ledger:blocks', chain);
+
+    // ── 7. Save remote config ─────────────────────────────────────
+    localStorage.setItem('phpoc_worker_url', baseUrl);
+    if (apiKey) {
+      localStorage.setItem('phpoc_api_key', apiKey);
+    } else {
+      localStorage.removeItem('phpoc_api_key');
+    }
+    localStorage.setItem('phpoc_deployment', 'saas');
+
+    // ── 8. Bootstrap services ─────────────────────────────────────
+    await bootstrapServices({ crypto, masterKey, storage });
+  }, []);
+
+  /**
    * Import a ledger from an exported file (one-shot convenience).
    *
    * For enhanced UX with confirmation dialogs, use validateImport() +
@@ -681,7 +853,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { CryptoService } = await import('../crypto/index.js');
       crypto = await CryptoService.create();
-    } catch {
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
       crypto = await DummyCryptoService.create();
     }
 
@@ -830,6 +1008,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Services (populated when ready)
     services,
 
+    // Crypto status
+    cryptoStatus,
+
+    // Storage backend quality
+    storageStatus,
+
     // Auth state (derived from phase)
     user: {
       isAuthenticated: phase === 'ready',
@@ -849,6 +1033,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Auth / onboarding actions
     login,
     createNewLedger,
+    connectToWorker,
     importLedger: importLedgerAction,
     validateImport,
     confirmImport,
@@ -885,12 +1070,15 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   error: string|null,
  *   setError: (string|null) => void,
  *   services: { crypto: object|null, sync: object|null, storage: object|null },
+ *   cryptoStatus: 'wasm'|'fallback',
+ *   storageStatus: 'persistent'|'session'|'memory',
  *   user: { isAuthenticated: boolean, deviceId: string|null, masterKeyCached: boolean, username: string|null, email: string|null },
  *   startLogin: () => void,
  *   startOnboarding: () => void,
  *   goBackToLanding: () => void,
  *   login: (passphrase: string) => Promise<void>,
  *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
+ *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, genesisBlock: object, chain: object[]}) => Promise<void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
  *   validateImport: (file: File, passphrase: string, seed: string) => Promise<{needsConfirmation: boolean, genesisCheck: string, stagingCount: number, blocksCount: number, importEntryCount: number, formatVersion: string}>,
  *   confirmImport: (opts: {keepStaging?: boolean}) => Promise<void>,

@@ -36,10 +36,11 @@ async function probeExistingData() {
 /**
  * OnboardingScreen — first-time setup or fresh-start flow.
  *
- * Presents three options:
+ * Presents four options:
  *   1. Import a ledger (file picker → passphrase → verify → load)
  *   2. Begin a new ledger (passphrase confirmation → generate seed → create)
- *   3. Export current ledger (passphrase auth → download) — only if data exists
+ *   3. Connect to existing Worker (URL + API key → fetch genesis → passphrase)
+ *   4. Export current ledger (passphrase auth → download) — only if data exists
  *
  * Props:
  *   hasExistingData     — Whether IndexedDB has existing ledger data
@@ -47,6 +48,7 @@ async function probeExistingData() {
  *   onValidateImport(file, passphrase, seed) — Read-only validation (two-phase import)
  *   onConfirmImport({ keepStaging })    — Execute confirmed import
  *   onNewLedger(passphrase)             — Create a brand new ledger
+ *   onWorkerConnect({ baseUrl, apiKey, passphrase, genesisBlock }) — Connect to Worker
  *   onExport(passphrase)                — Export current ledger (auth-gated)
  *   onExportFull()                      — Export full ledger (committed + staging)
  *   onBack()                             — Return to landing screen
@@ -58,13 +60,14 @@ export default function OnboardingScreen({
   onValidateImport,
   onConfirmImport,
   onNewLedger,
+  onWorkerConnect,
   onExport,
   onExportFull,
   onBack,
   error,
 }) {
   // ── Phase tracking ──────────────────────────────────────────────
-  // 'menu' | 'import' | 'new-ledger' | 'export'
+  // 'menu' | 'import' | 'new-ledger' | 'worker-connect' | 'export'
   const [phase, setPhase] = useState('menu');
   const fileInputRef = useRef(null);
 
@@ -185,6 +188,170 @@ export default function OnboardingScreen({
     }
   };
 
+  // ── Phase: Worker Connect ──────────────────────────────────────
+  const [workerUrl, setWorkerUrl] = useState('');
+  const [workerApiKey, setWorkerApiKey] = useState('');
+  const [connectStep, setConnectStep] = useState('form'); // 'form' | 'fetching' | 'compatible' | 'unlocking'
+  const [connectStatus, setConnectStatus] = useState(null);
+  // { type: 'compatible'|'incompatible'|'offline'|'403'|'no_ledger'|'error', message?: string }
+  const [fetchedGenesis, setFetchedGenesis] = useState(null);
+  const [connectPassphrase, setConnectPassphrase] = useState('');
+  const [connecting, setConnecting] = useState(false);
+
+  // Reset connect state when entering worker-connect phase
+  useEffect(() => {
+    if (phase === 'worker-connect') {
+      setConnectStep('form');
+      setConnectStatus(null);
+      setFetchedGenesis(null);
+      setConnectPassphrase('');
+      setConnecting(false);
+      setLocalError('');
+    }
+  }, [phase]);
+
+  const handleWorkerFetch = async (e) => {
+    e.preventDefault();
+    if (!workerUrl.trim()) {
+      setLocalError('Please enter a Worker URL.');
+      return;
+    }
+
+    setConnecting(true);
+    setLocalError('');
+    setConnectStep('fetching');
+
+    try {
+      const { HttpTransport } = await import('../../sync/transport.js');
+      const transport = new HttpTransport({
+        baseUrl: workerUrl.trim(),
+        apiKey: workerApiKey.trim() || null,
+      });
+
+      const raw = await transport.pull('ledger:blocks');
+
+      if (raw === null || raw === undefined) {
+        setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      let chain;
+      try {
+        const json = new TextDecoder().decode(raw);
+        chain = JSON.parse(json);
+      } catch {
+        setConnectStatus({ type: 'error', message: 'Invalid data received from server.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!Array.isArray(chain) || chain.length === 0) {
+        setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      const genesis = chain[0];
+
+      // Validate genesis structure
+      if (genesis.type !== 'genesis') {
+        setConnectStatus({ type: 'error', message: 'Remote ledger does not have a valid genesis block.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!genesis.format_version) {
+        setConnectStatus({ type: 'error', message: 'Genesis block is missing format version.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!genesis.identity) {
+        setConnectStatus({ type: 'error', message: 'Genesis block is missing identity data.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!genesis.identity.username) {
+        setConnectStatus({ type: 'error', message: 'Genesis block is missing username.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!genesis.identity.recovery_seed_enc) {
+        setConnectStatus({ type: 'error', message: 'Genesis block is missing recovery seed.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      if (!genesis.day_hash) {
+        setConnectStatus({ type: 'error', message: 'Genesis block is missing integrity seal.' });
+        setConnectStep('form');
+        setConnecting(false);
+        return;
+      }
+
+      // Genesis looks valid
+      setFetchedGenesis({ genesis, chain });
+      setConnectStatus({
+        type: 'compatible',
+        message: `Ledger found for "${genesis.identity.username}"` +
+          (genesis.identity.email ? ` (${genesis.identity.email})` : ''),
+      });
+      setConnectStep('compatible');
+      setConnecting(false);
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('403')) {
+        setConnectStatus({ type: '403', message: 'Access denied. Check your API key.' });
+      } else {
+        setConnectStatus({ type: 'offline', message: 'Cannot reach remote server. ' + msg });
+      }
+      setConnectStep('form');
+      setConnecting(false);
+    }
+  };
+
+  const handleWorkerUnlock = async (e) => {
+    e.preventDefault();
+    if (!connectPassphrase.trim()) {
+      setLocalError('Please enter your passphrase.');
+      return;
+    }
+    if (!onWorkerConnect) {
+      setLocalError('Worker connect is not available.');
+      return;
+    }
+
+    setConnecting(true);
+    setLocalError('');
+    setConnectStep('unlocking');
+
+    try {
+      await onWorkerConnect({
+        baseUrl: workerUrl.trim(),
+        apiKey: workerApiKey.trim() || null,
+        passphrase: connectPassphrase.trim(),
+        genesisBlock: fetchedGenesis.genesis,
+        chain: fetchedGenesis.chain,
+      });
+      // Success — parent will transition phase to ready
+    } catch (err) {
+      setLocalError(err.message || 'Failed to unlock. Check your passphrase.');
+      setConnectStep('compatible');
+      setConnecting(false);
+    }
+  };
+
   // ── Phase: Export ───────────────────────────────────────────────
   const [exportPassphrase, setExportPassphrase] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -223,6 +390,9 @@ export default function OnboardingScreen({
         </button>
         <button className="auth-btn" onClick={() => setPhase('new-ledger')}>
           ✨ Begin a new ledger
+        </button>
+        <button className="auth-btn" onClick={() => setPhase('worker-connect')}>
+          🔗 Connect to existing Worker
         </button>
         {hasExistingData && (
           <button className="btn btn-secondary btn-landing" onClick={() => setPhase('export')}>
@@ -520,6 +690,174 @@ export default function OnboardingScreen({
     </div>
   );
 
+  // ── Phase: Worker Connect ──────────────────────────────────────
+  const renderWorkerConnect = () => (
+    <div className="auth-card">
+      {/* ── Step 1: Enter URL + API key ──────────────────────── */}
+      {(connectStep === 'form' || connectStep === 'fetching') && (
+        <>
+          <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>🔗 Connect to a Worker</h2>
+          <p className="auth-subtitle">
+            Enter the URL and API key of a PH Ledger Worker to connect
+            an existing ledger from a different device.
+          </p>
+
+          {hasExistingData && (
+            <p className="auth-hint" style={{ marginBottom: '0.75rem', color: '#e67e22' }}>
+              ⚠ This will replace all current data in the app.
+            </p>
+          )}
+
+          {/* Show previous error status */}
+          {connectStatus && connectStatus.type !== 'compatible' && (
+            <div style={{
+              background: '#ffebee',
+              border: '1px solid #e53935',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              marginBottom: '0.75rem',
+            }}>
+              <p style={{ margin: 0, color: '#c62828', fontWeight: 600 }}>
+                {connectStatus.type === 'offline' && '🔌 Cannot reach remote'}
+                {connectStatus.type === '403' && '🔒 Access denied'}
+                {connectStatus.type === 'no_ledger' && '📭 No ledger found'}
+                {connectStatus.type === 'error' && '❌ Error'}
+              </p>
+              {connectStatus.message && (
+                <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#b71c1c' }}>
+                  {connectStatus.message}
+                </p>
+              )}
+            </div>
+          )}
+
+          <form className="auth-form" onSubmit={handleWorkerFetch}>
+            <div className="form-group">
+              <label htmlFor="worker-url" className="auth-label">Worker URL</label>
+              <input
+                id="worker-url"
+                type="url"
+                className="auth-input"
+                placeholder="https://your-worker.workers.dev"
+                value={workerUrl}
+                onChange={(e) => setWorkerUrl(e.target.value)}
+                disabled={connecting}
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="worker-api-key" className="auth-label">API Key</label>
+              <input
+                id="worker-api-key"
+                type="password"
+                className="auth-input"
+                placeholder="Shared API key"
+                value={workerApiKey}
+                onChange={(e) => setWorkerApiKey(e.target.value)}
+                disabled={connecting}
+              />
+            </div>
+
+            {displayError && <p className="auth-error-msg">{displayError}</p>}
+
+            <button
+              type="submit"
+              className="auth-btn"
+              disabled={connecting || !workerUrl.trim()}
+            >
+              {connecting ? 'Connecting...' : 'Connect'}
+            </button>
+          </form>
+
+          <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setPhase('menu')}>
+              ← Back
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step 2: Genesis found — enter passphrase ──────────── */}
+      {connectStep === 'compatible' && (
+        <>
+          <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>🔐 Unlock Ledger</h2>
+          <p className="auth-subtitle">
+            Enter your passphrase to unlock this ledger.
+          </p>
+
+          {/* Genesis info */}
+          {connectStatus && (
+            <div style={{
+              background: '#e8f5e9',
+              border: '1px solid #4caf50',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              marginBottom: '0.75rem',
+            }}>
+              <p style={{ margin: 0, color: '#2e7d32', fontWeight: 600 }}>
+                ✅ Genesis compatible
+              </p>
+              {connectStatus.message && (
+                <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#388e3c' }}>
+                  {connectStatus.message}
+                </p>
+              )}
+            </div>
+          )}
+
+          <form className="auth-form" onSubmit={handleWorkerUnlock}>
+            <div className="form-group">
+              <label htmlFor="connect-passphrase" className="auth-label">Passphrase</label>
+              <input
+                id="connect-passphrase"
+                type="password"
+                className="auth-input"
+                placeholder="Enter your passphrase"
+                value={connectPassphrase}
+                onChange={(e) => setConnectPassphrase(e.target.value)}
+                disabled={connecting}
+                autoFocus
+              />
+            </div>
+
+            {displayError && <p className="auth-error-msg">{displayError}</p>}
+
+            <button
+              type="submit"
+              className="auth-btn"
+              disabled={connecting || !connectPassphrase.trim()}
+            >
+              {connecting ? 'Unlocking...' : 'Unlock'}
+            </button>
+          </form>
+
+          <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setConnectStep('form');
+                setConnectStatus(null);
+                setFetchedGenesis(null);
+              }}
+              disabled={connecting}
+            >
+              ← Back
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Unlocking spinner ────────────────────────────────── */}
+      {connectStep === 'unlocking' && (
+        <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+          <div className="loading-spinner" />
+          <p style={{ marginTop: '1rem', color: '#666' }}>Unlocking ledger...</p>
+        </div>
+      )}
+    </div>
+  );
+
   // ── Phase: Export ──────────────────────────────────────────────
   const renderExport = () => (
     <div className="auth-card">
@@ -568,6 +906,7 @@ export default function OnboardingScreen({
       {phase === 'menu' && renderMenu()}
       {phase === 'import' && renderImport()}
       {phase === 'new-ledger' && renderNewLedger()}
+      {phase === 'worker-connect' && renderWorkerConnect()}
       {phase === 'export' && renderExport()}
     </div>
   );

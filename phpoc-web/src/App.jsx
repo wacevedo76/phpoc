@@ -35,6 +35,7 @@ function AppInner() {
     phase,
     loading,
     error,
+    isDev,
     hasExistingData,
     services,
     user,
@@ -43,12 +44,15 @@ function AppInner() {
     goBackToLanding,
     login,
     createNewLedger,
+    connectToWorker,
     importLedger,
     validateImport,
     confirmImport,
     exportLedger,
     exportLedgerFull,
     logout,
+    cryptoStatus,
+    storageStatus,
   } = useApp();
 
   const [currentScreen, setCurrentScreen] = useState('dashboard');
@@ -129,6 +133,7 @@ function AppInner() {
         onValidateImport={validateImport}
         onConfirmImport={confirmImport}
         onNewLedger={handleNewLedger}
+        onWorkerConnect={connectToWorker}
         onExport={exportLedger}
         onExportFull={exportLedgerFull}
       />
@@ -184,6 +189,28 @@ function AppInner() {
 
   return (
     <>
+      {/* Crypto fallback warning */}
+      {cryptoStatus === 'fallback' && !isDev && (
+        <div className="crypto-fallback-banner">
+          ⚠ <strong>WASM crypto unavailable</strong> — using fallback encryption.
+          Your data is <strong>not cryptographically protected</strong>.
+          Check the browser console for details.
+        </div>
+      )}
+      {/* Storage quality warning */}
+      {storageStatus === 'memory' && !isDev && (
+        <div className="storage-fallback-banner storage-fallback-banner--memory">
+          ⚠ <strong>Storage unavailable</strong> — using in-memory storage.
+          <strong>All data will be lost on page refresh.</strong>
+          Private/incognito browsing may cause this.
+        </div>
+      )}
+      {storageStatus === 'session' && !isDev && (
+        <div className="storage-fallback-banner storage-fallback-banner--session">
+          ℹ <strong>Session-only storage</strong> — data survives page refreshes
+          but will be lost when you close this tab/window.
+        </div>
+      )}
       <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogout}>
         {renderScreen()}
       </AppLayout>

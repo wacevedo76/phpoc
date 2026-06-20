@@ -27,9 +27,12 @@ All notable changes to the PH Ledger (phpoc) project.
 - `SyncResult` frozen object includes `GENESIS_MISMATCH`.
 - `DevModeContext` handles `GENESIS_MISMATCH` result from `checkAndSync()`.
 - `ph sync --help` now lists both `remote_staging` and `remote_ledger` subcommands.
+- **WASM crypto fallback made visible** — DummyCryptoService fallback now emits `console.error` and sets `cryptoStatus='fallback'`. App shows a red sticky warning banner in production mode. Removed `@vite-ignore` (dev HMR compat) and added `build.rollupOptions.external` for production safety.
+- **SessionStorage fallback for private browsing** — `createStorage()` cascade: IndexedDB → `SessionStorageBackend` (survives refresh) → in-memory Map. `SessionStorageBackend` auto-falls-back to Map on quota errors. `storageStatus` state drives amber (session) or red (memory) warning banners.
 
 ### Fixed
 - Genesis gate code review findings: `TextDecoder` promoted to module-level constant; merge error catch no longer masks real errors as `invalid_chain`.
+- **Connect to Existing Worker onboarding** — Fourth onboarding path: enter Worker URL + API key, fetch remote `ledger:blocks`, validate genesis structure, passphrase verification against pulled genesis (PDK → decrypt recovery_seed → master key → verify seal). `DevModeContext.connectToWorker()` handles full 8-step auth + storage write + remote config persist + service bootstrap. 65 tests, 0 failures.
 
 ## [0.6.1] — 389e268 (P3-Remote_Sync — recover session cache fix)
 

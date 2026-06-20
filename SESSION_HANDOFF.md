@@ -51,72 +51,26 @@ All 149 tests across genesis_gate (89), settings (13), sync_service (45), and al
 
 ---
 
-### 🔴 Phase 4 (current): Connect to Existing Worker — Onboarding Flow (2026-06-20)
+### 🟢 Phase 4 (complete): Connect to Existing Worker — Onboarding Flow ✅ (2026-06-20)
 
-**Pivot rationale:** Companion bridge server (Python, ~80-100 lines) is useful for self-hosting but deferred. "Connect to existing Worker" during onboarding is more immediately valuable — it enables real Worker end-to-end testing today, lets us exercise the remote sync pipeline (GenesisGate + SyncService + LedgerMerge) against a live Worker, and surfaces the cross-client concerns (passphrase verification against genesis, chain pull from remote, remote config persistence) that Flutter will need.
-
-**Feature:** A fourth onboarding path — "Connect to existing Worker" — that lets a user connect a new browser/device to a ledger already hosted on Worker → R2.
-
-**What already exists (all GREEN):**
-- `HttpTransport` — speaks Worker HTTP API from browser (49 tests)
-- `HttpBackend` — wraps Transport → StorageBackend (41 tests)
-- `GenesisGate.check()` — fetches remote `ledger:blocks`, validates format/seals/linkage, compares genesis hashes (89 tests)
-- `SyncService.checkAndSync()` — local ↔ remote sync with auth gate, respects genesis gate (45 tests)
-- Settings UI genesis check + status indicator (13 tests)
-- `LedgerMerge.merge()` — reconciles divergent same-genesis chains (99 tests)
-- Remote config persistence (`baseUrl`, `apiKey`) in localStorage via `RemoteConfig` (35 tests)
-
-**What needs to be built:**
-
-1. **Onboarding UI** — new "Connect to existing Worker" card in `OnboardingScreen.jsx`
-   - Worker URL + API key inputs (reuse pattern from Settings)
-   - "Connect" button triggers remote fetch + validation
-   - Status feedback: checking → compatible → proceed to passphrase entry
-   - Error states: offline, 403 (bad API key), incompatible genesis, no ledger found
-
-2. **Remote fetch during onboarding** — pull `ledger:blocks` from Worker
-   - Use `GenesisGate._fetchRemoteChain()` (or direct `HttpTransport.pull()`)
-   - Validate genesis block structure (format_version, type, identity, seal)
-   - Write `ledger:blocks` + `ledger:index` to IndexedDB
-   - Store `baseUrl` + `apiKey` via `RemoteConfig.save()`
-
-3. **Passphrase verification against pulled genesis**
-   - User enters passphrase → PBKDF2 → PDK → AES-decrypt `genesis.identity.recovery_seed_enc` → seed
-   - Seed → derive master key → verify genesis seal → correct passphrase
-   - Fail → "Wrong passphrase for this ledger" (do NOT write anything)
-   - Auth completes → master key cached → transition to Dashboard
-
-4. **Sync staging blobs after auth**
-   - After passphrase success: `SyncService.checkAndSync()` pulls staging blob + cookie from Worker
-   - Merge remote staging entries into local cache
-   - Push local cookie to Worker
-
-**Tests needed (~20–25 tests):**
-- `test/worker_connect_onboarding_test.mjs` — new test file
-  - Group A (UI): render, input validation, Connect button enable/disable
-  - Group B (fetch): successful chain pull, 404 (no ledger), 403 (bad API key), network error
-  - Group C (genesis validation): valid genesis → compatible, missing identity → error, tampered seal → error, format_version mismatch → incompatible
-  - Group D (passphrase): correct passphrase unlocks, wrong passphrase rejected, no writes on wrong passphrase
-  - Group E (config persistence): URL + API key saved to localStorage after successful connect, cleared on reset
-  - Group F (existing data protection): existing IndexedDB data not destroyed by failed connect attempt
-
-**Effort estimate:** ~250–300 LOC implementation, ~20–25 tests
+**Implemented:** OnboardingScreen has new "🔗 Connect to existing Worker" card. Two-step flow: (1) Enter URL + API key → Connect → fetches remote `ledger:blocks` via `HttpTransport`, validates genesis structure (type, format_version, identity, recovery_seed_enc, day_hash), shows compatible status. (2) Enter passphrase → Unlock → PDK derive → decrypt recovery_seed_enc → derive master key → verify genesis seal via `jsonSort`. `DevModeContext.connectToWorker()` does 8-step auth + storage write + remote config persist + bootstrap. 65 tests, 0 failures.
 
 ---
 
-### After Connect to Worker
+### 🔴 Next Steps
 
-2. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra. Deferred until after Worker connect flow is solid.
-3. **Docker + multi-tenant Worker** — one-command deploy for self-hosted users.
+1. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra.
+2. **Docker + multi-tenant Worker** — one-command deploy for self-hosted users.
+3. **End-to-end Worker testing** — test the full remote sync pipeline (GenesisGate + SyncService + LedgerMerge) against a live Worker from the browser.
 
 > Full historical step-by-step status is in `docs/planning/WEB_ROADMAP.md`. This file is the session-level snapshot.
 
 ## Known Issues
-- `HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.
-- MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.
-- ETag caching stale in long-running daemon mode (CLI-only, low priority).
-- WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.
-- IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.
+- ~~`HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.~~ ✅ **FIXED (2026-06-20):** `AbortSignal.timeout()` wired in all four methods (`pull`, `push`, `listFiles`, `delete`). 11 new tests (5 timeout-signal verification + 6 delete method coverage), 60 total transport tests, 0 failures.
+- ~~MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.~~ ✅ **FIXED (2026-06-20):** `MockRemoteBackend.listFiles()` now strips prefix to return basenames only, matching Worker + Git transport contract. 3 test expectations updated across mock_remote_test.mjs and http_backend_test.mjs. Full suite passes.
+- ~~ETag caching stale in long-running daemon mode (CLI-only, low priority).~~ ✅ **FIXED (2026-06-20):** Added `cacheTtlMs`/`cache_ttl_s` option to JS `HttpTransport` and Python `HttpStagingTransport`. Entries auto-evicted on access when older than TTL. New `evictStale()`/`evict_stale()` method for periodic daemon cleanup. 6 new TTL tests (JS), 66 total transport tests, 0 failures. Python syntax verified.
+- ~~WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.~~ ✅ **FIXED (2026-06-20):** Removed `@vite-ignore` to let Vite properly track the WASM module in dev mode. Added `build.rollupOptions.external` for production safety. All 4 silent fallback points in `DevModeContext.jsx` now emit `console.error` and set `cryptoStatus='fallback'`. App UI shows a red sticky warning banner when running in production mode with dummy crypto.
+- ~~IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.~~ ✅ **FIXED (2026-06-20):** Cascade fallback: IndexedDB → `SessionStorageBackend` (survives refresh in private browsing, uses `window.sessionStorage`) → in-memory Map (last resort). `SessionStorageBackend` auto-falls-back to Map on quota errors. `storageStatus` state exposed to UI with amber (session) or red (memory) warning banners. All existing tests pass.
 - **Ledger merge — GREEN (2026-06-19):** `LedgerMerge.merge()` implemented in `src/ledger/merge.js`. 7-step algorithm + Step 0 input chain validation. 99 assertions, 0 failures. ⏭ Next: Wire into genesis compatibility gate.
 - **Genesis gate — GREEN (2026-06-20):** `GenesisGate.check()` fully implemented. Fetches remote chain, validates format/seals/linkage, compares genesis hashes, delegates to `LedgerMerge.merge()`. 89 assertions, 0 failures. ⏭ Code review done, Settings/Sync integrations done.
 - **Genesis gate integration — DONE (2026-06-20):** Code review completed (2 minor fixes). Settings UI shows genesis status indicator on Worker URL save. SyncService.checkAndSync() runs gate before blob sync (cached, skipped when no local ledger). New SyncResult.GENESIS_MISMATCH. 16 new tests, zero regressions.
