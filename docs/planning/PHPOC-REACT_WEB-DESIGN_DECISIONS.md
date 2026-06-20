@@ -775,7 +775,7 @@ separate `AbstractLedgerStore` / `AbstractIndexStore` adapter classes.
 
 ### 11.13 Step 6 Code Review — Findings (2026-06-10)
 
-A code review of the Ledger Engine JS port identified 16 findings across three areas: Modularity (5), Clarity (6), and Security (5). The full review is in `SESSION_HANDOFF.md`; this section captures the design-affecting decisions only.
+A code review of the Ledger Engine JS port identified 16 findings across three areas: Modularity (5), Clarity (6), and Security (5). The full review is in `../../SESSION_HANDOFF.md`; this section captures the design-affecting decisions only.
 
 **Design-impacting findings:**
 

@@ -45,29 +45,26 @@ Key test files:
 
 | File | Use when... |
 |---|---|
-| `PHPSPEC.md` | Block structure, encryption, chain validation spec |
-| `MOBILE_ROADMAP.md` | Planning mobile app |
-| `SESSION_HANDOFF.md` | Session history, current state |
-| `ROADMAP.md` | Feature roadmap |
-| `BACKLOG.md` | Task-level tracking |
-| `VISION.md` | Protocol philosophy, use cases |
-| `docs/design/DESIGN_GOALS.md` | Architectural mandates |
-| `docs/design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
-| `docs/design/PH-VIEW-Workflow.md` | Auth gate workflow (original design) |
-| `docs/design/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
-| `docs/design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
+| `../spec/PHPSPEC.md` | Block structure, encryption, chain validation spec |
+| `../planning/WEB_ROADMAP.md` | Web/mobile build log — completed steps, bugs found, test plans |
+| `../../SESSION_HANDOFF.md` | Context restoration anchor — session-level snapshot |
+| `../planning/ROADMAP.md` | Migration arc (CLI → Browser → Flutter) + feature roadmap |
+| `../planning/BACKLOG.md` | Paused issues |
+| `../VISION.md` | Protocol philosophy, use cases |
+| `../design/DESIGN_GOALS.md` | Architectural mandates |
+| `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
+| `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
+| `../design/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)
 
 | File | What it was |
 |---|---|
-| `REMOTE_STAGING_ISSUE_TRACKING.md` | P3 issue tracker (all resolved) |
-| `ARCHITECTURAL_MIGRATION_STRATEGY.md` | Refactoring plan (complete) |
-| `IMPLEMENTATION_GUIDE.md` | Implementation guide (stale) |
-| `_Operational-Git_Staging_Remote_process.md` | P3 design doc (merged) |
+| `ARCHITECTURAL_MIGRATION_STRATEGY.md` | 7-phase refactoring plan (complete) |
+| `PH-VIEW-Workflow.md` | Original auth gate workflow (superseded by updated version in ../design/) |
 | `POSSIBLE_PROOF_OF_EXISTANCE.md` | External anchoring (speculative) |
-| `ROADMAP-BLOCKS.md` | Blocker tracking (all resolved) |
 | `verify_phase5.py` | Phase 5 one-time verification |
 | `verify_phase6.py` | Phase 6 one-time verification |
 

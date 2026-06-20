@@ -1,8 +1,8 @@
 # Roadmap — Personal History Protocol (PHPOC)
 
 PH Ledger (phpoc) — planned features organized by protocol layer.
-See [VISION.md](VISION.md) for the full protocol pitch, [docs/design/DESIGN_GOALS.md](docs/design/DESIGN_GOALS.md) for architectural mandates,
-[archive/ROADMAP-BLOCKS.md](archive/ROADMAP-BLOCKS.md) for blocker history, and [BACKLOG.md](BACKLOG.md) for detailed task tracking.
+See [VISION.md](../VISION.md) for the full protocol pitch, [../design/DESIGN_GOALS.md](../design/DESIGN_GOALS.md) for architectural mandates,
+[../reference/CHANGELOG.md](../reference/CHANGELOG.md) for blocker resolution history, and [BACKLOG.md](BACKLOG.md) for paused issues.
 
 ## Legend
 - ✅ = Completed
@@ -18,9 +18,9 @@ The top-level goal for PHPOC: establish it as an **open data format** for portab
 | Item | Status | Priority | Notes |
 |---|---|---|---|
 | **VISION.md** — Protocol pitch written | ✅ | — | Captures the "why" and the social use cases |
-| **Format Specification** (`PHPSPEC.md`) — Document the block structure, encryption scheme, chain validation, content hash algorithm, blind index, and staging area as a standalone spec | ✅ | — | Enables anyone to implement a reader/writer without reverse-engineering Python. Cross-refs: [DESIGN_GOALS §1](docs/design/DESIGN_GOALS.md#1-cryptographic-integrity--immutability), [BACKLOG P1](BACKLOG.md#p1-format-specification-phpspecmd). Includes `format_version` field in genesis (§4.1), explicit versioning policy (§9.3), and one-time migration script (`scripts/migrate_format_version.py`). |
+| **Format Specification** (`PHPSPEC.md`) — Document the block structure, encryption scheme, chain validation, content hash algorithm, blind index, and staging area as a standalone spec | ✅ | — | Enables anyone to implement a reader/writer without reverse-engineering Python. Cross-refs: [DESIGN_GOALS §1](../design/DESIGN_GOALS.md#1-cryptographic-integrity--immutability), [BACKLOG P1](BACKLOG.md#p1-format-specification-phpspecmd). Includes `format_version` field in genesis (§4.1), explicit versioning policy (§9.3), and one-time migration script (`scripts/migrate_format_version.py`). |
 | **Portable Export** — Two sub-commands: `--range` (block-level chain segment via chain splitting) + `--tag` (entry-level signed manifest for social sharing) | ⏸️ Deferred | **Highest** | File export unknowns (verification format, encrypted field treatment) need real-world context. Design session complete. See SESSION_HANDOFF §P2 Design Session. |
-| **Remote Sync (git-based)** — `GitStagingTransport` implementation, `init --git-create`, blob obfuscation | 🔜 | **High** | Staging blob only (not ledger). Shell-out to git CLI. Config-driven. See SESSION_HANDOFF §P3 Design Session. Cross-refs: [DESIGN_GOALS §3](docs/design/DESIGN_GOALS.md#3-scalability--durability), [BACKLOG P3](BACKLOG.md#p3-remote-sync-git-based) |
+| **Remote Sync (git-based)** — `GitStagingTransport` implementation, `init --git-create`, blob obfuscation | 🔜 | **High** | Staging blob only (not ledger). Shell-out to git CLI. Config-driven. See SESSION_HANDOFF §P3 Design Session. Cross-refs: [DESIGN_GOALS §3](../design/DESIGN_GOALS.md#3-scalability--durability), [BACKLOG P3](BACKLOG.md#p3-remote-sync-git-based) |
 | **Laptop reference implementation polish** — CLI kinks, UX improvements, reliability | 🔜 | **High** | The CLI is the first-class reference. Must be solid before downstream porting. Cross-refs: [BACKLOG P4](BACKLOG.md#p4-cli-kinks--ux-polish) |
 | **Mobile POC** (Swift/Kotlin) — Minimal ledger reader/ writer | 🔮 | Medium | Proves the format works cross-platform. Blind index writes (no full decryption) for wearable. |
 | **Wearable POC** (watchOS/WearOS) — Blind index writes only | 🔮 | Medium | Minimal footprint: log duration + activity type, no full decryption needed |
@@ -42,10 +42,10 @@ None. No new roadblocks identified. All historical blockers (R1–R4) resolved.
 | Block signing with Ed25519-proxy (HMAC-SHA256) | ✅ | — | Every block signed |
 | Verify command | ✅ | — | Full chain + entry hash + content_hash verification |
 | Tamper detection | ✅ | — | Any modification breaks downstream chain |
-| Encrypt-then-MAC auth tag (HMAC-SHA256) | ✅ | — | Added per [R1 resolution](archive/ROADMAP-BLOCKS.md#-r1--aes-ctr-malleability-no-authentication-tag) |
-| Plaintext content hash per entry (content_hash) | ✅ | — | Added per [R4 resolution](archive/ROADMAP-BLOCKS.md#-r4--no-entry-level-content-proof-for-reconciliation) |
-| Identity fallback in genesis | ✅ | — | Added per [R2 resolution](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
-| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep. [No block](archive/ROADMAP-BLOCKS.md) |
+| Encrypt-then-MAC auth tag (HMAC-SHA256) | ✅ | — | Added per [R1 resolution](../reference/CHANGELOG.md) |
+| Plaintext content hash per entry (content_hash) | ✅ | — | Added per [R4 resolution](../reference/CHANGELOG.md) |
+| Identity fallback in genesis | ✅ | — | Added per [R2 resolution](../reference/CHANGELOG.md) |
+| **Real Ed25519 signatures** (move beyond HMAC proxy) | 🔮 | Low | Requires cryptography package; current proxy is zero-dep. |
 | **Hardware-backed identity (TPM/SE)** | 🔮 | Low | Future-proofing for mobile/embedded |
 
 ### Blocked By
@@ -59,9 +59,9 @@ None.
 |---|---|---|---|
 | Partitionable chain design | ✅ | — | Each block independently sealed |
 | Year/Month summary blocks | ✅ | — | I/O optimization for partial traversals |
-| PBKDF2 600K iterations (OWASP 2026) | ✅ | — | Per [R3 resolution](archive/ROADMAP-BLOCKS.md#-r3--pbkdf2-iteration-count-below-current-standards) |
-| **Remote Sync (git-based)** | 🔜 | **High** | Listed above in §0. ✅ All blockers resolved. |
-| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. [No block](archive/ROADMAP-BLOCKS.md) |
+| PBKDF2 600K iterations (OWASP 2026) | ✅ | — | Per [R3 resolution](../reference/CHANGELOG.md) |
+| **Remote Sync (git-based)** | 🔜 | **High** | Listed above in §0. ✅ All blockers resolved. Paused — see BACKLOG.md. |
+| **Archival automation** (`phpoc archive --year X`) | 🔜 | Medium | Move old years to separate file. |
 | **Reconciliation / Chain-Bridging** | 🔜 | Medium | Restore chain from orphaned blocks. ✅ All blockers resolved. |
 | **Database backend** (SQLite, etc.) | 🔮 | Low | Via AbstractLedgerStore |
 | **Multi-device sync** (CRDT-based) | 🔮 | Low | Conflict-free merging across devices |
@@ -79,8 +79,8 @@ None — all historical blockers (R1, R2, R3, R4) resolved.
 | Encrypted metadata | ✅ | — | metadata_enc in every entry |
 | Blind duration index (index.json) | ✅ | — | Reputation queries without decryption |
 | Recovery Seed with encryption (PDK) | ✅ | — | Seed encrypted with passphrase-derived key |
-| **Media Witness linkage** | 🔜 | Medium | Content hashes linked to activities. [No block](archive/ROADMAP-BLOCKS.md) |
-| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. [No block](archive/ROADMAP-BLOCKS.md) |
+| **Media Witness linkage** | 🔜 | Medium | Content hashes linked to activities. |
+| **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. |
 
 ### Blocked By
 None.
@@ -115,7 +115,7 @@ None.
 | Passphrase-based seed unlock | ✅ | — | PBKDF2(passphrase) → AES decrypt seed |
 | `phpoc recover` command | ✅ | — | Seed → new passphrase → re-seal Genesis |
 | Identity file (identity.json) | ✅ | — | Encrypted secret + pub key |
-| Identity fallback in genesis block | ✅ | — | Per [R2 resolution](archive/ROADMAP-BLOCKS.md#-r2--identity-file-identityjson-has-no-in-ledger-fallback) |
+| Identity fallback in genesis block | ✅ | — | Per [R2 resolution](../reference/CHANGELOG.md) |
 | **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability |
 | **Multi-identity support** (aliases/permissions) | 🔮 | Low | Multiple signing keys per ledger |
 | **AI-agent verifiable reports** | 🔮 | Low | Signed third-party verification of habits |
@@ -129,10 +129,10 @@ None.
 
 | Priority | Item | Dependencies |
 |---|---|---|
-| ✅ Done | Format Spec (PHPSPEC.md) | — |
+| ✅ Done | Format Spec ([PHPSPEC.md](../spec/PHPSPEC.md)) | — |
 | ⏸️ Deferred | Portable Export (`--range` + `--tag`) | Deferred — file export unknowns need real-world dev context. Design captured in SESSION_HANDOFF §P2. |
-| 🥇 High | Remote Sync (git-based) | Infrastructure exists (interfaces, RemoteStagingSync, MergeEngine, config keys). Needs GitStagingTransport impl + CLI wiring + blob obfuscation. |
-| 🥇 High | CLI kinks & UX polish | None — can start now |
+| 🥇 High | Remote Sync (git-based) | Infrastructure exists, GitStagingTransport implemented. Remaining items paused — see BACKLOG.md. |
+| 🥇 High | CLI kinks & UX polish | Paused — CLI in maintenance mode while browser client is active. See BACKLOG.md. |
 | 🥈 Medium | Mobile POC reader/writer | Format Spec, Portable Export |
 | 🥈 Medium | Wearable POC (blind index writes) | Format Spec |
 | 🥈 Medium | Web viewer (static HTML) | Portable Export |

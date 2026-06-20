@@ -21,47 +21,15 @@
 
 ---
 
-## 1. CLI-Mobile Compatibility
+## 1. CLI-Browser Compatibility
 
 ### Decision
 
-**The CLI does not need to change. It is already mobile-compatible.**
+**The CLI does not need to change. It is already browser-compatible.**
 
-### Rationale
-
-The seam between CLI and mobile is the Cloudflare Worker, and the Worker is a **dumb blob store** — a generic HTTP-to-R2 proxy (149 lines of TypeScript). It has zero knowledge of the PHPOC data model, encryption, or blob format. It stores and retrieves opaque bytes by key.
-
-Both CLI and mobile speak the same three-verb protocol:
-
-| Operation | Worker Request | Worker Response |
-|-----------|---------------|-----------------|
-| Read blob | `GET /{path}` | 200 + bytes, 304 (ETag match), or 404 |
-| Write blob | `PUT /{path}` | 200 |
-| List blobs | `GET ?prefix={prefix}` | JSON array of keys |
-
-The storage paths are constants defined in the CLI reference — the mobile app uses the exact same strings:
-
-| Data | R2 Path | Defined In |
-|------|---------|------------|
-| Staging blob | `staging/blobs/current.json` | `domain/staging/remote_sync.py:77` (configurable) |
-| Device cookie | `staging/blobs/device_cookie.bin` | `domain/staging/remote_sync.py:42` (constant) |
-| Ledger blocks | `ledger/blocks/{seq}.json` | `domain/ledger/remote_sync.py:39` (configurable) |
-| Ledger index | `ledger/index.json` | `domain/ledger/remote_sync.py:40` (configurable) |
-
-The mobile app sends the same `X-Api-Key` header and uses the same path constants. The Worker does not know or care which client is talking to it.
-
-### What the mobile app must replicate (port, not re-invent)
-
-| CLI Component | What to Port | Where It's Defined |
-|---|---|---|
-| Crypto primitives | PBKDF2-600K, AES-CTR, HMAC-SHA256, SHA-256, blob obfuscation | `PHPSPEC.md` |
-| Sync algorithm | `check_and_sync()` flow (cookie check → blob pull/push → reconcile) | `domain/staging/service.py` |
-| Cookie format | Device specifier + TTL JSON schema | `domain/cookie/device_cookie.py` |
-| Merge engine | Dedup by `entry_id` | `domain/staging/merge_engine.py` |
-
-### The only potential CLI-adjacent change
-
-If per-device bearer tokens are added to the Worker (separate from the shared API key), the CLI would need a new config field for its token. This change is optional — the shared API key works for both platforms.
+The seam between CLI and browser is the Cloudflare Worker — a dumb blob store (HTTP-to-R2 proxy).
+Both CLI and browser speak the same protocol. For the full wire protocol table, storage paths,
+and what the browser client must replicate, see `../planning/WEB_ROADMAP.md`.
 
 ---
 
@@ -489,5 +457,5 @@ The passphrase is the source of truth. Biometric unlocks a Keychain-stored encry
 - `domain/staging/remote_sync.py` — Staging blob sync + device cookie (blob obfuscation, cookie format)
 - `domain/staging/service.py` — Auth gate, `check_and_sync()`, `_reconcile_and_claim()` (sync algorithm reference)
 - `PHPSPEC.md` — Format specification (crypto, block structure, key derivation)
-- `SESSION_HANDOFF.md` — Current state of the CLI reference implementation
-- `MOBILE_ROADMAP.md` — Mobile roadmap (revised, reflects these decisions)
+- `SESSION_HANDOFF.md` — Current state of the project (context restoration anchor)
+- `WEB_ROADMAP.md` — Web/mobile build log (completed steps, bugs found, test plans)
