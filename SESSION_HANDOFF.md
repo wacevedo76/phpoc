@@ -13,7 +13,46 @@
 
 ## Immediate Next Steps
 
-1. **🔴 Settings genesis compatibility gate** — Pull remote genesis block, compare hashes. Same genesis → use LedgerMerge for divergent chains. Different genesis → block connection. LedgerMerge is GREEN (99 assertions, 0 failures) with input chain validation.
+### 🔴 Phase 1 (TDD RED): Genesis Compatibility Gate — ✅ COMPLETE (2026-06-20)
+
+Created:
+- `phpoc-web/src/sync/genesis_gate.js` — full implementation (GREEN)
+- `phpoc-web/test/genesis_gate_test.mjs` — 20 tests, 89 assertions, 0 failures.
+
+Uses MockTransport (configurable: network errors, 403 auth failures, ETag simulation, latency), MockCrypto, TestHelpers, chain building helpers.
+
+### 🟢 Phase 2 (complete): Genesis Gate — TDD GREEN ✅ (2026-06-20)
+
+Implemented `phpoc-web/src/sync/genesis_gate.js`. Fetches remote `ledger:blocks`, validates format/type/seals/linkage, compares genesis hashes, delegates to `LedgerMerge.merge()`. In-flight dedup for concurrent calls. 8 reason codes. All 20 TDD tests pass (89 assertions, 0 failures). C2 test corrected (format_version is sealed → different hashes → genesis_mismatch).
+
+⏭ Next: Integrate into Settings UI (`Settings.jsx`) and SyncService:
+- Settings: genesis check fires on Worker URL save; shows status indicator (checking/compatible/incompatible/offline)
+- SyncService: gate runs before any blob sync
+- Settings UI tests (~9 tests): save triggers check, compatible/incompatible/checking/network-error states, reset on URL clear, API key change re-triggers
+- Sync integration tests (~3 tests): SyncService respects gate result
+
+---
+
+### 🔴 Phase 3 (current): Code Review + Settings/Sync Integration ✅ COMPLETE (2026-06-20)
+
+Code review completed (Modularity ✅, Clarity ✅, Security ✅, Efficiency ✅). Two findings:
+- `TextDecoder` per-call → promoted to module-level `_textDecoder` constant
+- Merge error catch silently reported `invalid_chain` for any merge error → removed try/catch, letting real errors surface
+
+**Settings integration:** `Save` handler triggers genesis check on URL save; shows status indicator (checking/compatible/incompatible/offline/error) with reason/message. Check re-triggers on URL or API key change. Resets to idle on URL clear. Skips when no local ledger or no master key.
+
+**SyncService integration:** `checkAndSync()` runs genesis gate before any blob sync (after transport confirm, before cookie check). Gate is cached (`_genesisCompatible`) and skipped when no local ledger exists. New `SyncResult.GENESIS_MISMATCH` return value. `resetGenesisGate()` clears cache for transport URL changes.
+
+**Tests added:** `settings_genesis_test.mjs` (13 tests, 0 failures — save/compatible, genesis_mismatch, network_error, URL clear, API key change, no re-check on unchanged, skip on no ledger, skip on no MK, invalid URL). `sync_service_test.mjs` Group I (3 tests — compatible proceeds, mismatch returns GENESIS_MISMATCH, cache reset re-checks).
+
+All 149 tests across genesis_gate (89), settings (13), sync_service (45), and all other suites pass with zero regressions.
+
+**Code review findings addressed:** TextDecoder made static, merge error handling fixed (no longer masks internal errors as invalid_chain).
+
+---
+
+### After Genesis Gate
+
 2. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra.
 3. **Docker + multi-tenant Worker** — one-command deploy for self-hosted users.
 
@@ -26,7 +65,8 @@
 - WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.
 - IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.
 - **Ledger merge — GREEN (2026-06-19):** `LedgerMerge.merge()` implemented in `src/ledger/merge.js`. 7-step algorithm + Step 0 input chain validation. 99 assertions, 0 failures. ⏭ Next: Wire into genesis compatibility gate.
-- **No genesis gate on remote connection (2026-06-18):** The Settings screen lets users configure a Worker URL without verifying it belongs to the same ledger. Step 6 addresses this with a genesis compatibility gate: pull remote block 0, decrypt, compare hashes. G₁≠G₂ → block connection.
+- **Genesis gate — GREEN (2026-06-20):** `GenesisGate.check()` fully implemented. Fetches remote chain, validates format/seals/linkage, compares genesis hashes, delegates to `LedgerMerge.merge()`. 89 assertions, 0 failures. ⏭ Code review done, Settings/Sync integrations done.
+- **Genesis gate integration — DONE (2026-06-20):** Code review completed (2 minor fixes). Settings UI shows genesis status indicator on Worker URL save. SyncService.checkAndSync() runs gate before blob sync (cached, skipped when no local ledger). New SyncResult.GENESIS_MISMATCH. 16 new tests, zero regressions.
 - **Cross-platform JSON:** JavaScript `JSON.stringify()` and Python `json.dumps()` produce different whitespace and key ordering. The `jsonDumps()` helper in `ledger_import.js` bridges this for raw chain verification.
 - **`isWasmDerivedUuid` regex too broad (2026-06-18):** The hex regex `/^[0-9a-f]{32,}$/` matches MD5 (32 chars), SHA-1 (40), and dash-stripped UUID4 (32 chars). Should be `{64}` for HMAC-SHA256. Low risk in practice.
 - **Index-based staging operations have stale-index race (2026-06-18):** `end()`, `pause()`, `unpause()` call `readEntries()` to find an index, then call `update()` by that index. Between the read and write, another operation could change the array order.

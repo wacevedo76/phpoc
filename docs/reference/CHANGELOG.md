@@ -9,6 +9,10 @@ All notable changes to the PH Ledger (phpoc) project.
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
 ### Added
+- **Genesis compatibility gate** (`GenesisGate.check()`) — verifies remote ledger shares same genesis before syncing. 8 reason codes, in-flight dedup, ~90 tests.
+- **Settings UI genesis indicator** — Worker URL save triggers genesis check with visual status (compatible/incompatible/offline/checking). Resets on URL clear; re-checks on API key change.
+- **SyncService genesis gate integration** — `checkAndSync()` runs gate before any blob sync (cached, skipped when no local ledger). New `SyncResult.GENESIS_MISMATCH` return value.
+- **Settings genesis tests** (`settings_genesis_test.mjs`) — 13 tests covering save/compatible, genesis_mismatch, network_error, URL clear, API key change, skip-on-no-data.
 - **Remote ledger sync** — new `ph sync remote_ledger` subcommand pushes/pulls
   ledger blocks to/from the same git repo as staging (append-only, no merge conflicts).
 - **`RemoteLedgerSync` class** (`domain/ledger/remote_sync.py`) — push_blocks,
@@ -19,7 +23,13 @@ All notable changes to the PH Ledger (phpoc) project.
   blocks, same obfuscation, forced auth + confirmation).
 
 ### Changed
+- `SyncService` now imports and runs `GenesisGate` before staging blob operations.
+- `SyncResult` frozen object includes `GENESIS_MISMATCH`.
+- `DevModeContext` handles `GENESIS_MISMATCH` result from `checkAndSync()`.
 - `ph sync --help` now lists both `remote_staging` and `remote_ledger` subcommands.
+
+### Fixed
+- Genesis gate code review findings: `TextDecoder` promoted to module-level constant; merge error catch no longer masks real errors as `invalid_chain`.
 
 ## [0.6.1] — 389e268 (P3-Remote_Sync — recover session cache fix)
 

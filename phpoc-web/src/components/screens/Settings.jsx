@@ -58,6 +58,12 @@ export default function Settings() {
   );
   const [saved, setSaved] = React.useState(false);
 
+  // ── Genesis gate status ───────────────────────────────────────
+  const [genesisStatus, setGenesisStatus] = useState('idle');
+  // 'idle' | 'checking' | 'compatible' | 'incompatible' | 'offline' | 'error'
+  const [genesisReason, setGenesisReason] = useState(null);
+  const [genesisStats, setGenesisStats] = useState(null);
+
   // ── Import / Export state ─────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -146,12 +152,83 @@ export default function Settings() {
     handleResetImport();
   }, [handleResetImport]);
 
-  const handleSaveRemote = (e) => {
+  const handleSaveRemote = async (e) => {
     e.preventDefault();
-    if (workerUrl) localStorage.setItem('phpoc_worker_url', workerUrl);
+    const prevUrl = localStorage.getItem('phpoc_worker_url') || '';
+    const prevApiKey = localStorage.getItem('phpoc_api_key') || '';
+
+    // Clear URL: reset genesis status
+    if (!workerUrl.trim()) {
+      localStorage.removeItem('phpoc_worker_url');
+      localStorage.removeItem('phpoc_api_key');
+      setWorkerUrl('');
+      setApiKey('');
+      setGenesisStatus('idle');
+      setGenesisReason(null);
+      setGenesisStats(null);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      return;
+    }
+
+    // Persist config
+    localStorage.setItem('phpoc_worker_url', workerUrl);
     if (apiKey) localStorage.setItem('phpoc_api_key', apiKey);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+
+    // Trigger genesis check if URL or API key changed
+    const urlChanged = workerUrl !== prevUrl;
+    const apiKeyChanged = apiKey !== prevApiKey;
+
+    if ((urlChanged || apiKeyChanged) && services.crypto && services.sync && services.storage) {
+      setGenesisStatus('checking');
+      setGenesisReason(null);
+      setGenesisStats(null);
+
+      try {
+        const { GenesisGate, createRemoteTransport } = await import('@sync/index.js');
+        const blocks = (await services.storage.get('ledger:blocks')) || [];
+        const masterKey = services.crypto.getMasterKey();
+
+        if (blocks.length === 0 || !masterKey) {
+          // No local ledger or not authenticated — skip check
+          setGenesisStatus('idle');
+          setTimeout(() => setSaved(false), 2000);
+          return;
+        }
+
+        const transport = createRemoteTransport({
+          deployment: 'saas',
+          config: { baseUrl: workerUrl, apiKey },
+        });
+
+        if (!transport) {
+          setGenesisStatus('error');
+          setGenesisReason('Invalid Worker URL');
+          setTimeout(() => setSaved(false), 2000);
+          return;
+        }
+
+        const result = await GenesisGate.check(
+          blocks, transport, services.crypto, masterKey
+        );
+
+        if (result.compatible) {
+          setGenesisStatus('compatible');
+          setGenesisStats(result.stats);
+        } else {
+          setGenesisStatus('incompatible');
+          setGenesisReason(result.reason);
+        }
+      } catch (err) {
+        setGenesisStatus('offline');
+        setGenesisReason(err.message || 'Network error');
+      }
+
+      setTimeout(() => setSaved(false), 2000);
+    } else {
+      setTimeout(() => setSaved(false), 2000);
+    }
   };
 
   return (
@@ -209,6 +286,85 @@ export default function Settings() {
               {saved ? '✓ Saved' : 'Save'}
             </button>
           </form>
+
+          {/* Genesis gate status indicator */}
+          {genesisStatus !== 'idle' && (
+            <div className={`genesis-status genesis-status-${genesisStatus}`} style={{ marginTop: '0.75rem' }}>
+              {genesisStatus === 'checking' && (
+                <p className="settings-hint" style={{ color: '#666' }}>
+                  ⏳ Checking genesis compatibility…
+                </p>
+              )}
+              {genesisStatus === 'compatible' && (
+                <div style={{
+                  background: '#e8f5e9',
+                  border: '1px solid #4caf50',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#2e7d32', fontWeight: 600 }}>
+                    ✅ Genesis compatible
+                  </p>
+                  {genesisStats && (
+                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#388e3c' }}>
+                      Remote has {genesisStats.remoteEntries} committed entries. Ready to sync.
+                    </p>
+                  )}
+                </div>
+              )}
+              {genesisStatus === 'incompatible' && (
+                <div style={{
+                  background: '#ffebee',
+                  border: '1px solid #e53935',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#c62828', fontWeight: 600 }}>
+                    ⚠️ Genesis incompatible
+                  </p>
+                  {genesisReason && (
+                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#b71c1c' }}>
+                      Reason: {genesisReason}
+                    </p>
+                  )}
+                </div>
+              )}
+              {genesisStatus === 'offline' && (
+                <div style={{
+                  background: '#fff3e0',
+                  border: '1px solid #e67e22',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#e65100', fontWeight: 600 }}>
+                    🔌 Cannot reach remote
+                  </p>
+                  {genesisReason && (
+                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#bf360c' }}>
+                      {genesisReason}
+                    </p>
+                  )}
+                </div>
+              )}
+              {genesisStatus === 'error' && (
+                <div style={{
+                  background: '#ffebee',
+                  border: '1px solid #e53935',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#c62828', fontWeight: 600 }}>
+                    ❌ Error
+                  </p>
+                  {genesisReason && (
+                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#b71c1c' }}>
+                      {genesisReason}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Data Management */}

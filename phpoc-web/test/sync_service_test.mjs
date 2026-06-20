@@ -100,6 +100,37 @@ class MockCrypto {
     return `dev-${(mk || '').slice(0, 8)}`;
   }
 
+  seal(jsonStr, masterKey) {
+    if (!masterKey) masterKey = this._mk || 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+    const hmac = createHash('sha256').update(masterKey + ':' + jsonStr).digest('hex');
+    return hmac;
+  }
+
+  verifySeal(jsonStr, sealVal, masterKey) {
+    const expected = this.seal(jsonStr, masterKey);
+    return expected === sealVal;
+  }
+
+  sealBlock(blockData) {
+    // Sort keys to match jsonSort() behavior used by LedgerMerge verification
+    const sortKeys = (obj) => {
+      if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map(sortKeys);
+      const sorted = {};
+      for (const key of Object.keys(obj).sort()) {
+        sorted[key] = sortKeys(obj[key]);
+      }
+      return sorted;
+    };
+    const copy = {};
+    for (const [k, v] of Object.entries(blockData)) {
+      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature') {
+        copy[k] = v;
+      }
+    }
+    return this.seal(JSON.stringify(sortKeys(copy)));
+  }
+
   obfuscateBlob(plaintext, mk) {
     const plainBytes = Buffer.from(plaintext, 'utf-8');
     const keyFingerprint = mk
@@ -699,6 +730,151 @@ async function run() {
 
     const starts = entries.map(e => e.start_epoch);
     t.assertDeepEq(starts, [1000, 3000, 5000, 7000, 9000], 'H6c. entries sorted by start_epoch');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group I: Genesis Gate Integration
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group I: Genesis Gate Integration ──\n');
+
+  const LEDGER_BLOCKS_KEY = 'ledger:blocks';
+  const ZERO_HASH = '0'.repeat(64);
+
+  /** Build a minimal valid genesis block + one day block for testing. */
+  function buildTestChain(opts = {}) {
+    const {
+      username = 'testuser',
+      email = 'test@example.com',
+      formatVersion = '0.3.0',
+    } = opts;
+
+    const genesisContent = {
+      type: 'genesis',
+      format_version: formatVersion,
+      day_index: 0,
+      date: '2026-01-01',
+      identity: {
+        username,
+        email,
+        recovery_seed_enc: 'enc:mockseed',
+        identity_pub_key: 'mockpubkey0000000000000000000000000000000000000000000000000000',
+        identity_secret_enc_fallback: 'enc:mocksecret',
+      },
+      prev_hash: ZERO_HASH,
+      entries: [],
+    };
+
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(opts.mk || 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+
+    // Seal the genesis block
+    genesisContent.day_hash = crypt.sealBlock({ ...genesisContent });
+
+    // Build a day block
+    const entryData = {
+      title: 'Test Entry',
+      startTime_enc: 'enc:1700000000000',
+      endTime_enc: 'enc:1700003600000',
+      duration: 3600000,
+      tags: [],
+      pauses_enc: 'enc:[]',
+      metadata_enc: 'enc:{}',
+      comment: '',
+      media: [],
+      content_hash: crypt.sha256(JSON.stringify({ title: 'Test Entry', duration: 3600000 })),
+    };
+    const dayEntry = {
+      hash: crypt.sha256(JSON.stringify(entryData, null, 2)),
+      data: entryData,
+    };
+
+    const dayContent = {
+      type: 'day',
+      day_index: 1,
+      date: '2026-06-20',
+      prev_hash: genesisContent.day_hash,
+      entries: [dayEntry],
+    };
+    dayContent.day_hash = crypt.sealBlock({ ...dayContent });
+
+    return [genesisContent, dayContent];
+  }
+
+  async function pushRemoteChain(transport, chain) {
+    const json = JSON.stringify(chain);
+    const bytes = new TextEncoder().encode(json);
+    await transport.push(LEDGER_BLOCKS_KEY, bytes);
+  }
+
+  // I1. Genesis compatible → checkAndSync proceeds to auth gate
+  {
+    const mk = 'genesis-gate-test-genesis-gate-test-gen123';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain);
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'I1. genesis compatible → does NOT return GENESIS_MISMATCH');
+    t.assert(result === SyncResult.READY || result === SyncResult.REAUTH_NEEDED,
+      'I1b. genesis compatible → proceeds to normal auth gate (READY or REAUTH_NEEDED)');
+  }
+
+  // I2. Genesis mismatch → checkAndSync returns GENESIS_MISMATCH
+  {
+    const mkLocal = 'genesis-gate-local-genesis-gate-local-aa';
+    const mkRemote = 'genesis-gate-remote-genesis-gate-remot-bb';
+    const localChain = buildTestChain({ mk: mkLocal, username: 'local' });
+    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote' });
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.GENESIS_MISMATCH,
+      'I2. genesis mismatch → GENESIS_MISMATCH');
+  }
+
+  // I3. resetGenesisGate clears cache → re-checks on next call
+  {
+    const mk = 'genesis-cache-test-genesis-cache-test-cc';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // First: compatible chain → cache set to true
+    await pushRemoteChain(transport, chain);
+    const result1 = await sync.checkAndSync();
+    t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
+      'I3. first check → compatible (cache set)');
+
+    // Reset cache
+    sync.resetGenesisGate();
+
+    // Push a different remote chain (different genesis)
+    const badChain = buildTestChain({ mk: 'bad-bad-bad-bad-bad-bad-bad-bad-bad-zz', username: 'evil' });
+    await pushRemoteChain(transport, badChain);
+
+    const result2 = await sync.checkAndSync();
+    t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
+      'I3b. after reset → re-checks and detects mismatch');
   }
 
   // ── Results ───────────────────────────────────────────────────────

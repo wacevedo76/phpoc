@@ -30,6 +30,15 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
 | `worker/src/index.ts` | COLD | Cloudflare Worker (149 lines, dumb blob store) |
 
+### Web/Mobile (phpoc-web)
+
+| File | Temp | Key contents |
+|---|---|---|
+| `phpoc-web/src/sync/genesis_gate.js` | HOT | GenesisGate.check() — genesis compatibility gate (GREEN, 89 tests) |
+| `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (all GREEN) |
+| `phpoc-web/test/settings_genesis_test.mjs` | HOT | 13-test Settings UI genesis gate integration |
+| `phpoc-web/test/sync_service_test.mjs` | HOT | 45 tests (SyncService auth gate + 3 new genesis gate integration tests) |
+
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
 ### Tests (30 files, ~13,000 lines, 1341 tests)

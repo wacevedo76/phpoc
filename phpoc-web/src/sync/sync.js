@@ -44,13 +44,15 @@ import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
 import { getOrCreateDeviceUuid } from './device_uuid.js';
+import { GenesisGate } from './genesis_gate.js';
 
-/** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'} SyncCheckResult */
+/** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
 export const SyncResult = Object.freeze({
   READY: 'READY',
   OFFLINE: 'OFFLINE',
   REAUTH_NEEDED: 'REAUTH_NEEDED',
+  GENESIS_MISMATCH: 'GENESIS_MISMATCH',
 });
 
 const DEFAULT_COOKIE_TTL = 30; // minutes
@@ -84,6 +86,11 @@ export class SyncService {
 
     /** @private ms timestamp of last push (for diagnostics) */
     this._lastPushAt = 0;
+
+    /** @private — genesis compatibility cache (null = unchecked) */
+    this._genesisCompatible = null;
+    /** @private — genesis check promise for in-flight dedup */
+    this._genesisCheckPromise = null;
   }
 
   // ------------------------------------------------------------------
@@ -374,6 +381,10 @@ export class SyncService {
   /**
    * Event-driven remote check with Device Cookie as the truth.
    *
+   * Genesis gate runs before any blob sync to verify the remote
+   * ledger shares the same genesis block. If genesis is incompatible,
+   * returns GENESIS_MISMATCH and no blob operations proceed.
+   *
    * @param {number} [timeoutMs=500] - Unused in this port; the
    *   underlying transport handles timeouts.
    * @returns {Promise<SyncCheckResult>}
@@ -381,6 +392,40 @@ export class SyncService {
   async checkAndSync(timeoutMs = 500) {
     if (!this._remote) {
       return SyncResult.READY;
+    }
+
+    // ------------------------------------------------------------------
+    // GENESIS GATE: Verify remote ledger shares same genesis block.
+    // Only runs when a local ledger exists — if there are no committed
+    // blocks yet, there's nothing to protect and gate is skipped.
+    // ------------------------------------------------------------------
+    const masterKey = this._crypto.getMasterKey();
+    if (masterKey && this._genesisCompatible === null) {
+      const blocks = (await this._storage.get('ledger:blocks')) || [];
+      if (blocks.length > 0) {
+        if (!this._genesisCheckPromise) {
+          this._genesisCheckPromise = (async () => {
+            try {
+              const result = await GenesisGate.check(
+                blocks, this._transport, this._crypto, masterKey
+              );
+              this._genesisCompatible = result.compatible;
+            } catch {
+              // Network error during genesis check — don't cache, retry next time
+              return null;
+            }
+            return this._genesisCompatible;
+          })();
+        }
+
+        const compatible = await this._genesisCheckPromise;
+        this._genesisCheckPromise = null;
+
+        if (compatible === false) {
+          return SyncResult.GENESIS_MISMATCH;
+        }
+        // If compatible === null (network error), fall through to OFFLINE below
+      }
     }
 
     // ------------------------------------------------------------------
@@ -800,6 +845,15 @@ export class SyncService {
   // ------------------------------------------------------------------
   // Diagnostics
   // ------------------------------------------------------------------
+
+  /**
+   * Reset genesis compatibility cache.
+   * Call when changing remote transport URL or API key.
+   */
+  resetGenesisGate() {
+    this._genesisCompatible = null;
+    this._genesisCheckPromise = null;
+  }
 
   /**
    * Quick reachability check.
