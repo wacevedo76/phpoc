@@ -526,6 +526,8 @@ The `SyncService` brokers between them:
 
 ### 11.6 The Bridge Server (Self-Hosted / LAN / Docker)
 
+> **Status (2026-06-20):** Deferred. The "Connect to existing Worker" onboarding flow (§11.32) is prioritized first — it enables real Worker end-to-end testing today and surfaces cross-client concerns (passphrase verification against genesis, chain pull from remote) that Flutter will need. The bridge server will be built after the Worker connect path is solid.
+
 A minimal HTTP server implementing the same API contract as the Cloudflare Worker — same paths, same verbs, same response format. The web app cannot tell the difference.
 
 ```
@@ -1575,3 +1577,76 @@ Three scenarios that can arise in practice:
 #### Backward Compatibility
 
 No migration needed. The merged chain is a new chain — new blocks, new seals. The original chains are unmodified. The genesis block and common prefix are referenced, not rewritten. Verification passes because all seals and hashes are internally consistent.
+
+---
+
+### 11.32 Connect to Existing Worker — Onboarding Flow (2026-06-20)
+
+**Problem:** The onboarding flow has three paths (New, Import from file, Export) but no way to connect a new browser/device to a ledger already hosted on Worker → R2. A user who created their ledger via CLI and pushed it to a Worker has no onboarding path in the web app — they must create a new ledger or import from file.
+
+**Solution:** Add a fourth onboarding path — "Connect to existing Worker" — that fetches the remote ledger chain, validates genesis, verifies the user's passphrase against the pulled genesis block, and syncs staging blobs after auth.
+
+**Why before the bridge server:** This path enables real Worker end-to-end testing today. The bridge server (self-hosted/LAN) is deferred — it's useful but doesn't surface the cross-client concerns that Flutter will need (passphrase verification against genesis, chain pull from remote, remote config persistence). The Worker connect path exercises the full remote sync pipeline (GenesisGate + SyncService + LedgerMerge) against a live Worker.
+
+#### Onboarding Flow
+
+```
+Landing Screen
+  ├─ Create New Ledger          (existing)
+  ├─ Import from File           (existing)
+  ├─ Connect to Existing Worker (NEW)
+  │     ├─ Enter Worker URL + API key
+  │     ├─ [Connect] → fetch remote ledger:blocks
+  │     │     ├─ Compatible genesis → proceed to passphrase
+  │     │     ├─ No ledger found → error
+  │     │     ├─ Incompatible genesis → error (different identity)
+  │     │     ├─ Network error / 403 → error
+  │     ├─ Enter passphrase
+  │     │     ├─ PDK → decrypt genesis.identity.recovery_seed_enc → seed → master key
+  │     │     ├─ Verify genesis seal → correct
+  │     │     └─ Fail → "Wrong passphrase" (no writes)
+  │     ├─ Write ledger:blocks + ledger:index to IndexedDB
+  │     ├─ Store baseUrl + apiKey via RemoteConfig
+  │     ├─ SyncService.checkAndSync() → pull staging blob + cookie
+  │     └─ Transition to Dashboard
+  └─ Export Ledger               (existing)
+```
+
+#### Key Design Decisions
+
+| # | Decision | Rationale |
+|---|----------|----------|
+| A | Passphrase verification BEFORE any writes | Wrong passphrase must be rejected with zero data mutations. Five read-only gates (parse → seal → entry hash → genesis check → passphrase) pass before `storage.clear()` or any write. |
+| B | Reuse `GenesisGate` for remote fetch + validation | Already handles format/type/seal/linkage validation, genesis hash comparison, and ETag caching. Avoids duplicating validation logic. |
+| C | Remote config persisted after successful connect only | `RemoteConfig.save()` called only after genesis validation + passphrase success. Failed attempts leave no localStorage traces. |
+| D | Staging blobs synced only after auth | `SyncService.checkAndSync()` runs after passphrase success. Cookie push, staging blob pull, and merge all happen with the validated master key. |
+| E | Master key from genesis, not from seed creation | The user already has a passphrase from the device that created the ledger. No new seed is generated. The passphrase decrypts the existing seed from `genesis.identity.recovery_seed_enc`. |
+| F | UI reuses Settings pattern for URL/API key inputs | Same input components, validation (protocol check, non-empty), and error display as Settings → Remote config. Consistency across surfaces. |
+
+#### Components Involved (all existing)
+
+| Component | Role | Tests |
+|-----------|------|:----:|
+| `GenesisGate.check()` | Fetch remote chain, validate genesis | 89 |
+| `HttpTransport` | HTTP GET `ledger:blocks` from Worker | 49 |
+| `CryptoService.authenticate()` | Passphrase → PDK → seed → master key | 74 (WASM) |
+| `CryptoService.verifySeal()` | Verify genesis seal against master key | 74 (WASM) |
+| `SyncService.checkAndSync()` | Pull staging blob + cookie after auth | 45 |
+| `RemoteConfig.save()` | Persist baseUrl + apiKey to localStorage | 35 |
+| `IndexedDBBackend` | Write ledger:blocks + ledger:index locally | 41 (HttpBackend) |
+
+**Effort:** ~250–300 LOC implementation, ~20–25 new tests in `test/worker_connect_onboarding_test.mjs`.
+
+#### Relationship to Flutter Client
+
+This onboarding path exercises the exact same flow a Flutter client will need:
+
+1. User enters Worker URL + API key
+2. Client fetches `ledger:blocks` from Worker (Dart HTTP → same API)
+3. Client validates genesis block structure
+4. User enters passphrase → PDK → decrypt recovery seed → master key
+5. Master key verifies genesis seal → correct
+6. Client writes chain to local storage (sqflite/Hive on Flutter)
+7. Client syncs staging blobs from Worker
+
+The web implementation serves as a reference for the Flutter port — every step maps to a Dart equivalent with the same crypto primitives (WASM → `flutter_rust_bridge`).

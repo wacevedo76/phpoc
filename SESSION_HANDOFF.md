@@ -51,9 +51,62 @@ All 149 tests across genesis_gate (89), settings (13), sync_service (45), and al
 
 ---
 
-### After Genesis Gate
+### 🔴 Phase 4 (current): Connect to Existing Worker — Onboarding Flow (2026-06-20)
 
-2. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra.
+**Pivot rationale:** Companion bridge server (Python, ~80-100 lines) is useful for self-hosting but deferred. "Connect to existing Worker" during onboarding is more immediately valuable — it enables real Worker end-to-end testing today, lets us exercise the remote sync pipeline (GenesisGate + SyncService + LedgerMerge) against a live Worker, and surfaces the cross-client concerns (passphrase verification against genesis, chain pull from remote, remote config persistence) that Flutter will need.
+
+**Feature:** A fourth onboarding path — "Connect to existing Worker" — that lets a user connect a new browser/device to a ledger already hosted on Worker → R2.
+
+**What already exists (all GREEN):**
+- `HttpTransport` — speaks Worker HTTP API from browser (49 tests)
+- `HttpBackend` — wraps Transport → StorageBackend (41 tests)
+- `GenesisGate.check()` — fetches remote `ledger:blocks`, validates format/seals/linkage, compares genesis hashes (89 tests)
+- `SyncService.checkAndSync()` — local ↔ remote sync with auth gate, respects genesis gate (45 tests)
+- Settings UI genesis check + status indicator (13 tests)
+- `LedgerMerge.merge()` — reconciles divergent same-genesis chains (99 tests)
+- Remote config persistence (`baseUrl`, `apiKey`) in localStorage via `RemoteConfig` (35 tests)
+
+**What needs to be built:**
+
+1. **Onboarding UI** — new "Connect to existing Worker" card in `OnboardingScreen.jsx`
+   - Worker URL + API key inputs (reuse pattern from Settings)
+   - "Connect" button triggers remote fetch + validation
+   - Status feedback: checking → compatible → proceed to passphrase entry
+   - Error states: offline, 403 (bad API key), incompatible genesis, no ledger found
+
+2. **Remote fetch during onboarding** — pull `ledger:blocks` from Worker
+   - Use `GenesisGate._fetchRemoteChain()` (or direct `HttpTransport.pull()`)
+   - Validate genesis block structure (format_version, type, identity, seal)
+   - Write `ledger:blocks` + `ledger:index` to IndexedDB
+   - Store `baseUrl` + `apiKey` via `RemoteConfig.save()`
+
+3. **Passphrase verification against pulled genesis**
+   - User enters passphrase → PBKDF2 → PDK → AES-decrypt `genesis.identity.recovery_seed_enc` → seed
+   - Seed → derive master key → verify genesis seal → correct passphrase
+   - Fail → "Wrong passphrase for this ledger" (do NOT write anything)
+   - Auth completes → master key cached → transition to Dashboard
+
+4. **Sync staging blobs after auth**
+   - After passphrase success: `SyncService.checkAndSync()` pulls staging blob + cookie from Worker
+   - Merge remote staging entries into local cache
+   - Push local cookie to Worker
+
+**Tests needed (~20–25 tests):**
+- `test/worker_connect_onboarding_test.mjs` — new test file
+  - Group A (UI): render, input validation, Connect button enable/disable
+  - Group B (fetch): successful chain pull, 404 (no ledger), 403 (bad API key), network error
+  - Group C (genesis validation): valid genesis → compatible, missing identity → error, tampered seal → error, format_version mismatch → incompatible
+  - Group D (passphrase): correct passphrase unlocks, wrong passphrase rejected, no writes on wrong passphrase
+  - Group E (config persistence): URL + API key saved to localStorage after successful connect, cleared on reset
+  - Group F (existing data protection): existing IndexedDB data not destroyed by failed connect attempt
+
+**Effort estimate:** ~250–300 LOC implementation, ~20–25 tests
+
+---
+
+### After Connect to Worker
+
+2. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra. Deferred until after Worker connect flow is solid.
 3. **Docker + multi-tenant Worker** — one-command deploy for self-hosted users.
 
 > Full historical step-by-step status is in `docs/planning/WEB_ROADMAP.md`. This file is the session-level snapshot.
