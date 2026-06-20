@@ -32,6 +32,7 @@ import http.client
 import json
 import logging
 import socket
+import time
 from typing import Optional, Dict, List, Tuple
 from urllib.parse import urlencode, urlparse
 
@@ -64,7 +65,12 @@ class HttpStagingTransport(AbstractStagingTransport):
         _etag_cache: ``{path: (etag, body_bytes)}`` — cached ETags and bodies.
     """
 
-    def __init__(self, base_url: str, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: Optional[str] = None,
+        cache_ttl_s: float = 0.0,
+    ):
         """Initialize with base URL and optional API key.
 
         Args:
@@ -75,6 +81,9 @@ class HttpStagingTransport(AbstractStagingTransport):
                      ``X-Api-Key`` header on every request.
                      If not provided, falls back to the environment
                      variable ``PHPOC_CLOUDFLARE_API_KEY``.
+            cache_ttl_s: ETag cache TTL in seconds. 0 = no expiry (default).
+                         Set to e.g. 300 for 5-minute expiry in long-running
+                         processes (daemon mode) to prevent stale bodies.
 
         Raises:
             ValueError: If *base_url* is empty or has an unsupported scheme.
@@ -94,7 +103,11 @@ class HttpStagingTransport(AbstractStagingTransport):
         self.api_key = api_key or os.environ.get(_API_KEY_ENV_VAR)
         self._api_key_source = "arg" if api_key else ("env" if self.api_key else "none")
 
-        self._etag_cache: Dict[str, Tuple[str, bytes]] = {}
+        # ETag cache: {path: (etag, body_bytes, cached_at_timestamp)}
+        self._etag_cache: Dict[str, Tuple[str, bytes, float]] = {}
+
+        # Cache TTL in seconds. 0 = no expiry.
+        self._cache_ttl_s = max(0.0, cache_ttl_s)
 
     # ------------------------------------------------------------------
     # Public interface (AbstractStagingTransport)
@@ -122,10 +135,10 @@ class HttpStagingTransport(AbstractStagingTransport):
         headers = {}
         self._add_api_key(headers)
 
-        # Send If-None-Match if we have a cached ETag for this path
-        cached = self._etag_cache.get(path)
+        # Send If-None-Match if we have a non-expired cached ETag for this path
+        cached = self._get_cached_entry(path)
         if cached is not None:
-            cached_etag, _cached_body = cached
+            cached_etag, cached_body, _cached_at = cached
             headers["If-None-Match"] = cached_etag
 
         try:
@@ -138,9 +151,9 @@ class HttpStagingTransport(AbstractStagingTransport):
                 # Not Modified — return cached body
                 logger.debug(
                     "304 for %s — returning cached %d bytes",
-                    path, len(_cached_body),
+                    path, len(cached_body),
                 )
-                return _cached_body
+                return cached_body
 
             body = resp.read()
 
@@ -148,7 +161,7 @@ class HttpStagingTransport(AbstractStagingTransport):
                 # Cache ETag if present
                 etag = resp.getheader("ETag")
                 if etag:
-                    self._etag_cache[path] = (etag, body)
+                    self._etag_cache[path] = (etag, body, time.time())
                 conn.close()
                 return body
 
@@ -283,6 +296,53 @@ class HttpStagingTransport(AbstractStagingTransport):
         ensure the next pull is a clean request.
         """
         self._etag_cache.clear()
+
+    def evict_stale(self) -> int:
+        """Evict all expired entries from the ETag cache.
+
+        Returns the number of entries evicted. Safe to call periodically
+        from daemon loops to purge stale entries without clearing the
+        entire cache.
+
+        Returns:
+            Number of cache entries evicted.
+        """
+        if self._cache_ttl_s <= 0:
+            return 0
+        now = time.time()
+        stale_keys = [
+            path
+            for path, (_etag, _body, cached_at) in self._etag_cache.items()
+            if now - cached_at > self._cache_ttl_s
+        ]
+        for path in stale_keys:
+            del self._etag_cache[path]
+        return len(stale_keys)
+
+    def _get_cached_entry(
+        self, path: str
+    ) -> Optional[Tuple[str, bytes, float]]:
+        """Return a cached ETag entry if it exists and has not expired.
+
+        If the cache TTL has been set and the entry is older than the TTL,
+        the entry is evicted and None is returned.
+
+        Args:
+            path: Remote path to look up.
+
+        Returns:
+            ``(etag, body, cached_at)`` tuple, or None if not cached or expired.
+        """
+        entry = self._etag_cache.get(path)
+        if entry is None:
+            return None
+
+        _etag, _body, cached_at = entry
+        if self._cache_ttl_s > 0 and time.time() - cached_at > self._cache_ttl_s:
+            del self._etag_cache[path]
+            return None
+
+        return entry
 
     # ------------------------------------------------------------------
     # Internal helpers

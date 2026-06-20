@@ -2668,3 +2668,41 @@ a { color: var(--accent-blue); text-decoration: none; }
   color: var(--accent-red);
   margin-bottom: 0.5rem;
 }
+
+/* Crypto fallback warning banner */
+.crypto-fallback-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: var(--accent-red);
+  color: #fff;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.crypto-fallback-banner strong {
+  font-weight: 700;
+}
+
+/* Storage quality warning banners */
+.storage-fallback-banner {
+  position: sticky;
+  top: 0;
+  z-index: 999;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.storage-fallback-banner strong {
+  font-weight: 700;
+}
+.storage-fallback-banner--memory {
+  background: #c62828;
+  color: #fff;
+}
+.storage-fallback-banner--session {
+  background: #e65100;
+  color: #fff;
+}

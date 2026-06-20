@@ -141,15 +141,15 @@ async function testListFiles() {
   const ledgerFiles = await remote.listFiles('ledger/blocks/');
   assertDeepEq(
     ledgerFiles,
-    ['ledger/blocks/0.json', 'ledger/blocks/1.json', 'ledger/blocks/2.json'],
-    'listFiles returns only matching prefix paths'
+    ['0.json', '1.json', '2.json'],
+    'listFiles returns basenames only (prefix stripped)'
   );
 
   const stagingFiles = await remote.listFiles('staging/blobs/');
   assertDeepEq(
     stagingFiles,
-    ['staging/blobs/current.json', 'staging/blobs/device_cookie.bin'],
-    'listFiles returns staging blobs'
+    ['current.json', 'device_cookie.bin'],
+    'listFiles returns staging blob basenames'
   );
 
   const empty = await remote.listFiles('nonexistent/');
@@ -205,7 +205,7 @@ async function testSeed() {
 
   const files = await remote.listFiles('ledger/');
   assertEq(files.length, 1, 'seeded files appear in listFiles');
-  assertEq(files[0], 'ledger/blocks/0.json', 'seeded block path correct');
+  assertEq(files[0], 'blocks/0.json', 'seeded block basename correct (prefix stripped)');
 }
 
 async function testDump() {

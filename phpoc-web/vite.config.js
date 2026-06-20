@@ -28,4 +28,11 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['phpoc_crypto_core'],
   },
+  build: {
+    rollupOptions: {
+      // WASM glue JS is loaded at runtime via dynamic import; keep it external
+      // to avoid bundling issues with wasm-bindgen's init/initSync pattern.
+      external: (id) => id.includes('phpoc_crypto_core'),
+    },
+  },
 });

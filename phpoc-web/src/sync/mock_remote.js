@@ -215,8 +215,12 @@ export class MockRemoteBackend {
   /**
    * Simulate LIST — list filenames under a prefix.
    *
+   * Returns basenames only (prefix stripped), matching the Worker
+   * and other transport implementations. Callers reconstruct full
+   * paths by prepending the prefix.
+   *
    * @param {string} prefix - Remote path prefix (e.g., "ledger/blocks/").
-   * @returns {Promise<string[]>} List of matching paths.
+   * @returns {Promise<string[]>} List of basenames (prefix stripped).
    * @throws {Error} On simulated network errors.
    */
   async listFiles(prefix) {
@@ -229,7 +233,7 @@ export class MockRemoteBackend {
     const keys = [];
     for (const key of this._keyIndex) {
       if (key.startsWith(prefix)) {
-        keys.push(key);
+        keys.push(key.slice(prefix.length));
       }
     }
 

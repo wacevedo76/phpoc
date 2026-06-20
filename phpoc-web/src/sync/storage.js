@@ -132,3 +132,127 @@ export class MemoryBackend extends StorageBackend {
     return keys.sort();
   }
 }
+
+
+/**
+ * SessionStorageBackend — sessionStorage-based storage for private browsing.
+ *
+ * Uses `window.sessionStorage` which survives page refreshes within a
+ * single browsing session (tab/window). Data is lost when the tab/window
+ * is closed. Better than in-memory Map when IndexedDB is unavailable
+ * (e.g. private/incognito browsing).
+ *
+ * Falls back to an in-memory Map if sessionStorage is also unavailable.
+ */
+export class SessionStorageBackend extends StorageBackend {
+  /** @param {string} [prefix='phpoc:'] - Key prefix to namespace storage. */
+  constructor(prefix = 'phpoc:') {
+    super();
+    this._prefix = prefix;
+    /** @type {Map<string, any>|null} */
+    this._fallback = null;
+  }
+
+  get name() { return this._fallback ? 'Memory (sessionStorage unavailable)' : 'SessionStorage'; }
+
+  /** @private */
+  _isAvailable() {
+    if (this._fallback) return false;
+    try {
+      const testKey = this._prefix + '__test__';
+      window.sessionStorage.setItem(testKey, '1');
+      window.sessionStorage.removeItem(testKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** @private */
+  _getStore() {
+    if (this._fallback) return this._fallback;
+    if (!this._isAvailable()) {
+      this._fallback = new Map();
+      return this._fallback;
+    }
+    return window.sessionStorage;
+  }
+
+  /** @private */
+  _fullKey(key) {
+    return this._prefix + key;
+  }
+
+  async get(key) {
+    const store = this._getStore();
+    if (store instanceof Map) return store.get(key);
+    try {
+      const raw = store.getItem(this._fullKey(key));
+      return raw !== null ? JSON.parse(raw) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async set(key, value) {
+    const store = this._getStore();
+    if (store instanceof Map) { store.set(key, value); return; }
+    try {
+      store.setItem(this._fullKey(key), JSON.stringify(value));
+    } catch (err) {
+      // QuotaExceededError or sessionStorage unavailable mid-session
+      if (!this._fallback) {
+        this._fallback = new Map();
+        // Migrate existing data from sessionStorage to Map
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (k && k.startsWith(this._prefix)) {
+            try {
+              this._fallback.set(k.slice(this._prefix.length), JSON.parse(store.getItem(k)));
+            } catch { /* skip corrupt entries */ }
+          }
+        }
+      }
+      this._fallback.set(key, value);
+    }
+  }
+
+  async delete(key) {
+    const store = this._getStore();
+    if (store instanceof Map) { store.delete(key); return; }
+    try {
+      store.removeItem(this._fullKey(key));
+    } catch { /* ignore */ }
+  }
+
+  async list(prefix = '') {
+    const store = this._getStore();
+    const keys = [];
+    if (store instanceof Map) {
+      for (const k of store.keys()) {
+        if (k.startsWith(prefix)) keys.push(k);
+      }
+    } else {
+      for (let i = 0; i < store.length; i++) {
+        const rawKey = store.key(i);
+        if (rawKey && rawKey.startsWith(this._prefix)) {
+          const k = rawKey.slice(this._prefix.length);
+          if (k.startsWith(prefix)) keys.push(k);
+        }
+      }
+    }
+    return keys.sort();
+  }
+
+  async clear() {
+    const store = this._getStore();
+    if (store instanceof Map) { store.clear(); return; }
+    // Only remove our own prefixed keys
+    const toRemove = [];
+    for (let i = 0; i < store.length; i++) {
+      const k = store.key(i);
+      if (k && k.startsWith(this._prefix)) toRemove.push(k);
+    }
+    for (const k of toRemove) store.removeItem(k);
+  }
+}

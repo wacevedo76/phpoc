@@ -13,7 +13,7 @@ export { DeviceCookie } from './cookie.js';
 export { mergeEntries } from './merge_engine.js';
 export { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 export { LocalCache } from './local_cache.js';
-export { StorageBackend, MemoryBackend } from './storage.js';
+export { StorageBackend, MemoryBackend, SessionStorageBackend } from './storage.js';
 export { IndexedDBBackend } from './indexeddb_storage.js';
 export { HttpBackend } from './http_backend.js';
 export { MockRemoteBackend } from './mock_remote.js';

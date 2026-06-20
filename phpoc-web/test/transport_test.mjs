@@ -541,16 +541,6 @@ await testThrows('pull network error throws Error', async () => {
   }
 });
 
-await testThrows('pull timeout throws Error', async () => {
-  globalThis.fetch = async () => { throw new Error('The user aborted a request'); };
-  try {
-    const t = new HttpTransport({ baseUrl: 'https://example.com' });
-    await t.pull('path');
-  } finally {
-    delete globalThis.fetch;
-  }
-});
-
 await testThrows('push network error throws Error', async () => {
   globalThis.fetch = async () => { throw new Error('Network failure'); };
   try {
@@ -571,7 +561,176 @@ await testThrows('listFiles network error throws Error', async () => {
   }
 });
 
-// ── Category 8: HTTP error statuses ──
+await testThrows('delete network error throws Error', async () => {
+  globalThis.fetch = async () => { throw new Error('Network failure'); };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.delete('path');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+// ── Category 7b: timeoutMs → AbortSignal.timeout() wired ──
+console.log('\n── timeoutMs → AbortSignal.timeout() wired ──');
+
+await testBehavior('pull with timeoutMs passes signal to fetch', async () => {
+  let capturedSignal = undefined;
+  globalThis.fetch = async (url, options) => {
+    capturedSignal = options?.signal;
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('ok').buffer; }, async text() { return 'ok'; }, async json() { return '{}'; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.pull('path', { timeoutMs: 5000 });
+    assert(capturedSignal instanceof AbortSignal, 'signal is AbortSignal');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('pull without timeoutMs does NOT pass signal', async () => {
+  let capturedSignal = undefined;
+  globalThis.fetch = async (url, options) => {
+    capturedSignal = options?.signal;
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('ok').buffer; }, async text() { return 'ok'; }, async json() { return '{}'; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.pull('path');
+    assert(!capturedSignal, 'no signal passed when timeoutMs omitted');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('push with timeoutMs passes signal to fetch', async () => {
+  let capturedSignal = undefined;
+  globalThis.fetch = async (url, options) => {
+    capturedSignal = options?.signal;
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('').buffer; }, async text() { return ''; }, async json() { return '{}'; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.push('path', new TextEncoder().encode('x'), { timeoutMs: 5000 });
+    assert(capturedSignal instanceof AbortSignal, 'signal is AbortSignal');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('listFiles with timeoutMs passes signal to fetch', async () => {
+  let capturedSignal = undefined;
+  globalThis.fetch = async (url, options) => {
+    capturedSignal = options?.signal;
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('[]').buffer; }, async json() { return []; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.listFiles('prefix/', { timeoutMs: 5000 });
+    assert(capturedSignal instanceof AbortSignal, 'signal is AbortSignal');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('delete with timeoutMs passes signal to fetch', async () => {
+  let capturedSignal = undefined;
+  globalThis.fetch = async (url, options) => {
+    capturedSignal = options?.signal;
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('').buffer; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.delete('path', { timeoutMs: 5000 });
+    assert(capturedSignal instanceof AbortSignal, 'signal is AbortSignal');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+// ── Category 8: HTTP DELETE method ──
+console.log('\n── delete method ──');
+
+await testBehavior('basic delete succeeds on 200', async () => {
+  const fetchMock = createMockFetch();
+  globalThis.fetch = fetchMock({ status: 200, body: '' });
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com', apiKey: 'k' });
+    await t.delete('staging/blobs/x.json');
+    assert(fetchMock.requests.length === 1, 'one request made');
+    assertEq(fetchMock.requests[0].options?.method || 'DELETE', 'DELETE', 'uses DELETE method');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('delete 404 succeeds silently (already gone)', async () => {
+  const fetchMock = createMockFetch();
+  globalThis.fetch = fetchMock({ status: 404 });
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    // Should not throw — 404 is treated as success for delete
+    await t.delete('nonexistent');
+    assert(true, 'delete 404 does not throw');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('delete clears ETag cache for that path', async () => {
+  let callCount = 0;
+  globalThis.fetch = async (url, options) => {
+    callCount++;
+    const method = options?.method || 'GET';
+    const headers = new Map();
+    if (method === 'GET') {
+      if (callCount === 1) {
+        headers.set('etag', '"cached"');
+        return { status: 200, ok: true, headers: { get(n) { return headers.get(n.toLowerCase()); }, has(n) { return headers.has(n.toLowerCase()); } }, async arrayBuffer() { return new TextEncoder().encode('original').buffer; }, async text() { return 'original'; }, async json() { return JSON.parse('"original"'); } };
+      }
+      // GET after DELETE — should NOT have If-None-Match since cache was cleared
+      const reqHeaders = options?.headers || {};
+      const ifNoneMatch = typeof reqHeaders.get === 'function' ? reqHeaders.get('If-None-Match') : reqHeaders['If-None-Match'];
+      assert(!ifNoneMatch, 'no If-None-Match after cache clear');
+      return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('fresh').buffer; }, async text() { return 'fresh'; }, async json() { return JSON.parse('"fresh"'); } };
+    }
+    // DELETE
+    return { status: 200, ok: true, headers: { get() { return null; }, has() { return false; } }, async arrayBuffer() { return new TextEncoder().encode('').buffer; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.pull('some-path');
+    await t.delete('some-path');
+    await t.pull('some-path');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testThrows('delete 500 throws Error', async () => {
+  const fetchMock = createMockFetch();
+  globalThis.fetch = fetchMock({ status: 500 });
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.delete('server-error');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testThrows('delete 403 throws Error', async () => {
+  const fetchMock = createMockFetch();
+  globalThis.fetch = fetchMock({ status: 403 });
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.delete('forbidden');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+// ── Category 9: HTTP error statuses ──
 console.log('\n── Error handling — HTTP error statuses ──');
 
 await testThrows('pull 403 throws Error', async () => {
@@ -618,7 +777,7 @@ await testThrows('listFiles 500 throws Error', async () => {
   }
 });
 
-// ── Category 9: isHttp property ──
+// ── Category 10: isHttp property ──
 console.log('\n── isHttp property ──');
 
 await testBehavior('isHttp returns true', async () => {
@@ -626,7 +785,7 @@ await testBehavior('isHttp returns true', async () => {
   assert(t.isHttp === true, 'isHttp === true');
 });
 
-// ── Category 10: URL construction ──
+// ── Category 11: URL construction ──
 console.log('\n── URL construction ──');
 
 await testBehavior('leading slash on path is normalized', async () => {
@@ -657,7 +816,7 @@ await testBehavior('base URL with sub-path resolves correctly', async () => {
   }
 });
 
-// ── Category 11: Request headers ──
+// ── Category 12: Request headers ──
 console.log('\n── Request headers ──');
 
 await testBehavior('push sends Content-Type: application/octet-stream', async () => {
@@ -711,6 +870,154 @@ await testBehavior('no API key configured → no X-Api-Key header', async () => 
       : capturedHeaders['X-Api-Key'];
     assert(!apiKey, 'no X-Api-Key header when no key configured');
   } finally {
+    delete globalThis.fetch;
+  }
+});
+
+// ── Category 13: ETag cache TTL expiry ──
+console.log('\n── ETag cache TTL expiry ──');
+
+await testBehavior('TTL=0 (default) — entry never expires', async () => {
+  const fetchMock = createMockFetch();
+  globalThis.fetch = fetchMock({ status: 200, body: 'data', headers: { ETag: '"v1"' } });
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' });
+    await t.pull('path');
+    // Second pull — should still have cached entry (TTL=0 means never expire)
+    globalThis.fetch = fetchMock({ status: 304 });
+    const result = await t.pull('path');
+    const decoded = new TextDecoder().decode(result);
+    assertEq(decoded, 'data', 'cached body returned (TTL=0 never expires)');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('expired cache entry — no If-None-Match sent', async () => {
+  const realNow = Date.now;
+  let fakeNow = 1000000;
+  Date.now = () => fakeNow;
+
+  let capturedHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    capturedHeaders = options?.headers || {};
+    return { status: 200, ok: true, headers: { get(n) { return n.toLowerCase() === 'etag' ? '"v1"' : null; }, has(n) { return n.toLowerCase() === 'etag'; } }, async arrayBuffer() { return new TextEncoder().encode('fresh').buffer; } };
+  };
+
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com', cacheTtlMs: 5000 });
+    await t.pull('path'); // cached at fakeNow=1000000
+
+    // Advance time past TTL
+    fakeNow = 1000000 + 6000; // 6s later, TTL was 5s
+
+    // Reset capturedHeaders for the second request
+    capturedHeaders = null;
+    await t.pull('path'); // should miss cache, re-fetch
+
+    const ifNoneMatch = typeof capturedHeaders?.get === 'function'
+      ? capturedHeaders.get('If-None-Match')
+      : capturedHeaders?.['If-None-Match'];
+    assert(!ifNoneMatch, 'no If-None-Match header (cache expired)');
+  } finally {
+    Date.now = realNow;
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('fresh cache entry — If-None-Match still sent', async () => {
+  const realNow = Date.now;
+  let fakeNow = 1000000;
+  Date.now = () => fakeNow;
+
+  let capturedHeaders = null;
+  globalThis.fetch = async (url, options) => {
+    capturedHeaders = options?.headers || {};
+    return { status: 200, ok: true, headers: { get(n) { return n.toLowerCase() === 'etag' ? '"v1"' : null; }, has(n) { return n.toLowerCase() === 'etag'; } }, async arrayBuffer() { return new TextEncoder().encode('data').buffer; } };
+  };
+
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com', cacheTtlMs: 5000 });
+    await t.pull('path'); // cached at fakeNow=1000000
+
+    // Advance time but still within TTL
+    fakeNow = 1000000 + 3000; // 3s later, TTL is 5s
+
+    capturedHeaders = null;
+    await t.pull('path');
+
+    const ifNoneMatch = typeof capturedHeaders?.get === 'function'
+      ? capturedHeaders.get('If-None-Match')
+      : capturedHeaders?.['If-None-Match'];
+    assertEq(ifNoneMatch, '"v1"', 'If-None-Match header present (cache still fresh)');
+  } finally {
+    Date.now = realNow;
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('evictStale() removes expired entries', async () => {
+  const realNow = Date.now;
+  let fakeNow = 1000000;
+  Date.now = () => fakeNow;
+
+  globalThis.fetch = async (url, options) => {
+    return { status: 200, ok: true, headers: { get(n) { return n.toLowerCase() === 'etag' ? `"etag-${url}"` : null; }, has(n) { return n.toLowerCase() === 'etag'; } }, async arrayBuffer() { return new TextEncoder().encode('data').buffer; } };
+  };
+
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com', cacheTtlMs: 5000 });
+    await t.pull('path-a'); // cached at 1000000
+
+    // Advance time past TTL
+    fakeNow = 1000000 + 6000;
+
+    await t.pull('path-b'); // cached at 1006000 (fresh)
+
+    const evicted = t.evictStale();
+    assertEq(evicted, 1, 'one entry evicted (path-a expired, path-b fresh)');
+  } finally {
+    Date.now = realNow;
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('evictStale() with TTL=0 is a no-op', async () => {
+  globalThis.fetch = async () => {
+    return { status: 200, ok: true, headers: { get(n) { return n.toLowerCase() === 'etag' ? '"etag"' : null; }, has(n) { return n.toLowerCase() === 'etag'; } }, async arrayBuffer() { return new TextEncoder().encode('data').buffer; } };
+  };
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com' }); // TTL=0 (default)
+    await t.pull('path-a');
+    await t.pull('path-b');
+
+    const evicted = t.evictStale();
+    assertEq(evicted, 0, 'no entries evicted when TTL=0');
+  } finally {
+    delete globalThis.fetch;
+  }
+});
+
+await testBehavior('resetCache() clears all entries regardless of TTL', async () => {
+  const realNow = Date.now;
+  let fakeNow = 1000000;
+  Date.now = () => fakeNow;
+
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount++;
+    return { status: 200, ok: true, headers: { get(n) { return n.toLowerCase() === 'etag' ? '"etag"' : null; }, has(n) { return n.toLowerCase() === 'etag'; } }, async arrayBuffer() { return new TextEncoder().encode('data').buffer; } };
+  };
+
+  try {
+    const t = new HttpTransport({ baseUrl: 'https://example.com', cacheTtlMs: 86400000 }); // 24h TTL
+    await t.pull('path');
+    t.resetCache();
+    await t.pull('path');
+    // After reset, the second pull must be a real request (not 304 from cache)
+    assert(callCount === 2, 'two real requests after cache reset (TTL-aware)');
+  } finally {
+    Date.now = realNow;
     delete globalThis.fetch;
   }
 });

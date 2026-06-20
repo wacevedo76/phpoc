@@ -298,9 +298,9 @@ await testBehavior('list returns paths under prefix', async () => {
   await transport.push('ledger/blocks/1.json', new TextEncoder().encode('{}'));
   await transport.push('staging/blobs/current.json', new TextEncoder().encode('{}'));
   const files = await backend.list('ledger/blocks/');
-  // MockRemoteBackend returns full paths (not prefix-stripped like the Worker).
+  // Transport returns basenames only (prefix stripped), matching Worker behavior.
   // HttpBackend is a pass-through — what the transport returns is what you get.
-  assertDeepEq(files, ['ledger/blocks/0.json', 'ledger/blocks/1.json'], 'returns matching paths');
+  assertDeepEq(files, ['0.json', '1.json'], 'returns matching paths');
 });
 
 await testBehavior('list returns empty for unmatched prefix', async () => {

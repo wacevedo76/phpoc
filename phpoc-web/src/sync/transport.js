@@ -22,7 +22,15 @@
  */
 
 export class HttpTransport {
-  constructor({ baseUrl, apiKey } = {}) {
+  /**
+   * @param {object} [options]
+   * @param {string} options.baseUrl - Base URL of the remote storage server.
+   * @param {string} [options.apiKey] - Pre-shared API key for X-Api-Key header.
+   * @param {number} [options.cacheTtlMs=0] - ETag cache TTL in ms.
+   *   0 = no expiry (default). Set to e.g. 300000 for 5-minute expiry
+   *   in long-running processes (daemon mode) to prevent stale bodies.
+   */
+  constructor({ baseUrl, apiKey, cacheTtlMs } = {}) {
     if (!baseUrl) {
       throw new Error('HttpTransport: baseUrl must not be empty');
     }
@@ -36,8 +44,11 @@ export class HttpTransport {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.apiKey = apiKey || null;
 
-    // ETag cache: Map<path, { etag: string, body: Uint8Array }>
+    // ETag cache: Map<path, { etag: string, body: Uint8Array, cachedAt: number }>
     this._etagCache = new Map();
+
+    // Cache TTL: entries older than this are evicted. 0 = no expiry.
+    this._cacheTtlMs = Math.max(0, cacheTtlMs || 0);
   }
 
   // ------------------------------------------------------------------
@@ -63,15 +74,20 @@ export class HttpTransport {
     const headers = {};
     this._addApiKey(headers);
 
-    // Send If-None-Match if we have a cached ETag for this path
-    const cached = this._etagCache.get(path);
+    // Send If-None-Match if we have a non-expired cached ETag for this path
+    const cached = this._getCachedEntry(path);
     if (cached) {
       headers['If-None-Match'] = cached.etag;
     }
 
+    const fetchOpts = { method: 'GET', headers };
+    if (timeoutMs) {
+      fetchOpts.signal = AbortSignal.timeout(timeoutMs);
+    }
+
     let response;
     try {
-      response = await fetch(url, { method: 'GET', headers });
+      response = await fetch(url, fetchOpts);
     } catch (err) {
       throw new Error(
         `HttpTransport: network error pulling ${path}: ${err.message}`
@@ -103,7 +119,7 @@ export class HttpTransport {
     if (response.status === 200) {
       const etag = response.headers.get('ETag');
       if (etag) {
-        this._etagCache.set(path, { etag, body });
+        this._etagCache.set(path, { etag, body, cachedAt: Date.now() });
       }
       return body;
     }
@@ -136,13 +152,18 @@ export class HttpTransport {
     };
     this._addApiKey(headers);
 
+    const fetchOpts = {
+      method: 'PUT',
+      headers,
+      body: data,
+    };
+    if (timeoutMs) {
+      fetchOpts.signal = AbortSignal.timeout(timeoutMs);
+    }
+
     let response;
     try {
-      response = await fetch(url, {
-        method: 'PUT',
-        headers,
-        body: data,
-      });
+      response = await fetch(url, fetchOpts);
     } catch (err) {
       throw new Error(
         `HttpTransport: network error pushing ${path}: ${err.message}`
@@ -177,9 +198,14 @@ export class HttpTransport {
     const headers = {};
     this._addApiKey(headers);
 
+    const fetchOpts = { method: 'GET', headers };
+    if (timeoutMs) {
+      fetchOpts.signal = AbortSignal.timeout(timeoutMs);
+    }
+
     let response;
     try {
-      response = await fetch(url, { method: 'GET', headers });
+      response = await fetch(url, fetchOpts);
     } catch (err) {
       throw new Error(
         `HttpTransport: network error listing ${prefix}: ${err.message}`
@@ -231,9 +257,14 @@ export class HttpTransport {
     const headers = {};
     this._addApiKey(headers);
 
+    const fetchOpts = { method: 'DELETE', headers };
+    if (timeoutMs) {
+      fetchOpts.signal = AbortSignal.timeout(timeoutMs);
+    }
+
     let response;
     try {
-      response = await fetch(url, { method: 'DELETE', headers });
+      response = await fetch(url, fetchOpts);
     } catch (err) {
       throw new Error(
         `HttpTransport: network error deleting ${path}: ${err.message}`
@@ -261,9 +292,50 @@ export class HttpTransport {
     this._etagCache.clear();
   }
 
+  /**
+   * Evict all expired entries from the ETag cache.
+   *
+   * Called automatically before cache lookups. Safe to call from
+   * daemon loops to periodically purge stale entries.
+   *
+   * @returns {number} Number of entries evicted.
+   */
+  evictStale() {
+    if (this._cacheTtlMs <= 0) return 0;
+    const now = Date.now();
+    let count = 0;
+    for (const [path, entry] of this._etagCache) {
+      if (now - entry.cachedAt > this._cacheTtlMs) {
+        this._etagCache.delete(path);
+        count++;
+      }
+    }
+    return count;
+  }
+
   // ------------------------------------------------------------------
   // Internal helpers
   // ------------------------------------------------------------------
+
+  /**
+   * Get a cached ETag entry, evicting if TTL-expired.
+   *
+   * @private
+   * @param {string} path
+   * @returns {{ etag: string, body: Uint8Array, cachedAt: number }|null}
+   */
+  _getCachedEntry(path) {
+    const entry = this._etagCache.get(path);
+    if (!entry) return null;
+
+    // Check TTL expiry
+    if (this._cacheTtlMs > 0 && Date.now() - entry.cachedAt > this._cacheTtlMs) {
+      this._etagCache.delete(path);
+      return null;
+    }
+
+    return entry;
+  }
 
   /**
    * Build the full URL from base URL and remote path.

@@ -108,7 +108,7 @@ export class CryptoService {
 
     // Dynamic import ensures the wasm-bindgen glue is loaded on demand.
     const mod = await import(
-      /* @vite-ignore */ '../../../phpoc-crypto-core/pkg/phpoc_crypto_core.js'
+      '../../../phpoc-crypto-core/pkg/phpoc_crypto_core.js'
     );
 
     wasmModule = mod;
