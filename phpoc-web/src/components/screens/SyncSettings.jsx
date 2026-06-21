@@ -65,7 +65,7 @@ function formatTime(ts) {
 // ── Sync Screen Component ────────────────────────────────────────────
 
 export default function SyncSettings() {
-  const { services, commitEntries } = useApp();
+  const { services, commitEntries, triggerReauth, reauthActive } = useApp();
   const sync = services.sync;
 
   // ── Active tasks (for live elapsed timer on running entries) ─────
@@ -100,9 +100,11 @@ export default function SyncSettings() {
   const [syncing, setSyncing] = useState(false);
   const [lastSyncResult, setLastSyncResult] = useState(null);
 
-  // Display status: SYNCING > NOT_SYNCED (staging entries exist) > remote status
+  // Display status: SYNCING > remote status > NOT_SYNCED (entries pending commit).
+  // When remote sync succeeded (READY), show the remote status even if entries
+  // exist — "Not Synced" only appears when sync hasn't run or has warnings.
   const displayStatus = syncing ? STATUS_SYNCING
-    : allEntries.length > 0 ? STATUS_NOT_SYNCED
+    : remoteStatus !== STATUS_READY && allEntries.length > 0 ? STATUS_NOT_SYNCED
     : remoteStatus;
 
   // Debounce timer for commit error/reset
@@ -670,15 +672,22 @@ export default function SyncSettings() {
     setLastSyncResult(null);
     try {
       const result = await sync.checkAndSync();
-      setRemoteStatus(result);
-      setLastSyncResult(result === STATUS_READY ? 'Sync completed' : result);
+      if (result === STATUS_REAUTH) {
+        // Show the re-auth overlay instead of an error message
+        triggerReauth();
+        setRemoteStatus(STATUS_REAUTH);
+        setLastSyncResult('Authentication required. Enter your passphrase.');
+      } else {
+        setRemoteStatus(result);
+        setLastSyncResult(result === STATUS_READY ? 'Sync completed' : result);
+      }
     } catch (err) {
       setRemoteStatus(STATUS_OFFLINE);
       setLastSyncResult(`Error: ${err.message}`);
     } finally {
       setSyncing(false);
     }
-  }, [sync, syncing]);
+  }, [sync, syncing, triggerReauth]);
 
   // ── Auto-clear commit error after 8 seconds ─────────────────────
 
@@ -694,6 +703,18 @@ export default function SyncSettings() {
       if (errorTimer.current) clearTimeout(errorTimer.current);
     };
   }, [commitError, commitResult]);
+
+  // When reauth overlay dismisses, clear the REAUTH_NEEDED error so the
+  // user sees a clean slate. They can press "Sync Now" to retry (the
+  // master key is now cached so it should succeed).
+  const prevReauthRef = useRef(false);
+  useEffect(() => {
+    if (prevReauthRef.current && !reauthActive) {
+      setRemoteStatus(STATUS_NOT_SYNCED);
+      setLastSyncResult(null);
+    }
+    prevReauthRef.current = reauthActive;
+  }, [reauthActive]);
 
   // ── Compute live elapsed for all entries ────────────────────────
   // Use the activeElapsedMap for running entries, compute static
@@ -1036,10 +1057,14 @@ export default function SyncSettings() {
             <div className={`sync-result ${
               lastSyncResult === 'Sync completed' || lastSyncResult === STATUS_READY
                 ? 'sync-result-ok'
+                : lastSyncResult.startsWith('Authentication required')
+                ? 'sync-result-reauth'
                 : 'sync-result-error'
             }`}>
               {lastSyncResult === 'Sync completed' || lastSyncResult === STATUS_READY
                 ? '✓ Sync completed successfully'
+                : lastSyncResult.startsWith('Authentication required')
+                ? `🔐 ${lastSyncResult}`
                 : `⚠ ${lastSyncResult}`
               }
             </div>

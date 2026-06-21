@@ -45,6 +45,7 @@ function AppInner() {
     login,
     createNewLedger,
     connectToWorker,
+    importFromCloud,
     importLedger,
     validateImport,
     confirmImport,
@@ -53,11 +54,13 @@ function AppInner() {
     logout,
     cryptoStatus,
     storageStatus,
+    reauthActive,
+    handleReauth,
+    dismissReauth,
   } = useApp();
 
   const [currentScreen, setCurrentScreen] = useState('dashboard');
   const [profileSubview, setProfileSubview] = useState('profile');
-  const [reauthOverlay, setReauthOverlay] = useState(false);
 
   const handleNavigate = useCallback((screen) => {
     setCurrentScreen(screen);
@@ -68,8 +71,8 @@ function AppInner() {
 
   const handleLogout = useCallback(() => {
     logout();
-    setReauthOverlay(false);
-  }, [logout]);
+    dismissReauth();
+  }, [logout, dismissReauth]);
 
   // ── Recovery seed display (one-time after new ledger creation) ──
   const [recoverySeed, setRecoverySeed] = useState(null);
@@ -134,6 +137,7 @@ function AppInner() {
         onConfirmImport={confirmImport}
         onNewLedger={handleNewLedger}
         onWorkerConnect={connectToWorker}
+        onImportFromCloud={importFromCloud}
         onExport={exportLedger}
         onExportFull={exportLedgerFull}
       />
@@ -215,18 +219,11 @@ function AppInner() {
         {renderScreen()}
       </AppLayout>
 
-      {/* Re-auth overlay: triggered when cookie TTL expires */}
-      {reauthOverlay && (
+      {/* Re-auth overlay: triggered by sync when cookie TTL expires or device mismatch */}
+      {reauthActive && (
         <AuthScreen
           overlay
-          onAuthenticated={async (passphrase) => {
-            try {
-              await login(passphrase);
-              setReauthOverlay(false);
-            } catch (err) {
-              throw err;
-            }
-          }}
+          onAuthenticated={handleReauth}
         />
       )}
 

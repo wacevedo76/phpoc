@@ -57,11 +57,76 @@ All 149 tests across genesis_gate (89), settings (13), sync_service (45), and al
 
 ---
 
-### 🔴 Next Steps
+### 🟢 Phase 5 (complete): Remote Import from Cloud Storage ✅ (2026-06-20)
 
-1. **Companion bridge server** (Python, ~80-100 lines) — same HTTP API as Worker, enables CLI ↔ web without remote infra.
-2. **Docker + multi-tenant Worker** — one-command deploy for self-hosted users.
-3. **End-to-end Worker testing** — test the full remote sync pipeline (GenesisGate + SyncService + LedgerMerge) against a live Worker from the browser.
+**Implemented:** `WorkerImportSource` class wraps `HttpTransport` to list backup files under `backups/` prefix and fetch individual `.json` export files. Abstract interface (`listBackups()`, `fetchBackup()`, `validateConnection()`) for future storage providers (S3, Google Drive, etc.). Built-in `fetchAndValidate()` combines fetch with full import validation (v1, v2, raw chain formats).
+
+**OnboardingScreen changes:** Import phase now shows source selection (`importSource`: null → 'file' | 'cloud'). Cloud flow: Enter Worker URL + API key → Connect → list backups → select backup → detect auth mode (passphrase-only if genesis has `recovery_seed_enc`, else passphrase+seed) → authenticate → import.
+
+**DevModeContext changes:** `importFromCloud()` action handles full 7-step flow: crypto init, transport/import source creation, PDK derivation (passphrase-only) or direct authenticate (passphrase+seed), `fetchAndValidate()`, genesis hash cross-check, storage write (seed, identity, ledger blocks, staging entries), remote config persist, bootstrap.
+
+**Test suite:** `remote_import_test.mjs` — 57 assertions across 6 groups (A: connection validation, B: list backups, C: fetch backup, D: fetchAndValidate happy path, E: fetchAndValidate errors, F: edge cases). 0 failures.
+
+**Files created:** `phpoc-web/src/sync/remote_import.js` (~300 LOC), `phpoc-web/test/remote_import_test.mjs` (~480 LOC).
+
+**Files modified:** `phpoc-web/src/sync/index.js` (barrel exports), `phpoc-web/src/components/screens/OnboardingScreen.jsx` (cloud sub-source UI), `phpoc-web/src/context/DevModeContext.jsx` (`importFromCloud` action), `phpoc-web/src/App.jsx` (prop wiring).
+
+**Zero existing tests modified.** Full suite passes with zero regressions.
+
+### 🔴 Phase 5a (fix): Worker Connect — CLI Block Format Compatibility ✅ (2026-06-20)
+
+**Problem:** Worker Connect flow pulled a single `ledger:blocks` key, but the CLI stores blocks as individual obfuscated files under `ledger/blocks/000000.json`. This caused "No ledger found" when connecting to Workers populated by the CLI.
+
+**Fix:** `handleWorkerFetch` now tries `ledger:blocks` (single blob) first → falls back to `listFiles('ledger/blocks/')` (CLI format). For CLI format: blocks are obfuscated → username preview unavailable → shows block count instead. `handleWorkerUnlock` requires seed for CLI format (passphrase+seed → master key → de-obfuscation). `connectToWorker` handles CLI format branch: after auth, lists `ledger/blocks/`, fetches each block, de-obfuscates via `CryptoService.deobfuscateBlob()`, assembles chain, verifies genesis seal, writes to storage, bootstraps.
+
+**Files modified:** `OnboardingScreen.jsx` (dual-format fetch, seed field + UI), `DevModeContext.jsx` (CLI format branch in connectToWorker).
+
+**Zero existing tests broken** — all 65 worker connect tests pass. Full suite: 0 regressions.
+
+### 🟢 Phase 5b.1 (complete): Multi-Device Auto-Sync Hook — GREEN ✅ (2026-06-20)
+
+**Implemented:** `createAutoSync()` in `phpoc-web/src/hooks/useAutoSync.js`. Wraps all 6 SyncService mutation methods with debounced `pushToRemote()`. `isSyncing` true during debounce/push, false after completion. Push errors logged but don't break mutations. No master key → push skipped. `dispose()` cancels pending debounce, suppresses state updates during in-flight push.
+
+**React hook:** `useAutoSync()` thin wrapper — `useRef` for instance, `setInterval` polling for `isSyncing` reactivity, `useEffect` cleanup calls `dispose()`. Methods wrapped in `useCallback`.
+
+**SyncService change:** Added `getMasterKey()` method (accesses `this._crypto.getMasterKey()`).
+
+All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
+
+### 🟢 Phase 5b.2 (complete): Auto-Sync Wiring — GREEN ✅ (2026-06-20)
+
+**Implemented:** `DevModeContext.jsx` now wraps `services.sync` with `createAutoSync()` via a `useMemo`-based `effectiveServices` object. All 6 mutation methods (capture/end/pause/unpause/modify/remove) are replaced with auto-sync wrapped versions that trigger a debounced `pushToRemote()` after each call. Non-mutation methods (readEntries, checkAndSync, getCompleted, markCommitted, _local) pass through unchanged.
+
+**Architecture:** `autoSyncRef` + `prevRawSyncRef` track the raw sync instance, recreating the `createAutoSync` wrapper only when the SyncService instance changes (e.g., after bootstrap or logout→login). The wrapper is cleaned up on unmount via `useEffect` return. `effectiveServices` is exposed through context as `services`, so all screen components (Dashboard, History, SyncSettings, NewTask) get auto-sync behavior transparently — no component changes needed.
+
+**Key decisions:**
+- Used `createAutoSync()` (pure function) directly, not `useAutoSync()` (React hook), since the context provider manages its own lifecycle via `useMemo` + `useRef`.
+- `debounceMs: 500` — rapid mutations coalesce into a single push.
+- Push errors are logged but never propagate to the caller (mutations always succeed).
+- No master key → push silently skipped (local-only mode).
+- **Bug fix:** `wrappedSync` uses a `Proxy` (not `...rawSync` spread) to preserve prototype methods (`getCompleted`, `markCommitted`, `_local`, etc.). Spreading only copies own enumerable properties — class methods are on the prototype and would be silently lost.
+
+**Files modified:** `phpoc-web/src/context/DevModeContext.jsx` (imports, `effectiveServices` useMemo, context value).
+
+**Zero test regressions** — all 28 test suites pass (1 pre-existing failure: MemoryBackend list).
+
+### 🔴 Phase 5b.3 (fix): Auth Gate + Status Display + Reauth Overlay — RED/GREEN ✅ (2026-06-20)
+
+**Problems found during live testing:**
+1. **Auth gate blocked sync after Worker connect:** `checkAndSync()` unconditionally returned `REAUTH_NEEDED` when no local cookie existed, even though the master key was cached from the connect flow. The `reauthOverlay` in `App.jsx` is never triggered — no passphrase prompt appears. Result: sync does nothing after Worker connect.
+2. **Status display misleading:** `displayStatus` in SyncSettings always showed "Not Synced" when staging entries existed, overriding the real remote sync status. After a successful sync, users still see "Not Synced" if they have uncommitted entries.
+
+**Fixes:**
+- `checkAndSync()` auth gate: when `!localCookie && masterKeyIsCached`, proceed to `_reconcileAndClaim()` instead of returning `REAUTH_NEEDED`. This establishes a first-time cookie and syncs staging blobs.
+- `displayStatus` in SyncSettings: only shows `STATUS_NOT_SYNCED` when `remoteStatus !== STATUS_READY`. When sync succeeded, shows `STATUS_READY` even if entries exist.
+- **Re-auth overlay wired end-to-end:** `triggerReauth()` sets `reauthActive=true` in DevModeContext, App.jsx renders `AuthScreen overlay`. `handleReauth()` (new) re-derives MK from passphrase+seed on existing crypto (no re-bootstrap), auto-runs `checkAndSync()`, then `setReauthActive(false)`. SyncSettings calls `triggerReauth()` when sync returns `REAUTH_NEEDED`.
+
+⏭ Next: End-to-end integration testing of auto-sync behavior in the browser (dev mode: mutate entries → observe push debounce in MockRemoteBackend; production mode: mutate → observe HTTP push to Worker).
+
+**Also pending:**
+- Ledger blocks sync to R2 — after committing entries, ledger blocks remain local-only. Need to implement `pushLedgerBlocks()` and wire it into the commit flow.
+- `SyncIndicator` should reflect `isAutoSyncing` from the auto-sync wrapper.
+- `reauthOverlay` in `App.jsx` is never triggered (`setReauthOverlay(true)` called nowhere). TTL expiry on existing cookies cannot prompt for re-auth.
 
 > Full historical step-by-step status is in `docs/planning/WEB_ROADMAP.md`. This file is the session-level snapshot.
 
@@ -80,3 +145,13 @@ All 149 tests across genesis_gate (89), settings (13), sync_service (45), and al
 - ~~`_getDeviceId()` called twice in push operations: `pushToRemote()` calls it for `pushBlob` and again for `_pushCookie`.~~ ✅ **FIXED (2026-06-20):** `pushBlobOnly()` now accepts optional `deviceId` parameter to skip redundant `_getDeviceId()` call. `_reconcileAndClaim` passes its already-computed `localDeviceUuid` through to both `pushBlobOnly()` calls (Case A + Case B) and reuses it for cookie creation instead of calling `_getDeviceId()` a third time. Reduced from 2-3 calls to exactly 1. 5 new tests (Group J), 53 total sync_service tests, 0 failures.
 - ~~`createStoragePlugin` lan/saas branch still creates `HttpBackend`: The architecture decision says SaaS should be IndexedDB (local) + HttpTransport (remote), but the branch returns `HttpBackend` directly. Full storage unification deferred.~~ ✅ **FIXED (2026-06-20):** `createStoragePlugin` now returns `IndexedDBBackend` for `lan`/`saas` deployments — matching the target architecture where storage (IndexedDB) and transport (HttpTransport) are separate concerns. Removed `HttpBackend` import from `plugin_factory.js`. Updated `storage_plugin_test.mjs`: `createStoragePlugin` saas/lan tests now assert `IndexedDBBackend`; HttpBackend test section rewritten to use `{ transport }` constructor with a mock transport (get/set round-trip, remove, list, clear throws). 94 passed, 1 pre-existing failure (MemoryBackend list).
 - ~~**apiKey normalization differs between factories:** `createRemoteTransport` uses `|| null`, `createStoragePlugin` uses `|| ''`. Both intentional but divergent.~~ ✅ **FIXED (2026-06-20):** `readRemoteConfig()` and `detectDeployment()` now normalize absent `apiKey` to `null` (was `''`). `createRemoteTransport()` already normalized to `null` — the source now matches the sink. 7 new tests in `remote_config_test.mjs` (explicit deployment, URL param, auto-detect, LAN paths). Full suite: 53 passed, 0 failures.
+- ~~**Code review: useAutoSync.js (6 findings)** — stale `useCallback` closures, `require('react')` in ES module, 100ms polling inefficiency, `_syncing` state leak on dispose-during-push, dead `_disposed` check in setTimeout, silent `{}` fallback with `?.()`.~~ ✅ **FIXED (2026-06-20):** All 6 findings resolved:
+  - `useCallback` now reads from `instanceRef.current` at call time (stable ref, always current)
+  - Replaced `require('react')` with standard ES `import { useRef, useEffect, useCallback, useState } from 'react'`
+  - Replaced 100ms polling with push-based `onSyncingChange` callback — React `isSyncing` state updates only on actual transitions
+  - `_syncing` reset unconditionally in `finally` block (no longer suppressed by `_disposed`)
+  - Removed dead `if (_disposed) return;` in setTimeout callback (clearTimeout handles debounce-phase disposal)
+  - Removed `{}` fallback; lazy init ensures `instanceRef.current` is always assigned before callbacks fire
+  - Renamed `_wrap` → `_wrapMutation` for clarity; added comment to `_schedulePush` about reset+start behavior
+  - Removed defensive `sync.getMasterKey ?` guard — contract now enforced
+  - 58 assertions pass, 0 failures; zero regressions across all 28 test suites

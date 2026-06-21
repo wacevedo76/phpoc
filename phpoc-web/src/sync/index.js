@@ -19,3 +19,5 @@ export { HttpBackend } from './http_backend.js';
 export { MockRemoteBackend } from './mock_remote.js';
 export { createStoragePlugin, createRemoteTransport, createTransportFromDeployment, detectDeployment } from './plugin_factory.js';
 export { GenesisGate } from './genesis_gate.js';
+export { WorkerImportSource } from './remote_import.js';
+export { HttpTransport } from './transport.js';

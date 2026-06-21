@@ -16,9 +16,10 @@
  * phase-based flow with real WASM crypto.
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DummyCryptoService } from '../services/DummyLedger.js';
-import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate } from '@sync/index.js';
+import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport } from '@sync/index.js';
+import { createAutoSync } from '../hooks/useAutoSync.js';
 import { exportLedger } from '../services/ledger_export.js';
 import { importLedger } from '../services/ledger_import.js';
 
@@ -163,6 +164,70 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     storage: null,
   });
 
+  // ── Auto-sync wrapper ────────────────────────────────────────────
+  // Wraps sync mutation methods (capture/end/pause/unpause/modify/remove)
+  // with debounced pushToRemote so every staging change auto-syncs to
+  // the remote Worker for cross-device consistency.
+  const autoSyncRef = useRef(null);
+  const prevRawSyncRef = useRef(null);
+
+  // Build the effective services object with auto-sync wrapped sync.
+  // All components access services.sync — by replacing it here,
+  // every mutation call automatically triggers a debounced push.
+  const effectiveServices = useMemo(() => {
+    const rawSync = services.sync;
+    if (!rawSync) {
+      // No sync yet (boot/landing/onboarding/auth phases) — pass through
+      return services;
+    }
+
+    // Only recreate the auto-sync wrapper if rawSync instance changed
+    if (prevRawSyncRef.current !== rawSync) {
+      if (autoSyncRef.current) {
+        autoSyncRef.current.dispose();
+      }
+      autoSyncRef.current = createAutoSync(rawSync, { debounceMs: 500 });
+      prevRawSyncRef.current = rawSync;
+    }
+
+    // Use a Proxy so prototype methods (getCompleted, markCommitted,
+    // getMasterKey, pushToRemote, etc.) pass through to the real
+    // SyncService. Spreading `...rawSync` only copies own properties
+    // — class methods live on the prototype and would be lost.
+    const autoSync = autoSyncRef.current;
+    const proxyHandler = {
+      get(target, prop, receiver) {
+        // Override mutation methods with auto-sync wrapped versions
+        if (prop === 'capture') return autoSync.capture;
+        if (prop === 'end') return autoSync.end;
+        if (prop === 'pause') return autoSync.pause;
+        if (prop === 'unpause') return autoSync.unpause;
+        if (prop === 'modify') return autoSync.modify;
+        if (prop === 'remove') return autoSync.remove;
+        // Expose isSyncing for UI indicators
+        if (prop === 'isAutoSyncing') return autoSync.isSyncing();
+        // Expose dispose for cleanup
+        if (prop === '_autoSyncDispose') return autoSync.dispose;
+        // Everything else passes through to the real SyncService.
+        // Use receiver so `this` inside prototype methods resolves
+        // through the proxy (needed for this._local, this._storage, etc.)
+        return Reflect.get(target, prop, receiver);
+      },
+    };
+    const wrappedSync = new Proxy(rawSync, proxyHandler);
+
+    return { ...services, sync: wrappedSync };
+  }, [services]);
+
+  // Clean up auto-sync on unmount (cancels pending debounce)
+  useEffect(() => {
+    return () => {
+      if (autoSyncRef.current) {
+        autoSyncRef.current.dispose();
+      }
+    };
+  }, []);
+
   // ── Loading / error ───────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -184,6 +249,46 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // Tracks storage quality: 'persistent' (IndexedDB), 'session' (SessionStorage),
   // or 'memory' (in-memory Map, data lost on refresh).
   const [storageStatus, setStorageStatus] = useState('persistent');
+
+  // ── Re-auth overlay state ───────────────────────────────────────
+  // Triggered by sync when cookie TTL expires or device mismatch detected.
+  // The overlay prompts for passphrase; on success re-runs bootstrap.
+  const [reauthActive, setReauthActive] = useState(false);
+
+  const triggerReauth = useCallback(() => {
+    setReauthActive(true);
+  }, []);
+
+  const dismissReauth = useCallback(() => {
+    setReauthActive(false);
+  }, []);
+
+  /**
+   * Handle re-auth: re-derive the master key from passphrase + stored seed,
+   * set it on the existing crypto instance, then dismiss the overlay.
+   * Unlike login(), this does NOT re-bootstrap — it only refreshes the
+   * in-memory master key so checkAndSync() can proceed.
+   */
+  const handleReauth = useCallback(async (passphrase) => {
+    // Re-derive master key from stored seed and set on existing crypto.
+    // authenticate() is deterministic — same passphrase+seed → same MK.
+    // This ONLY caches the MK; sync is triggered separately by the user
+    // pressing "Sync Now".
+    if (!services.storage) {
+      throw new Error('Storage not initialized. Please refresh the page.');
+    }
+    if (!services.crypto) {
+      throw new Error('Crypto not initialized. Please refresh the page.');
+    }
+    const seed = await services.storage.get(STORED_SEED_KEY);
+    if (!seed) {
+      throw new Error('No recovery seed found. Cannot re-authenticate.');
+    }
+    const mk = services.crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+    services.crypto.setMasterKey(mk);
+    // Success — dismiss overlay (user must press "Sync Now" manually)
+    setReauthActive(false);
+  }, [services]);
 
   useEffect(() => {
     if (bootAttempted.current) return;
@@ -699,10 +804,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
    * @param {string} opts.baseUrl - Worker URL
    * @param {string} opts.apiKey - API key
    * @param {string} opts.passphrase - User's passphrase
-   * @param {object} opts.genesisBlock - Fetched genesis block
-   * @param {object[]} opts.chain - Full remote chain
+   * @param {string|null} opts.userSeed - Recovery seed (required for CLI block format)
+   * @param {object|null} opts.genesisBlock - Pre-fetched genesis block (single-blob format)
+   * @param {object[]|null} opts.chain - Pre-fetched full chain (single-blob format)
+   * @param {string} opts.format - 'blob' (single ledger:blocks key) or 'blocks' (CLI ledger/blocks/ files)
    */
-  const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, genesisBlock, chain }) => {
+  const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, userSeed, genesisBlock, chain, format }) => {
     setLoading(true);
 
     // ── 1. Initialize crypto ───────────────────────────────────────
@@ -720,6 +827,137 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       crypto = await DummyCryptoService.create();
     }
 
+    // ── CLI block format: fetch + deobfuscate + assemble chain ──
+    if (format === 'blocks') {
+      if (!userSeed) {
+        setLoading(false);
+        throw new Error('Recovery seed is required for CLI-format ledgers.');
+      }
+
+      // Derive master key from passphrase + user seed
+      let masterKey;
+      try {
+        masterKey = crypto.authenticate(passphrase, userSeed, PBKDF2_ITERATIONS);
+      } catch (err) {
+        setLoading(false);
+        throw new Error(`Authentication failed: ${err.message}`);
+      }
+      crypto.setMasterKey(masterKey);
+
+      // Create transport to fetch blocks
+      const transport = new HttpTransport({
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey || null,
+      });
+
+      // List and fetch all blocks
+      let blockFiles;
+      try {
+        blockFiles = await transport.listFiles('ledger/blocks/');
+      } catch (err) {
+        setLoading(false);
+        throw new Error(`Failed to list ledger blocks: ${err.message}`);
+      }
+
+      if (!blockFiles || blockFiles.length === 0) {
+        setLoading(false);
+        throw new Error('No ledger blocks found on remote.');
+      }
+
+      // Sort by sequence number (000000.json, 000001.json, ...)
+      blockFiles.sort();
+
+      // Fetch and deobfuscate each block
+      const assembledChain = [];
+      for (const filename of blockFiles) {
+        const path = `ledger/blocks/${filename}`;
+        let raw;
+        try {
+          raw = await transport.pull(path);
+        } catch (err) {
+          setLoading(false);
+          throw new Error(`Failed to fetch block ${filename}: ${err.message}`);
+        }
+
+        if (raw === null || raw === undefined) {
+          setLoading(false);
+          throw new Error(`Block ${filename} not found on remote.`);
+        }
+
+        // Deobfuscate: convert bytes to base64, then deobfuscate via WASM
+        let block;
+        try {
+          const b64 = btoa(String.fromCharCode(...raw));
+          const plaintext = crypto.deobfuscateBlob(b64, masterKey);
+          block = JSON.parse(plaintext);
+        } catch (err) {
+          setLoading(false);
+          throw new Error(`Failed to deobfuscate block ${filename}. Wrong passphrase or seed.`);
+        }
+
+        assembledChain.push(block);
+      }
+
+      chain = assembledChain;
+      genesisBlock = assembledChain.length > 0 ? assembledChain[0] : null;
+
+      // Validate genesis block
+      if (!genesisBlock || genesisBlock.type !== 'genesis') {
+        setLoading(false);
+        throw new Error('Remote ledger does not have a valid genesis block.');
+      }
+
+      // Verify genesis seal
+      try {
+        const { jsonSort } = await import('../ledger/utils.js');
+        const checkData = {};
+        for (const [k, v] of Object.entries(genesisBlock)) {
+          if (k !== 'day_hash' && k !== 'signature') {
+            checkData[k] = v;
+          }
+        }
+        const sealData = jsonSort(checkData);
+        const valid = crypto.verifySeal(sealData, genesisBlock.day_hash, masterKey);
+        if (!valid) {
+          throw new Error('Seal verification failed');
+        }
+      } catch (err) {
+        setLoading(false);
+        throw new Error('Wrong passphrase for this ledger.');
+      }
+
+      // ── Write everything to storage ────────────────────────────
+      const storage = await createStorage();
+      await storage.clear();
+
+      await storage.set(STORED_SEED_KEY, userSeed);
+
+      if (genesisBlock.identity) {
+        if (genesisBlock.identity.username) {
+          await storage.set(USERNAME_KEY, genesisBlock.identity.username);
+        }
+        if (genesisBlock.identity.email) {
+          await storage.set(EMAIL_KEY, genesisBlock.identity.email);
+        }
+      }
+
+      await storage.set('ledger:blocks', chain);
+
+      // ── Save remote config ─────────────────────────────────────
+      localStorage.setItem('phpoc_worker_url', baseUrl);
+      if (apiKey) {
+        localStorage.setItem('phpoc_api_key', apiKey);
+      } else {
+        localStorage.removeItem('phpoc_api_key');
+      }
+      localStorage.setItem('phpoc_deployment', 'saas');
+
+      // ── Bootstrap services ─────────────────────────────────────
+      await bootstrapServices({ crypto, masterKey, storage });
+      return;
+    }
+
+    // ── Single-blob format (existing flow) ─────────────────────────
     // ── 2. Derive PDK from passphrase ──────────────────────────────
     let pdk;
     try {
@@ -799,6 +1037,166 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     localStorage.setItem('phpoc_deployment', 'saas');
 
     // ── 8. Bootstrap services ─────────────────────────────────────
+    await bootstrapServices({ crypto, masterKey, storage });
+  }, []);
+
+  /**
+   * Import a ledger from cloud storage (Worker → R2).
+   *
+   * Fetches a backup file from a Worker's `backups/` prefix, validates
+   * the export seal and entry hashes, and writes the imported chain +
+   * staging entries to local storage.
+   *
+   * Two auth paths:
+   *   - passphrase_only: Genesis block has `recovery_seed_enc` → PDK derive,
+   *     decrypt seed, derive master key, verify seal.
+   *   - passphrase_seed: No encrypted seed → user provides seed directly,
+   *     derive master key via PBKDF2, verify seal.
+   *
+   * @param {object} opts
+   * @param {string} opts.baseUrl - Worker URL
+   * @param {string} opts.apiKey - API key
+   * @param {string} opts.filename - Backup filename on remote
+   * @param {string} opts.passphrase - User's passphrase
+   * @param {string|null} opts.seed - Recovery seed (null if passphrase-only)
+   * @param {object|null} opts.genesisBlock - Genesis block (for seal verification)
+   * @param {string} opts.authMode - 'passphrase_only' | 'passphrase_seed'
+   */
+  const importFromCloud = useCallback(async ({ baseUrl, apiKey, filename, passphrase, seed, genesisBlock, authMode }) => {
+    setLoading(true);
+
+    // ── 1. Initialize crypto ─────────────────────────────────────
+    let crypto;
+    try {
+      const { CryptoService } = await import('../crypto/index.js');
+      crypto = await CryptoService.create();
+      setCryptoStatus('wasm');
+    } catch (err) {
+      console.error(
+        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
+        'Encryption will NOT be real. Cause:', err,
+      );
+      setCryptoStatus('fallback');
+      crypto = await DummyCryptoService.create();
+    }
+
+    // ── 2. Create transport and import source ────────────────────
+    const transport = new HttpTransport({
+      baseUrl: baseUrl.trim(),
+      apiKey: apiKey || null,
+    });
+    const source = new WorkerImportSource(transport, crypto);
+
+    // ── 3. Fetch and parse the backup ────────────────────────────
+    let importResult;
+    try {
+      // Determine master key based on auth mode
+      let masterKey;
+
+      if (authMode === 'passphrase_only' && genesisBlock) {
+        // ── Passphrase-only: PDK → decrypt seed → master key ──
+        let pdk;
+        try {
+          pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+        } catch (err) {
+          setLoading(false);
+          throw new Error(`Failed to derive key: ${err.message}`);
+        }
+
+        let decryptedSeed;
+        try {
+          decryptedSeed = crypto.decrypt(genesisBlock.identity.recovery_seed_enc, pdk);
+          if (!decryptedSeed || decryptedSeed.length < 10) {
+            throw new Error('Decrypted seed is invalid');
+          }
+        } catch (err) {
+          setLoading(false);
+          throw new Error('Wrong passphrase for this backup.');
+        }
+
+        try {
+          masterKey = crypto.authenticate(passphrase, decryptedSeed, PBKDF2_ITERATIONS);
+        } catch (err) {
+          setLoading(false);
+          throw new Error(`Authentication failed: ${err.message}`);
+        }
+      } else {
+        // ── Passphrase+seed: direct authenticate ──
+        if (!seed || !seed.trim()) {
+          setLoading(false);
+          throw new Error('Recovery seed is required for this backup.');
+        }
+
+        try {
+          masterKey = crypto.authenticate(passphrase, seed.trim(), PBKDF2_ITERATIONS);
+        } catch (err) {
+          setLoading(false);
+          throw new Error(`Authentication failed: ${err.message}`);
+        }
+      }
+
+      // Fetch and validate the backup using the derived master key
+      crypto.setMasterKey(masterKey);
+      importResult = await source.fetchAndValidate(filename, masterKey);
+    } catch (err) {
+      setLoading(false);
+      throw err;
+    }
+
+    // ── 4. Verify genesis seal (passphrase-only path) ────────────
+    // Extra check: if genesis was pre-fetched, verify it matches
+    // the import data we just validated.
+    if (authMode === 'passphrase_only' && genesisBlock && importResult.genesisBlock) {
+      const fetchedGenesisHash = importResult.genesisBlock.day_hash;
+      const expectedGenesisHash = genesisBlock.day_hash;
+      if (fetchedGenesisHash !== expectedGenesisHash) {
+        setLoading(false);
+        throw new Error('Genesis block mismatch — backup may have been modified.');
+      }
+    }
+
+    // ── 5. Write everything to storage ──────────────────────────
+    const storage = await createStorage();
+    await storage.clear();
+
+    // Store seed for future logins
+    if (authMode === 'passphrase_only' && genesisBlock) {
+      // Re-derive to get the seed string for storage
+      const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      const storedSeed = crypto.decrypt(genesisBlock.identity.recovery_seed_enc, pdk);
+      await storage.set(STORED_SEED_KEY, storedSeed);
+    } else if (seed) {
+      await storage.set(STORED_SEED_KEY, seed.trim());
+    }
+
+    // Store identity info from genesis
+    if (importResult.genesisBlock && importResult.genesisBlock.identity) {
+      const ident = importResult.genesisBlock.identity;
+      if (ident.username) await storage.set(USERNAME_KEY, ident.username);
+      if (ident.email) await storage.set(EMAIL_KEY, ident.email);
+    }
+
+    // Write ledger chain
+    if (importResult.ledger && Array.isArray(importResult.ledger) && importResult.ledger.length > 0) {
+      await storage.set('ledger:blocks', importResult.ledger);
+    }
+
+    // Write staging entries
+    if (importResult.entries && importResult.entries.length > 0) {
+      await storage.set(ENTRIES_KEY, importResult.entries);
+    }
+
+    // ── 6. Save remote config ────────────────────────────────────
+    localStorage.setItem('phpoc_worker_url', baseUrl.trim());
+    if (apiKey) {
+      localStorage.setItem('phpoc_api_key', apiKey.trim());
+    } else {
+      localStorage.removeItem('phpoc_api_key');
+    }
+    localStorage.setItem('phpoc_deployment', 'saas');
+
+    // ── 7. Bootstrap services ────────────────────────────────────
+    const masterKey = crypto.getMasterKey();
     await bootstrapServices({ crypto, masterKey, storage });
   }, []);
 
@@ -1005,8 +1403,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     error,
     setError,
 
-    // Services (populated when ready)
-    services,
+    // Services (populated when ready) — sync is auto-sync wrapped
+    // so every capture/end/pause/unpause/modify/remove call triggers
+    // a debounced pushToRemote
+    services: effectiveServices,
 
     // Crypto status
     cryptoStatus,
@@ -1017,10 +1417,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Auth state (derived from phase)
     user: {
       isAuthenticated: phase === 'ready',
-      deviceId: phase === 'ready' && services.crypto
-        ? services.crypto.getDeviceIdWithCachedKey?.() || 'unknown'
+      deviceId: phase === 'ready' && effectiveServices.crypto
+        ? effectiveServices.crypto.getDeviceIdWithCachedKey?.() || 'unknown'
         : null,
-      masterKeyCached: phase === 'ready' && !!services.crypto?.hasMasterKey?.(),
+      masterKeyCached: phase === 'ready' && !!effectiveServices.crypto?.hasMasterKey?.(),
       username: identityInfo.username,
       email: identityInfo.email,
     },
@@ -1034,6 +1434,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     login,
     createNewLedger,
     connectToWorker,
+    importFromCloud,
     importLedger: importLedgerAction,
     validateImport,
     confirmImport,
@@ -1046,6 +1447,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Commit entries to ledger
     commitEntries,
+
+    // Re-auth overlay
+    reauthActive,
+    triggerReauth,
+    dismissReauth,
+    handleReauth,
   };
 
   return (
@@ -1078,7 +1485,8 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   goBackToLanding: () => void,
  *   login: (passphrase: string) => Promise<void>,
  *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
- *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, genesisBlock: object, chain: object[]}) => Promise<void>,
+ *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, userSeed: string|null, genesisBlock: object|null, chain: object[]|null, format: string}) => Promise<void>,
+ *   importFromCloud: (opts: {baseUrl: string, apiKey: string, filename: string, passphrase: string, seed: string|null, genesisBlock: object|null, authMode: string}) => Promise<void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
  *   validateImport: (file: File, passphrase: string, seed: string) => Promise<{needsConfirmation: boolean, genesisCheck: string, stagingCount: number, blocksCount: number, importEntryCount: number, formatVersion: string}>,
  *   confirmImport: (opts: {keepStaging?: boolean}) => Promise<void>,

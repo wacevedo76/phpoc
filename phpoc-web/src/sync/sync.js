@@ -471,11 +471,14 @@ export class SyncService {
       return SyncResult.REAUTH_NEEDED;
     }
 
-    // TTL expired or no local cookie — always force auth.
-    // Per workflow spec, TTL expiry is an unconditional gate to auth.
-    // The user must explicitly enter their passphrase to re-establish
-    // the device session, even if a valid crypto key is cached.
+    // TTL expired or no local cookie — force auth UNLESS the master key
+    // is already cached (fresh device after onboarding/login). In that case
+    // proceed to _reconcileAndClaim to establish a first-time cookie and sync.
     if (!localCookie) {
+      const mk = this._crypto.getMasterKey();
+      if (mk) {
+        return this._reconcileAndClaim(mk);
+      }
       return SyncResult.REAUTH_NEEDED;
     }
 
@@ -876,6 +879,14 @@ export class SyncService {
    */
   get isRemoteAvailable() {
     return this._remote !== null;
+  }
+
+  /**
+   * Return the cached master key, or null if not unlocked.
+   * @returns {string|null}
+   */
+  getMasterKey() {
+    return this._crypto.getMasterKey();
   }
 
   /**

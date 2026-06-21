@@ -61,6 +61,7 @@ export default function OnboardingScreen({
   onConfirmImport,
   onNewLedger,
   onWorkerConnect,
+  onImportFromCloud,
   onExport,
   onExportFull,
   onBack,
@@ -81,6 +82,7 @@ export default function OnboardingScreen({
   }, [phase]);
 
   // ── Phase: Import ───────────────────────────────────────────────
+  const [importSource, setImportSource] = useState(null); // null | 'file' | 'cloud'
   const [importFile, setImportFile] = useState(null);
   const [importPassphrase, setImportPassphrase] = useState('');
   const [importSeed, setImportSeed] = useState('');
@@ -91,11 +93,33 @@ export default function OnboardingScreen({
   const [confirmDestroy, setConfirmDestroy] = useState(false);
   const [existingInfo, setExistingInfo] = useState(null); // { blocksCount, stagingCount } | null
 
+  // ── Cloud import state ────────────────────────────────────────
+  const [cloudUrl, setCloudUrl] = useState('');
+  const [cloudApiKey, setCloudApiKey] = useState('');
+  const [cloudStep, setCloudStep] = useState('connect'); // 'connect' | 'fetching' | 'select' | 'auth' | 'importing'
+  const [cloudBackups, setCloudBackups] = useState([]);
+  const [cloudSelectedBackup, setCloudSelectedBackup] = useState('');
+  const [cloudStatus, setCloudStatus] = useState(null);
+  // { type: 'ok'|'no_backups'|'offline'|'403'|'error', message?: string }
+  const [cloudPassphrase, setCloudPassphrase] = useState('');
+  const [cloudSeed, setCloudSeed] = useState('');
+  const [cloudGenesisBlock, setCloudGenesisBlock] = useState(null); // genesis block for passphrase-only auth
+  const [cloudAuthMode, setCloudAuthMode] = useState(null); // 'passphrase_only' | 'passphrase_seed'
+
   // Probe existing data when import phase opens
   useEffect(() => {
     if (phase === 'import') {
       setConfirmDestroy(false);
       setKeepStaging(true);
+      setImportSource(null);
+      setCloudStep('connect');
+      setCloudStatus(null);
+      setCloudBackups([]);
+      setCloudSelectedBackup('');
+      setCloudPassphrase('');
+      setCloudSeed('');
+      setCloudGenesisBlock(null);
+      setCloudAuthMode(null);
       probeExistingData().then(setExistingInfo);
     }
   }, [phase]);
@@ -103,6 +127,157 @@ export default function OnboardingScreen({
   const handleFileSelected = (e) => {
     const file = e.target.files?.[0];
     if (file) setImportFile(file);
+  };
+
+  // ── Cloud import: connect to Worker and list backups ─────────
+  const handleCloudConnect = async (e) => {
+    e.preventDefault();
+    if (!cloudUrl.trim()) {
+      setLocalError('Please enter a Worker URL.');
+      return;
+    }
+
+    setConnecting(true);
+    setLocalError('');
+    setCloudStep('fetching');
+
+    try {
+      const { HttpTransport } = await import('../../sync/transport.js');
+      const { WorkerImportSource } = await import('../../sync/remote_import.js');
+      const transport = new HttpTransport({
+        baseUrl: cloudUrl.trim(),
+        apiKey: cloudApiKey.trim() || null,
+      });
+      const source = new WorkerImportSource(transport);
+
+      const backups = await source.listBackups();
+
+      if (backups.length === 0) {
+        setCloudStatus({ type: 'no_backups', message: 'No backup files found on this server.' });
+        setCloudStep('connect');
+        setConnecting(false);
+        return;
+      }
+
+      setCloudBackups(backups);
+      setCloudStatus({ type: 'ok', message: `Found ${backups.length} backup${backups.length !== 1 ? 's' : ''}.` });
+      setCloudStep('select');
+      setConnecting(false);
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('403')) {
+        setCloudStatus({ type: '403', message: 'Access denied. Check your API key.' });
+      } else {
+        setCloudStatus({ type: 'offline', message: 'Cannot reach remote server. ' + msg });
+      }
+      setCloudStep('connect');
+      setConnecting(false);
+    }
+  };
+
+  // ── Cloud import: fetch selected backup and determine auth mode ─
+  const handleCloudFetchBackup = async (e) => {
+    e.preventDefault();
+    if (!cloudSelectedBackup) {
+      setLocalError('Please select a backup file.');
+      return;
+    }
+
+    setConnecting(true);
+    setLocalError('');
+
+    try {
+      const { HttpTransport } = await import('../../sync/transport.js');
+      const { WorkerImportSource } = await import('../../sync/remote_import.js');
+      const transport = new HttpTransport({
+        baseUrl: cloudUrl.trim(),
+        apiKey: cloudApiKey.trim() || null,
+      });
+      const source = new WorkerImportSource(transport);
+
+      const raw = await source.fetchBackup(cloudSelectedBackup);
+
+      if (raw === null || raw === undefined) {
+        setCloudStatus({ type: 'error', message: 'Backup file disappeared from server.' });
+        setCloudStep('select');
+        setConnecting(false);
+        return;
+      }
+
+      // Parse and check for genesis block (determines auth mode)
+      let parsed;
+      try {
+        const jsonStr = new TextDecoder().decode(raw);
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        setCloudStatus({ type: 'error', message: 'Invalid backup file format.' });
+        setCloudStep('select');
+        setConnecting(false);
+        return;
+      }
+
+      // Detect format and check for genesis with recovery_seed_enc
+      let genesisBlock = null;
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type === 'genesis') {
+        genesisBlock = parsed[0];
+      } else if (parsed.ledger && Array.isArray(parsed.ledger) && parsed.ledger.length > 0 && parsed.ledger[0].type === 'genesis') {
+        genesisBlock = parsed.ledger[0];
+      }
+
+      if (genesisBlock && genesisBlock.identity && genesisBlock.identity.recovery_seed_enc) {
+        setCloudAuthMode('passphrase_only');
+        setCloudGenesisBlock(genesisBlock);
+      } else {
+        setCloudAuthMode('passphrase_seed');
+        setCloudGenesisBlock(genesisBlock);
+      }
+
+      setCloudStep('auth');
+      setConnecting(false);
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('403')) {
+        setCloudStatus({ type: '403', message: 'Access denied fetching backup. Check your API key.' });
+      } else {
+        setCloudStatus({ type: 'offline', message: 'Failed to fetch backup: ' + msg });
+      }
+      setCloudStep('select');
+      setConnecting(false);
+    }
+  };
+
+  // ── Cloud import: execute import ──────────────────────────────
+  const handleCloudImportSubmit = async (e) => {
+    e.preventDefault();
+    if (!cloudPassphrase.trim()) {
+      setLocalError('Please enter your passphrase.');
+      return;
+    }
+    if (cloudAuthMode === 'passphrase_seed' && !cloudSeed.trim()) {
+      setLocalError('Please enter your recovery seed.');
+      return;
+    }
+
+    setImporting(true);
+    setLocalError('');
+    setCloudStep('importing');
+
+    try {
+      await onImportFromCloud({
+        baseUrl: cloudUrl.trim(),
+        apiKey: cloudApiKey.trim() || null,
+        filename: cloudSelectedBackup,
+        passphrase: cloudPassphrase.trim(),
+        seed: cloudAuthMode === 'passphrase_seed' ? cloudSeed.trim() : null,
+        genesisBlock: cloudGenesisBlock,
+        authMode: cloudAuthMode,
+      });
+      // Success — parent handles phase transition
+    } catch (err) {
+      setLocalError(err.message || 'Import failed.');
+      setCloudStep('auth');
+      setImporting(false);
+    }
   };
 
   // ── Submit: one or two-phase import ───────────────────────────
@@ -195,7 +370,9 @@ export default function OnboardingScreen({
   const [connectStatus, setConnectStatus] = useState(null);
   // { type: 'compatible'|'incompatible'|'offline'|'403'|'no_ledger'|'error', message?: string }
   const [fetchedGenesis, setFetchedGenesis] = useState(null);
+  // { genesis, chain } for single-blob format, { blockCount, format: 'blocks' } for CLI format
   const [connectPassphrase, setConnectPassphrase] = useState('');
+  const [connectSeed, setConnectSeed] = useState('');
   const [connecting, setConnecting] = useState(false);
 
   // Reset connect state when entering worker-connect phase
@@ -205,6 +382,7 @@ export default function OnboardingScreen({
       setConnectStatus(null);
       setFetchedGenesis(null);
       setConnectPassphrase('');
+      setConnectSeed('');
       setConnecting(false);
       setLocalError('');
     }
@@ -228,84 +406,121 @@ export default function OnboardingScreen({
         apiKey: workerApiKey.trim() || null,
       });
 
-      const raw = await transport.pull('ledger:blocks');
-
-      if (raw === null || raw === undefined) {
-        setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      let chain;
+      // ── Try single-blob format first (ledger:blocks) ────────
+      let raw = null;
       try {
-        const json = new TextDecoder().decode(raw);
-        chain = JSON.parse(json);
+        raw = await transport.pull('ledger:blocks');
       } catch {
-        setConnectStatus({ type: 'error', message: 'Invalid data received from server.' });
+        // Network/auth errors will be caught by outer try/catch
+      }
+
+      if (raw !== null && raw !== undefined) {
+        // ── Single-blob format: plain JSON array of blocks ────
+        let chain;
+        try {
+          const json = new TextDecoder().decode(raw);
+          chain = JSON.parse(json);
+        } catch {
+          setConnectStatus({ type: 'error', message: 'Invalid data received from server.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!Array.isArray(chain) || chain.length === 0) {
+          setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        const genesis = chain[0];
+
+        // Validate genesis structure
+        if (genesis.type !== 'genesis') {
+          setConnectStatus({ type: 'error', message: 'Remote ledger does not have a valid genesis block.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!genesis.format_version) {
+          setConnectStatus({ type: 'error', message: 'Genesis block is missing format version.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!genesis.identity) {
+          setConnectStatus({ type: 'error', message: 'Genesis block is missing identity data.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!genesis.identity.username) {
+          setConnectStatus({ type: 'error', message: 'Genesis block is missing username.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!genesis.identity.recovery_seed_enc) {
+          setConnectStatus({ type: 'error', message: 'Genesis block is missing recovery seed.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        if (!genesis.day_hash) {
+          setConnectStatus({ type: 'error', message: 'Genesis block is missing integrity seal.' });
+          setConnectStep('form');
+          setConnecting(false);
+          return;
+        }
+
+        // Genesis looks valid
+        setFetchedGenesis({ genesis, chain, format: 'blob' });
+        setConnectStatus({
+          type: 'compatible',
+          message: `Ledger found for "${genesis.identity.username}"` +
+            (genesis.identity.email ? ` (${genesis.identity.email})` : ''),
+        });
+        setConnectStep('compatible');
+        setConnecting(false);
+        return;
+      }
+
+      // ── Fall back to CLI block format (ledger/blocks/000000.json) ──
+      let blockFiles;
+      try {
+        blockFiles = await transport.listFiles('ledger/blocks/');
+      } catch (err) {
+        const msg = err.message || '';
+        if (msg.includes('403')) {
+          setConnectStatus({ type: '403', message: 'Access denied. Check your API key.' });
+        } else {
+          setConnectStatus({ type: 'offline', message: 'Cannot reach remote server. ' + msg });
+        }
         setConnectStep('form');
         setConnecting(false);
         return;
       }
 
-      if (!Array.isArray(chain) || chain.length === 0) {
+      if (!blockFiles || blockFiles.length === 0) {
         setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
         setConnectStep('form');
         setConnecting(false);
         return;
       }
 
-      const genesis = chain[0];
-
-      // Validate genesis structure
-      if (genesis.type !== 'genesis') {
-        setConnectStatus({ type: 'error', message: 'Remote ledger does not have a valid genesis block.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      if (!genesis.format_version) {
-        setConnectStatus({ type: 'error', message: 'Genesis block is missing format version.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      if (!genesis.identity) {
-        setConnectStatus({ type: 'error', message: 'Genesis block is missing identity data.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      if (!genesis.identity.username) {
-        setConnectStatus({ type: 'error', message: 'Genesis block is missing username.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      if (!genesis.identity.recovery_seed_enc) {
-        setConnectStatus({ type: 'error', message: 'Genesis block is missing recovery seed.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      if (!genesis.day_hash) {
-        setConnectStatus({ type: 'error', message: 'Genesis block is missing integrity seal.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      // Genesis looks valid
-      setFetchedGenesis({ genesis, chain });
+      // ── Ledger found in CLI block format ────────────────────
+      // Blocks are obfuscated — can't preview username until after auth.
+      // The unlock step will de-obfuscate after passphrase entry.
+      setFetchedGenesis({ blockCount: blockFiles.length, format: 'blocks' });
       setConnectStatus({
         type: 'compatible',
-        message: `Ledger found for "${genesis.identity.username}"` +
-          (genesis.identity.email ? ` (${genesis.identity.email})` : ''),
+        message: `Ledger found with ${blockFiles.length} block${blockFiles.length !== 1 ? 's' : ''}.`,
       });
       setConnectStep('compatible');
       setConnecting(false);
@@ -327,6 +542,11 @@ export default function OnboardingScreen({
       setLocalError('Please enter your passphrase.');
       return;
     }
+    // CLI block format requires seed (blocks are obfuscated)
+    if (fetchedGenesis.format === 'blocks' && !connectSeed.trim()) {
+      setLocalError('Please enter your recovery seed (required for CLI-format ledgers).');
+      return;
+    }
     if (!onWorkerConnect) {
       setLocalError('Worker connect is not available.');
       return;
@@ -341,8 +561,10 @@ export default function OnboardingScreen({
         baseUrl: workerUrl.trim(),
         apiKey: workerApiKey.trim() || null,
         passphrase: connectPassphrase.trim(),
-        genesisBlock: fetchedGenesis.genesis,
-        chain: fetchedGenesis.chain,
+        userSeed: connectSeed.trim() || null,
+        genesisBlock: fetchedGenesis.genesis || null,
+        chain: fetchedGenesis.chain || null,
+        format: fetchedGenesis.format || 'blob',
       });
       // Success — parent will transition phase to ready
     } catch (err) {
@@ -418,10 +640,35 @@ export default function OnboardingScreen({
   // ── Phase: Import ──────────────────────────────────────────────
   const renderImport = () => (
     <div className="auth-card">
-      {/* ── Sub-phase: Form (with inline warnings) ────────────── */}
-      {importPhase === 'form' && (
+      {/* ── Step 0: Choose import source ─────────────────────── */}
+      {importSource === null && (
         <>
           <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>📥 Import a Ledger</h2>
+          <p className="auth-subtitle">
+            Choose where your ledger backup is stored.
+          </p>
+
+          <div className="landing-actions">
+            <button className="auth-btn" onClick={() => setImportSource('file')}>
+              📁 From File
+            </button>
+            <button className="auth-btn" onClick={() => setImportSource('cloud')}>
+              ☁️ From Cloud
+            </button>
+          </div>
+
+          <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setPhase('menu')}>
+              ← Back
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Sub-phase: File Import Form (with inline warnings) ── */}
+      {importSource === 'file' && importPhase === 'form' && (
+        <>
+          <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>📥 Import from File</h2>
           <p className="auth-subtitle">
             Select an exported ledger file and authenticate to import.
           </p>
@@ -587,14 +834,244 @@ export default function OnboardingScreen({
           </form>
 
           <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
-            <button className="btn btn-secondary btn-sm" onClick={() => setPhase('menu')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setImportSource(null)}>
               ← Back
             </button>
           </div>
         </>
       )}
 
-      {/* ── Sub-phase: Executing (spinner) ────────────────────── */}
+      {/* ── Sub-phase: Cloud Import ──────────────────────────── */}
+      {importSource === 'cloud' && (
+        <>
+          {/* ── Step 1: Connect to Worker ─────────────────── */}
+          {(cloudStep === 'connect' || cloudStep === 'fetching') && (
+            <>
+              <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>☁️ Import from Cloud</h2>
+              <p className="auth-subtitle">
+                Enter your Worker URL and API key to list available backups.
+              </p>
+
+              {cloudStatus && cloudStatus.type !== 'ok' && (
+                <div style={{
+                  background: '#ffebee',
+                  border: '1px solid #e53935',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  marginBottom: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#c62828', fontWeight: 600 }}>
+                    {cloudStatus.type === 'offline' && '🔌 Cannot reach remote'}
+                    {cloudStatus.type === '403' && '🔒 Access denied'}
+                    {cloudStatus.type === 'no_backups' && '📭 No backups found'}
+                    {cloudStatus.type === 'error' && '❌ Error'}
+                  </p>
+                  {cloudStatus.message && (
+                    <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#b71c1c' }}>
+                      {cloudStatus.message}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <form className="auth-form" onSubmit={handleCloudConnect}>
+                <div className="form-group">
+                  <label htmlFor="cloud-url" className="auth-label">Worker URL</label>
+                  <input
+                    id="cloud-url"
+                    type="url"
+                    className="auth-input"
+                    placeholder="https://your-worker.workers.dev"
+                    value={cloudUrl}
+                    onChange={(e) => setCloudUrl(e.target.value)}
+                    disabled={connecting}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="cloud-api-key" className="auth-label">API Key</label>
+                  <input
+                    id="cloud-api-key"
+                    type="password"
+                    className="auth-input"
+                    placeholder="Shared API key"
+                    value={cloudApiKey}
+                    onChange={(e) => setCloudApiKey(e.target.value)}
+                    disabled={connecting}
+                  />
+                </div>
+
+                {displayError && <p className="auth-error-msg">{displayError}</p>}
+
+                <button
+                  type="submit"
+                  className="auth-btn"
+                  disabled={connecting || !cloudUrl.trim()}
+                >
+                  {connecting ? 'Connecting...' : 'List Backups'}
+                </button>
+              </form>
+
+              <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setImportSource(null)}>
+                  ← Back
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Step 2: Select backup ──────────────────────── */}
+          {cloudStep === 'select' && (
+            <>
+              <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>☁️ Select Backup</h2>
+              <p className="auth-subtitle">
+                Choose a backup file to import.
+              </p>
+
+              {cloudStatus && cloudStatus.type === 'ok' && (
+                <div style={{
+                  background: '#e8f5e9',
+                  border: '1px solid #4caf50',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  marginBottom: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#2e7d32' }}>{cloudStatus.message}</p>
+                </div>
+              )}
+
+              {cloudStatus && cloudStatus.type === 'error' && (
+                <div style={{
+                  background: '#ffebee',
+                  border: '1px solid #e53935',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  marginBottom: '0.75rem',
+                }}>
+                  <p style={{ margin: 0, color: '#c62828' }}>{cloudStatus.message}</p>
+                </div>
+              )}
+
+              <form className="auth-form" onSubmit={handleCloudFetchBackup}>
+                <div className="form-group">
+                  <label htmlFor="cloud-backup-select" className="auth-label">Backup File</label>
+                  <select
+                    id="cloud-backup-select"
+                    className="auth-input"
+                    value={cloudSelectedBackup}
+                    onChange={(e) => setCloudSelectedBackup(e.target.value)}
+                    disabled={connecting}
+                    autoFocus
+                  >
+                    <option value="">-- Select a backup --</option>
+                    {cloudBackups.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {displayError && <p className="auth-error-msg">{displayError}</p>}
+
+                <button
+                  type="submit"
+                  className="auth-btn"
+                  disabled={connecting || !cloudSelectedBackup}
+                >
+                  {connecting ? 'Fetching...' : 'Continue'}
+                </button>
+              </form>
+
+              <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => { setCloudStep('connect'); setCloudStatus(null); }}
+                  disabled={connecting}
+                >
+                  ← Back
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Step 3: Authenticate and import ────────────── */}
+          {cloudStep === 'auth' && (
+            <>
+              <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>🔐 Authenticate</h2>
+              <p className="auth-subtitle">
+                {cloudAuthMode === 'passphrase_only'
+                  ? 'Enter your passphrase to decrypt the recovery seed and import this backup.'
+                  : 'Enter your passphrase and recovery seed to import this backup.'}
+              </p>
+
+              <form className="auth-form" onSubmit={handleCloudImportSubmit}>
+                <div className="form-group">
+                  <label htmlFor="cloud-passphrase" className="auth-label">Passphrase</label>
+                  <input
+                    id="cloud-passphrase"
+                    type="password"
+                    className="auth-input"
+                    placeholder="Enter your passphrase"
+                    value={cloudPassphrase}
+                    onChange={(e) => setCloudPassphrase(e.target.value)}
+                    disabled={importing}
+                    autoFocus
+                  />
+                </div>
+
+                {cloudAuthMode === 'passphrase_seed' && (
+                  <div className="form-group">
+                    <label htmlFor="cloud-seed" className="auth-label">Recovery Seed</label>
+                    <input
+                      id="cloud-seed"
+                      type="text"
+                      className="auth-input"
+                      placeholder="Base64 recovery seed from export"
+                      value={cloudSeed}
+                      onChange={(e) => setCloudSeed(e.target.value)}
+                      disabled={importing}
+                    />
+                  </div>
+                )}
+
+                {displayError && <p className="auth-error-msg">{displayError}</p>}
+
+                <button
+                  type="submit"
+                  className="auth-btn"
+                  disabled={
+                    importing ||
+                    !cloudPassphrase.trim() ||
+                    (cloudAuthMode === 'passphrase_seed' && !cloudSeed.trim())
+                  }
+                >
+                  {importing ? 'Importing...' : 'Import Backup'}
+                </button>
+              </form>
+
+              <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setCloudStep('select')}
+                  disabled={importing}
+                >
+                  ← Back
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Importing spinner ──────────────────────────── */}
+          {cloudStep === 'importing' && (
+            <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+              <div className="loading-spinner" />
+              <p style={{ marginTop: '1rem', color: '#666' }}>Importing ledger from cloud...</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Sub-phase: Executing (spinner) for file imports ─── */}
       {importPhase === 'executing' && (
         <div style={{ textAlign: 'center', padding: '2rem 0' }}>
           <div className="loading-spinner" />
@@ -820,6 +1297,21 @@ export default function OnboardingScreen({
                 autoFocus
               />
             </div>
+
+            {fetchedGenesis.format === 'blocks' && (
+              <div className="form-group">
+                <label htmlFor="connect-seed" className="auth-label">Recovery Seed</label>
+                <input
+                  id="connect-seed"
+                  type="text"
+                  className="auth-input"
+                  placeholder="Base64 recovery seed from onboarding"
+                  value={connectSeed}
+                  onChange={(e) => setConnectSeed(e.target.value)}
+                  disabled={connecting}
+                />
+              </div>
+            )}
 
             {displayError && <p className="auth-error-msg">{displayError}</p>}
 
