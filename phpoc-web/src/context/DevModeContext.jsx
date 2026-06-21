@@ -1372,7 +1372,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Services not ready');
     }
     const entries = await sync.readEntries();
-    const toCommit = entries.filter((e) => entryIds.includes(e.entry_id));
+    const toCommit = entries.filter((e) => entryIds.includes(e.entry_id) && !e.committed);
     if (toCommit.length === 0) return;
 
     // Create LedgerEngine

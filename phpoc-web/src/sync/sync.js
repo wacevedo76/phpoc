@@ -410,21 +410,36 @@ export class SyncService {
                 blocks, this._transport, this._crypto, masterKey
               );
               this._genesisCompatible = result.compatible;
+              return result;
             } catch {
               // Network error during genesis check — don't cache, retry next time
               return null;
             }
-            return this._genesisCompatible;
           })();
         }
 
-        const compatible = await this._genesisCheckPromise;
+        const result = await this._genesisCheckPromise;
         this._genesisCheckPromise = null;
 
-        if (compatible === false) {
+        if (result === null) {
+          // Network error — genesis not cached, fall through to OFFLINE below
+        } else if (result.compatible === false) {
           return SyncResult.GENESIS_MISMATCH;
+        } else if (result.compatible === true) {
+          // Genesis compatible — persist merged chain to storage.
+          // Previously a known gap: merge result was computed but
+          // never written, so every checkAndSync() re-merged.
+          if (result.mergedChain) {
+            try {
+              await this._storage.set('ledger:blocks', result.mergedChain);
+              if (result.index) {
+                await this._storage.set('ledger:index', result.index);
+              }
+            } catch (err) {
+              console.warn('Failed to persist merged ledger chain:', err.message);
+            }
+          }
         }
-        // If compatible === null (network error), fall through to OFFLINE below
       }
     }
 

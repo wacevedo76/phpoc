@@ -13,6 +13,31 @@
 
 ## Immediate Next Steps
 
+### 🔴 Phase 5c (current): Fix Duplicate Commits + End-to-End Test (2026-06-21)
+
+**Problem:** "Sync Now" committed duplicate entries. `LedgerEngine.commit()` has no duplicate detection — it encrypts and appends entries as new day blocks regardless of whether they were already committed or exist in the ledger chain.
+
+**Fix applied (NOT YET TESTED):**
+- `DevModeContext.jsx:1377`: `commitEntries` now filters `!e.committed` — skips already-marked entries
+- `SyncSettings.jsx:691`: `handleSyncNow` reads fresh entries via `sync.readEntries()` (not stale React closure) and filters `!e.is_active && !e.committed`
+
+**⏭ Next session — test this:**
+1. The ledger ALREADY has duplicate blocks from before the fix (entries committed to blocks 1 and 2 with same data). The user must clear IndexedDB and start fresh to verify the fix works.
+2. Steps:
+   a. Browser DevTools → Application → IndexedDB → delete phpoc database
+   b. Reload `http://localhost:5173/?dev=false`
+   c. Re-import test ledger via onboarding (file at `~/code/phpoc-testing-data/phpoc-robertwallace.json`, credentials stored locally — see Testing Quick Reference below)
+   d. SyncSettings: enter Worker URL + API key (see Testing Quick Reference below), hit Save
+   e. Hit "Sync Now" — should commit exactly 2 entries (no duplicates)
+   f. Verify History tab shows them as committed
+3. If duplicates still appear, investigate `LedgerEngine.commit()` — add duplicate detection by entry hash or entry_id
+4. If duplicates appear but tests pass, add a test case for `commitEntries` with already-committed entries
+
+**Pending features (not yet implemented):**
+- `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2
+- `SyncIndicator` should reflect `isAutoSyncing`
+- Re-auth overlay for TTL expiry on existing cookies
+
 ### 🔴 Phase 1 (TDD RED): Genesis Compatibility Gate — ✅ COMPLETE (2026-06-20)
 
 Created:
@@ -155,3 +180,33 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
   - Renamed `_wrap` → `_wrapMutation` for clarity; added comment to `_schedulePush` about reset+start behavior
   - Removed defensive `sync.getMasterKey ?` guard — contract now enforced
   - 58 assertions pass, 0 failures; zero regressions across all 28 test suites
+- ~~**Genesis gate: empty remote treated as incompatible** (2026-06-21): `genesis_gate.js` returned `{compatible: false, reason: 'no_remote_ledger'}` for empty R2 buckets, causing `checkAndSync()` to cache `_genesisCompatible = false` and return `GENESIS_MISMATCH` — permanently blocking all staging sync.~~ ✅ **FIXED (2026-06-21):** Empty remote now returns `{compatible: true, mergedChain: localChain, stats: {local, remote: 0, merged: local}}` — empty bucket = first boot, no conflict. Updated A4 test (8 assertions → compatible true + mergedChain checks).
+- ~~**Genesis merge result never persisted** (2026-06-21): `checkAndSync()` only cached `_genesisCompatible` boolean, discarding the `mergedChain` from `GenesisGate.check()`. Every `checkAndSync()` call re-merged without writing results.~~ ✅ **FIXED (2026-06-21):** `sync.js` now captures full result object, writes `result.mergedChain` to `storage.set('ledger:blocks')` and `result.index` to `storage.set('ledger:index')` when genesis is compatible.
+- ~~**"Sync Now" button only synced staging blob, never committed to ledger** (2026-06-21): The web app's "Sync Now" called `checkAndSync()` (staging blob sync) but never committed entries to the ledger — unlike the CLI `sync` command which does both.~~ ✅ **FIXED (2026-06-21):** `SyncSettings.jsx` `handleSyncNow` now runs `checkAndSync()` → then auto-commits all completed entries via `commitEntries()`. Also updated stale hint text ("auto-sync coming in Phase 2" → "Staging changes auto-sync in background").
+- **Testing Worker deployed** (2026-06-21): `phpoc-staging-testing.wacevedo.workers.dev` bound to R2 bucket `phpoc-data-testing`. Config at `worker/wrangler.testing.toml`. API key stored locally.
+
+## Testing Quick Reference
+
+| Resource | Value |
+|----------|-------|
+| **Worker URL** | `https://phpoc-staging-testing.wacevedo.workers.dev` |
+| **R2 bucket** | `phpoc-data-testing` |
+| **Test ledger path** | `~/code/phpoc-testing-data/phpoc-robertwallace.json` |
+| **phpoc-web URL** | `http://localhost:5173/?dev=false` |
+| **Worker configs** | `worker/wrangler.toml` (production, `phpoc-data`) / `worker/wrangler.testing.toml` (testing, `phpoc-data-testing`) |
+
+> **Credentials** (API key, passphrase, recovery seed, wrangler token) are stored locally outside the repo. Ask the user to provide them if needed.
+
+## Files Changed This Session (2026-06-21)
+
+| File | Change |
+|------|--------|
+| `worker/wrangler.testing.toml` | **NEW** — Testing Worker config bound to `phpoc-data-testing` |
+| `phpoc-web/src/sync/genesis_gate.js:103-111` | Empty remote → `compatible: true` (was `false`) |
+| `phpoc-web/src/sync/sync.js:407-441` | Genesis check captures full result; writes merged chain to storage |
+| `phpoc-web/src/components/screens/SyncSettings.jsx:667-730` | "Sync Now" now runs checkAndSync → auto-commits all completed entries |
+| `phpoc-web/src/components/screens/SyncSettings.jsx:1113-1116` | Updated hint text (stale "Phase 2" → accurate description) |
+| `phpoc-web/src/context/DevModeContext.jsx:1377` | `commitEntries` filters `!e.committed` to skip already-committed entries |
+| `phpoc-web/test/genesis_gate_test.mjs:399-421` | A4 test updated for empty remote → compatible:true |
+| `docs/design/Remote_Local-Workflow.md` | Removed 2 fixed known gaps; updated SyncSettings diagram |
+| `SESSION_HANDOFF.md` | Added Phase 5c, duplicates context, testing quick reference |

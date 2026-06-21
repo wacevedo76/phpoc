@@ -396,9 +396,9 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   }
 }
 
-// ── A4: Remote empty (no blocks) → no_remote_ledger ───────────────────
+// ── A4: Remote empty (no blocks) → compatible (local chain wins) ───────
 {
-  console.log('\n  --- A4: Remote empty → no_remote_ledger ---');
+  console.log('\n  --- A4: Remote empty → compatible (local chain wins) ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -410,10 +410,15 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
 
   if (result !== null) {
     t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'empty remote → compatible: false');
-    t.assertEq(result.reason, 'no_remote_ledger', 'reason is no_remote_ledger');
+    t.assertEq(result.compatible, true, 'empty remote → compatible: true');
+    t.assert(result.mergedChain !== undefined, 'mergedChain present');
+    t.assertEq(result.mergedChain.length, localChain.length, 'mergedChain same length as local chain');
+    t.assertEq(result.stats.local, localChain.length, 'stats.local correct');
+    t.assertEq(result.stats.remote, 0, 'stats.remote is 0');
+    t.assertEq(result.stats.merged, localChain.length, 'stats.merged correct');
+    t.assertEq(result.index, null, 'index is null');
   } else {
-    t.assert(false, 'remote empty → no_remote_ledger — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'remote empty → compatible — NOT IMPLEMENTED (TDD RED)');
   }
 }
 

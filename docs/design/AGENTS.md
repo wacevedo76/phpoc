@@ -11,6 +11,7 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `PH-VIEW-Workflow.md` — Original auth gate workflow (superseded by `ph-view-workflow-updated.md`)
 - `ph-view-workflow-updated.md` — Auth gate workflow (updated with test scenarios)
 - `ARCHITECTURAL_MIGRATION_STRATEGY.md` — Historical 7-phase migration record (complete)
+- `Remote_Local-Workflow.md` — Compressed remote/local sync workflow reference (AI-consumable troubleshooting doc)
 
 ## Local Contracts
 - ADRs document decisions that have architectural impact — include context, decision, and consequences

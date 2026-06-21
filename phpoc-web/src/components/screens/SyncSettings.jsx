@@ -664,6 +664,9 @@ export default function SyncSettings() {
   }, [handleCommit, allEntries]);
 
   // ── Sync Now ────────────────────────────────────────────────────
+  // Mirrors the CLI `sync` command: check_and_sync → commit to ledger.
+  // Step 1: sync staging blob with remote (pull/merge/push).
+  // Step 2: commit all completed (not active) entries to the ledger.
 
   const handleSyncNow = useCallback(async () => {
     if (!sync || syncing) return;
@@ -671,23 +674,63 @@ export default function SyncSettings() {
     setRemoteStatus(STATUS_SYNCING);
     setLastSyncResult(null);
     try {
+      // Step 1 — sync staging with remote
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
-        // Show the re-auth overlay instead of an error message
         triggerReauth();
         setRemoteStatus(STATUS_REAUTH);
         setLastSyncResult('Authentication required. Enter your passphrase.');
-      } else {
-        setRemoteStatus(result);
-        setLastSyncResult(result === STATUS_READY ? 'Sync completed' : result);
+        return;
       }
+      setRemoteStatus(result);
+
+      // Step 2 — commit all completed entries to the ledger.
+      // Re-read entries fresh (allEntries from the closure may be stale
+      // if checkAndSync modified staging via merge).
+      const freshEntries = await sync.readEntries();
+      const stoppedIds = freshEntries
+        .filter((e) => !e.is_active && !e.committed)
+        .map((e) => e.entry_id);
+
+      if (stoppedIds.length > 0) {
+        setCommitting(true);
+        try {
+          const commitResult = await commitEntries(stoppedIds);
+          if (commitResult && commitResult.committedEntryIds && commitResult.committedEntryIds.length > 0) {
+            setCommitResult({
+              type: 'success',
+              message: `Committed ${commitResult.committedEntryIds.length} entry${commitResult.committedEntryIds.length !== 1 ? 'ies' : 'y'}`,
+              count: commitResult.committedEntryIds.length,
+              blockIndex: commitResult.blockIndex,
+            });
+            // Remove committed from selection
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+            setExpandedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+          }
+          await refreshEntries();
+        } catch (err) {
+          setCommitError(err.message || 'Commit failed');
+        } finally {
+          setCommitting(false);
+        }
+      }
+
+      setLastSyncResult(result === STATUS_READY ? 'Sync completed' : result);
     } catch (err) {
       setRemoteStatus(STATUS_OFFLINE);
       setLastSyncResult(`Error: ${err.message}`);
     } finally {
       setSyncing(false);
     }
-  }, [sync, syncing, triggerReauth]);
+  }, [sync, syncing, triggerReauth, allEntries, commitEntries, refreshEntries]);
 
   // ── Auto-clear commit error after 8 seconds ─────────────────────
 
@@ -1071,8 +1114,8 @@ export default function SyncSettings() {
           )}
 
           <p className="sync-hint">
-            Syncs local staging entries with the remote blob.
-            Background auto-sync coming in Phase 2.
+            Syncs staging with remote, then commits completed entries to the ledger.
+            Staging changes auto-sync to remote in the background.
           </p>
         </div>
       </div>

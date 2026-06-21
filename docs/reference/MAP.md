@@ -77,6 +77,7 @@ Key test files:
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
 | `../design/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
+| `../design/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)

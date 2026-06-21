@@ -101,8 +101,14 @@ export class GenesisGate {
     }
 
     // ── 3. Check for empty remote ─────────────────────────────────
+    // Empty bucket is not a conflict — local chain is authoritative.
     if (raw === null || raw === undefined) {
-      return { compatible: false, reason: 'no_remote_ledger' };
+      return {
+        compatible: true,
+        mergedChain: localChain,
+        stats: { local: localChain.length, remote: 0, merged: localChain.length },
+        index: null,
+      };
     }
 
     // ── 4. Parse remote chain ─────────────────────────────────────

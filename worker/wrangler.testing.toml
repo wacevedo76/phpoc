@@ -1,0 +1,15 @@
+name = "phpoc-staging-testing"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+
+# R2 bucket binding — test bucket, separate from production.
+[[r2_buckets]]
+binding = "PHPOC_BUCKET"
+bucket_name = "phpoc-data-testing"
+
+# Environment variables (not secrets — these are less sensitive)
+[vars]
+API_KEY_ENV = "PHPOC_API_KEY"
+
+# Secrets (set via `npx wrangler secret put PHPOC_API_KEY`)
+# The Worker reads the API key from secrets, not from env vars.
