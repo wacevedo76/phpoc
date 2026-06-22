@@ -48,20 +48,22 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
-| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate + `_reconcileAndClaim` — cookie management, staging blob push |
+| `phpoc-web/test/ledger_sync_test.mjs` | 🔴 RED | 31-test TDD suite for `pushLedgerBlocks()` — RED phase complete, 35 assertions all failing (method not implemented) |
+| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate + `_reconcileAndClaim` — cookie management, staging blob push — **next: add `pushLedgerBlocks()` method** |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display, reauth overlay triggering, commit flow. |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay rendering (`AuthScreen overlay`) via context `reauthActive` state. |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-### Tests (31 files, ~13,500 lines, 1395 tests)
+### Tests (31 files, ~14,200 lines, 1493 tests)
 
 Key test files:
 - `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
-- `tests/test_onboarding_e2e.py` — 44 E2E tests (all GREEN), Phase 5d onboarding redesign
+- `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
+- `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
 - `tests/test_transport_registry.py` — 50 tests (all GREEN), TransportProvider + TransportRegistry unit tests
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
 
@@ -74,6 +76,7 @@ Key test files:
 | `../../SESSION_HANDOFF.md` | Context restoration anchor — session-level snapshot |
 | `../planning/ROADMAP.md` | Migration arc (CLI → Browser → Flutter) + feature roadmap |
 | `../planning/BACKLOG.md` | Paused issues |
+| `../planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | `pushLedgerBlocks()` TDD test plan — 31 tests across 7 categories (RED phase, not started) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
@@ -119,7 +122,7 @@ Key test files:
 | Run single test file | `python3 -m pytest tests/test_<name>.py -v` |
 | Run single test | `python3 -m pytest tests/test_<name>.py::TestClass::test_method -v` |
 | Run with warnings | `python3 -m pytest -W ignore::DeprecationWarning` |
-| Test count | 1445 passing |
+| Test count | 1493 passing (Python), plus web test suites |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands

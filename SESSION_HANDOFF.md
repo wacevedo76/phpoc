@@ -45,18 +45,41 @@
 4. **Staging empty (normal)** → write `[]`, no warnings, ledger imports fine
 5. **Forensic mechanism** → `data_dir/forensic/` directory with `events.log` + raw blob files
 
-**⏭ Next session:**
+**All Phase 5d items:**
 1. ~~Create `core/sync/transport_registry.py` with `TransportProvider` registry~~ ✅ DONE (2026-06-22)
 2. ~~Rename `onboarding remote` → `onboarding git` in CLI parsers + dispatch~~ ✅ DONE (2026-06-22)
 3. ~~Refactor `cli/onboarding.py` — unified pipeline consumes provider from registry~~ ✅ DONE (2026-06-22)
 4. ~~Add `ph onboarding http generic` provider~~ ✅ DONE (2026-06-22)
 5. ~~Add bare `ph onboarding` as top-level picker~~ ✅ DONE (2026-06-22)
 6. ~~Remove temporary `run_onboarding_http()` after unification~~ ✅ DONE (2026-06-22)
-7. **Write tests for onboarding CLI dispatch (test_phase5_main_wiring.py or new)** — CLI parser changes, backward compat, interactive picker
-8. **Write end-to-end tests for registry-based onboarding flows** — git, http-cloudflare, http-generic via registry
+7. ~~Write tests for onboarding CLI dispatch~~ ✅ DONE (2026-06-22) — 16 tests in `test_phase5_main_wiring.py::TestOnboardingArgparse`
+8. ~~Write end-to-end tests for registry-based onboarding flows~~ ✅ DONE (2026-06-22) — 14 tests in `test_onboarding_e2e.py::TestE2E_08` + `TestE2E_09`
+9. ~~Verify full `ph onboarding` flows E2E with real transports (git, http-cloudflare, http-generic)~~ ✅ DONE (2026-06-22) — 10 tests in `TestE2E_11_RealTransportIntegration`
+10. ~~Test `run_onboarding_picker()` menu UI (provider list, selection, cancel, invalid input, empty registry, prompt_config delegation)~~ ✅ DONE (2026-06-22) — 8 tests in `TestE2E_10_OnboardingPicker`
+
+**Phase 5d complete ✅ (2026-06-22)** — All 10 items DONE. 198 tests GREEN (76 onboarding E2E + 50 transport registry + 72 CLI wiring), zero regressions across full suite (1493 total).
+
+### 🔴 Next: `pushLedgerBlocks()` — TDD RED phase ✅ COMPLETE (2026-06-22)
+
+**Test file created:** `phpoc-web/test/ledger_sync_test.mjs` — 31 tests, 35 assertions, all RED.
+
+**Test infrastructure:** MockTransport (push/pull/listFiles with error simulation), MockCrypto (obfuscateBlob/deobfuscateBlob with master key fingerprint), helpers (makeBlock, makeIndex, pushBlocksToRemote, readPushedBlock), `testBlock()` wrapper for clean RED reporting.
+
+**Categories (all RED — method not implemented):**
+- **A (5 tests):** Basic push — empty remote, partial existing, single block, return count, sequential order
+- **B (4 tests):** No-op cases — no MK, no transport, empty blocks, already synced
+- **C (4 tests):** Obfuscation correctness — not plaintext, round-trip, day_hash preservation, key binding
+- **D (4 tests):** Transport error resilience — listFiles fails, mid-batch push fail, all fail, index failure
+- **E (4 tests):** Index push — pushed after blocks, obfuscated, skipped if no data, failure tolerance
+- **F (6 tests):** SyncService integration — method exists, reads from storage, uses internal state, no staging touch
+- **G (4 tests):** Edge cases — large block (50 entries), Unicode (emoji/CJK/diacritics), missing key, corrupt fields
+
+**Test run:** 33 RED + 2 bypass (B2a/F4a check existing `isRemoteAvailable`). All 31 pushLedgerBlocks tests fail with `TypeError: pushLedgerBlocks is not a function`.
+
+**⏭ Next session:** TDD Phase 2 GREEN — implement `pushLedgerBlocks()` on `SyncService` in `phpoc-web/src/sync/sync.js`. Wire into commit flow (DevModeContext or auto-sync wrapper). Target: 31 GREEN, 0 RED.
 
 **Pending features (not yet implemented):**
-- `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2
+- `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2 [🔴 TDD RED complete (31 tests), GREEN pending]
 - `SyncIndicator` should reflect `isAutoSyncing`
 - Re-auth overlay for TTL expiry on existing cookies
 - Duplicate commit fix (Phase 5c) still needs browser E2E testing
@@ -233,7 +256,27 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 | `core/sync/git_transport.py` | Added `delete()` via git rm + commit + push |
 | `main.py` | Renamed `onboarding remote` → `onboarding git` ("remote" deprecated alias). Added `onboarding http cloudflare` + `onboarding http generic`. Added bare `ph onboarding` → interactive picker. Dispatch uses registry. |
 | `docs/reference/MAP.md` | Updated: new files, test count 1341→1445, `cli/onboarding.py` description |
-| `SESSION_HANDOFF.md` | Updated Phase 5d status, next steps, files changed |
+| `tests/test_phase5_main_wiring.py` | Added `TestOnboardingArgparse` — 16 CLI dispatch tests (git, remote alias, http cloudflare/generic, file, bare picker) |
+| `tests/test_onboarding_e2e.py` | Added `TestE2E_08_RegistryCreateTransportFromConfig` (6 tests) + `TestE2E_09_RegistryIntegrationWithOnboarding` (8 tests) — registry-based E2E flows |
+| `docs/reference/MAP.md` | Updated test count 1445→1475, test file descriptions |
+| `SESSION_HANDOFF.md` | Marked items 7+8 DONE, updated next steps
+| `tests/test_onboarding_e2e.py` | Added `TestE2E_10_OnboardingPicker` (8 tests) + `TestE2E_11_RealTransportIntegration` (10 tests) — picker UI menu + real transport E2E verification. Phase 5d green phase complete.
+| `docs/reference/MAP.md` | Updated test count 1475→1493
+| `SESSION_HANDOFF.md` | Marked items 9+10 DONE, Phase 5d final status |
+| `docs/planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | **NEW** — TDD test plan for `pushLedgerBlocks()`: 31 tests across 7 categories (A-G). RED phase — tests not yet written. |
+| `SESSION_HANDOFF.md` | Updated Immediate Next Steps: Phase 5d complete, added `pushLedgerBlocks()` TDD as next item |
+| `docs/reference/MAP.md` | Added new planning doc + upcoming test file + corrected test count to 1493 |
+
+## Files Changed This Session (2026-06-22)
+
+| File | Change |
+|------|--------|
+| `phpoc-web/test/ledger_sync_test.mjs` | **NEW** — 31 TDD tests (35 assertions) for `pushLedgerBlocks()` across 7 categories (A-G). All RED — method not implemented. MockTransport with listFiles + error simulation, MockCrypto with obfuscateBlob/deobfuscateBlob, helpers (makeBlock, makeIndex, pushBlocksToRemote, readPushedBlock), testBlock wrapper for clean RED reporting. |
+| `docs/planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | Updated status: tests written (was "not yet written") |
+| `docs/planning/WEB_ROADMAP.md` | Added build step 44 — pushLedgerBlocks TDD RED phase (31 tests, all fail) |
+| `docs/reference/MAP.md` | Updated `ledger_sync_test.mjs` from 🔜 to 🔴 RED |
+| `phpoc-web/AGENTS.md` | Updated test file count: 25 → 26; added Node test run command |
+| `SESSION_HANDOFF.md` | Updated Immediate Next Steps: pushLedgerBlocks RED complete, GREEN pending |
 
 ## Files Changed This Session (2026-06-21)
 

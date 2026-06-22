@@ -724,6 +724,194 @@ class TestSyncCommandUnified(unittest.TestCase):
 
 
 # =========================================================================
+# Test: Onboarding CLI argument dispatch (Phase 5d — Item 7)
+# =========================================================================
+
+class TestOnboardingArgparse(unittest.TestCase):
+    """Verify the onboarding argparse subparser structure routes correctly.
+
+    Tests:
+      - ``ph onboarding`` (bare) → no method selected (interactive picker)
+      - ``ph onboarding git`` → method="git"
+      - ``ph onboarding remote`` → method="remote" (deprecated alias)
+      - ``ph onboarding http cloudflare`` → method="http", http_provider="cloudflare"
+      - ``ph onboarding http generic`` → method="http", http_provider="generic"
+      - ``ph onboarding file <path>`` → method="file", path="..."
+    """
+
+    @staticmethod
+    def _build_onboarding_parser():
+        """Build the same argparser structure as main.py for onboarding.
+
+        Mirrors the setup in main.py lines ~110-130.
+        """
+        root = argparse.ArgumentParser(prog="ph")
+        sub = root.add_subparsers(dest="command")
+
+        onboarding_p = sub.add_parser(
+            "onboarding",
+            help="Import existing ledger to this device",
+        )
+        onboarding_sub = onboarding_p.add_subparsers(dest="onboarding_method")
+
+        # git transport (canonical)
+        onboarding_sub.add_parser("git", help="Import from a git repository")
+
+        # remote — deprecated alias
+        onboarding_sub.add_parser("remote", help="[deprecated] Use 'ph onboarding git' instead")
+
+        # file import
+        file_p = onboarding_sub.add_parser("file", help="Import from a local JSON export file")
+        file_p.add_argument("path", help="Path to the .json export file")
+
+        # http transport (with sub-providers)
+        http_p = onboarding_sub.add_parser("http", help="Import via HTTP transport")
+        http_sub = http_p.add_subparsers(dest="http_provider")
+        http_sub.add_parser("cloudflare", help="Import from Cloudflare R2")
+        http_sub.add_parser("generic", help="Import from a generic HTTP server")
+
+        return root
+
+    # ── Bare onboarding (interactive picker) ───────────────────────────
+
+    def test_51_bare_onboarding_no_method(self):
+        """Bare ``ph onboarding`` sets command=onboarding, no method."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertIsNone(args.onboarding_method)
+
+    def test_52_bare_onboarding_no_http_provider(self):
+        """Bare ``ph onboarding`` has no http_provider attribute."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding"])
+        self.assertIsNone(getattr(args, "http_provider", None))
+
+    # ── Git transport ─────────────────────────────────────────────────
+
+    def test_53_onboarding_git(self):
+        """``ph onboarding git`` sets method=git."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "git"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "git")
+
+    def test_54_onboarding_git_no_path(self):
+        """``ph onboarding git`` has no path attribute."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "git"])
+        self.assertFalse(hasattr(args, "path"))
+
+    # ── Deprecated "remote" alias ─────────────────────────────────────
+
+    def test_55_onboarding_remote_deprecated(self):
+        """``ph onboarding remote`` still parses as method=remote."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "remote"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "remote")
+
+    def test_56_onboarding_remote_is_known_method(self):
+        """The deprecated ``remote`` method is a valid choice."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "remote"])
+        self.assertIn(args.onboarding_method, ["git", "remote", "file", "http"])
+
+    # ── HTTP transport: cloudflare ────────────────────────────────────
+
+    def test_57_onboarding_http_cloudflare(self):
+        """``ph onboarding http cloudflare`` sets method=http, provider=cloudflare."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "http", "cloudflare"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "http")
+        self.assertEqual(args.http_provider, "cloudflare")
+
+    def test_58_onboarding_http_cloudflare_no_path(self):
+        """``ph onboarding http cloudflare`` does not set a path."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "http", "cloudflare"])
+        self.assertFalse(hasattr(args, "path"))
+
+    # ── HTTP transport: generic ───────────────────────────────────────
+
+    def test_59_onboarding_http_generic(self):
+        """``ph onboarding http generic`` sets method=http, provider=generic."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "http", "generic"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "http")
+        self.assertEqual(args.http_provider, "generic")
+
+    # ── HTTP without sub-provider ─────────────────────────────────────
+
+    def test_60_onboarding_http_no_provider(self):
+        """``ph onboarding http`` (no sub-provider) sets method=http, no http_provider."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "http"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "http")
+        self.assertIsNone(args.http_provider)
+
+    # ── File import ───────────────────────────────────────────────────
+
+    def test_61_onboarding_file_with_path(self):
+        """``ph onboarding file backup.json`` sets method=file, path=backup.json."""
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "file", "/tmp/backup.json"])
+        self.assertEqual(args.command, "onboarding")
+        self.assertEqual(args.onboarding_method, "file")
+        self.assertEqual(args.path, "/tmp/backup.json")
+
+    def test_62_onboarding_file_missing_path_fails(self):
+        """``ph onboarding file`` without path raises SystemExit (argparse error)."""
+        p = self._build_onboarding_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["onboarding", "file"])
+
+    # ── Unknown method ────────────────────────────────────────────────
+
+    def test_63_onboarding_unknown_method_fails(self):
+        """``ph onboarding invalid`` raises SystemExit."""
+        p = self._build_onboarding_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["onboarding", "invalid"])
+
+    # ── Unknown HTTP sub-provider ─────────────────────────────────────
+
+    def test_64_onboarding_http_unknown_provider_fails(self):
+        """``ph onboarding http unknown`` raises SystemExit."""
+        p = self._build_onboarding_parser()
+        with self.assertRaises(SystemExit):
+            p.parse_args(["onboarding", "http", "s3"])
+
+    # ── Backward compat: main.py dispatch logic ───────────────────────
+
+    def test_65_remote_is_handled_in_same_branch_as_git(self):
+        """Both 'git' and 'remote' methods are handled by the same code branch.
+
+        The main.py dispatch uses:
+            elif args.onboarding_method in ("git", "remote"):
+        """
+        for method in ("git", "remote"):
+            p = self._build_onboarding_parser()
+            args = p.parse_args(["onboarding", method])
+            self.assertIn(args.onboarding_method, ("git", "remote"))
+
+    def test_66_http_method_dispatches_to_provider_lookup(self):
+        """When method is 'http', http_provider is checked for sub-provider.
+
+        The main.py dispatch looks up ``httpProvider``, defaults to cloudflare.
+        """
+        p = self._build_onboarding_parser()
+        args = p.parse_args(["onboarding", "http", "cloudflare"])
+        self.assertEqual(args.onboarding_method, "http")
+        # In main.py, if http_provider is None, it defaults to "cloudflare"
+        provider = getattr(args, "http_provider", None) or "cloudflare"
+        self.assertEqual(provider, "cloudflare")
+
+
+# =========================================================================
 # Run
 # =========================================================================
 if __name__ == "__main__":

@@ -34,8 +34,9 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Use context for dev mode state; hooks for derived data
 
 ## Verification
-- `test/` directory: 25 test files covering crypto, sync, ledger, storage, and transport
+- `test/` directory: 26 test files covering crypto, sync, ledger, storage, and transport
 - Run with: `npm test` (vitest)
+- Node-based tests: `node --experimental-vm-modules test/<name>.mjs`
 - Smoke tests for WASM integration
 
 ## Child DOX Index
