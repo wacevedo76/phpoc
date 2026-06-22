@@ -228,6 +228,48 @@ class HttpStagingTransport(AbstractStagingTransport):
         except Exception as e:
             raise RuntimeError(f"Error pushing {path}: {e}") from e
 
+    def delete(self, path: str, timeout_ms: Optional[int] = None) -> None:
+        """Delete blob at *path* from remote via HTTP DELETE.
+
+        Args:
+            path: Remote path (e.g., ``staging/blobs/current.json``).
+            timeout_ms: Optional timeout in milliseconds.
+
+        Raises:
+            RuntimeError: On network errors, timeouts, or non-2xx/404 responses.
+        """
+        url_path = self._build_path(path)
+        timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+
+        headers = {}
+        self._add_api_key(headers)
+
+        try:
+            conn = self._connect(timeout_s)
+            conn.request("DELETE", url_path, headers=headers)
+            resp = conn.getresponse()
+
+            if resp.status in (200, 202, 204, 404):
+                # Success (or already gone — idempotent)
+                self._etag_cache.pop(path, None)
+                resp.read()  # drain
+                conn.close()
+                return
+
+            reason = resp.reason or ""
+            body = resp.read()
+            conn.close()
+            raise RuntimeError(f"HTTP {resp.status} deleting {path}: {reason}")
+
+        except (socket.timeout, TimeoutError) as e:
+            raise RuntimeError(f"Timeout deleting {path}: {e}") from e
+        except (socket.gaierror, ConnectionRefusedError, ConnectionError) as e:
+            raise RuntimeError(f"Network error deleting {path}: {e}") from e
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Error deleting {path}: {e}") from e
+
     def list_files(self, prefix: str, timeout_ms: Optional[int] = None) -> List[str]:
         """List filenames under *prefix* via HTTP GET with ?prefix= query.
 

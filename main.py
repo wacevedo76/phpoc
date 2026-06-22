@@ -105,20 +105,33 @@ def main():
     # Onboarding command (import existing ledger to a new device)
     onboarding_p = subparsers.add_parser(
         "onboarding",
-        help="Import existing ledger to this device (remote or file)",
+        help="Import existing ledger to this device (git, http, file, or interactive picker)",
     )
     onboarding_sub = onboarding_p.add_subparsers(dest="onboarding_method")
+    # Git transport (was "remote", kept as alias for backward compat)
     onboarding_sub.add_parser(
-        "remote", help="Import from remote (git/HTTP transport per config)"
+        "git", help="Import from a git repository (SSH or HTTPS)"
     )
+    onboarding_sub.add_parser(
+        "remote", help="[deprecated] Use 'ph onboarding git' instead"
+    )
+    # File import
     onboarding_file_p = onboarding_sub.add_parser(
         "file", help="Import from a local JSON export file"
     )
     onboarding_file_p.add_argument(
         "path", help="Path to the .json export file"
     )
-    onboarding_sub.add_parser(
-        "http", help="Import from Cloudflare R2 via HTTP transport"
+    # HTTP transport with sub-providers
+    onboarding_http_p = onboarding_sub.add_parser(
+        "http", help="Import via HTTP transport"
+    )
+    onboarding_http_sub = onboarding_http_p.add_subparsers(dest="http_provider")
+    onboarding_http_sub.add_parser(
+        "cloudflare", help="Import from Cloudflare R2 via a deployed Worker"
+    )
+    onboarding_http_sub.add_parser(
+        "generic", help="Import from a generic HTTP server"
     )
 
     # Login / Logout commands
@@ -312,22 +325,55 @@ def main():
         return
 
     if args.command == "onboarding":
-        # Backward compat: plain 'ph onboarding' = remote
-        if not args.onboarding_method or args.onboarding_method == "remote":
+        if not args.onboarding_method:
+            # Bare 'ph onboarding' — interactive provider picker
+            from cli.onboarding import run_onboarding_picker
+            ok = run_onboarding_picker(
+                data_dir=CONFIG_DIR,
+                config_manager=CONFIG,
+            )
+        elif args.onboarding_method in ("git", "remote"):
+            # Git transport ("remote" is deprecated backward compat alias)
+            if args.onboarding_method == "remote":
+                print("Note: 'ph onboarding remote' is deprecated. Use 'ph onboarding git' instead.")
             from cli.onboarding import run_onboarding
-            config_with_dir = dict(CONFIG.read())
-            config_with_dir["_config_dir"] = str(CONFIG_DIR)
-            onboarding_transport = create_transport_from_config(config_with_dir)
+            from core.sync.transport_registry import get_registry
+            registry = get_registry()
+            provider = registry.get("git")
+            if provider is None:
+                print("Git transport provider not available.")
+                return
+            config_update, transport = provider.prompt_config()
+            if transport is None:
+                return
+            # Save config
+            CONFIG.write(config_update)
             ok = run_onboarding(
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
-                transport=onboarding_transport,
+                transport=transport,
             )
         elif args.onboarding_method == "http":
-            from cli.onboarding import run_onboarding_http
-            ok = run_onboarding_http(
+            # HTTP transport with optional sub-provider
+            http_provider = getattr(args, "http_provider", None) or "cloudflare"
+            from core.sync.transport_registry import get_registry
+            registry = get_registry()
+            provider_id = f"http-{http_provider}"
+            provider = registry.get(provider_id)
+            if provider is None:
+                print(f"HTTP provider '{http_provider}' not available.")
+                print(f"Available: cloudflare, generic")
+                return
+            config_update, transport = provider.prompt_config()
+            if transport is None:
+                return
+            # Save config
+            CONFIG.write(config_update)
+            from cli.onboarding import run_onboarding
+            ok = run_onboarding(
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
+                transport=transport,
             )
         elif args.onboarding_method == "file":
             from cli.onboarding_file import run_onboarding_file

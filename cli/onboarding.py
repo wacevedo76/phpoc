@@ -24,6 +24,7 @@ import hashlib
 import base64
 import getpass
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -144,11 +145,15 @@ def _prompt_http_transport() -> tuple:
     return transport, config_update
 
 
-def run_onboarding_http(
+def run_onboarding_picker(
     data_dir: Path,
     config_manager,
 ) -> bool:
-    """Run onboarding from a Cloudflare R2 Worker (HTTP transport).
+    """Interactive top-level onboarding picker (bare ``ph onboarding``).
+
+    Shows a menu of available transport providers and lets the user pick one.
+    Each provider's ``prompt_config()`` handles provider-specific setup.
+    Delegates to ``run_onboarding()`` for the unified pipeline.
 
     Args:
         data_dir: Path to the data directory.
@@ -157,123 +162,62 @@ def run_onboarding_http(
     Returns:
         True if onboarding completed successfully.
     """
-    print("=" * 60)
-    print("  PH Ledger — Onboarding (Cloudflare R2)")
-    print("  Import existing ledger from Cloudflare Worker")
-    print("=" * 60)
+    from core.sync.transport_registry import get_registry
 
-    # Check if ledger already exists
-    ledger_path = data_dir / "ledger.json"
-    if ledger_path.exists():
-        override = input("Ledger already exists on this device. Overwrite? (y/N): ").strip().lower()
-        if override != "y":
+    registry = get_registry()
+    providers = registry.list_providers()
+
+    if not providers:
+        print("No transport providers are available.")
+        return False
+
+    print("=" * 60)
+    print("  PH Ledger — Onboarding")
+    print("  Import existing ledger to this device")
+    print("=" * 60)
+    print()
+    print("Choose a data source:")
+    print()
+
+    for i, provider in enumerate(providers, start=1):
+        print(f"  {i}. {provider.name}")
+        print(f"     {provider.description}")
+        print()
+
+    print(f"  0. Cancel")
+    print()
+
+    while True:
+        choice = input(f"Select [1-{len(providers)} or 0 to cancel]: ").strip()
+        if choice == "0":
             print("Onboarding cancelled.")
             return False
 
-    # ── Step 1: HTTP Transport Setup ──────────────────────────────────
-    transport, config_update = _prompt_http_transport()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(providers):
+                selected = providers[idx]
+                break
+        except ValueError:
+            pass
+
+        print(f"  Invalid choice. Enter 1-{len(providers)} or 0 to cancel.")
+
+    # ── Provider prompt → config + transport ──────────────────────
+    print()
+    config_update, transport = selected.prompt_config()
     if transport is None:
         return False
 
-    # ── Step 2: Recovery Seed ────────────────────────────────────────
-    print("\n=== Recovery Seed ===")
-    print("Enter your recovery seed to decrypt the ledger.")
-    print("(This was shown when you ran 'ph init' on your original device.)")
-    rec_auth = RecoveryAuthenticator()
-    if not rec_auth.authenticate():
-        print("  No seed entered. Onboarding cancelled.")
-        return False
-
-    mk = rec_auth.get_key()
-    assert mk is not None
-
-    # ── Pull ledger blocks ───────────────────────────────────────────
-    ledger_blocks = _pull_ledger_blocks(transport, mk, data_dir)
-    if ledger_blocks is None:
-        print("  No ledger blocks found on remote. Cannot proceed.")
-        return False
-
-    ledger_path.write_text(json.dumps(ledger_blocks, indent=2))
-    print(f"  Wrote {len(ledger_blocks)} block(s) to ledger.json.")
-
-    # ── Extract identity from genesis ────────────────────────────────
-    identity_path = data_dir / "identity.json"
-    identity_ok = _extract_identity_from_genesis(ledger_blocks, mk, identity_path)
-    if not identity_ok:
-        print("  Could not extract identity from ledger. Proceeding without signing key.")
-
-    # ── Pull staging ─────────────────────────────────────────────────
-    crypto = CryptoManager(mk)
-    staging_data = _pull_staging(transport, mk, data_dir, crypto)
-    staging_path = data_dir / "staging.json"
-    _write_staging_json(staging_data, staging_path)
-
-    # ── Pull index ───────────────────────────────────────────────────
-    index_data = _pull_index(transport, mk)
-    index_path = data_dir / "index.json"
-    if index_data is not None:
-        index_path.write_text(json.dumps(index_data, indent=2))
-        print(f"  Wrote index with {len(index_data)} date(s) to index.json.")
-    else:
-        index_path.write_text(json.dumps({}, indent=2))
-        print("  Wrote empty index.json.")
-
-    # ── Save HTTP transport config ───────────────────────────────────
+    # ── Save config ───────────────────────────────────────────────
     config_manager.write(config_update)
-    from core.sync.http_transport import HttpStagingTransport
-    print(f"  Transport config saved (Cloudflare Worker: {transport.base_url}).")
 
-    # ── Set new passphrase ───────────────────────────────────────────
-    recover_ok = _recover_ledger(ledger_path, data_dir, mk)
-    if not recover_ok:
-        print("  Failed to set new passphrase. Data files are intact but unsealed.")
-        return False
-
-    # ── Cache master key ─────────────────────────────────────────────
-    from security.auth import PassphraseAuthenticator
-    auth = PassphraseAuthenticator(ledger_path)
-    auth._cache_key(mk)
-    print("  Master key cached in session.")
-
-    # ── Verify ───────────────────────────────────────────────────────
-    verify_ok = _verify_ledger(ledger_path, crypto, identity_path)
-
-    # ── Summary ──────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("  Onboarding Complete!")
-    print("=" * 60)
-    print(f"  Ledger:   {ledger_path} ({len(ledger_blocks)} blocks)")
-
-    if staging_data:
-        n_active = sum(1 for e in staging_data.get("entries", []) if e.get("data", {}).get("is_active"))
-        n_staged = len(staging_data.get("entries", []))
-        print(f"  Staging:  {staging_path} ({n_staged} entries, {n_active} active)")
-    else:
-        print(f"  Staging:  (no remote staging data)")
-
-    print(f"  Identity: {identity_path} {'✓' if identity_ok else '✗ not extracted'}")
-
-    from security.device_identity import RandomUUIDDeviceIdentityProvider
-    provider = RandomUUIDDeviceIdentityProvider(config_manager)
-    device_id = provider.get_device_identity(mk)
-    print(f"  Device:   {device_id.device_label or device_id.device_id}")
-
-    print(f"  Verify:   {'✓ Passed' if verify_ok else '✗ Failed'}")
-    print()
-    print("  You can now use all ph commands:")
-    print("    ph view        — view active tasks")
-    print("    ph add start   — start a new task")
-    print("    ph add end     — end a task")
-    print("    ph list all 7  — view recent entries")
-    print("    ph rep         — reputation summary")
-    print()
-
-    # Update stored reference for subsequent commands
-    config_update["_config_dir"] = str(data_dir)
-    # The global transport in main.py will be recreated on next command
-    # from the saved config. No need to modify transport refs here.
-
-    return verify_ok
+    # ── Unified pipeline ──────────────────────────────────────────
+    return run_onboarding(
+        data_dir=data_dir,
+        config_manager=config_manager,
+        transport=transport,
+    )
 
 
 def _prompt_git_remote_url() -> Optional[str]:
@@ -356,13 +300,31 @@ def _pull_ledger_blocks(transport, master_key, data_dir: Path) -> Optional[list]
     print(f"  Remote has {remote_count} block(s). Pulling...")
     
     # Pull all blocks (no local blocks yet)
-    new_blocks, total = ledger_sync.pull_blocks(local_blocks=None)
+    try:
+        new_blocks, total = ledger_sync.pull_blocks(local_blocks=None)
+    except ValueError as exc:
+        # Deobfuscation failed — likely wrong recovery seed
+        print(f"  Failed to decrypt ledger: {exc}")
+        print("  The recovery seed may be incorrect. Check the seed and try again.")
+        return None
+    except Exception as exc:
+        print(f"  Failed to pull ledger blocks: {exc}")
+        return None
+
     if new_blocks is None and total > 0:
         # All blocks already present (shouldn't happen on fresh device)
         print("  No new blocks to pull (already in sync).")
         return None
     if new_blocks is None:
         print("  No ledger blocks on remote.")
+        return None
+
+    # Detect chain divergence: fewer blocks pulled than remote has means
+    # the chain was truncated by _verify_chain due to prev_hash mismatch.
+    if len(new_blocks) < total:
+        print(f"  Chain divergence detected: pulled {len(new_blocks)} of {total} blocks.")
+        print("  The remote ledger chain is corrupted or from an incompatible source.")
+        print("  Onboarding aborted — no partial data written.")
         return None
     
     print(f"  Pulled {len(new_blocks)} block(s).")
@@ -375,7 +337,7 @@ def _pull_staging(transport, master_key, data_dir: Path, crypto) -> Optional[dic
     Returns the staging entries dict, or None on failure/absence.
     """
     print("\n=== Step 3: Pulling Staging Data ===")
-    from domain.staging.remote_sync import RemoteStagingSync
+    from domain.staging.remote_sync import RemoteStagingSync, BLOB_KEY_MISMATCH
     
     # Use the crypto's master_key for blob deobfuscation
     remote_sync = RemoteStagingSync(
@@ -390,14 +352,77 @@ def _pull_staging(transport, master_key, data_dir: Path, crypto) -> Optional[dic
         print("  No staging blob found on remote.")
         return None
     
-    from domain.staging.remote_sync import BLOB_KEY_MISMATCH
     if blob_data is BLOB_KEY_MISMATCH:
-        print("  Remote staging blob exists but cannot be decrypted with this key.")
+        _handle_staging_key_mismatch(transport, data_dir)
         return None
     
     entries = blob_data.get("entries", [])
     print(f"  Pulled staging blob with {len(entries)} entry/entries.")
     return blob_data
+
+
+def _handle_staging_key_mismatch(transport, data_dir: Path) -> None:
+    """Handle staging blob that cannot be decrypted.
+
+    1. Display prominent warning to the user.
+    2. Pull the raw blob bytes for forensic analysis.
+    3. Save raw blob to ``data_dir/forensic/`` (quarantine).
+    4. Log the event to ``forensic/events.log``.
+    5. Delete the corrupted blob from remote storage.
+    6. Write empty local staging (ledger import continues).
+
+    Args:
+        transport: Transport instance with ``pull()`` and ``delete()`` methods.
+        data_dir: Data directory for forensic storage.
+    """
+    staging_path = "staging/blobs/current.json"
+
+    # 1. Prominent warning
+    print()
+    print("  " + "=" * 56)
+    print("  ⚠️  WARNING: Staging blob key mismatch")
+    print("  " + "=" * 56)
+    print("  The remote staging blob exists but cannot be decrypted with")
+    print("  this recovery seed. This may indicate:")
+    print("    - The blob was encrypted by a different device or seed.")
+    print("    - The remote data is corrupted.")
+    print()
+    print("  The ledger blocks imported successfully.")
+    print("  The corrupted staging blob will be:")
+    print("    1. Quarantined locally for forensic analysis")
+    print("    2. Deleted from remote storage")
+    print("  Pending staging entries could not be recovered.")
+    print("  " + "=" * 56)
+    print()
+
+    # 2. Pull raw blob for quarantine
+    raw_bytes = transport.pull(staging_path)
+    if raw_bytes is not None:
+        forensic_dir = data_dir / "forensic"
+        forensic_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save raw blob with timestamped filename
+        ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        quarantine_path = forensic_dir / f"staging_key_mismatch_{ts}.bin"
+        quarantine_path.write_bytes(raw_bytes)
+        print(f"  Quarantined raw blob to {quarantine_path}")
+
+        # 4. Log the event
+        log_path = forensic_dir / "events.log"
+        event_entry = json.dumps({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            "event": "staging_key_mismatch",
+            "path": staging_path,
+            "quarantine": str(quarantine_path),
+            "context": "onboarding",
+        })
+        with log_path.open("a") as f:
+            f.write(event_entry + "\n")
+        print(f"  Event logged to {log_path}")
+
+    # 5. Delete corrupted blob from remote
+    transport.delete(staging_path)
+    print("  Corrupted staging blob deleted from remote.")
 
 
 def _pull_index(transport, master_key) -> Optional[dict]:

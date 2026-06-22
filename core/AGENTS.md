@@ -9,6 +9,7 @@ Wiring layer between CLI and domain — factory initialization, sync orchestrati
 - `core/sync/orchestrator.py` — `SyncOrchestrator`: full sync lifecycle (pull → merge → commit → verify → push)
 - `core/sync/decision.py` — `SyncDecision`: data class for sync choices
 - `core/sync/transport.py` — `AbstractStagingTransport`: abstract base for remote staging transports
+- `core/sync/transport_registry.py` — `TransportProvider` dataclass, `TransportRegistry`: extensible transport discovery for onboarding
 - `core/sync/http_transport.py` — `HttpStagingTransport`: HTTP GET/PUT/LIST + ETag
 - `core/sync/git_transport.py` — `GitStagingTransport`: git-based remote staging
 - `core/sync_confirmation.py` — Sync confirmation strategies
@@ -25,7 +26,7 @@ Wiring layer between CLI and domain — factory initialization, sync orchestrati
 - Sync lifecycle order: check_and_sync → commit → verify → push → ledger sync
 
 ## Verification
-- Tests: `test_http_transport.py`, `test_git_transport.py`, `test_sync_confirmation*.py`, `test_phase5_main_wiring.py`, `test_phase6c_orchestrator_cli.py`
+- Tests: `test_transport_registry.py`, `test_http_transport.py`, `test_git_transport.py`, `test_sync_confirmation*.py`, `test_phase5_main_wiring.py`, `test_phase6c_orchestrator_cli.py`
 
 ## Child DOX Index
 - `core/sync/` — Sync transport, orchestrator, and decision logic

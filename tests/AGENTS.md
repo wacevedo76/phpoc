@@ -19,6 +19,7 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_phase6b_ledger_equivalence.py` — Ledger equivalence
 - `test_phase6c_orchestrator_cli.py` — Orchestrator CLI tests
 - `test_phase7_config_integration.py` — Config integration tests
+- `test_transport_registry.py` — TransportRegistry + TransportProvider tests (50 tests)
 - `test_http_transport.py` — HTTP transport tests (68 tests)
 - `test_git_transport.py` — Git transport tests
 - `test_sync_confirmation*.py` — Sync confirmation tests (3 files)
@@ -32,7 +33,7 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_remote_config_wiring.py` — Remote config wiring
 
 ## Local Contracts
-- **30 test files, ~13,000 lines, 1341 tests passing**
+- **31 test files, ~13,500 lines, 1445 tests passing**
 - Run all: `python3 -m pytest`
 - Run single file: `python3 -m pytest tests/test_<name>.py -v`
 - Run with warnings: `python3 -m pytest -W ignore::DeprecationWarning`

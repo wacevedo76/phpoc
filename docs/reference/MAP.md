@@ -14,12 +14,13 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/background.py` | COLD | Phase A instant reads, background sync check |
 | `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
 | `cli/wal.py` | COLD | Write-ahead log, background push |
-| `cli/onboarding.py` | HOT | `run_onboarding()` (git), `run_onboarding_http()` (Cloudflare R2) — remote transport import |
+| `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import |
 | `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | COLD | `SyncOrchestrator` — sync lifecycle coordinator |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
 | `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
+| `core/sync/transport_registry.py` | HOT | `TransportProvider` dataclass, `TransportRegistry` — extensible transport discovery for onboarding |
 | `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | COLD | Passphrase + Recovery authenticators |
 | `security/device_identity.py` | COLD | `DeviceIdentity`, `AbstractDeviceIdentityProvider` |
@@ -60,7 +61,8 @@ Key test files:
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
-- `tests/test_onboarding_e2e.py` — 44 E2E tests (27 GREEN / 13 RED), Phase 5d onboarding redesign
+- `tests/test_onboarding_e2e.py` — 44 E2E tests (all GREEN), Phase 5d onboarding redesign
+- `tests/test_transport_registry.py` — 50 tests (all GREEN), TransportProvider + TransportRegistry unit tests
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
 
 ### Active docs
@@ -117,7 +119,7 @@ Key test files:
 | Run single test file | `python3 -m pytest tests/test_<name>.py -v` |
 | Run single test | `python3 -m pytest tests/test_<name>.py::TestClass::test_method -v` |
 | Run with warnings | `python3 -m pytest -W ignore::DeprecationWarning` |
-| Test count | 1341 passing |
+| Test count | 1445 passing |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands

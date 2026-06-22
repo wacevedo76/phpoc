@@ -157,6 +157,36 @@ class GitStagingTransport(AbstractStagingTransport):
                 # Auth/network error — re-raise immediately without retry
                 raise
 
+    def delete(self, path: str) -> None:
+        """Delete a blob from the remote repo via git rm + commit + push.
+
+        Args:
+            path: Relative path within the repo.
+
+        Raises:
+            RuntimeError: If the delete operation fails.
+        """
+        self._ensure_clone()
+        self._ensure_remote_url()
+
+        blob_file = self._clone_path / path
+        if not blob_file.is_file():
+            return  # Nothing to delete — idempotent
+
+        # Pull latest to avoid conflicts
+        self._recover_git_abort_stuck_rebase()
+        if self._has_remote_refs():
+            self._ensure_on_branch()
+            try:
+                self._git("pull", "--rebase", "--autostash")
+            except RuntimeError:
+                pass
+
+        # Remove, stage, commit, push
+        self._git("rm", "-f", str(blob_file.relative_to(self._clone_path)))
+        self._git("commit", "-m", f"Delete {path}")
+        self._push_or_detached_refspec()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

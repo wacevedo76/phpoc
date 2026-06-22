@@ -60,14 +60,28 @@ class AbstractStagingTransport(ABC):
         """
         return []
 
+    def delete(self, path: str) -> None:
+        """Delete a blob at *path* from remote.
+
+        Default implementation is a no-op. Transports that support
+        deletion (HTTP DELETE, git rm, etc.) should override this.
+
+        Args:
+            path: Remote path to delete.
+        """
+        pass
+
 
 def create_transport_from_config(config: Dict[str, Any]) -> Optional[AbstractStagingTransport]:
-    """Create a transport based on config settings.
+    """Create a transport based on config settings (delegates to registry).
 
     Priority:
       1. ``http.base_url`` set + ``remote.transport == "http"`` → ``HttpStagingTransport``
       2. ``remote.git_remote_url`` set → ``GitStagingTransport``
       3. Neither set → ``None`` (no remote transport)
+
+    This function delegates to ``core.sync.transport_registry.create_transport_from_config``
+    so that custom registered providers are respected.
 
     Args:
         config: Application config dict (from ``ConfigManager``).
@@ -76,32 +90,5 @@ def create_transport_from_config(config: Dict[str, Any]) -> Optional[AbstractSta
         An ``AbstractStagingTransport`` instance, or ``None`` if no remote
         transport is configured.
     """
-    transport_type = config.get("remote", {}).get("transport", "git")
-    config_dir = config.get("_config_dir", None)
-
-    # HTTP transport takes priority when explicitly configured
-    if transport_type == "http":
-        base_url = config.get("http", {}).get("base_url")
-        if not base_url:
-            logger.warning("transport=http but http.base_url is not set")
-            return None
-        api_key = config.get("http", {}).get("api_key")
-        from core.sync.http_transport import HttpStagingTransport
-        logger.info("Using HttpStagingTransport -> %s", base_url)
-        return HttpStagingTransport(base_url=base_url, api_key=api_key)
-
-    # Fall back to git transport
-    remote_url = config.get("remote", {}).get("git_remote_url")
-    if not remote_url:
-        return None
-
-    from pathlib import Path
-    clone_path = config_dir
-    if clone_path is None:
-        clone_path = Path.home() / ".local" / "share" / "phpoc" / "remote"
-    else:
-        clone_path = Path(config_dir) / "remote"
-
-    from core.sync.git_transport import GitStagingTransport
-    logger.info("Using GitStagingTransport -> %s", remote_url)
-    return GitStagingTransport(remote_url, str(clone_path))
+    from core.sync.transport_registry import create_transport_from_config as _from_registry
+    return _from_registry(config)

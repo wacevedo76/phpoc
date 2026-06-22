@@ -7,7 +7,7 @@
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete)
 - **CLI:** Maintenance mode — 1395 tests (31 files), onboarding redesign in progress (Phase 5d)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
-- **CLI Onboarding Redesign (2026-06-22):** E2E TDD test suite created (44 tests, 27 GREEN, 13 RED). Tests define desired behavior for unified pipeline. Next session: implement code to turn RED tests GREEN.
+- **CLI Onboarding Redesign (2026-06-22):** E2E TDD test suite complete — 44 tests, all GREEN (was 27 GREEN / 13 RED). Wrong seed handling, chain divergence detection, and staging key mismatch (forensic quarantine + delete) all implemented.
 - **Storage decision (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON). No adapter layer.
 - **Auth gate:** Cookie-only fast path. Full implementation in `src/sync/sync.js` (60 tests). Documented in `docs/design/DESIGN_MULTI_DEVICE_SESSION.md`.
 - **Architecture:** Multi-deployment via `StorageBackend` interface — standalone PWA (IndexedDB), self-hosted LAN/Docker (bridge server), SaaS (Worker→R2). Full details in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.
@@ -27,11 +27,16 @@
 - Unified pipeline: picker → provider prompt → save config → transport-agnostic pull/passphrase/verify
 
 **Changes this session (2026-06-22):**
-- `tests/test_onboarding_e2e.py`: **NEW** — 44 E2E tests, 27 GREEN / 13 RED (TDD)
-- `cli/onboarding.py`: Added `_prompt_http_transport()` and `run_onboarding_http()` (Cloudflare-specific)
-- `main.py`: Added `ph onboarding http` subparser
-- `docs/design/workflows/cli/onboarding-workflow.md`: Updated with HTTP flow
-- `docs/reference/MAP.md`, `cli/AGENTS.md`: Updated file inventory
+- `tests/test_onboarding_e2e.py`: **NEW** — 44 E2E tests, all GREEN (was 27/13, TDD)
+- `tests/test_transport_registry.py`: **NEW** — 50 tests, all GREEN (TransportProvider, TransportRegistry, built-in providers, factory functions, prompt config callbacks)
+- `core/sync/transport_registry.py`: **NEW** — `TransportProvider` dataclass, `TransportRegistry`, `create_transport_from_config` (registry-backed), built-in providers (git, http-cloudflare, http-generic), module-level singleton
+- `cli/onboarding.py`: Added `_prompt_http_transport()`, `run_onboarding_picker()` (interactive provider picker), `_handle_staging_key_mismatch()` (forensic quarantine + delete). Removed `run_onboarding_http()` (replaced by registry). Fixed `_pull_ledger_blocks()` (catch ValueError, detect chain divergence). Fixed `_pull_staging()` (BLOB_KEY_MISMATCH → forensic flow).
+- `core/sync/transport.py`: Added `delete()` method to `AbstractStagingTransport`. `create_transport_from_config` now delegates to registry.
+- `core/sync/http_transport.py`: Added `delete()` via HTTP DELETE
+- `core/sync/git_transport.py`: Added `delete()` via git rm + commit + push
+- `main.py`: Renamed `onboarding remote` → `onboarding git` ("remote" kept as deprecated alias). Added `onboarding http cloudflare` and `onboarding http generic` sub-subparsers. Added bare `ph onboarding` → interactive picker. Dispatch refactored to use registry.
+- `docs/reference/MAP.md`: Updated with new files, test count 1341→1445
+- `SESSION_HANDOFF.md`: Updated Phase 5d status
 
 **Architectural decisions made this session:**
 1. **Staging key mismatch** → warn prominently, quarantine raw blob to `data_dir/forensic/`, log event, destroy remote staging, continue with ledger import
@@ -41,15 +46,14 @@
 5. **Forensic mechanism** → `data_dir/forensic/` directory with `events.log` + raw blob files
 
 **⏭ Next session:**
-1. **Fix wrong seed (2 RED tests):** Add try/except in `_pull_ledger_blocks()` for `ValueError` from deobfuscation → friendly error, return None
-2. **Fix chain divergence (4 RED tests):** Add partial-chain detection in `_pull_ledger_blocks()` — compare pulled count vs expected, abort if truncated
-3. **Fix staging key mismatch (7 RED tests):** Create `ForensicLogger` utility, add quarantine/log/destroy flow, add `delete()` to `AbstractStagingTransport`
-4. Create `core/sync/transport_registry.py` with `TransportProvider` registry
-5. Rename `onboarding remote` → `onboarding git` in CLI parsers + dispatch
-6. Refactor `cli/onboarding.py` — unified pipeline consumes provider from registry
-7. Add `ph onboarding http generic` provider
-8. Add bare `ph onboarding` as top-level picker
-9. Remove temporary `run_onboarding_http()` after unification
+1. ~~Create `core/sync/transport_registry.py` with `TransportProvider` registry~~ ✅ DONE (2026-06-22)
+2. ~~Rename `onboarding remote` → `onboarding git` in CLI parsers + dispatch~~ ✅ DONE (2026-06-22)
+3. ~~Refactor `cli/onboarding.py` — unified pipeline consumes provider from registry~~ ✅ DONE (2026-06-22)
+4. ~~Add `ph onboarding http generic` provider~~ ✅ DONE (2026-06-22)
+5. ~~Add bare `ph onboarding` as top-level picker~~ ✅ DONE (2026-06-22)
+6. ~~Remove temporary `run_onboarding_http()` after unification~~ ✅ DONE (2026-06-22)
+7. **Write tests for onboarding CLI dispatch (test_phase5_main_wiring.py or new)** — CLI parser changes, backward compat, interactive picker
+8. **Write end-to-end tests for registry-based onboarding flows** — git, http-cloudflare, http-generic via registry
 
 **Pending features (not yet implemented):**
 - `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2
@@ -220,8 +224,16 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 
 | File | Change |
 |------|--------|
-| `tests/test_onboarding_e2e.py` | **NEW** — 44 E2E tests (27 GREEN / 13 RED) for Phase 5d onboarding redesign |
-| `SESSION_HANDOFF.md` | Updated Phase 5d status, added architectural decisions, moved to next implementation phase |
+| `core/sync/transport_registry.py` | **NEW** — `TransportProvider` dataclass, `TransportRegistry`, `create_transport_from_config`, built-in providers (git, http-cloudflare, http-generic), singleton |
+| `tests/test_transport_registry.py` | **NEW** — 50 tests (all GREEN): TransportProvider, TransportRegistry, built-ins, factories, prompts, singleton |
+| `tests/test_onboarding_e2e.py` | **NEW** — 44 E2E tests (all GREEN) for Phase 5d onboarding redesign |
+| `cli/onboarding.py` | Added `run_onboarding_picker()`. Removed `run_onboarding_http()`. Fixed `_pull_ledger_blocks()` (wrong seed catch + chain divergence detection). Fixed `_pull_staging()` (staging key mismatch → forensic quarantine + remote delete). Added `_handle_staging_key_mismatch()`. |
+| `core/sync/transport.py` | Added `delete()` method to `AbstractStagingTransport`. `create_transport_from_config` now delegates to registry. |
+| `core/sync/http_transport.py` | Added `delete()` via HTTP DELETE |
+| `core/sync/git_transport.py` | Added `delete()` via git rm + commit + push |
+| `main.py` | Renamed `onboarding remote` → `onboarding git` ("remote" deprecated alias). Added `onboarding http cloudflare` + `onboarding http generic`. Added bare `ph onboarding` → interactive picker. Dispatch uses registry. |
+| `docs/reference/MAP.md` | Updated: new files, test count 1341→1445, `cli/onboarding.py` description |
+| `SESSION_HANDOFF.md` | Updated Phase 5d status, next steps, files changed |
 
 ## Files Changed This Session (2026-06-21)
 
