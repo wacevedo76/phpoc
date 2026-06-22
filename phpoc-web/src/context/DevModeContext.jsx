@@ -20,6 +20,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { DummyCryptoService } from '../services/DummyLedger.js';
 import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport } from '@sync/index.js';
 import { createAutoSync } from '../hooks/useAutoSync.js';
+import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
 import { exportLedger } from '../services/ledger_export.js';
 import { importLedger } from '../services/ledger_import.js';
 
@@ -170,6 +171,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // the remote Worker for cross-device consistency.
   const autoSyncRef = useRef(null);
   const prevRawSyncRef = useRef(null);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
 
   // Build the effective services object with auto-sync wrapped sync.
   // All components access services.sync — by replacing it here,
@@ -186,7 +188,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       if (autoSyncRef.current) {
         autoSyncRef.current.dispose();
       }
-      autoSyncRef.current = createAutoSync(rawSync, { debounceMs: 500 });
+      autoSyncRef.current = createAutoSync(rawSync, {
+        debounceMs: 500,
+        onSyncingChange: setIsAutoSyncing,
+      });
       prevRawSyncRef.current = rawSync;
     }
 
@@ -218,6 +223,47 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     return { ...services, sync: wrappedSync };
   }, [services]);
+
+  // ── Cookie TTL monitor ─────────────────────────────────────────
+  // Monitors the local device cookie TTL. When the cookie expires,
+  // clears the master key and triggers the re-auth overlay.
+  const cookieMonitorRef = useRef(null);
+
+  useEffect(() => {
+    // Only run the monitor when services are fully bootstrapped
+    if (phase !== 'ready') {
+      // Dispose monitor when leaving the ready phase (logout, re-bootstrap, etc.)
+      if (cookieMonitorRef.current) {
+        cookieMonitorRef.current.dispose();
+        cookieMonitorRef.current = null;
+      }
+      return;
+    }
+
+    const crypto = effectiveServices?.crypto;
+    const storage = effectiveServices?.storage;
+    if (!crypto || !storage) return;
+
+    // Dispose any previous monitor instance before creating a new one
+    if (cookieMonitorRef.current) {
+      cookieMonitorRef.current.dispose();
+    }
+
+    const monitor = createCookieMonitor(storage, crypto, {
+      cookieTtlMinutes: 30,
+      pollIntervalMs: 60_000, // check every 60 seconds
+      onExpired: triggerReauth,
+    });
+
+    cookieMonitorRef.current = monitor;
+    monitor.start();
+
+    // Cleanup: dispose when leaving ready phase or on unmount
+    return () => {
+      monitor.dispose();
+      cookieMonitorRef.current = null;
+    };
+  }, [phase, effectiveServices?.crypto, effectiveServices?.storage, triggerReauth]);
 
   // Clean up auto-sync on unmount (cancels pending debounce)
   useEffect(() => {
@@ -1340,6 +1386,11 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // ── Logout ───────────────────────────────────────────────────────
 
   const logout = useCallback(() => {
+    // Dispose cookie TTL monitor (stops polling before clearing MK)
+    if (cookieMonitorRef.current) {
+      cookieMonitorRef.current.dispose();
+      cookieMonitorRef.current = null;
+    }
     if (services.crypto) {
       services.crypto.clearMasterKey();
     }
@@ -1384,6 +1435,8 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const result = await engine.commit(toCommit);
     if (result && result.committedEntryIds.length > 0) {
       await sync.markCommitted(result.committedEntryIds, result.blockIndex);
+      // Push committed blocks to remote (best-effort; handles all errors internally)
+      await sync.pushLedgerBlocks();
     }
     return result;
   }, [services]);
@@ -1410,6 +1463,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Crypto status
     cryptoStatus,
+
+    // Auto-sync status (true during debounced pushToRemote)
+    isAutoSyncing,
 
     // Storage backend quality
     storageStatus,
@@ -1478,6 +1534,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   setError: (string|null) => void,
  *   services: { crypto: object|null, sync: object|null, storage: object|null },
  *   cryptoStatus: 'wasm'|'fallback',
+ *   isAutoSyncing: boolean,
  *   storageStatus: 'persistent'|'session'|'memory',
  *   user: { isAuthenticated: boolean, deviceId: string|null, masterKeyCached: boolean, username: string|null, email: string|null },
  *   startLogin: () => void,

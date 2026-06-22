@@ -49,13 +49,20 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
 | `phpoc-web/test/ledger_sync_test.mjs` | 🟢 GREEN | 31-test TDD suite for `pushLedgerBlocks()` — GREEN phase complete, 76 assertions all passing |
-| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote, index push |
-| `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display, reauth overlay triggering, commit flow. |
+| `phpoc-web/test/commit_push_integration_test.mjs` | 🟢 GREEN | 14-test Commit→Push Wiring suite — all 60 assertions pass (wiring complete) |
+| `phpoc-web/test/sync_indicator_test.mjs` | 🟢 GREEN | 32-test SyncIndicator unit test — status config, 6 status mappings, compact mode, fallback |
+| `phpoc-web/test/display_status_test.mjs` | 🟢 GREEN | 20-test `computeDisplayStatus()` unit test — SYNCING priority, NOT_SYNCED, READY passthrough, edge cases |
+| `phpoc-web/test/reauth_ttl_test.mjs` | 🟢 GREEN | 50-test (was 35) suite for `checkCookieTtl()` + `createCookieMonitor()` — all 50 pass (GREEN phase complete) |
+| `phpoc-web/test/reauth_integration_test.mjs` | 🟢 GREEN | 40-test suite for full re-auth flow integration — 39 pass / 1 test-only MK mismatch (mock sha256≠PBKDF2) |
+| `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing, wired into DevModeContext ready-phase boot (GREEN, 89 combined assertions, 0 failures) |
+| `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
+| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote (uses `day_index` + `index` fallback for cross-engine compatibility), index push |
+| `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (now uses extracted `computeDisplayStatus` + `isAutoSyncing`), reauth overlay triggering, commit flow. |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay rendering (`AuthScreen overlay`) via context `reauthActive` state. |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-### Tests (31 files, ~14,200 lines, 1493 tests)
+### Tests (34 files, ~14,900 lines, ~1606 tests)
 
 Key test files:
 - `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
@@ -76,7 +83,9 @@ Key test files:
 | `../../SESSION_HANDOFF.md` | Context restoration anchor — session-level snapshot |
 | `../planning/ROADMAP.md` | Migration arc (CLI → Browser → Flutter) + feature roadmap |
 | `../planning/BACKLOG.md` | Paused issues |
-| `../planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | `pushLedgerBlocks()` TDD test plan — 31 tests across 7 categories (RED phase, not started) |
+| `../planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | `pushLedgerBlocks()` TDD test plan — 31 tests across 7 categories (GREEN phase, 76 assertions) |
+| `../planning/COMMIT_PUSH_WIRING_TESTS.md` | Commit→push wiring TDD test outline — 14 tests across 4 categories, execution plan (RED, not started) |
+| `../planning/REAUTH_TTL_TDD_PLAN.md` | Re-auth overlay for TTL expiry TDD test plan — ~47 tests across 2 new files + 3 additions, 9 categories (A–I) (🔴 RED, tests not yet written) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
@@ -122,7 +131,7 @@ Key test files:
 | Run single test file | `python3 -m pytest tests/test_<name>.py -v` |
 | Run single test | `python3 -m pytest tests/test_<name>.py::TestClass::test_method -v` |
 | Run with warnings | `python3 -m pytest -W ignore::DeprecationWarning` |
-| Test count | 1493 passing (Python), plus web test suites |
+| Test count | 1493 passing (Python), plus web test suites (32 test files, 2 new RED) |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands

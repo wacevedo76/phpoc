@@ -797,6 +797,39 @@ console.log('\n=== Group H — Cleanup (2 tests) ===');
   }
 }
 
+// ── H3: auto-sync wrapper handles getMasterKey() === null gracefully ──
+{
+  console.log('\n  --- H3: getMasterKey null → mutations work, push skipped, no crash ---');
+  const sync = new MockSyncService({ masterKey: null });
+
+  const result = safeSync(() => wrapSync(sync), 'wrap');
+  if (result !== null) {
+    const wrapped = result;
+
+    // Mutations should still work even when MK is null
+    const id1 = await wrapped.capture({ title: 'Task H3a', startEpoch: 1000 });
+    t.assert(typeof id1 === 'string' && id1.length > 0, 'H3a. capture returns entry_id with null MK');
+
+    const id2 = await wrapped.capture({ title: 'Task H3b', startEpoch: 2000 });
+    t.assertEq(sync.entries.length, 2, 'H3b. both entries captured');
+
+    await wrapped.end('Task H3a', 5000);
+    t.assertEq(sync.entries[0].is_active, false, 'H3c. end() works with null MK');
+
+    // No push should have been triggered (no MK → _schedulePush returns early)
+    await settle();
+    t.assertEq(sync.pushCount, 0, `H3d. pushToRemote NOT called with null MK (got ${sync.pushCount})`);
+
+    // Now set MK — future mutations should trigger push
+    sync.setMasterKey('aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111');
+    await wrapped.pause('Task H3b', 3000);
+    await settle();
+    t.assert(sync.pushCount >= 1, `H3e. pushToRemote called after MK restored (got ${sync.pushCount})`);
+  } else {
+    t.assert(false, 'getMasterKey null handling — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
 // ── Summary ───────────────────────────────────────────────────────────
 const failures = t.summary('auto_sync_hook_test.mjs');
 process.exitCode = failures > 0 ? 1 : 0;

@@ -28,14 +28,10 @@ import { useApp } from '../../context/DevModeContext.jsx';
 import { useActiveTasks } from '../../hooks/useActiveTasks.js';
 import SyncIndicator from '../sync/SyncIndicator.jsx';
 import { Icons } from '../ui/Icons.jsx';
+import { computeDisplayStatus, STATUS_READY, STATUS_NOT_SYNCED, STATUS_OFFLINE, STATUS_REAUTH_NEEDED, STATUS_SYNCING } from '../../sync/display_status.js';
 
-// ── Constants ────────────────────────────────────────────────────────
-
-const STATUS_READY = 'READY';
-const STATUS_NOT_SYNCED = 'NOT_SYNCED';
-const STATUS_OFFLINE = 'OFFLINE';
-const STATUS_REAUTH = 'REAUTH_NEEDED';
-const STATUS_SYNCING = 'SYNCING';
+// ── Aliases (kept for local brevity) ────────────────────────────────
+const STATUS_REAUTH = STATUS_REAUTH_NEEDED;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -65,7 +61,7 @@ function formatTime(ts) {
 // ── Sync Screen Component ────────────────────────────────────────────
 
 export default function SyncSettings() {
-  const { services, commitEntries, triggerReauth, reauthActive } = useApp();
+  const { services, commitEntries, triggerReauth, reauthActive, isAutoSyncing } = useApp();
   const sync = services.sync;
 
   // ── Active tasks (for live elapsed timer on running entries) ─────
@@ -100,12 +96,16 @@ export default function SyncSettings() {
   const [syncing, setSyncing] = useState(false);
   const [lastSyncResult, setLastSyncResult] = useState(null);
 
-  // Display status: SYNCING > remote status > NOT_SYNCED (entries pending commit).
-  // When remote sync succeeded (READY), show the remote status even if entries
-  // exist — "Not Synced" only appears when sync hasn't run or has warnings.
-  const displayStatus = syncing ? STATUS_SYNCING
-    : remoteStatus !== STATUS_READY && allEntries.length > 0 ? STATUS_NOT_SYNCED
-    : remoteStatus;
+  // Display status: SYNCING (manual or auto) > remote status > NOT_SYNCED
+  // (entries pending commit). When remote sync succeeded (READY), show the
+  // remote status even if entries exist — "Not Synced" only appears when
+  // sync hasn't run or has warnings.
+  const displayStatus = computeDisplayStatus({
+    syncing,
+    isAutoSyncing,
+    remoteStatus,
+    hasEntries: allEntries.length > 0,
+  });
 
   // Debounce timer for commit error/reset
   const errorTimer = useRef(null);

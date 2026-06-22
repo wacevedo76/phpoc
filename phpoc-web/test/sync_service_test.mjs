@@ -723,6 +723,50 @@ async function run() {
     t.assertDeepEq(starts, [1000, 3000, 5000, 7000, 9000], 'H6c. entries sorted by start_epoch');
   }
 
+  // H7. MK cleared by TTL monitor → checkAndSync returns REAUTH_NEEDED
+  {
+    const { sync, storage, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'h7-ttl-test-h7-ttl-test-h7-ttl-test-h7-xx',
+    });
+
+    // Set up: valid local cookie exists but we simulate TTL monitor clearing MK
+    await storage.set('cookie', {
+      device_specifier: 'spec-h7',
+      creation_time: Date.now(),
+    });
+
+    // Simulate TTL monitor clearing the MK
+    crypto.setMasterKey(null);
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED,
+      'H7. MK cleared by TTL monitor → REAUTH_NEEDED');
+  }
+
+  // H8. After reauth MK restore + fresh cookie → checkAndSync returns READY
+  {
+    const mk = 'h8-fresh-mk-h8-fresh-mk-h8-fresh-mk-h8-yy';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-h8',
+      creation_time: Date.now(),
+    });
+
+    // Remote has matching cookie
+    await pushRemoteCookie(transport, `dev-${mk.slice(0, 8)}`, 'spec-h8');
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY,
+      'H8. fresh cookie after reauth MK restore → READY (fast path)');
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // Group I: Genesis Gate Integration
   // ═══════════════════════════════════════════════════════════════

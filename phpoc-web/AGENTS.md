@@ -16,8 +16,8 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core)
 - `src/context/` — DevModeContext
-- `src/hooks/` — useActiveTasks
-- `test/` — JavaScript test suite (25 test files)
+- `src/hooks/` — useActiveTasks, useAutoSync, useCookieMonitor
+- `test/` — JavaScript test suite (32 test files)
 
 ## Local Contracts
 - Built with Vite + React
@@ -34,7 +34,8 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Use context for dev mode state; hooks for derived data
 
 ## Verification
-- `test/` directory: 26 test files covering crypto, sync, ledger, storage, and transport
+- `test/` directory: 30 test files covering crypto, sync, ledger, storage, and transport
+- New RED: `reauth_ttl_test.mjs` (35 tests), `reauth_integration_test.mjs` (27 tests) — Re-auth TTL overlay tests
 - Run with: `npm test` (vitest)
 - Node-based tests: `node --experimental-vm-modules test/<name>.mjs`
 - Smoke tests for WASM integration

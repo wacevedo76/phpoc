@@ -927,10 +927,12 @@ export class SyncService {
     }
 
     // ---- Push new blocks (in ascending index order) ----
-    const sorted = [...blocks].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    // Use day_index (LedgerEngine) with index fallback (test helpers / genesis).
+    const _blockIdx = (b) => b.day_index ?? b.index ?? 0;
+    const sorted = [...blocks].sort((a, b) => _blockIdx(a) - _blockIdx(b));
     let pushed = 0;
     for (const block of sorted) {
-      const idx = block.index;
+      const idx = block.day_index ?? block.index;
       if (idx == null) continue;
 
       if (remoteIndices.has(idx)) continue;
