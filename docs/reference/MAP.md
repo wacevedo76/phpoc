@@ -48,8 +48,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
-| `phpoc-web/test/ledger_sync_test.mjs` | 🔴 RED | 31-test TDD suite for `pushLedgerBlocks()` — RED phase complete, 35 assertions all failing (method not implemented) |
-| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate + `_reconcileAndClaim` — cookie management, staging blob push — **next: add `pushLedgerBlocks()` method** |
+| `phpoc-web/test/ledger_sync_test.mjs` | 🟢 GREEN | 31-test TDD suite for `pushLedgerBlocks()` — GREEN phase complete, 76 assertions all passing |
+| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote, index push |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display, reauth overlay triggering, commit flow. |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay rendering (`AuthScreen overlay`) via context `reauthActive` state. |
 

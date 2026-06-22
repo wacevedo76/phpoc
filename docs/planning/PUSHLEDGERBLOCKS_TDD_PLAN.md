@@ -1,9 +1,9 @@
 # pushLedgerBlocks() — TDD Test Plan
 
-> **Status:** 🔴 RED phase — tests written (35 assertions, all RED). Implementation not started.
+> **Status:** 🟢 GREEN phase — 76 assertions, 0 failures. `pushLedgerBlocks()` implemented on `SyncService`.
 > **Created:** 2026-06-22
-> **Module:** `phpoc-web/src/sync/` — new `ledger_sync.js` or method on `SyncService`
-> **Test file:** `phpoc-web/test/ledger_sync_test.mjs` (to be created)
+> **Module:** `phpoc-web/src/sync/sync.js` — method on `SyncService`
+> **Test file:** `phpoc-web/test/ledger_sync_test.mjs`
 > **Reference:** Python `RemoteLedgerSync.push_blocks()` in `domain/ledger/remote_sync.py`
 
 ## Problem

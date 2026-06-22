@@ -76,10 +76,10 @@
 
 **Test run:** 33 RED + 2 bypass (B2a/F4a check existing `isRemoteAvailable`). All 31 pushLedgerBlocks tests fail with `TypeError: pushLedgerBlocks is not a function`.
 
-**⏭ Next session:** TDD Phase 2 GREEN — implement `pushLedgerBlocks()` on `SyncService` in `phpoc-web/src/sync/sync.js`. Wire into commit flow (DevModeContext or auto-sync wrapper). Target: 31 GREEN, 0 RED.
+**⏭ Next session:** Wire `pushLedgerBlocks()` into commit flow (DevModeContext or auto-sync wrapper). `SyncIndicator` should reflect `isAutoSyncing`. Re-auth overlay for TTL expiry on existing cookies. Duplicate commit fix (Phase 5c) browser E2E testing.
 
 **Pending features (not yet implemented):**
-- `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2 [🔴 TDD RED complete (31 tests), GREEN pending]
+- Wire `pushLedgerBlocks()` into commit flow — call after `commitEntries` in DevModeContext or auto-sync wrapper
 - `SyncIndicator` should reflect `isAutoSyncing`
 - Re-auth overlay for TTL expiry on existing cookies
 - Duplicate commit fix (Phase 5c) still needs browser E2E testing
@@ -277,6 +277,16 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 | `docs/reference/MAP.md` | Updated `ledger_sync_test.mjs` from 🔜 to 🔴 RED |
 | `phpoc-web/AGENTS.md` | Updated test file count: 25 → 26; added Node test run command |
 | `SESSION_HANDOFF.md` | Updated Immediate Next Steps: pushLedgerBlocks RED complete, GREEN pending |
+
+## Files Changed This Session (2026-06-22)
+
+| File | Change |
+|------|--------|
+| `phpoc-web/src/sync/sync.js` | **Added `pushLedgerBlocks()` method** — lists remote indices, pushes only new blocks (JSON+obfuscated), pushes index after blocks. Sorted by index. Error-resilient (catches + logs, returns count). Added `_base64ToBytes()` cross-platform helper. |
+| `docs/planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | Updated status: 🟢 GREEN (was 🔴 RED) — implementation complete |
+| `docs/planning/WEB_ROADMAP.md` | Added build step 44.2 — pushLedgerBlocks GREEN (76 assertions, 0 failures) |
+| `docs/reference/MAP.md` | Updated `sync.js` description + `ledger_sync_test.mjs` from 🔴 RED to 🟢 GREEN |
+| `SESSION_HANDOFF.md` | Updated Immediate Next Steps: pushLedgerBlocks GREEN complete, wiring pending |
 
 ## Files Changed This Session (2026-06-21)
 

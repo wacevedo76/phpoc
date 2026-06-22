@@ -57,6 +57,28 @@ export const SyncResult = Object.freeze({
 
 const DEFAULT_COOKIE_TTL = 30; // minutes
 
+// ------------------------------------------------------------------
+// Internal helpers
+// ------------------------------------------------------------------
+
+/**
+ * Convert base64 string to Uint8Array.
+ * Works in browser (atob) and Node.js (Buffer).
+ * @param {string} b64
+ * @returns {Uint8Array}
+ */
+function _base64ToBytes(b64) {
+  if (typeof atob !== 'undefined') {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+  return new Uint8Array(Buffer.from(b64, 'base64'));
+}
+
 export class SyncService {
   /**
    * @param {import('./storage.js').StorageBackend} storage - Storage backend.
@@ -859,6 +881,88 @@ export class SyncService {
     const effectiveDeviceId = deviceId || (await this._getDeviceId()) || 'unknown';
     await this._remote.pushBlob(entries, effectiveDeviceId, masterKeyHex);
     this._lastPushAt = Date.now();
+  }
+
+  // ------------------------------------------------------------------
+  // Ledger block sync
+  // ------------------------------------------------------------------
+
+  /**
+   * Push local ledger blocks to remote that don't exist there yet.
+   *
+   * Lists remote indices via transport.listFiles('ledger/blocks/'),
+   * then pushes only blocks whose index is not already on remote.
+   * Blocks are JSON-serialized then obfuscated via crypto.obfuscateBlob().
+   * Index is pushed after blocks.
+   *
+   * Skipped when: no transport, no master key, or no local blocks.
+   * Errors are logged but never thrown — push is best-effort.
+   *
+   * @returns {Promise<number>} Number of blocks pushed (0 = nothing to do or error).
+   */
+  async pushLedgerBlocks() {
+    // ---- Skip conditions ----
+    if (!this._remote) return 0;
+
+    const mk = this._crypto.getMasterKey();
+    if (!mk) return 0;
+
+    const blocks = (await this._storage.get('ledger:blocks')) || [];
+    if (blocks.length === 0) return 0;
+
+    // ---- Discover remote indices ----
+    /** @type {Set<number>} */
+    let remoteIndices;
+    try {
+      const remoteFiles = await this._transport.listFiles('ledger/blocks/');
+      remoteIndices = new Set(
+        remoteFiles
+          .filter(f => f.endsWith('.json'))
+          .map(f => parseInt(f.replace('.json', ''), 10))
+          .filter(n => !isNaN(n))
+      );
+    } catch (err) {
+      console.warn('pushLedgerBlocks: listFiles failed:', err.message);
+      return 0;
+    }
+
+    // ---- Push new blocks (in ascending index order) ----
+    const sorted = [...blocks].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    let pushed = 0;
+    for (const block of sorted) {
+      const idx = block.index;
+      if (idx == null) continue;
+
+      if (remoteIndices.has(idx)) continue;
+
+      try {
+        const json = JSON.stringify(block);
+        const obfuscatedB64 = this._crypto.obfuscateBlob(json, mk);
+        const bytes = _base64ToBytes(obfuscatedB64);
+        const path = `ledger/blocks/${String(idx).padStart(6, '0')}.json`;
+        await this._transport.push(path, bytes);
+        pushed++;
+      } catch (err) {
+        console.warn('pushLedgerBlocks: push failed for block', idx, ':', err.message);
+      }
+    }
+
+    // ---- Push index ----
+    if (pushed > 0) {
+      try {
+        const index = await this._storage.get('ledger:index');
+        if (index) {
+          const json = JSON.stringify(index);
+          const obfuscatedB64 = this._crypto.obfuscateBlob(json, mk);
+          const bytes = _base64ToBytes(obfuscatedB64);
+          await this._transport.push('ledger/index.json', bytes);
+        }
+      } catch (err) {
+        console.warn('pushLedgerBlocks: index push failed:', err.message);
+      }
+    }
+
+    return pushed;
   }
 
   // ------------------------------------------------------------------
