@@ -75,9 +75,9 @@ Key test files:
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
-| `../design/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `../design/workflows/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
-| `../design/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
+| `../design/workflows/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)

@@ -209,5 +209,5 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 | `phpoc-web/src/components/screens/SyncSettings.jsx:1113-1116` | Updated hint text (stale "Phase 2" → accurate description) |
 | `phpoc-web/src/context/DevModeContext.jsx:1377` | `commitEntries` filters `!e.committed` to skip already-committed entries |
 | `phpoc-web/test/genesis_gate_test.mjs:399-421` | A4 test updated for empty remote → compatible:true |
-| `docs/design/Remote_Local-Workflow.md` | Removed 2 fixed known gaps; updated SyncSettings diagram |
+| `docs/design/workflows/Remote_Local-Workflow.md` | Removed 2 fixed known gaps; updated SyncSettings diagram |
 | `SESSION_HANDOFF.md` | Added Phase 5c, duplicates context, testing quick reference |

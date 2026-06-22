@@ -8,10 +8,8 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` — Cross-platform architecture decisions
 - `DESIGN_GOALS.md` — Architectural mandates and design goals
 - `DESIGN_MULTI_DEVICE_SESSION.md` — Multi-device session architecture
-- `PH-VIEW-Workflow.md` — Original auth gate workflow (superseded by `ph-view-workflow-updated.md`)
-- `ph-view-workflow-updated.md` — Auth gate workflow (updated with test scenarios)
 - `ARCHITECTURAL_MIGRATION_STRATEGY.md` — Historical 7-phase migration record (complete)
-- `Remote_Local-Workflow.md` — Compressed remote/local sync workflow reference (AI-consumable troubleshooting doc)
+- `workflows/` — User-facing and system workflow specifications
 
 ## Local Contracts
 - ADRs document decisions that have architectural impact — include context, decision, and consequences
@@ -27,4 +25,4 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 None — design docs are specifications, verified indirectly through test suites.
 
 ## Child DOX Index
-None — flat directory structure.
+- `workflows/AGENTS.md` — Workflow specifications: auth gate, remote/local sync, and future workflows
