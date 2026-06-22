@@ -1,14 +1,15 @@
 # CLI Onboarding — Workflow Map
 
-> Two paths: remote import (`ph onboarding`) and local file import (`ph onboarding file <path>`).
-> Both derive the master key from a recovery seed, then pull/validate/verify data.
+> Three paths: remote via git (`ph onboarding remote`), remote via HTTP/Cloudflare R2
+> (`ph onboarding http`), and local file import (`ph onboarding file <path>`).
+> All three derive the master key from a recovery seed, then pull/validate/verify data.
 
 ## Module Map
 
 | File | Concern |
 |---|---|
-| `main.py` | Dispatches `ph onboarding` → remote, `ph onboarding file <path>` → local |
-| `cli/onboarding.py` | Remote orchestration: `run_onboarding()` — transport setup, pull ledger/staging/index, extract identity, set passphrase, verify |
+| `main.py` | Dispatches `ph onboarding` → remote, `ph onboarding http` → HTTP, `ph onboarding file <path>` → local |
+| `cli/onboarding.py` | Remote orchestration: `run_onboarding()` (git), `run_onboarding_http()` (Cloudflare R2) — transport setup, pull ledger/staging/index, extract identity, set passphrase, verify |
 | `cli/onboarding_file.py` | File orchestration: `run_onboarding_file()` — format detection (v1/v2/chain), seal verification, passphrase prompt, verify |
 | `core/sync/transport.py` | `create_transport_from_config()` — factory for `HttpStagingTransport` or `GitStagingTransport` |
 | `core/sync/git_transport.py` | `GitStagingTransport` — git-based pull/push for remote onboarding |
@@ -31,14 +32,14 @@
 | `identity.json` | `_extract_identity_from_genesis()` / `_extract_identity()` | `{identity_secret_enc}` from genesis fallback |
 | `device_cookie.meta` | `DeviceCookie.create()` (later, during sync) | Device specifier + creation time |
 
-## Remote Onboarding Flow (`ph onboarding`)
+## Remote Onboarding Flow — Git (`ph onboarding` / `ph onboarding remote`)
 
 ```
 1. Check: ledger.json exists? → prompt overwrite
 
 2. [TRANSPORT] create_transport_from_config(config)
-   ├─ config has worker_url + api_key → HttpStagingTransport
-   ├─ config has git_remote_url → GitStagingTransport
+   ├─ config has base_url + transport=http → HttpStagingTransport (from existing config)
+   ├─ config has git_remote_url → GitStagingTransport (from existing config)
    └─ neither → prompt interactively for git URL
 
 3. [AUTH] RecoveryAuthenticator.authenticate()
@@ -69,6 +70,40 @@
 10. [VERIFY] LedgerDomain.verify() → checks all seals/signatures/chain linkage
 
 11. [SUMMARY] Print device label, block count, verify result
+```
+
+## HTTP/Cloudflare R2 Onboarding Flow (`ph onboarding http`)
+
+```
+1. Check: ledger.json exists? → prompt overwrite
+
+2. [TRANSPORT] _prompt_http_transport()
+   ├─ Show Worker setup instructions (wrangler deploy steps)
+   ├─ Prompt for Worker URL (e.g. https://phpoc-staging.username.workers.dev)
+   ├─ Check $PHPOC_CLOUDFLARE_API_KEY env var, or prompt for API key
+   ├─ Create HttpStagingTransport
+   ├─ Test connectivity (pull non-existent path → expect 404 or 403)
+   └─ Return transport + config dict {remote.transport: http, http: {base_url, api_key}}
+
+3. [AUTH] RecoveryAuthenticator.authenticate()
+   → prompts for recovery seed → seed_to_key() → 32-byte master key
+
+4-7. [PULL] Same as git flow — transport-agnostic helpers:
+   → RemoteLedgerSync.pull_blocks() — lists ledger/blocks/, deobfuscates, verifies chain
+   → _extract_identity_from_genesis() — writes identity.json
+   → RemoteStagingSync.pull() — pulls staging/blobs/current.json via HTTP GET
+   → RemoteLedgerSync.pull_index() — pulls ledger/index.json via HTTP GET
+
+8. [SAVE CONFIG] config_manager.write({remote.transport: "http", http: {base_url, api_key}})
+
+9. [PASSPHRASE] _recover_ledger()
+   → prompt new passphrase → PBKDF2 → re-encrypt seed → re-seal → re-sign
+
+10. [CACHE KEY] Cache master key in session
+
+11. [VERIFY] LedgerDomain.verify()
+
+12. [SUMMARY] Same summary output as git flow
 ```
 
 ## File Import Flow (`ph onboarding file <path>`)
@@ -106,9 +141,22 @@
 
 | Input | Format | Has ledger? | Has staging? | Auth needed? |
 |---|---|---|---|---|
-| `[block, ...]` | raw chain | Yes | No | Seed only |
+| `[block, ...]` (list) | raw chain | Yes | No | Seed only |
 | `{format_version: "1", entries, seal}` | v1 export | No | Yes | Seed only |
 | `{format_version: "2", ledger, staging, seal}` | v2 export | Yes | Yes | Seed only |
+
+## HTTP Transport Prompt Detail (`_prompt_http_transport`)
+
+| Step | Prompt | Validation |
+|---|---|---|
+| Worker URL | User enters `https://<worker>.<account>.workers.dev` | Parses valid URL; strips trailing slash |
+| API key | Checks `$PHPOC_CLOUDFLARE_API_KEY` env var first; if absent, prompts user | Stored in config or sourced from env at runtime |
+| Connectivity test | `transport.pull("onboarding-health-check")` | Expects None (404) on empty bucket; error 403/401 = auth failure; Timeout = unreachable |
+
+### Error recovery
+- **Timeout**: prompt retry or cancel
+- **Auth failure (403/401)**: show API key troubleshooting; prompt retry
+- **Other failures**: prompt retry with different URL
 
 ## Key Invariants
 
@@ -127,6 +175,6 @@
 | 2 | Seal verified? | `CryptoManager.seal(jsonSort(data)) == stored_seal` |
 | 3 | Block chain intact? | Each block's `prev_hash` matches previous block's hash field |
 | 4 | Entry hashes match? | Staging: core-field hash or all-field hash. Ledger: 2-space indent hash |
-| 5 | Transport reachable? | (Remote only) `git ls-remote` exits 0; or `HttpStagingTransport.pull()` succeeds |
+| 5 | Transport reachable? | (Git) `git ls-remote` exits 0; (HTTP) `HttpStagingTransport.pull()` succeeds or returns None |
 | 6 | Identity extractable? | `identity_secret_enc_fallback` decrypts to 32-byte hex |
 | 7 | Passphrase re-seal complete? | `LedgerDomain.verify()` returns True |

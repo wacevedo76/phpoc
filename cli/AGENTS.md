@@ -10,7 +10,7 @@ Command-line interface for the PH Ledger — user-facing commands, display logic
 - `cli/background.py` — Background sync check with notifications
 - `cli/daemon.py` / `cli/daemon_sync.py` — `PhDaemon` lifecycle and sync loop
 - `cli/daemon_cli.py` — Daemon CLI subcommands
-- `cli/onboarding.py` — `ph onboarding remote` flow
+- `cli/onboarding.py` — `ph onboarding remote` flow (git), `ph onboarding http` flow (Cloudflare R2)
 - `cli/onboarding_file.py` — `ph onboarding file` flow (v1/v2/chain import)
 - `cli/wal.py` — Write-ahead log and background push
 - `cli/trace.py` — Trace/debug logging

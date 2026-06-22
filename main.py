@@ -117,6 +117,9 @@ def main():
     onboarding_file_p.add_argument(
         "path", help="Path to the .json export file"
     )
+    onboarding_sub.add_parser(
+        "http", help="Import from Cloudflare R2 via HTTP transport"
+    )
 
     # Login / Logout commands
     subparsers.add_parser("login", help="Authenticate and cache session (re-prompts for passphrase)")
@@ -319,6 +322,12 @@ def main():
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
                 transport=onboarding_transport,
+            )
+        elif args.onboarding_method == "http":
+            from cli.onboarding import run_onboarding_http
+            ok = run_onboarding_http(
+                data_dir=CONFIG_DIR,
+                config_manager=CONFIG,
             )
         elif args.onboarding_method == "file":
             from cli.onboarding_file import run_onboarding_file

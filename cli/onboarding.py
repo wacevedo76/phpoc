@@ -1,10 +1,15 @@
-"""ph onboarding — import an existing ledger to a new device via git transport.
+"""ph onboarding — import an existing ledger to a new device.
 
-Orchestrates pulling all data from a remote git repo, extracting identity,
-verifying recovery seed, and setting a new passphrase — all in one flow.
+Supported transports:
+  - Git remote (``ph onboarding remote``)
+  - HTTP/Cloudflare R2 (``ph onboarding http``)
+  - Local file (``ph onboarding file <path>``)
 
-Steps:
-  1. Prompt for git remote URL → validate → store in config
+Remote flows (git + http) orchestrate pulling all data from a remote store,
+extracting identity, verifying recovery seed, and setting a new passphrase.
+
+Steps (remote):
+  1. Set up transport — prompt for git URL or Cloudflare Worker URL/API key
   2. Prompt for recovery seed → derive master key
   3. Pull ledger blocks from remote → write ledger.json
   4. Extract identity secret from genesis → write identity.json
@@ -32,6 +37,243 @@ from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 
 logger = logging.getLogger(__name__)
+
+
+# ── HTTP transport prompt ────────────────────────────────────────────────────
+
+
+def _prompt_http_transport() -> tuple:
+    """Prompt for Cloudflare Worker URL and API key, create transport.
+
+    Shows guided setup instructions, validates connectivity, and returns
+    both the transport instance and a config dict to persist.
+
+    Returns:
+        Tuple of (HttpStagingTransport, config_update_dict), or
+        (None, None) if the user cancels.
+    """
+    from core.sync.http_transport import HttpStagingTransport
+
+    print("\n=== Step 1: Cloudflare Worker Setup ===")
+    print()
+    print("To use Cloudflare R2 storage, you need a deployed phpoc Worker.")
+    print("If you haven't deployed one yet:")
+    print()
+    print("  1. cd worker && npm install")
+    print("  2. npx wrangler login")
+    print("  3. npx wrangler secret put PHPOC_API_KEY   (choose a strong key)")
+    print("  4. npx wrangler deploy")
+    print("  5. Copy the Worker URL from the deploy output")
+    print()
+
+    url = input("Worker URL (e.g. https://phpoc-staging.username.workers.dev): ").strip()
+    if not url:
+        print("No URL entered. Onboarding cancelled.")
+        return None, None
+    url = url.rstrip("/")
+
+    # API key can come from env var, stdin, or be omitted
+    import os as _os
+    env_key = _os.environ.get("PHPOC_CLOUDFLARE_API_KEY")
+    if env_key:
+        print("  API key loaded from $PHPOC_CLOUDFLARE_API_KEY environment variable.")
+        api_key = None  # transport will pick it up from env
+    else:
+        print()
+        print("  API key options:")
+        print("    1. Enter it now (stored in config file)")
+        print("    2. Skip — use $PHPOC_CLOUDFLARE_API_KEY env var later")
+        print()
+        entered = input("API key (optional, press Enter to skip): ").strip()
+        api_key = entered if entered else None
+
+    transport = HttpStagingTransport(base_url=url, api_key=api_key)
+
+    # Validate connectivity with a quick pull of a non-existent path
+    print("  Testing connection to Worker...", end=" ", flush=True)
+    try:
+        result = transport.pull("onboarding-health-check")
+        # Expected: 404 (None) or possibly 403 if API key is wrong
+        if result is None:
+            print("ok (reachable, no existing data)")
+        else:
+            print("ok")
+    except RuntimeError as exc:
+        err_str = str(exc)
+        if "403" in err_str or "401" in err_str:
+            print("AUTH ERROR")
+            print(f"  Worker returned {err_str.split(':')[0].strip()}.")
+            print("  Check your API key. If using the env var, verify it's set correctly:")
+            print("    echo $PHPOC_CLOUDFLARE_API_KEY")
+            retry = input("Retry with a different URL/key? (y/N): ").strip().lower()
+            if retry == "y":
+                return _prompt_http_transport()
+            print("Onboarding cancelled.")
+            return None, None
+        elif "Timeout" in err_str:
+            print("TIMEOUT")
+            print("  Worker did not respond. Check the URL and your network.")
+            retry = input("Retry? (y/N): ").strip().lower()
+            if retry == "y":
+                return _prompt_http_transport()
+            print("Onboarding cancelled.")
+            return None, None
+        else:
+            print("FAILED")
+            print(f"  Error: {exc}")
+            retry = input("Retry with a different URL? (y/N): ").strip().lower()
+            if retry == "y":
+                return _prompt_http_transport()
+            print("Onboarding cancelled.")
+            return None, None
+    except Exception as exc:
+        print("FAILED")
+        print(f"  Unexpected error: {exc}")
+        return None, None
+
+    # Build config dict to persist
+    config_update = {
+        "remote": {"transport": "http"},
+        "http": {
+            "provider": "cloudflare",
+            "base_url": url,
+            "api_key": api_key,
+        },
+    }
+
+    return transport, config_update
+
+
+def run_onboarding_http(
+    data_dir: Path,
+    config_manager,
+) -> bool:
+    """Run onboarding from a Cloudflare R2 Worker (HTTP transport).
+
+    Args:
+        data_dir: Path to the data directory.
+        config_manager: ConfigManager instance for reading/writing config.
+
+    Returns:
+        True if onboarding completed successfully.
+    """
+    print("=" * 60)
+    print("  PH Ledger — Onboarding (Cloudflare R2)")
+    print("  Import existing ledger from Cloudflare Worker")
+    print("=" * 60)
+
+    # Check if ledger already exists
+    ledger_path = data_dir / "ledger.json"
+    if ledger_path.exists():
+        override = input("Ledger already exists on this device. Overwrite? (y/N): ").strip().lower()
+        if override != "y":
+            print("Onboarding cancelled.")
+            return False
+
+    # ── Step 1: HTTP Transport Setup ──────────────────────────────────
+    transport, config_update = _prompt_http_transport()
+    if transport is None:
+        return False
+
+    # ── Step 2: Recovery Seed ────────────────────────────────────────
+    print("\n=== Recovery Seed ===")
+    print("Enter your recovery seed to decrypt the ledger.")
+    print("(This was shown when you ran 'ph init' on your original device.)")
+    rec_auth = RecoveryAuthenticator()
+    if not rec_auth.authenticate():
+        print("  No seed entered. Onboarding cancelled.")
+        return False
+
+    mk = rec_auth.get_key()
+    assert mk is not None
+
+    # ── Pull ledger blocks ───────────────────────────────────────────
+    ledger_blocks = _pull_ledger_blocks(transport, mk, data_dir)
+    if ledger_blocks is None:
+        print("  No ledger blocks found on remote. Cannot proceed.")
+        return False
+
+    ledger_path.write_text(json.dumps(ledger_blocks, indent=2))
+    print(f"  Wrote {len(ledger_blocks)} block(s) to ledger.json.")
+
+    # ── Extract identity from genesis ────────────────────────────────
+    identity_path = data_dir / "identity.json"
+    identity_ok = _extract_identity_from_genesis(ledger_blocks, mk, identity_path)
+    if not identity_ok:
+        print("  Could not extract identity from ledger. Proceeding without signing key.")
+
+    # ── Pull staging ─────────────────────────────────────────────────
+    crypto = CryptoManager(mk)
+    staging_data = _pull_staging(transport, mk, data_dir, crypto)
+    staging_path = data_dir / "staging.json"
+    _write_staging_json(staging_data, staging_path)
+
+    # ── Pull index ───────────────────────────────────────────────────
+    index_data = _pull_index(transport, mk)
+    index_path = data_dir / "index.json"
+    if index_data is not None:
+        index_path.write_text(json.dumps(index_data, indent=2))
+        print(f"  Wrote index with {len(index_data)} date(s) to index.json.")
+    else:
+        index_path.write_text(json.dumps({}, indent=2))
+        print("  Wrote empty index.json.")
+
+    # ── Save HTTP transport config ───────────────────────────────────
+    config_manager.write(config_update)
+    from core.sync.http_transport import HttpStagingTransport
+    print(f"  Transport config saved (Cloudflare Worker: {transport.base_url}).")
+
+    # ── Set new passphrase ───────────────────────────────────────────
+    recover_ok = _recover_ledger(ledger_path, data_dir, mk)
+    if not recover_ok:
+        print("  Failed to set new passphrase. Data files are intact but unsealed.")
+        return False
+
+    # ── Cache master key ─────────────────────────────────────────────
+    from security.auth import PassphraseAuthenticator
+    auth = PassphraseAuthenticator(ledger_path)
+    auth._cache_key(mk)
+    print("  Master key cached in session.")
+
+    # ── Verify ───────────────────────────────────────────────────────
+    verify_ok = _verify_ledger(ledger_path, crypto, identity_path)
+
+    # ── Summary ──────────────────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("  Onboarding Complete!")
+    print("=" * 60)
+    print(f"  Ledger:   {ledger_path} ({len(ledger_blocks)} blocks)")
+
+    if staging_data:
+        n_active = sum(1 for e in staging_data.get("entries", []) if e.get("data", {}).get("is_active"))
+        n_staged = len(staging_data.get("entries", []))
+        print(f"  Staging:  {staging_path} ({n_staged} entries, {n_active} active)")
+    else:
+        print(f"  Staging:  (no remote staging data)")
+
+    print(f"  Identity: {identity_path} {'✓' if identity_ok else '✗ not extracted'}")
+
+    from security.device_identity import RandomUUIDDeviceIdentityProvider
+    provider = RandomUUIDDeviceIdentityProvider(config_manager)
+    device_id = provider.get_device_identity(mk)
+    print(f"  Device:   {device_id.device_label or device_id.device_id}")
+
+    print(f"  Verify:   {'✓ Passed' if verify_ok else '✗ Failed'}")
+    print()
+    print("  You can now use all ph commands:")
+    print("    ph view        — view active tasks")
+    print("    ph add start   — start a new task")
+    print("    ph add end     — end a task")
+    print("    ph list all 7  — view recent entries")
+    print("    ph rep         — reputation summary")
+    print()
+
+    # Update stored reference for subsequent commands
+    config_update["_config_dir"] = str(data_dir)
+    # The global transport in main.py will be recreated on next command
+    # from the saved config. No need to modify transport refs here.
+
+    return verify_ok
 
 
 def _prompt_git_remote_url() -> Optional[str]:
@@ -357,7 +599,7 @@ def run_onboarding(
     config_manager,
     transport: Optional[AbstractStagingTransport] = None,
 ) -> bool:
-    """Run the full onboarding flow.
+    """Run the full git onboarding flow.
 
     Args:
         data_dir: Path to the data directory (resolved via --dir, XDG, etc.)

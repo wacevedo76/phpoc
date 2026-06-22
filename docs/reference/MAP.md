@@ -14,7 +14,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/background.py` | COLD | Phase A instant reads, background sync check |
 | `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
 | `cli/wal.py` | COLD | Write-ahead log, background push |
-| `cli/onboarding.py` | HOT | `run_onboarding()` — remote transport import |
+| `cli/onboarding.py` | HOT | `run_onboarding()` (git), `run_onboarding_http()` (Cloudflare R2) — remote transport import |
 | `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | COLD | `SyncOrchestrator` — sync lifecycle coordinator |
@@ -53,13 +53,14 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-### Tests (30 files, ~13,000 lines, 1341 tests)
+### Tests (31 files, ~13,500 lines, 1395 tests)
 
 Key test files:
 - `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
+- `tests/test_onboarding_e2e.py` — 44 E2E tests (27 GREEN / 13 RED), Phase 5d onboarding redesign
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
 
 ### Active docs

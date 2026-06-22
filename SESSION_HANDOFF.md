@@ -5,39 +5,57 @@
 
 ## Current State
 - **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete)
-- **CLI:** Maintenance mode — 1341 tests, fully functional, not actively worked on
+- **CLI:** Maintenance mode — 1395 tests (31 files), onboarding redesign in progress (Phase 5d)
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
+- **CLI Onboarding Redesign (2026-06-22):** E2E TDD test suite created (44 tests, 27 GREEN, 13 RED). Tests define desired behavior for unified pipeline. Next session: implement code to turn RED tests GREEN.
 - **Storage decision (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON). No adapter layer.
 - **Auth gate:** Cookie-only fast path. Full implementation in `src/sync/sync.js` (60 tests). Documented in `docs/design/DESIGN_MULTI_DEVICE_SESSION.md`.
 - **Architecture:** Multi-deployment via `StorageBackend` interface — standalone PWA (IndexedDB), self-hosted LAN/Docker (bridge server), SaaS (Worker→R2). Full details in `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` §11.
 
 ## Immediate Next Steps
 
-### 🔴 Phase 5c (current): Fix Duplicate Commits + End-to-End Test (2026-06-21)
+### 🔴 Phase 5d (current): CLI Onboarding Redesign — Unified Transport Picker (2026-06-22)
 
-**Problem:** "Sync Now" committed duplicate entries. `LedgerEngine.commit()` has no duplicate detection — it encrypts and appends entries as new day blocks regardless of whether they were already committed or exist in the ledger chain.
+**Design agreed (session with user):**
+- Replace `ph onboarding remote` with `ph onboarding git` (generic git, not GitHub-specific)
+- Add `ph onboarding http` as a provider sub-menu (skips top-level picker)
+- Add `ph onboarding http cloudflare` — Cloudflare R2 guided setup (code started this session)
+- Add `ph onboarding http generic` — generic HTTP server prompt
+- Add bare `ph onboarding` as a top-level interactive picker showing all sources
+- New `core/sync/transport_registry.py` — `TransportProvider` dataclass registry for extensibility
+- Each provider has its own `prompt_config()` function
+- Unified pipeline: picker → provider prompt → save config → transport-agnostic pull/passphrase/verify
 
-**Fix applied (NOT YET TESTED):**
-- `DevModeContext.jsx:1377`: `commitEntries` now filters `!e.committed` — skips already-marked entries
-- `SyncSettings.jsx:691`: `handleSyncNow` reads fresh entries via `sync.readEntries()` (not stale React closure) and filters `!e.is_active && !e.committed`
+**Changes this session (2026-06-22):**
+- `tests/test_onboarding_e2e.py`: **NEW** — 44 E2E tests, 27 GREEN / 13 RED (TDD)
+- `cli/onboarding.py`: Added `_prompt_http_transport()` and `run_onboarding_http()` (Cloudflare-specific)
+- `main.py`: Added `ph onboarding http` subparser
+- `docs/design/workflows/cli/onboarding-workflow.md`: Updated with HTTP flow
+- `docs/reference/MAP.md`, `cli/AGENTS.md`: Updated file inventory
 
-**⏭ Next session — test this:**
-1. The ledger ALREADY has duplicate blocks from before the fix (entries committed to blocks 1 and 2 with same data). The user must clear IndexedDB and start fresh to verify the fix works.
-2. Steps:
-   a. Browser DevTools → Application → IndexedDB → delete phpoc database
-   b. Reload `http://localhost:5173/?dev=false`
-   c. Re-import test ledger via onboarding (file at `~/code/phpoc-testing-data/phpoc-robertwallace.json`, credentials stored locally — see Testing Quick Reference below)
-   d. SyncSettings: enter Worker URL + API key (see Testing Quick Reference below), hit Save
-   e. Hit "Sync Now" — should commit exactly 2 entries (no duplicates)
-   f. Verify History tab shows them as committed
-3. If duplicates still appear, investigate `LedgerEngine.commit()` — add duplicate detection by entry hash or entry_id
-4. If duplicates appear but tests pass, add a test case for `commitEntries` with already-committed entries
+**Architectural decisions made this session:**
+1. **Staging key mismatch** → warn prominently, quarantine raw blob to `data_dir/forensic/`, log event, destroy remote staging, continue with ledger import
+2. **Wrong seed** → catch ValueError, friendly error message, no partial writes
+3. **Chain divergence** → abort onboarding with clear message, no partial writes
+4. **Staging empty (normal)** → write `[]`, no warnings, ledger imports fine
+5. **Forensic mechanism** → `data_dir/forensic/` directory with `events.log` + raw blob files
+
+**⏭ Next session:**
+1. **Fix wrong seed (2 RED tests):** Add try/except in `_pull_ledger_blocks()` for `ValueError` from deobfuscation → friendly error, return None
+2. **Fix chain divergence (4 RED tests):** Add partial-chain detection in `_pull_ledger_blocks()` — compare pulled count vs expected, abort if truncated
+3. **Fix staging key mismatch (7 RED tests):** Create `ForensicLogger` utility, add quarantine/log/destroy flow, add `delete()` to `AbstractStagingTransport`
+4. Create `core/sync/transport_registry.py` with `TransportProvider` registry
+5. Rename `onboarding remote` → `onboarding git` in CLI parsers + dispatch
+6. Refactor `cli/onboarding.py` — unified pipeline consumes provider from registry
+7. Add `ph onboarding http generic` provider
+8. Add bare `ph onboarding` as top-level picker
+9. Remove temporary `run_onboarding_http()` after unification
 
 **Pending features (not yet implemented):**
-- `ph onboarding file <path>` — ✅ **IMPLEMENTED (2026-06-21):** `cli/onboarding_file.py` imports v1/v2/raw-chain JSON files. Prompt for recovery seed → verify seal → write data files → set passphrase → verify. Supports all three export formats.
 - `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2
 - `SyncIndicator` should reflect `isAutoSyncing`
 - Re-auth overlay for TTL expiry on existing cookies
+- Duplicate commit fix (Phase 5c) still needs browser E2E testing
 
 ### 🔴 Phase 1 (TDD RED): Genesis Compatibility Gate — ✅ COMPLETE (2026-06-20)
 
@@ -197,6 +215,13 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 | **Worker configs** | `worker/wrangler.toml` (production, `phpoc-data`) / `worker/wrangler.testing.toml` (testing, `phpoc-data-testing`) |
 
 > **Credentials** (API key, passphrase, recovery seed, wrangler token) are stored locally outside the repo. Ask the user to provide them if needed.
+
+## Files Changed This Session (2026-06-22)
+
+| File | Change |
+|------|--------|
+| `tests/test_onboarding_e2e.py` | **NEW** — 44 E2E tests (27 GREEN / 13 RED) for Phase 5d onboarding redesign |
+| `SESSION_HANDOFF.md` | Updated Phase 5d status, added architectural decisions, moved to next implementation phase |
 
 ## Files Changed This Session (2026-06-21)
 
