@@ -76,6 +76,7 @@ Key test files:
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
 | `../design/workflows/cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `../design/workflows/cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `MAP.md` | This file — project map |
