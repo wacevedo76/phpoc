@@ -34,6 +34,7 @@
 4. If duplicates appear but tests pass, add a test case for `commitEntries` with already-committed entries
 
 **Pending features (not yet implemented):**
+- `ph onboarding file <path>` — ✅ **IMPLEMENTED (2026-06-21):** `cli/onboarding_file.py` imports v1/v2/raw-chain JSON files. Prompt for recovery seed → verify seal → write data files → set passphrase → verify. Supports all three export formats.
 - `pushLedgerBlocks()` — committed ledger blocks remain local-only, never pushed to R2
 - `SyncIndicator` should reflect `isAutoSyncing`
 - Re-auth overlay for TTL expiry on existing cookies

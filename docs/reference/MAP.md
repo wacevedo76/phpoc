@@ -14,8 +14,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/background.py` | COLD | Phase A instant reads, background sync check |
 | `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
 | `cli/wal.py` | COLD | Write-ahead log, background push |
-| `cli/onboarding.py` | COLD | `ph onboarding` |
-| `cli/trace.py` | COLD | Trace/debug logging |
+| `cli/onboarding.py` | HOT | `run_onboarding()` — remote transport import |
+| `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | COLD | `SyncOrchestrator` — sync lifecycle coordinator |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |

@@ -103,7 +103,20 @@ def main():
     subparsers.add_parser("recover", help="Recover access using seed and set new passphrase")
 
     # Onboarding command (import existing ledger to a new device)
-    subparsers.add_parser("onboarding", help="Import existing ledger to this device via git remote")
+    onboarding_p = subparsers.add_parser(
+        "onboarding",
+        help="Import existing ledger to this device (remote or file)",
+    )
+    onboarding_sub = onboarding_p.add_subparsers(dest="onboarding_method")
+    onboarding_sub.add_parser(
+        "remote", help="Import from remote (git/HTTP transport per config)"
+    )
+    onboarding_file_p = onboarding_sub.add_parser(
+        "file", help="Import from a local JSON export file"
+    )
+    onboarding_file_p.add_argument(
+        "path", help="Path to the .json export file"
+    )
 
     # Login / Logout commands
     subparsers.add_parser("login", help="Authenticate and cache session (re-prompts for passphrase)")
@@ -296,15 +309,27 @@ def main():
         return
 
     if args.command == "onboarding":
-        from cli.onboarding import run_onboarding
-        config_with_dir = dict(CONFIG.read())
-        config_with_dir["_config_dir"] = str(CONFIG_DIR)
-        onboarding_transport = create_transport_from_config(config_with_dir)
-        ok = run_onboarding(
-            data_dir=CONFIG_DIR,
-            config_manager=CONFIG,
-            transport=onboarding_transport,
-        )
+        # Backward compat: plain 'ph onboarding' = remote
+        if not args.onboarding_method or args.onboarding_method == "remote":
+            from cli.onboarding import run_onboarding
+            config_with_dir = dict(CONFIG.read())
+            config_with_dir["_config_dir"] = str(CONFIG_DIR)
+            onboarding_transport = create_transport_from_config(config_with_dir)
+            ok = run_onboarding(
+                data_dir=CONFIG_DIR,
+                config_manager=CONFIG,
+                transport=onboarding_transport,
+            )
+        elif args.onboarding_method == "file":
+            from cli.onboarding_file import run_onboarding_file
+            ok = run_onboarding_file(
+                data_dir=CONFIG_DIR,
+                config_manager=CONFIG,
+                file_path=args.path,
+            )
+        else:
+            print(f"Unknown onboarding method: {args.onboarding_method}")
+            return
         return
 
     if args.command == "recover":
