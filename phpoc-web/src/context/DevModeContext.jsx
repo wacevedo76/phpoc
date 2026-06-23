@@ -224,6 +224,49 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     return { ...services, sync: wrappedSync };
   }, [services]);
 
+  // ── Re-auth overlay state ───────────────────────────────────────
+  // Triggered by sync when cookie TTL expires or device mismatch detected.
+  // The overlay prompts for passphrase; on success re-runs bootstrap.
+  //
+  // NOTE: Must be defined BEFORE the cookie TTL monitor useEffect below,
+  // since that effect references triggerReauth in its dependency array.
+  const [reauthActive, setReauthActive] = useState(false);
+
+  const triggerReauth = useCallback(() => {
+    setReauthActive(true);
+  }, []);
+
+  const dismissReauth = useCallback(() => {
+    setReauthActive(false);
+  }, []);
+
+  /**
+   * Handle re-auth: re-derive the master key from passphrase + stored seed,
+   * set it on the existing crypto instance, then dismiss the overlay.
+   * Unlike login(), this does NOT re-bootstrap — it only refreshes the
+   * in-memory master key so checkAndSync() can proceed.
+   */
+  const handleReauth = useCallback(async (passphrase) => {
+    // Re-derive master key from stored seed and set on existing crypto.
+    // authenticate() is deterministic — same passphrase+seed → same MK.
+    // This ONLY caches the MK; sync is triggered separately by the user
+    // pressing "Sync Now".
+    if (!services.storage) {
+      throw new Error('Storage not initialized. Please refresh the page.');
+    }
+    if (!services.crypto) {
+      throw new Error('Crypto not initialized. Please refresh the page.');
+    }
+    const seed = await services.storage.get(STORED_SEED_KEY);
+    if (!seed) {
+      throw new Error('No recovery seed found. Cannot re-authenticate.');
+    }
+    const mk = services.crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
+    services.crypto.setMasterKey(mk);
+    // Success — dismiss overlay (user must press "Sync Now" manually)
+    setReauthActive(false);
+  }, [services]);
+
   // ── Cookie TTL monitor ─────────────────────────────────────────
   // Monitors the local device cookie TTL. When the cookie expires,
   // clears the master key and triggers the re-auth overlay.
@@ -295,46 +338,6 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // Tracks storage quality: 'persistent' (IndexedDB), 'session' (SessionStorage),
   // or 'memory' (in-memory Map, data lost on refresh).
   const [storageStatus, setStorageStatus] = useState('persistent');
-
-  // ── Re-auth overlay state ───────────────────────────────────────
-  // Triggered by sync when cookie TTL expires or device mismatch detected.
-  // The overlay prompts for passphrase; on success re-runs bootstrap.
-  const [reauthActive, setReauthActive] = useState(false);
-
-  const triggerReauth = useCallback(() => {
-    setReauthActive(true);
-  }, []);
-
-  const dismissReauth = useCallback(() => {
-    setReauthActive(false);
-  }, []);
-
-  /**
-   * Handle re-auth: re-derive the master key from passphrase + stored seed,
-   * set it on the existing crypto instance, then dismiss the overlay.
-   * Unlike login(), this does NOT re-bootstrap — it only refreshes the
-   * in-memory master key so checkAndSync() can proceed.
-   */
-  const handleReauth = useCallback(async (passphrase) => {
-    // Re-derive master key from stored seed and set on existing crypto.
-    // authenticate() is deterministic — same passphrase+seed → same MK.
-    // This ONLY caches the MK; sync is triggered separately by the user
-    // pressing "Sync Now".
-    if (!services.storage) {
-      throw new Error('Storage not initialized. Please refresh the page.');
-    }
-    if (!services.crypto) {
-      throw new Error('Crypto not initialized. Please refresh the page.');
-    }
-    const seed = await services.storage.get(STORED_SEED_KEY);
-    if (!seed) {
-      throw new Error('No recovery seed found. Cannot re-authenticate.');
-    }
-    const mk = services.crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
-    services.crypto.setMasterKey(mk);
-    // Success — dismiss overlay (user must press "Sync Now" manually)
-    setReauthActive(false);
-  }, [services]);
 
   useEffect(() => {
     if (bootAttempted.current) return;
