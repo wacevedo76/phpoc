@@ -11,17 +11,18 @@
  * In the `ready` phase, services (crypto, sync, storage) are fully
  * initialized and available via the context.
  *
- * Dev mode (`?dev=true`) bypasses the landing/onboarding flow and seeds
- * mock data for development. Production mode (default) uses the full
- * phase-based flow with real WASM crypto.
+ * Dev mode (`?dev=true`) and production mode follow the same boot path
+ * with real WASM crypto. The `isDev` flag is available for future dev-only
+ * UI features (badges, debug panels, verbose logging). No mock services
+ * or dummy crypto are used — all cryptography goes through the Rust WASM
+ * core (phpoc-crypto-core).
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { DummyCryptoService } from '../services/DummyLedger.js';
 import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport } from '@sync/index.js';
 import { createAutoSync } from '../hooks/useAutoSync.js';
 import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
-import { exportLedger } from '../services/ledger_export.js';
+import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
 import { importLedger } from '../services/ledger_import.js';
 
 // ── Context ──────────────────────────────────────────────────────────
@@ -331,8 +332,8 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   // ── Pending import state (carries data from validate to confirm) ──
   const pendingImportRef = useRef(null);
 
-  // Tracks whether real WASM crypto loaded or we fell back to dummy.
-  // 'wasm' = real crypto, 'fallback' = DummyCryptoService (INSECURE).
+  // Tracks whether real WASM crypto loaded successfully.
+  // 'wasm' = real crypto, 'fallback' = WASM failed — operations blocked.
   const [cryptoStatus, setCryptoStatus] = useState('wasm');
 
   // Tracks storage quality: 'persistent' (IndexedDB), 'session' (SessionStorage),
@@ -348,13 +349,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
         const storage = await createStorage();
         setStorageStatus(_storageStatus);
 
-        if (isDev) {
-          // ── DEV MODE: eager bootstrap with mock data ──
-          await bootDevMode(storage);
-          return;
-        }
-
-        // ── PRODUCTION MODE: check for existing data ──
+        // ── Check for existing data ──
         const hasData = await detectExistingData(storage);
         setHasExistingData(hasData);
 
@@ -376,107 +371,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     boot();
   }, [mode]);
 
-  /**
-   * Dev mode bootstraps DummyCryptoService with mock remote data.
-   * (Kept from the original implementation for backward compat.)
-   */
-  async function bootDevMode(storage) {
-    try {
-      // Dynamic import to avoid bundling mock infra in production
-      const { MockRemoteBackend } = await import('@sync/index.js');
-      const { seedMockRemote, inspectMockRemote } = await import('../services/MockDataSeeder.js');
 
-      const crypto = await DummyCryptoService.create();
-      crypto.setMasterKey('deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
-
-      const mockRemote = new MockRemoteBackend({ latencyMs: 30 });
-      const deviceUuid = crypto.getDeviceId(crypto.getMasterKey());
-
-      // Seed mock remote with 14 days of data
-      await seedMockRemote(mockRemote, crypto, {
-        historyDays: 14,
-        activeTasks: 2,
-        deviceUuid,
-      });
-
-      // Create SyncService connected to mock remote
-      const sync = new SyncService(storage, crypto, mockRemote, {
-        cookieTtlMinutes: 60,
-      });
-
-      // Bootstrap local cache: match cookie, pull seeded data
-      const remoteCookieRaw = await mockRemote.pull('staging/blobs/device_cookie.bin');
-      if (remoteCookieRaw) {
-        const remoteCookie = JSON.parse(new TextDecoder().decode(remoteCookieRaw));
-        await storage.set('cookie', {
-          device_specifier: remoteCookie.device_specifier,
-          creation_time: Date.now(),
-        });
-      }
-
-      // Pull seeded entries into local cache
-      const seededBlobBytes = await mockRemote.pull('staging/blobs/current.json');
-      if (seededBlobBytes) {
-        const seededBlob = JSON.parse(new TextDecoder().decode(seededBlobBytes));
-        if (seededBlob.entries && Array.isArray(seededBlob.entries)) {
-          const dtos = seededBlob.entries.map(raw => ({
-            entry_id: raw.entry_id || '',
-            title: raw.title || '',
-            start_epoch: raw.start_epoch || 0,
-            end_epoch: raw.end_epoch || null,
-            duration: raw.duration || 0,
-            is_active: raw.is_active || false,
-            is_paused: raw.is_paused || false,
-            pauses: raw.pauses || [],
-            tags: raw.tags || [],
-            comment: raw.comment || null,
-            media: raw.media || [],
-            device_uuid: raw.device_uuid || '',
-            end_device_uuid: raw.end_device_uuid || '',
-            metadata: raw.metadata || {},
-            hash: raw.hash || '',
-          }));
-          await sync._local.writeEntries(dtos);
-        }
-      }
-
-      // Run checkAndSync (should be fast path)
-      try {
-        await sync.checkAndSync(300);
-      } catch {
-        // Non-critical
-      }
-
-      // Dev info display
-      let devInfo = null;
-      try {
-        devInfo = await inspectMockRemote(mockRemote);
-      } catch {
-        // ignore
-      }
-
-      setServices({ crypto, sync, storage, mockRemote, devInfo });
-      setPhase('ready');
-      setLoading(false);
-    } catch (err) {
-      // Fallback to basic dummy services
-      try {
-        const fallbackCrypto = new DummyCryptoService();
-        const { DummySyncService } = await import('../services/DummyLedger.js');
-        const fallbackSync = new DummySyncService(fallbackCrypto);
-        setServices({
-          crypto: fallbackCrypto,
-          sync: fallbackSync,
-          storage: fallbackSync._storage,
-          mockRemote: null,
-        });
-        setPhase('ready');
-      } catch {
-        setError(err.message);
-      }
-      setLoading(false);
-    }
-  }
 
   // ── Initialize real services (called when transitioning to 'ready') ──
 
@@ -517,6 +412,25 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       // Non-critical
     }
 
+    // Ensure a local device cookie exists BEFORE the cookie TTL monitor starts.
+    // When there's no remote transport, checkAndSync() returns READY without
+    // creating a cookie. The monitor then sees no cookie → treats as expired →
+    // calls crypto.clearMasterKey() → subsequent renders crash in
+    // getDeviceIdWithCachedKey() with "No master key cached".
+    try {
+      const existingCookie = await storage.get('cookie');
+      if (!existingCookie) {
+        // Create a minimal cookie so the monitor sees a valid session.
+        // 'local' deviceUuid is harmless — the real deviceUuid will be
+        // set when SyncService._getDeviceId() fires on the next sync.
+        const { DeviceCookie } = await import('@sync/index.js');
+        await DeviceCookie.create('local', storage, crypto);
+      }
+    } catch {
+      // Non-critical — cookie monitor will just skip the first check
+      // if checkCookieTtl's storage read fails.
+    }
+
     setServices({ crypto, sync, storage, mockRemote: null });
     setPhase('ready');
     setLoading(false);
@@ -555,20 +469,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('No recovery seed found. The ledger may be corrupted.');
     }
 
-    // Initialize crypto service
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    // Initialize crypto service — real WASM only, no fallback
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // Derive master key
     let masterKey;
@@ -600,20 +504,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   const createNewLedger = useCallback(async (passphrase, username = '', email = '') => {
     setLoading(true);
 
-    // Initialize crypto service
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    // Initialize crypto service — real WASM only, no fallback
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // Generate seed
     const seed = crypto.generateSeed();
@@ -704,20 +598,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   const validateImport = useCallback(async (file, passphrase, seed) => {
     setLoading(true);
 
-    // Initialize crypto
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    // Initialize crypto — real WASM only, no fallback
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // Derive master key
     const masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
@@ -861,20 +745,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, userSeed, genesisBlock, chain, format }) => {
     setLoading(true);
 
-    // ── 1. Initialize crypto ───────────────────────────────────────
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    // ── 1. Initialize crypto — real WASM only, no fallback ────────
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // ── CLI block format: fetch + deobfuscate + assemble chain ──
     if (format === 'blocks') {
@@ -1114,20 +988,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   const importFromCloud = useCallback(async ({ baseUrl, apiKey, filename, passphrase, seed, genesisBlock, authMode }) => {
     setLoading(true);
 
-    // ── 1. Initialize crypto ─────────────────────────────────────
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    // ── 1. Initialize crypto — real WASM only, no fallback ───────
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // ── 2. Create transport and import source ────────────────────
     const transport = new HttpTransport({
@@ -1283,12 +1147,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
         masterKey = existingCrypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
       }
       const entries = await existingSync.readEntries();
-      if (entries.length === 0) {
-        throw new Error('No entries to export.');
+      const blocks = await existingStorage.get('ledger:blocks') || [];
+      if (blocks.length === 0 && entries.length === 0) {
+        throw new Error('No data to export.');
       }
-      const blob = await exportLedger(entries, existingCrypto, masterKey);
+      const blob = await exportLedgerFull(blocks, entries, existingCrypto, masterKey);
       const timestamp = new Date().toISOString().slice(0, 10);
-      triggerDownload(blob, `ph-ledger-export-${timestamp}.json`);
+      triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
       return;
     }
 
@@ -1296,19 +1161,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Load on demand: create storage, init crypto, read entries, export.
     const storage = await createStorage();
 
-    let crypto;
-    try {
-      const { CryptoService } = await import('../crypto/index.js');
-      crypto = await CryptoService.create();
-      setCryptoStatus('wasm');
-    } catch (err) {
-      console.error(
-        '[PHPOC] WARNING: WASM crypto failed to load — falling back to DummyCryptoService.',
-        'Encryption will NOT be real. Cause:', err,
-      );
-      setCryptoStatus('fallback');
-      crypto = await DummyCryptoService.create();
-    }
+    const { CryptoService } = await import('../crypto/index.js');
+    const crypto = await CryptoService.create();
+    setCryptoStatus('wasm');
 
     // Use cached master key if available, else authenticate via seed
     let masterKey = crypto.getMasterKey();
@@ -1323,13 +1178,14 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Read entries directly from storage
     const entries = await storage.get(ENTRIES_KEY) || [];
-    if (entries.length === 0) {
-      throw new Error('No entries to export.');
+    const blocks = await storage.get('ledger:blocks') || [];
+    if (blocks.length === 0 && entries.length === 0) {
+      throw new Error('No data to export.');
     }
 
-    const blob = await exportLedger(entries, crypto, masterKey);
+    const blob = await exportLedgerFull(blocks, entries, crypto, masterKey);
     const timestamp = new Date().toISOString().slice(0, 10);
-    triggerDownload(blob, `ph-ledger-export-${timestamp}.json`);
+    triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
   }, [services]);
 
   /**

@@ -1,20 +1,23 @@
 # Web Workflow Specifications
 
 ## Purpose
-Web-specific workflow specifications for the PHPOC React application (sync, auth, import/export).
+AI-agent consumable workflow references for the PHPOC React application.
+Not user-facing docs — designed to be parsed quickly by an agent tracing
+issues, adding features, or reviewing code.
 
 ## Ownership
-- `Remote_Local-Workflow.md` — Compressed remote/local sync workflow reference (AI-consumable troubleshooting doc)
+- `Remote_Local-Workflow.md` — Remote/local sync: staging, genesis gate, reconcile, commit, auto-sync
+- `Local_Import-Export-Workflow.md` — File-based import/export: v1/v2/raw-chain, two-phase validate→confirm, genesis gating
 
 ## Local Contracts
-- Workflow docs describe expected behavior — test suites in `phpoc-web/test/` validate against these
-
-## Work Guidance
-- Add new web workflows as standalone markdown files in this directory
-- Reference `phpoc-web/AGENTS.md` for web architecture
+- **Agent-only** — concise tables, decision trees, invariants, checkpoints, gaps.
+- Follow the parent `workflows/AGENTS.md` template: Module Map, Storage Keys,
+Decision Tree, Key Invariants, Diagnostic Checkpoints, Known Gaps.
+- Test suites in `phpoc-web/test/` validate against these.
+- Keep module paths and export names current.
 
 ## Verification
-None — workflow docs are specifications, verified indirectly through test suites.
+None — verified indirectly through test suites.
 
 ## Child DOX Index
 None — flat directory structure.

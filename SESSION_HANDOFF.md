@@ -14,16 +14,66 @@
 
 ## Immediate Next Steps
 
-### 🟢 Next: SyncIndicator → isAutoSyncing ✅ (2026-06-22)
+### 🔴 Phase 5c (Duplicate Commit Fix) — Browser E2E ✅ (2026-06-24)
 
-Wired `SyncIndicator` to reflect `isAutoSyncing` from the auto-sync hook. Changes:
-- `DevModeContext.jsx`: Added `isAutoSyncing` React state + `onSyncingChange: setIsAutoSyncing` to `createAutoSync` call + exposed in context
-- `SyncSettings.jsx`: `displayStatus` now checks `isAutoSyncing` alongside local `syncing` state → shows SYNCING during auto-pushes
-- New test: `sync_indicator_test.mjs` — 32 tests (status config completeness, each status mapping, compact mode, fallback)
+**E2E verified in production build.** Created 2 tasks, committed via "Commit All (2)", verified ledger has exactly 2 blocks (genesis + 1 day block with 2 entries). No duplicate blocks. The `!e.committed` filter in `commitEntries` (line 1429) works correctly.
 
-### ⏭ Also pending
-- Duplicate commit fix (Phase 5c) — browser E2E testing
-- Settings genesis gate integration — browser E2E testing
+### 🔴 Step 1/2: Remove Dev-Mode Mock Bootstrap ✅ (2026-06-24)
+
+**Done:** Removed `bootDevMode()` function (~130 lines) from `DevModeContext.jsx`. This function was the sole source of `DummyCryptoService`, `MockRemoteBackend`, and `MockDataSeeder` in the dev boot path. Both dev and production modes now follow the same boot path: create storage → check for existing data → landing/onboarding. The `isDev` flag and `toggleMode` remain for future UI use (dev badges, debug panels).
+
+### 🔴 Step 2/2: Remove DummyCryptoService Fallbacks ✅ (2026-06-24)
+
+**Done:** Removed all 6 `DummyCryptoService` try/catch fallback blocks from production flows (`login`, `createNewLedger`, `connectToWorker`, `importFromCloud`, `validateImport`, `exportLedgerAction`). Removed `import { DummyCryptoService }` line. All crypto init is now unconditional — WASM failure means an uncaught error, no silent degradation to dummy crypto. Updated `cryptoStatus` comment. Updated JSDoc header for DevModeContext. Total: 168 LOC removed. Zero regressions across all test suites.
+
+**Remaining DummyCryptoService references:** Only in `src/services/DummyLedger.js` (definition) and `src/services/MockDataSeeder.js` (test helper) — neither imported by the app boot path.
+
+### 🔴 Step 3/3: WASM Resolution Fix ✅ (2026-06-24)
+
+**Done:** WASM artifacts copied from `phpoc-crypto-core/pkg/` into `phpoc-web/src/crypto/wasm/`. Import path changed from `../../../phpoc-crypto-core/pkg/` to `./wasm/`. Removed `build.rollupOptions.external` exclusion + `optimizeDeps.exclude` for `phpoc_crypto_core` — Vite now bundles the WASM glue JS and content-hashes the `.wasm` binary via `new URL()` asset references. Production build verified: `phpoc_crypto_core_bg-30LYJKWU.wasm` (134KB) + `phpoc_crypto_core-D9wuZLDO.js` (10KB), served with correct `application/wasm` MIME type. Browser E2E verified: app loads with real WASM crypto, no yellow warning banner. 96 crypto tests pass (22 smoke + 74 integration), zero regressions.
+
+**Files changed:**
+- `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` — NEW (copy from phpoc-crypto-core/pkg/)
+- `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` — NEW (copy from phpoc-crypto-core/pkg/)
+- `phpoc-web/src/crypto/index.js` — updated import path + JSDoc
+- `phpoc-web/vite.config.js` — removed external exclusion + optimizeDeps.exclude
+
+### 🔴 Settings Genesis Gate — TDD RED: Create Component Tests (NEXT, 2026-06-24)
+
+- ⏭ **Next:** Create `test/settings_genesis_component_test.mjs` with 30 RED tests covering Category B (React component integration), Category E (edge cases), and Category F (accessibility). Requires `vitest` + `@testing-library/react` + `jsdom` as dev dependencies.
+- **Reference:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — full test plan with 54 tests across 6 categories
+- **Prerequisites:** `npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom`
+- **Config:** Add `test` block to `vite.config.js` (environment: jsdom, globals: true, setupFiles)
+
+### 🔴 Settings Genesis Gate Integration — TDD Phase RED (2026-06-24)
+
+**TDD test plan created:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — 54 tests identified across 6 categories (A–F). 16 existing (🟢), 38 planned (🔴).
+
+- **Category A:** State Machine Logic — 13 tests (🟢 DONE, `test/settings_genesis_test.mjs`)
+- **Category B:** React Component Integration — 20 tests (🔴 PLANNED, needs Vitest + RTL)
+- **Category C:** Browser E2E — 8 tests (🔴 PLANNED, agent-browser session)
+- **Category D:** SyncService Genesis Gate — 3 tests (🟢 DONE, `test/sync_service_test.mjs` Group I)
+- **Category E:** Edge Cases & Regressions — 6 tests (🔴 PLANNED)
+- **Category F:** Accessibility & A11Y — 4 tests (🔴 PLANNED)
+
+⏭ **Next:** Install Vitest + @testing-library/react dev dependencies. Create `test/settings_genesis_component_test.mjs` with 30 RED tests (Categories B, E, F). All tests expected to fail — confirm RED phase.
+
+### Browser E2E Testing Setup (2026-06-24)
+
+- **Browser:** Vivaldi with `--remote-debugging-port=9222`. Connect via `agent_browser: connect 9222` with `sessionMode: "fresh"`.
+- **Tab rule:** After connecting, run `tab list` → find tab with `localhost:5173` (or 4173) → `tab t<N>` to switch. **Do NOT open new tabs** — reuse the existing one. If server restart opens a new tab, find it via `tab list` by URL.
+- **Dev server:** Start with `cd phpoc-web && npx vite --host 0.0.0.0 --port 5173` (now works — WASM fix resolved the import path issue)
+- **Production preview:** `cd phpoc-web && npx vite preview --host 0.0.0.0 --port 4173`
+- **WASM crypto is NOW FIXED** — artifacts bundled from `src/crypto/wasm/`, Vite handles `.wasm` via `new URL()` asset references. No more DummyCryptoService fallback.
+- **Re-auth overlay works** in production mode.
+- **Job mode (`steps`)** works for batched fills.
+
+### Test Ledger Credentials (2026-06-24)
+
+- **Passphrase:** `VZQKp6TrIBK/GUtsjoof75HRyzd7w8S0`
+- **Master seed:** `hopULgZOX/cpcLTlur/T0jbt9gV5Q/w/FEBMpLnR6oA=`
+- **Username:** `testuser` | **Email:** `test@example.com`
+- **Ledger:** 2 blocks (genesis + 1 day block), 2 entries committed
 
 ### 🟢 Commit→Push Wiring — TDD GREEN phase ✅ (2026-06-22)
 
@@ -40,8 +90,28 @@ Wired `SyncIndicator` to reflect `isAutoSyncing` from the auto-sync hook. Change
 
 
 
+### 🟢 Import/Export Test Coverage — Tier 1 Complete ✅ (2026-06-24)
+
+**170 new tests written, all GREEN.** Closes the biggest coverage gap — raw chain import path, v2 format import, two-phase orchestration, and full roundtrip fidelity. No regressions in existing 112 tests. Total web import/export coverage: 282 tests across 8 files.
+
+| File | Tests | Covers |
+|------|:-----:|--------|
+| `test/ledger_import_chain_test.mjs` | 31 | Raw chain: genesis detection, block seals, prev_hash linkage, entry hash validation, mixed block types, 6 error paths |
+| `test/ledger_import_v2_test.mjs` | 42 | v2 format: genesis hash extraction, ledger+staging preservation, empty edge cases, active task preservation, seal tampering, wrong key |
+| `test/import_orchestration_test.mjs` | 51 | Two-phase: validate→confirm, genesis gating, staging merge dedup, ID collision resolution, identity persistence, call guard |
+| `test/ledger_roundtrip_test.mjs` | 46 | Roundtrip: v1/v2 fidelity, active/paused entries, rich metadata, deterministic seal, wrong key rejection |
+
+**Zero red tests — nothing to fix in next session.**
+
+### ⏭ Remaining Gaps (future work)
+
+1. **Tier 2 — React component tests** (~9 tests): OnboardingScreen import form state machine — file picker gating, destroy warning display, checkbox gates, genesis error display. Requires adding `vitest` + `@testing-library/react` as dev dependencies.
+2. **Tier 3 — Browser E2E** (~4 tests): Real browser flow with Playwright — full import from file picker, export from Settings, roundtrip in a fresh session.
+3. **Same-genesis merge support**: `LedgerMerge.merge()` exists in `src/ledger/merge.js` but import rejects same-genesis with "merge not yet supported". Needs to be wired into `confirmImport`.
+4. **Raw chain staging extraction**: CLI `ledger.json` import puts all entries inside `ledger:blocks` — no way to extract them into staging for editing or re-commit.
+
 **Pending features (not yet implemented):**
-- Duplicate commit fix (Phase 5c) still needs browser E2E testing
+- (none — import/export Tier 1 coverage complete, Tier 2/3 + merge staging for future sessions)
 
 ### 🔴 Phase 1 (TDD RED): Genesis Compatibility Gate — ✅ COMPLETE (2026-06-20)
 
@@ -165,7 +235,7 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 - ~~`HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.~~ ✅ **FIXED (2026-06-20):** `AbortSignal.timeout()` wired in all four methods (`pull`, `push`, `listFiles`, `delete`). 11 new tests (5 timeout-signal verification + 6 delete method coverage), 60 total transport tests, 0 failures.
 - ~~MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.~~ ✅ **FIXED (2026-06-20):** `MockRemoteBackend.listFiles()` now strips prefix to return basenames only, matching Worker + Git transport contract. 3 test expectations updated across mock_remote_test.mjs and http_backend_test.mjs. Full suite passes.
 - ~~ETag caching stale in long-running daemon mode (CLI-only, low priority).~~ ✅ **FIXED (2026-06-20):** Added `cacheTtlMs`/`cache_ttl_s` option to JS `HttpTransport` and Python `HttpStagingTransport`. Entries auto-evicted on access when older than TTL. New `evictStale()`/`evict_stale()` method for periodic daemon cleanup. 6 new TTL tests (JS), 66 total transport tests, 0 failures. Python syntax verified.
-- ~~WASM CryptoService dynamic import (`@vite-ignore`) may fail in dev HMR mode — falls back to DummyCryptoService transparently.~~ ✅ **FIXED (2026-06-20):** Removed `@vite-ignore` to let Vite properly track the WASM module in dev mode. Added `build.rollupOptions.external` for production safety. All 4 silent fallback points in `DevModeContext.jsx` now emit `console.error` and set `cryptoStatus='fallback'`. App UI shows a red sticky warning banner when running in production mode with dummy crypto.
+- ~~WASM CryptoService dynamic import unresolved in production build — Vite's `build.rollupOptions.external` excluded `phpoc_crypto_core` from bundling, causing the dynamic import to fail at runtime.~~ ✅ **FIXED (2026-06-24):** WASM artifacts copied into `src/crypto/wasm/`, import path updated to `./wasm/`, `external` exclusion and `optimizeDeps.exclude` removed. Vite now bundles the glue JS and content-hashes the `.wasm` binary via `new URL()` asset references. Production build verified, browser E2E verified — real WASM crypto loads with no fallback.
 - ~~IndexedDB unavailable in private/incognito browsing — falls back to in-memory storage (`FallbackStorage`), data lost on refresh. Now cached at module level so it survives logout/login within the same session.~~ ✅ **FIXED (2026-06-20):** Cascade fallback: IndexedDB → `SessionStorageBackend` (survives refresh in private browsing, uses `window.sessionStorage`) → in-memory Map (last resort). `SessionStorageBackend` auto-falls-back to Map on quota errors. `storageStatus` state exposed to UI with amber (session) or red (memory) warning banners. All existing tests pass.
 - **Ledger merge — GREEN (2026-06-19):** `LedgerMerge.merge()` implemented in `src/ledger/merge.js`. 7-step algorithm + Step 0 input chain validation. 99 assertions, 0 failures. ⏭ Next: Wire into genesis compatibility gate.
 - **Genesis gate — GREEN (2026-06-20):** `GenesisGate.check()` fully implemented. Fetches remote chain, validates format/seals/linkage, compares genesis hashes, delegates to `LedgerMerge.merge()`. 89 assertions, 0 failures. ⏭ Code review done, Settings/Sync integrations done.
@@ -190,6 +260,7 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 - ~~**Genesis merge result never persisted** (2026-06-21): `checkAndSync()` only cached `_genesisCompatible` boolean, discarding the `mergedChain` from `GenesisGate.check()`. Every `checkAndSync()` call re-merged without writing results.~~ ✅ **FIXED (2026-06-21):** `sync.js` now captures full result object, writes `result.mergedChain` to `storage.set('ledger:blocks')` and `result.index` to `storage.set('ledger:index')` when genesis is compatible.
 - ~~**"Sync Now" button only synced staging blob, never committed to ledger** (2026-06-21): The web app's "Sync Now" called `checkAndSync()` (staging blob sync) but never committed entries to the ledger — unlike the CLI `sync` command which does both.~~ ✅ **FIXED (2026-06-21):** `SyncSettings.jsx` `handleSyncNow` now runs `checkAndSync()` → then auto-commits all completed entries via `commitEntries()`. Also updated stale hint text ("auto-sync coming in Phase 2" → "Staging changes auto-sync in background").
 - **Testing Worker deployed** (2026-06-21): `phpoc-staging-testing.wacevedo.workers.dev` bound to R2 bucket `phpoc-data-testing`. Config at `worker/wrangler.testing.toml`. API key stored locally.
+- ~~**Export Ledger: error swallowed + staging-only export** (2026-06-24): When pressing Export Ledger in Settings and entering passphrase, nothing happened. Two bugs: (1) `handleExport` re-threw errors but PassphraseModal called `onSubmit` without `await`, making errors unhandled promise rejections — modal stayed open with no feedback. (2) `exportLedgerAction` used v1 format (`exportLedger()`) which exports staging entries only; once entries are committed, staging is empty → "No entries to export." silently swallowed.~~ ✅ **FIXED (2026-06-24):** (1) `handleExport` now sets `exportError` state instead of re-throwing; PassphraseModal receives `errorMessage={exportError}`. (2) `exportLedgerAction` now exports full ledger (committed blocks + staging) using `exportLedgerFull()`. Import added in DevModeContext.jsx. Both fast path and slow path updated. Browser E2E verified — export modal closes, download triggers with full ledger data. Zero regressions across 40 test files.
 
 ## Testing Quick Reference
 
@@ -318,3 +389,45 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 **Known gap:** F1d fails because the test mock's `simulateReauth()` uses `sha256(seed:passphrase)` instead of PBKDF2 — produces a different MK than the original. In production, `handleReauth()` uses the real `crypto.authenticate(passphrase, seed, iterations)` which is deterministic — same inputs → same MK. Not a code bug.
 
 ### ⏭ Next: Duplicate commit fix (Phase 5c) — browser E2E testing
+
+## Files Changed This Session (2026-06-24)
+
+| File | Change |
+|------|--------|
+| `phpoc-web/src/context/DevModeContext.jsx` | **Steps 1+2 complete — mock purge.** Removed `bootDevMode()` (~130 LOC) + all 6 `DummyCryptoService` fallback blocks + `DummyCryptoService` import. Total: −168 LOC. Both dev and production now use real WASM crypto exclusively. No silent crypto degradation. |
+| `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | **NEW** — WASM glue JS copied from `phpoc-crypto-core/pkg/` for Vite bundling |
+| `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | **NEW** — WASM binary (134KB) copied from `phpoc-crypto-core/pkg/` |
+| `phpoc-web/src/crypto/index.js` | Updated dynamic import path: `../../../phpoc-crypto-core/pkg/` → `./wasm/`. Updated JSDoc path resolution comment. |
+| `phpoc-web/vite.config.js` | Removed `build.rollupOptions.external` exclusion + `optimizeDeps.exclude` for `phpoc_crypto_core`. WASM now bundled by Vite's native pipeline. |
+| `phpoc-web/AGENTS.md` | Updated: DevModeContext description — dev mode no longer uses mock services, no DummyCryptoService fallbacks |
+| `docs/reference/MAP.md` | Added crypto/wasm files to web section. Updated DevModeContext.jsx description. |
+| `docs/planning/WEB_ROADMAP.md` | Added build steps 50, 51, 52 — mock purge (Steps 1+2) + WASM Resolution Fix |
+| `SESSION_HANDOFF.md` | Removed WASM issue from Known Issues. Added Step 3/3 WASM fix to Immediate Next Steps. Updated this session's file changes. |
+| `docs/design/workflows/web/Local_Import-Export-Workflow.md` | **NEW** — file-based import/export workflow: v1/v2/raw-chain formats, two-phase validation+confirmation, genesis gating, destroy warnings, key invariants, diagnostic checkpoints |
+| `docs/design/workflows/web/AGENTS.md` | Updated ownership index — added Local_Import-Export-Workflow.md |
+| `docs/design/workflows/AGENTS.md` | Updated contract — agent-only, concise+parseable, table-driven template for all workflow docs |
+| `docs/design/workflows/cli/AGENTS.md` | Updated to mirror parent contract for CLI workflow docs |
+| `phpoc-web/test/ledger_import_chain_test.mjs` | **NEW** — 31 tests for raw chain import path |
+| `phpoc-web/test/ledger_import_v2_test.mjs` | **NEW** — 42 tests for v2 format import path |
+| `phpoc-web/test/import_orchestration_test.mjs` | **NEW** — 51 tests for two-phase validate→confirm orchestration |
+| `phpoc-web/test/ledger_roundtrip_test.mjs` | **NEW** — 46 tests for export→import roundtrip fidelity |
+| `phpoc-web/AGENTS.md` | Updated test file count: 32 → 36 |
+| `docs/reference/MAP.md` | Added 4 new test files + updated test count to 38 files ~1776 tests |
+| `docs/planning/WEB_ROADMAP.md` | Added build step 53 — Import/Export Tier 1 coverage (170 tests, 0 fail) |
+| `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` | **NEW** — TDD test plan for Settings Genesis Gate Integration: 54 tests across 6 categories (A–F). Phase RED — tests not yet written. |
+| `SESSION_HANDOFF.md` | Updated: Settings Genesis Gate section → TDD RED phase. Added test creation as next to-do. Pointed to TDD plan for reference. |
+
+## Files Changed This Session (2026-06-24) — Export Ledger Fix
+
+| File | Change |
+|------|--------|
+| `phpoc-web/src/context/DevModeContext.jsx` | Imported `exportLedgerFull` alongside `exportLedger`. Updated `exportLedgerAction` to export full ledger (committed blocks + staging) using `exportLedgerFull()` — both fast path (services loaded) and slow path (on-demand init). Changed "No entries to export" → "No data to export" with OR logic. |
+| `phpoc-web/src/components/screens/Settings.jsx` | Fixed `handleExport` error handling: added `exportError` state, set error instead of re-throwing (prevents unhandled promise rejection). Passed `errorMessage={exportError}` to PassphraseModal. Cleared error on modal open. |
+| `SESSION_HANDOFF.md` | Added discovered bug to Known Issues (✅ FIXED). |
+
+### Browser E2E Session Summary (2026-06-24)
+
+- **Phase 5c verified:** Created 2 tasks on fresh production ledger, committed via "Commit All (2)", confirmed 2 ledger blocks (genesis + 1 day block, 2 entries). No duplicates. `!e.committed` filter working.
+- **Genesis gate TDD plan:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — 54 tests identified. Next: create 30 component tests (RED phase).
+- **WASM issue resolved:** Dynamic import fixed — WASM artifacts bundled by Vite's native pipeline. Production build loads real WASM crypto.
+- **Browser at `http://localhost:4173/?dev=false`** ready for next session. Start preview server: `cd phpoc-web && npx vite preview --host 0.0.0.0 --port 4173`.

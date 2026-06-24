@@ -16,10 +16,9 @@
  *   crypto.clearMasterKey();
  *
  * Browser path resolution:
- *   The WASM binary is auto-fetched from the same directory as this
- *   module (via wasm-bindgen's default init). In production with
- *   bundlers, ensure phpoc_crypto_core_bg.wasm is in the static
- *   assets directory or configure the init path explicitly.
+ *   WASM artifacts are copied to src/crypto/wasm/ and bundled by Vite.
+ *   The .wasm binary is auto-fetched via wasm-bindgen's default init
+ *   using new URL() — Vite rewrites this to the hashed output asset.
  */
 
 // ---------------------------------------------------------------------------
@@ -107,9 +106,7 @@ export class CryptoService {
     if (this.#ready) return;
 
     // Dynamic import ensures the wasm-bindgen glue is loaded on demand.
-    const mod = await import(
-      '../../../phpoc-crypto-core/pkg/phpoc_crypto_core.js'
-    );
+    const mod = await import('./wasm/phpoc_crypto_core.js');
 
     wasmModule = mod;
 

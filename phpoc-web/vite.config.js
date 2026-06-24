@@ -25,14 +25,10 @@ export default defineConfig({
       '@services': '/src/services',
     },
   },
-  optimizeDeps: {
-    exclude: ['phpoc_crypto_core'],
-  },
   build: {
     rollupOptions: {
-      // WASM glue JS is loaded at runtime via dynamic import; keep it external
-      // to avoid bundling issues with wasm-bindgen's init/initSync pattern.
-      external: (id) => id.includes('phpoc_crypto_core'),
+      // WASM artifacts are bundled from src/crypto/wasm/ — Vite natively
+      // handles .wasm files via new URL() asset references.
     },
   },
 });

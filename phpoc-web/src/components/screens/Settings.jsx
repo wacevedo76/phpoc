@@ -66,6 +66,7 @@ export default function Settings() {
 
   // ── Import / Export state ─────────────────────────────────────
   const [showExportModal, setShowExportModal] = useState(false);
+  const [exportError, setExportError] = useState('');
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importSeed, setImportSeed] = useState('');
@@ -89,11 +90,12 @@ export default function Settings() {
   }, [showImportModal]);
 
   const handleExport = useCallback(async (passphrase) => {
+    setExportError('');
     try {
       await exportLedgerAction(passphrase);
       setShowExportModal(false);
     } catch (err) {
-      throw err; // PassphraseModal shows the error
+      setExportError(err.message || 'Export failed');
     }
   }, [exportLedgerAction]);
 
@@ -379,7 +381,7 @@ export default function Settings() {
                 Download your entries as a signed JSON file.
               </p>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowExportModal(true)}>
+            <button className="btn btn-primary btn-sm" onClick={() => { setExportError(''); setShowExportModal(true); }}>
               Export
             </button>
           </div>
@@ -625,6 +627,7 @@ export default function Settings() {
             description="Enter your passphrase to export your ledger data."
             onSubmit={handleExport}
             onCancel={() => setShowExportModal(false)}
+            errorMessage={exportError}
           />
         )}
       </div>

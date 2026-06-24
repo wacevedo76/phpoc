@@ -14,10 +14,10 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils
 - `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory
 - `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import
-- `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core)
-- `src/context/` — DevModeContext
+- `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
+- `src/context/` — DevModeContext (dev and production share the same boot path; no mock services or DummyCryptoService fallbacks remain)
 - `src/hooks/` — useActiveTasks, useAutoSync, useCookieMonitor
-- `test/` — JavaScript test suite (32 test files)
+- `test/` — JavaScript test suite (36 test files)
 
 ## Local Contracts
 - Built with Vite + React
@@ -34,10 +34,9 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Use context for dev mode state; hooks for derived data
 
 ## Verification
-- `test/` directory: 30 test files covering crypto, sync, ledger, storage, and transport
-- New RED: `reauth_ttl_test.mjs` (35 tests), `reauth_integration_test.mjs` (27 tests) — Re-auth TTL overlay tests
-- Run with: `npm test` (vitest)
-- Node-based tests: `node --experimental-vm-modules test/<name>.mjs`
+- `test/` directory: 36 test files covering crypto, sync, ledger, storage, import/export, and transport
+- New (Jun 2026): `ledger_import_chain_test.mjs` (31), `ledger_import_v2_test.mjs` (42), `import_orchestration_test.mjs` (51), `ledger_roundtrip_test.mjs` (46) — 170 tests for web import/export workflow coverage
+- Node-based tests: `node test/<name>.mjs`
 - Smoke tests for WASM integration
 
 ## Child DOX Index

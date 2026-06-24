@@ -1,19 +1,33 @@
 # Workflow Specifications
 
 ## Purpose
-User-facing and system workflow specifications for the PH Ledger, organized by interface. Each doc describes expected behavior end-to-end, covering inputs, processing, outputs, and error states.
+AI-agent consumable workflow references — NOT user-facing docs. Each file maps
+the modules, decision trees, invariants, diagnostic checkpoints, and known gaps
+for a single workflow so an agent can trace issues without reading source.
 
 ## Ownership
 - `cli/` — CLI-specific workflows (`ph` command, daemon, background sync)
 - `web/` — Web-specific workflows (React app, sync, auth, import/export)
 
 ## Local Contracts
-- Workflow docs describe expected behavior — test suites validate against these
-- Keep workflow docs in sync with test scenarios
+- **Agent-only** — these docs are written for and consumed by AI agents during
+debugging, feature work, and code review. They are not user documentation.
+- **Concise and parseable** — prefer tables, decision trees, and numbered
+invariants over prose paragraphs. Every section should be directly actionable.
+- **Fingerprinted** — every file must include a Module Map (exact file paths +
+exports), Key Invariants (what must never break), Diagnostic Checkpoints
+(code expressions for each check), and Known Gaps (what's not yet implemented).
+- Test suites in `phpoc-web/test/` and `tests/` validate against these specs.
+- Keep workflow docs in sync with module paths and exported function names.
 
 ## Work Guidance
-- Add new CLI workflows to `cli/`, web workflows to `web/`
-- Reference upstream design docs when workflows depend on architectural decisions
+- Start new workflow docs from the existing templates in `web/` or `cli/`.
+- Module Map: every source file touched by the workflow with exact path and exports.
+- Decision trees: ASCII-branch style showing every possible path and outcome.
+- Diagnostic checkpoints: numbered table — what to check + exact code expression.
+- Key invariants: numbered list — behaviors that must never regress.
+- Known gaps: only things that exist as source but aren't wired, or real limitations.
+- Add new CLI workflows to `cli/`, web workflows to `web/`.
 
 ## Verification
 None — workflow docs are specifications, verified indirectly through test suites.

@@ -43,7 +43,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/remote_import.js` | HOT | `WorkerImportSource` — cloud backup import source (list, fetch, validate). 57-test suite. (2026-06-20) |
 | `phpoc-web/test/remote_import_test.mjs` | HOT | 57 assertions — 6 groups (connection, list, fetch, validate happy/error, edge cases) |
 | `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | 5 onboarding paths including "From Cloud" import sub-option (2026-06-20) |
-| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `handleReauth` (reauth overlay). |
+| `phpoc-web/src/crypto/index.js` | HOT | `CryptoService` — singleton WASM wrapper (20 exports), master key cache, ready guards. Imports from `./wasm/` (bundled by Vite, not external). |
+| `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
+| `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
+| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `handleReauth` (reauth overlay). Dev mode no longer bootstraps mock services — same boot path as production. All DummyCryptoService fallbacks removed (2026-06-24). |
 | `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()` — Python-compatible JSON serialization (2026-06-20) |
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
@@ -54,6 +57,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/display_status_test.mjs` | 🟢 GREEN | 20-test `computeDisplayStatus()` unit test — SYNCING priority, NOT_SYNCED, READY passthrough, edge cases |
 | `phpoc-web/test/reauth_ttl_test.mjs` | 🟢 GREEN | 50-test (was 35) suite for `checkCookieTtl()` + `createCookieMonitor()` — all 50 pass (GREEN phase complete) |
 | `phpoc-web/test/reauth_integration_test.mjs` | 🟢 GREEN | 40-test suite for full re-auth flow integration — 39 pass / 1 test-only MK mismatch (mock sha256≠PBKDF2) |
+| `phpoc-web/test/ledger_import_chain_test.mjs` | 🟢 GREEN | **NEW** — 31 tests for raw chain import path (genesis detection, block seals, prev_hash linkage, entry hash validation, mixed block types) |
+| `phpoc-web/test/ledger_import_v2_test.mjs` | 🟢 GREEN | **NEW** — 42 tests for v2 format import path (genesis hash extraction, ledger+staging preservation, empty edge cases) |
+| `phpoc-web/test/import_orchestration_test.mjs` | 🟢 GREEN | **NEW** — 51 tests for two-phase validate→confirm orchestration (in-memory storage, genesis gating, staging merge dedup, identity persistence) |
+| `phpoc-web/test/ledger_roundtrip_test.mjs` | 🟢 GREEN | **NEW** — 46 tests for full export→import fidelity (v1, v2, active/paused entries, deterministic seal, wrong key rejection) |
 | `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing, wired into DevModeContext ready-phase boot (GREEN, 89 combined assertions, 0 failures) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
 | `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote (uses `day_index` + `index` fallback for cross-engine compatibility), index push |
@@ -62,7 +69,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-### Tests (34 files, ~14,900 lines, ~1606 tests)
+### Tests (38 files, ~16,000 lines, ~1776 tests)
 
 Key test files:
 - `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
@@ -94,6 +101,7 @@ Key test files:
 | `../design/workflows/cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
+| `../design/workflows/web/Local_Import-Export-Workflow.md` | File-based import/export workflow: v1/v2/raw-chain, two-phase validation, genesis gating |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)
@@ -131,7 +139,7 @@ Key test files:
 | Run single test file | `python3 -m pytest tests/test_<name>.py -v` |
 | Run single test | `python3 -m pytest tests/test_<name>.py::TestClass::test_method -v` |
 | Run with warnings | `python3 -m pytest -W ignore::DeprecationWarning` |
-| Test count | 1493 passing (Python), plus web test suites (32 test files, 2 new RED) |
+| Test count | 1493 passing (Python), plus web test suites (38 test files, all GREEN) |
 | Session cache | `/dev/shm/phpoc_session` (Master Key, chmod 600) |
 
 ### Config commands
