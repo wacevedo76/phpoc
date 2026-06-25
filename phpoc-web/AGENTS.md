@@ -17,7 +17,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
 - `src/context/` — DevModeContext (dev and production share the same boot path; no mock services or DummyCryptoService fallbacks remain)
 - `src/hooks/` — useActiveTasks, useAutoSync, useCookieMonitor
-- `test/` — JavaScript test suite (36 test files)
+- `test/` — JavaScript test suite (37 test files)
 
 ## Local Contracts
 - Built with Vite + React
@@ -34,9 +34,10 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Use context for dev mode state; hooks for derived data
 
 ## Verification
-- `test/` directory: 36 test files covering crypto, sync, ledger, storage, import/export, and transport
+- `test/` directory: 37 test files covering crypto, sync, ledger, storage, import/export, transport, and component rendering
 - New (Jun 2026): `ledger_import_chain_test.mjs` (31), `ledger_import_v2_test.mjs` (42), `import_orchestration_test.mjs` (51), `ledger_roundtrip_test.mjs` (46) — 170 tests for web import/export workflow coverage
 - Node-based tests: `node test/<name>.mjs`
+- Vitest component tests: `npx vitest run test/settings_genesis_component.test.mjs`
 - Smoke tests for WASM integration
 
 ## Child DOX Index

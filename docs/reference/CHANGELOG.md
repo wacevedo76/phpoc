@@ -43,6 +43,7 @@ All notable changes to the PH Ledger (phpoc) project.
 - `ph sync --help` now lists both `remote_staging` and `remote_ledger` subcommands.
 - **WASM crypto fallback made visible** — DummyCryptoService fallback now emits `console.error` and sets `cryptoStatus='fallback'`. App shows a red sticky warning banner in production mode. Removed `@vite-ignore` (dev HMR compat) and added `build.rollupOptions.external` for production safety.
 - **Storage cascade for private browsing** — `createStorage()` cascade: IndexedDB → `SessionStorageBackend` (survives refresh) → in-memory Map. `storageStatus` state drives amber (session) or red (memory) warning banners.
+- **Entry hash format aligned** — Python CLI now uses 2-space indent for entry hashes (`json.dumps(data, sort_keys=True, indent=2)`), matching the web app's `computeEntryHash()`. Verification in both `chain.py` and `onboarding_file.py` accepts both formats (legacy no-indent and current indent=2) for backward compatibility. (2026-06-25)
 
 ### Fixed
 - **Auto-sync hook code review (6 findings resolved):** `useCallback([])` stale closures → ref-based reads; `require('react')` → ES `import`; 100ms `isSyncing` polling → push-based `onSyncingChange` callback; `_syncing` state leak on dispose-during-push → unconditional reset; dead `_disposed` check removed; silent `{}` fallback → lazy init. Also: `_wrap` → `_wrapMutation`, debounce comment added, `getMasterKey` contract enforced. Zero regressions across all 28 test suites. (2026-06-20)

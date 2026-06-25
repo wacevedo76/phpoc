@@ -390,7 +390,7 @@ class TestLedgerChainAppendAndBuild(unittest.TestCase):
         self.assertIn("hash", block["entries"][0])
         self.assertIn("data", block["entries"][0])
         # Hash should match SHA256(data sorted_keys)
-        expected_hash = hashlib.sha256(json.dumps(entry_data, sort_keys=True).encode()).hexdigest()
+        expected_hash = hashlib.sha256(json.dumps(entry_data, sort_keys=True, indent=2).encode()).hexdigest()
         self.assertEqual(block["entries"][0]["hash"], expected_hash)
     
     def test_append_encrypted_entry(self):
@@ -442,7 +442,7 @@ class TestLedgerChainVerify(unittest.TestCase):
             "day_index": self.chain.get_block_count() + 1,
             "date": date_str,
             "prev_hash": prev_hash,
-            "entries": [{"hash": hashlib.sha256(json.dumps(e, sort_keys=True).encode()).hexdigest(), "data": e} for e in entries],
+            "entries": [{"hash": hashlib.sha256(json.dumps(e, sort_keys=True, indent=2).encode()).hexdigest(), "data": e} for e in entries],
         }
         day_json = json.dumps(block, sort_keys=True)
         block["day_hash"] = self.crypto.seal(day_json)

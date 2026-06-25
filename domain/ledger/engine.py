@@ -188,9 +188,9 @@ class LedgerEngine:
             # Compute content hash (after removing staging fields)
             data["content_hash"] = self._compute_content_hash(data)
 
-            # Compute entry hash
+            # Compute entry hash (2-space indent — matches web app utils.js computeEntryHash)
             entry_hash = hashlib.sha256(
-                json.dumps(data, sort_keys=True).encode()
+                json.dumps(data, sort_keys=True, indent=2).encode()
             ).hexdigest()
 
             date_str = time.strftime(

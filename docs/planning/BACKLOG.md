@@ -3,6 +3,21 @@
 > Issues parked for future attention. Completed items are tracked in `CHANGELOG.md`
 > and `WEB_ROADMAP.md`. This file only tracks what remains.
 
+## Entry Hash Format Alignment — Gap
+
+**Pause rationale:** Sole user, no immediate need. Migration script's `verify_chain()` only
+checks no-indent entry hashes (`json.dumps(data, sort_keys=True)`). After the
+2026-06-25 entry hash alignment, new entries use `indent=2`. Mixed-format chains
+(old no-indent + new indent=2) would fail `verify_chain()` in the migration script.
+`chain.py`'s `_verify_entry_hash_flex()` handles both — the migration script should too.
+
+**Unblock criteria:** Mixed-format chain appears, or pre-v0.4.0 migration is needed
+on a chain with post-alignment entries.
+
+### Remaining
+- [ ] Update `scripts/migrate_format_version.py` `verify_chain()` to try both
+      entry hash formats (no-indent + indent=2), matching `_verify_entry_hash_flex()`
+
 ## P3 — Remote Sync (git-based) — Paused
 
 **Pause rationale:** Browser client takes priority. Git transport is functional for CLI

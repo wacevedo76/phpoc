@@ -81,15 +81,34 @@ def _verify_entry_hash(entry: dict) -> bool:
 
 
 def _verify_ledger_entry_hash(entry: dict) -> bool:
-    """Verify a ledger-block entry's hash (2-space indent, matches
-    ``LedgerEngine._encryptEntry()`` → ``computeEntryHash()``)."""
+    """Verify a ledger-block entry's hash.
+
+    Tries both serialization formats:
+      - No indent (Python CLI: domain/ledger/engine.py, chain.py)
+      - 2-space indent (Web app: utils.js computeEntryHash)
+
+    Both formats are valid; the hash in the block determines which
+    format was used at commit time.
+    """
     if "data" not in entry:
         return False
     data = entry["data"]
-    expected = hashlib.sha256(
+    stored_hash = entry.get("hash")
+    if not stored_hash:
+        return False
+
+    # Try CLI format first (no indent, most common for imported chains)
+    expected_no_indent = hashlib.sha256(
+        json.dumps(data, sort_keys=True).encode()
+    ).hexdigest()
+    if expected_no_indent == stored_hash:
+        return True
+
+    # Try web app format (2-space indent)
+    expected_indent2 = hashlib.sha256(
         json.dumps(data, sort_keys=True, indent=2).encode()
     ).hexdigest()
-    return entry.get("hash") == expected
+    return expected_indent2 == stored_hash
 
 
 def _verify_entry_hash_updated(entry: dict) -> bool:

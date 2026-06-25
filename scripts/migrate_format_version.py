@@ -41,7 +41,7 @@ from security.auth import PassphraseAuthenticator
 from security.crypto import CryptoManager
 
 
-CONFIG_DIR = Path.home() / ".config" / "personal_history_poc"
+CONFIG_DIR = Path.home() / ".local" / "share" / "phpoc"
 LEDGER_FILE = CONFIG_DIR / "ledger.json"
 
 

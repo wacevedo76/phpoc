@@ -14,6 +14,16 @@
 
 ## Immediate Next Steps
 
+### 🔴 Onboarding File Import — Entry Hash Mismatch Fix ✅ (2026-06-25)
+
+**Fixed:** `_verify_ledger_entry_hash()` in `cli/onboarding_file.py` used `indent=2` for entry hash computation while the Python engine (`engine.py`, `chain.py`) used no indent. This caused `ph onboarding file` to fail for all CLI-generated chains.
+
+**Changes:**
+- `cli/onboarding_file.py`: `_verify_ledger_entry_hash()` now tries both formats (no-indent first, then indent=2)
+- `domain/ledger/engine.py`: entry hash now uses `indent=2` (matches web app `utils.js computeEntryHash`)
+- `domain/ledger/chain.py`: `build_day_block()` uses `indent=2`; `verify()`/`verify_block()` use dual-format `_verify_entry_hash_flex()`
+- Tests: 7 locations updated (`test_phase3_ledger_engine.py`, `test_phase6b_ledger_equivalence.py`, `test_tags.py`, `test_sync_confirmation.py`). All 1493 tests pass.
+
 ### 🔴 Phase 5c (Duplicate Commit Fix) — Browser E2E ✅ (2026-06-24)
 
 **E2E verified in production build.** Created 2 tasks, committed via "Commit All (2)", verified ledger has exactly 2 blocks (genesis + 1 day block with 2 entries). No duplicate blocks. The `!e.committed` filter in `commitEntries` (line 1429) works correctly.
@@ -38,25 +48,48 @@
 - `phpoc-web/src/crypto/index.js` — updated import path + JSDoc
 - `phpoc-web/vite.config.js` — removed external exclusion + optimizeDeps.exclude
 
-### 🔴 Settings Genesis Gate — TDD RED: Create Component Tests (NEXT, 2026-06-24)
+### 🔴 Settings Genesis Gate — TDD RED: Component Tests ✅ (2026-06-25)
 
-- ⏭ **Next:** Create `test/settings_genesis_component_test.mjs` with 30 RED tests covering Category B (React component integration), Category E (edge cases), and Category F (accessibility). Requires `vitest` + `@testing-library/react` + `jsdom` as dev dependencies.
-- **Reference:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — full test plan with 54 tests across 6 categories
-- **Prerequisites:** `npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom`
-- **Config:** Add `test` block to `vite.config.js` (environment: jsdom, globals: true, setupFiles)
+**Done:** Created `test/settings_genesis_component.test.mjs` — 26 Vitest + RTL component tests across Categories B (20), E (6), F (4). 24 pass (existing behavior verified), 2 RED (accessibility: aria-live="polite" on checking text + role="status" on status cards). Dev deps installed, vite.config.js updated with test block + jsdom environment, `test/vitest-setup.js` created.
 
-### 🔴 Settings Genesis Gate Integration — TDD Phase RED (2026-06-24)
+- **Reference:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — updated coverage map
+- **Run:** `npx vitest run test/settings_genesis_component.test.mjs`
 
-**TDD test plan created:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — 54 tests identified across 6 categories (A–F). 16 existing (🟢), 38 planned (🔴).
+### 🟢 Settings Genesis Gate — TDD GREEN: Accessibility ✅ (2026-06-25)
 
-- **Category A:** State Machine Logic — 13 tests (🟢 DONE, `test/settings_genesis_test.mjs`)
-- **Category B:** React Component Integration — 20 tests (🔴 PLANNED, needs Vitest + RTL)
-- **Category C:** Browser E2E — 8 tests (🔴 PLANNED, agent-browser session)
-- **Category D:** SyncService Genesis Gate — 3 tests (🟢 DONE, `test/sync_service_test.mjs` Group I)
-- **Category E:** Edge Cases & Regressions — 6 tests (🔴 PLANNED)
-- **Category F:** Accessibility & A11Y — 4 tests (🔴 PLANNED)
+**Done:** Added `aria-live="polite"` to checking text `<p>` + `role="status"` to `.genesis-status` container in `Settings.jsx`. All 26 component tests pass (was 24 ✅ / 2 🔴). Category F: 4/4 🟢 GREEN.
 
-⏭ **Next:** Install Vitest + @testing-library/react dev dependencies. Create `test/settings_genesis_component_test.mjs` with 30 RED tests (Categories B, E, F). All tests expected to fail — confirm RED phase.
+- ⏭ **Next:** Category C Browser E2E (8 tests, agent-browser session)
+
+### 🔴 Settings Genesis Gate Integration — TDD Phase RED (2026-06-25)
+
+**TDD test plan updated:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — 54 tests across 6 categories (A–F). 24 🟢, 2 🔴, 28 planned.
+
+- **Category A:** State Machine Logic — 13 tests (🟢 DONE)
+- **Category B:** React Component Integration — 20 tests (🟢 DONE — 20 pass)
+- **Category C:** Browser E2E — 8 tests (🟡 PARTIAL — 3 pass, 1 fail, 4 skipped)
+- **Category D:** SyncService Genesis Gate — 3 tests (🟢 DONE)
+- **Category E:** Edge Cases & Regressions — 6 tests (🟢 DONE — 6 pass)
+- **Category F:** Accessibility & A11Y — 4 tests (🟢 DONE — 4 pass)
+
+⏭ **Next:** 🔴 DECISION PENDING — Choose SyncService transport reconfiguration approach. Analysis at `docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md`. Three solutions: A (localStorage reads), B (reconfigure() method), C (DevModeContext watcher). **Recommendation: Solution B** (~15 LOC, 2 files). Must decide before C2 E2E test can pass. Also investigate C5 (clear URL → status disappear) — fill command doesn't trigger React onChange, may need test methodology fix.
+
+### Category C Browser E2E Results (2026-06-25)
+
+**Preview server:** `http://localhost:4174/?dev=false` (port 4174 — 4173 was in use)
+
+| Test | Result | Details |
+|------|--------|--------|
+| **C1** | ✅ PASS | "✅ Genesis compatible" + entry count shown for correct Worker URL + API key |
+| **C2** | ❌ FAIL | Sync Now shows OFFLINE — SyncService transport configured at bootstrap, not updated on Settings save. Settings→save updates localStorage but SyncService still uses old/empty transport. Root cause: no mechanism to update SyncService transport in-flight after bootstrap. |
+| **C3** | ⏭️ SKIP | Need Worker with different genesis; testing Worker appears empty (404 on `ledger:blocks`). No incompatible Worker available. |
+| **C4** | ✅ PASS | "🔌 Cannot reach remote" + "Network error" for non-existent URL (`bad.example.com`) |
+| **C5** | ⚠️ UNTESTABLE | `fill` command sets DOM `.value` but doesn't trigger React `onChange`. Can't clear URL field to test status→disappear flow via agent_browser. May pass with real user interaction; needs playwright or input event dispatch. |
+| **C6** | ✅ PASS | API key change re-triggers genesis check. Wrong API key → "Authentication failed. Check your API key." |
+| **C7** | ⏭️ SKIP | Requires clearing local ledger (destructive). Settings inaccessible during onboarding. |
+| **C8** | ⏭️ SKIP | Settings page inaccessible without authentication (requires login → Settings path). |
+
+**Additional finding:** The network trace revealed 3 pending requests to old bad URLs (`nonexistent-worker.example.com`, `bad.example.com`) left over from earlier save attempts — these are harmless but clutter the network panel.
 
 ### Browser E2E Testing Setup (2026-06-24)
 
@@ -231,6 +264,7 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 > Full historical step-by-step status is in `docs/planning/WEB_ROADMAP.md`. This file is the session-level snapshot.
 
 ## Known Issues
+- **SyncService transport not updated on Settings change (2026-06-25):** Changing Worker URL/API key in Settings updates localStorage but does not update the SyncService's transport. `checkAndSync()` uses stale transport → returns OFFLINE. **Decision pending** — full tradeoff analysis at `docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md`. Proposed fix: Solution B — expose `reconfigure(transport)` on SyncService, call from Settings after genesis check. Affects C2 browser E2E test.
 - ~~**TDZ crash: `triggerReauth` before initialization** (2026-06-23): Cookie TTL monitor `useEffect` in `DevModeContext.jsx` referenced `triggerReauth` in its dependency array, but `const triggerReauth = useCallback(...)` was declared later in the component. Caused blank white page on any render — dev mode showed React boundary error, prod build showed `ReferenceError: Cannot access 've' before initialization`.~~ ✅ **FIXED (2026-06-23):** Moved re-auth state (`reauthActive`) + all three re-auth callbacks (`triggerReauth`, `dismissReauth`, `handleReauth`) above the cookie TTL monitor `useEffect`. App now renders onboarding screen correctly in both dev and production modes.
 - ~~`HttpTransport.delete()`: `timeoutMs` parameter accepted but unused. `AbortSignal.timeout()` not yet wired.~~ ✅ **FIXED (2026-06-20):** `AbortSignal.timeout()` wired in all four methods (`pull`, `push`, `listFiles`, `delete`). 11 new tests (5 timeout-signal verification + 6 delete method coverage), 60 total transport tests, 0 failures.
 - ~~MockRemoteBackend `listFiles()` returns full paths; Worker strips prefix to return filenames only. Pre-existing inconsistency.~~ ✅ **FIXED (2026-06-20):** `MockRemoteBackend.listFiles()` now strips prefix to return basenames only, matching Worker + Git transport contract. 3 test expectations updated across mock_remote_test.mjs and http_backend_test.mjs. Full suite passes.
@@ -431,3 +465,34 @@ All 24 assertions pass (58 assertions counting sub-checks), 0 failures.
 - **Genesis gate TDD plan:** `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` — 54 tests identified. Next: create 30 component tests (RED phase).
 - **WASM issue resolved:** Dynamic import fixed — WASM artifacts bundled by Vite's native pipeline. Production build loads real WASM crypto.
 - **Browser at `http://localhost:4173/?dev=false`** ready for next session. Start preview server: `cd phpoc-web && npx vite preview --host 0.0.0.0 --port 4173`.
+
+## Files Changed This Session (2026-06-25) — Settings Genesis Gate RED Phase
+
+| File | Change |
+|------|--------|
+| `phpoc-web/test/settings_genesis_component.test.mjs` | **NEW** — 26 Vitest + RTL component tests for Settings genesis gate (B: 20, E: 6, F: 4). 24 pass / 2 RED (accessibility). |
+| `phpoc-web/test/vitest-setup.js` | **NEW** — `@testing-library/jest-dom` import |
+| `phpoc-web/vite.config.js` | Added `test` block (jsdom environment, globals: true, setupFiles) |
+| `phpoc-web/package.json` | Added dev deps: vitest, @testing-library/react, @testing-library/jest-dom, jsdom, @testing-library/dom |
+| `phpoc-web/AGENTS.md` | Updated test file count: 36 → 37; added Vitest run command |
+| `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` | Updated coverage map: B/E now 🔴 RED (written), F now 🔴 RED (2 pass / 2 RED), total 24 🟢 / 2 🔴 / 28 planned |
+| `docs/planning/WEB_ROADMAP.md` | Added Build 54 — Settings Genesis Gate Component Tests RED phase |
+| `docs/reference/MAP.md` | Added new test file entry |
+| `SESSION_HANDOFF.md` | Updated Immediate Next Steps: RED → ✅ done, GREEN phase (accessibility) as next
+
+## Files Changed This Session (2026-06-25) — Settings Genesis Gate GREEN Phase (Accessibility)
+
+| File | Change |
+|------|--------|
+| `phpoc-web/src/components/screens/Settings.jsx` | Added `aria-live="polite"` to checking text `<p>` + `role="status"` to `.genesis-status` container |
+| `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` | Updated status: 🟢 GREEN (was 🔴 RED). Coverage map: B/E/F all 🟢 GREEN. Total 50 🟢 / 4 planned. |
+| `docs/planning/WEB_ROADMAP.md` | Added Build 55 — Settings Genesis Gate GREEN phase (Accessibility) |
+| `SESSION_HANDOFF.md` | Marked GREEN phase ✅ DONE, updated Category F status to 🟢, next step: Category C Browser E2E |
+
+## Files Changed This Session (2026-06-25) — Category C Browser E2E
+
+| File | Change |
+|------|--------|
+| `SESSION_HANDOFF.md` | Updated Category C results (🟡 PARTIAL: 3 pass/1 fail/4 skip). Added C2 bug to Known Issues (→ analysis doc). Updated Next Steps with decision pending. |
+| `docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md` | **NEW** — Tradeoff analysis for SyncService transport reconfiguration (Solutions A/B/C). Recommendation: Solution B (reconfigure() method). Decision pending. |
+| `docs/planning/SETTINGS_GENESIS_GATE_TDD_PLAN.md` | Category C status updated: 🔴 PLANNED → 🟡 PARTIAL with results table |

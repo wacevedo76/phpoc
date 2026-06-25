@@ -65,6 +65,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
 | `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote (uses `day_index` + `index` fallback for cross-engine compatibility), index push |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (now uses extracted `computeDisplayStatus` + `isAutoSyncing`), reauth overlay triggering, commit flow. |
+| `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay rendering (`AuthScreen overlay`) via context `reauthActive` state. |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
@@ -102,6 +103,7 @@ Key test files:
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `../design/workflows/web/Local_Import-Export-Workflow.md` | File-based import/export workflow: v1/v2/raw-chain, two-phase validation, genesis gating |
+| `../design/TRANSPORT_RECONFIGURATION_ANALYSIS.md` | SyncService transport reconfiguration tradeoff analysis (Solutions A/B/C). 🔴 Decision pending. |
 | `MAP.md` | This file — project map |
 
 ### Archive (`archive/` — retired docs kept for reference)

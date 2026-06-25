@@ -94,7 +94,7 @@ def _sync_day_old(ledger_domain, store, crypto, entries):
             "tags": e.get("tags", []),
             "media": e.get("media", []),
         }
-        h = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+        h = hashlib.sha256(json.dumps(data, sort_keys=True, indent=2).encode()).hexdigest()
         staging.append({"hash": h, "data": data, "start_epoch": e["start_epoch"]})
     store.write_staging(staging)
     return ledger_domain.sync_day()

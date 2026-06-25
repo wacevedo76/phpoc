@@ -7,6 +7,36 @@
 
 ---
 
+## Build 54 — Settings Genesis Gate Component Tests (RED phase) — 2026-06-25
+
+**26 Vitest + RTL component tests written:**
+- Category B (React Component Integration): 20 tests — all pass (existing behavior)
+- Category E (Edge Cases & Regressions): 6 tests — all pass (existing behavior)
+- Category F (Accessibility & A11Y): 4 tests — 2 pass / 2 RED (aria-live="polite" + role="status" not yet implemented)
+
+**Infrastructure:**
+- Dev deps installed: `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `jsdom`, `@testing-library/dom`
+- `vite.config.js` updated with `test` block (jsdom environment, globals)
+- `test/vitest-setup.js` created
+- File: `test/settings_genesis_component.test.mjs`
+
+**Result:** 24 passed, 2 failed (intentionally RED — accessibility features pending)
+
+---
+
+## Build 55 — Settings Genesis Gate GREEN Phase (Accessibility) — 2026-06-25
+
+**2 accessibility fixes made to `Settings.jsx`:**
+- Added `aria-live="polite"` to the "⏳ Checking genesis compatibility…" paragraph — screen readers announce the status change
+- Added `role="status"` to the outer `.genesis-status` container — enables ARIA live-region behavior for all status cards
+
+**Files changed:**
+- `phpoc-web/src/components/screens/Settings.jsx` — 2 attributes added
+
+**Result:** All 26 component tests pass (was 24 ✅ / 2 🔴). Category F: 4/4 GREEN.
+
+---
+
 ## Crypto Core Status
 
 | Layer | CLI (Reference) | Web/Mobile PoC |

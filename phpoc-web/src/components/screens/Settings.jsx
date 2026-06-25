@@ -218,6 +218,14 @@ export default function Settings() {
         if (result.compatible) {
           setGenesisStatus('compatible');
           setGenesisStats(result.stats);
+        } else if (result.reason === 'network_error' || result.reason === 'auth_failure') {
+          // Transient errors — show as offline (orange), not incompatible (red)
+          setGenesisStatus('offline');
+          setGenesisReason(
+            result.reason === 'auth_failure'
+              ? 'Authentication failed. Check your API key.'
+              : 'Network error'
+          );
         } else {
           setGenesisStatus('incompatible');
           setGenesisReason(result.reason);
@@ -291,9 +299,9 @@ export default function Settings() {
 
           {/* Genesis gate status indicator */}
           {genesisStatus !== 'idle' && (
-            <div className={`genesis-status genesis-status-${genesisStatus}`} style={{ marginTop: '0.75rem' }}>
+            <div className={`genesis-status genesis-status-${genesisStatus}`} role="status" style={{ marginTop: '0.75rem' }}>
               {genesisStatus === 'checking' && (
-                <p className="settings-hint" style={{ color: '#666' }}>
+                <p className="settings-hint" aria-live="polite" style={{ color: '#666' }}>
                   ⏳ Checking genesis compatibility…
                 </p>
               )}

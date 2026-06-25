@@ -299,7 +299,7 @@ class TestTagsBackwardCompat(unittest.TestCase):
         if extra_fields:
             data.update(extra_fields)
         entry = {
-            "hash": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
+            "hash": hashlib.sha256(json.dumps(data, sort_keys=True, indent=2).encode()).hexdigest(),
             "data": data,
             "start_epoch": now - 3600000,
         }
@@ -355,7 +355,7 @@ class TestTagsBackwardCompat(unittest.TestCase):
             "metadata_enc": self.crypto.encrypt("{}"),
         }
         entry = {
-            "hash": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
+            "hash": hashlib.sha256(json.dumps(data, sort_keys=True, indent=2).encode()).hexdigest(),
             "data": data,
         }
         genesis = json.loads(self.lf.read_text())[0]

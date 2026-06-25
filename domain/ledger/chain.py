@@ -15,6 +15,26 @@ from security.crypto import AbstractCryptoManager
 from storage.ledger_store import AbstractLedgerStore
 
 
+def _verify_entry_hash_flex(data: dict, stored_hash: str) -> bool:
+    """Verify an entry hash, trying both serialization formats.
+
+    Tries:
+      1. 2-space indent (current: web app utils.js, domain/ledger/engine.py)
+      2. No indent (legacy: pre-v0.4 Python CLI)
+
+    Returns True if stored_hash matches either format.
+    """
+    expected_indent2 = hashlib.sha256(
+        json.dumps(data, sort_keys=True, indent=2).encode()
+    ).hexdigest()
+    if expected_indent2 == stored_hash:
+        return True
+    expected_no_indent = hashlib.sha256(
+        json.dumps(data, sort_keys=True).encode()
+    ).hexdigest()
+    return expected_no_indent == stored_hash
+
+
 class LedgerChain:
     """Block-level chain operations.
 
@@ -182,7 +202,7 @@ class LedgerChain:
             else:
                 data = dict(e)
             entry_hash = hashlib.sha256(
-                json.dumps(data, sort_keys=True).encode()
+                json.dumps(data, sort_keys=True, indent=2).encode()
             ).hexdigest()
             normalized_entries.append({"hash": entry_hash, "data": data})
 
@@ -344,12 +364,7 @@ class LedgerChain:
             if current.get("type", "day") == "day":
                 for entry in current["entries"]:
                     data = entry["data"]
-                    if (
-                        hashlib.sha256(
-                            json.dumps(data, sort_keys=True).encode()
-                        ).hexdigest()
-                        != entry["hash"]
-                    ):
+                    if not _verify_entry_hash_flex(data, entry["hash"]):
                         return False
 
                     # 5. Content hash verification
@@ -409,10 +424,7 @@ class LedgerChain:
         if current.get("type", "day") == "day":
             for entry in current["entries"]:
                 data = entry["data"]
-                if (
-                    hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
-                    != entry["hash"]
-                ):
+                if not _verify_entry_hash_flex(data, entry["hash"]):
                     return False
 
         return True
