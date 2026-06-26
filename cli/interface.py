@@ -382,14 +382,19 @@ class CLIInterface:
         staged_by_date = {}
         for entry in staged_data:
             start_val = entry["data"]["startTime_enc"]
+            decryptable = True
             if start_val.startswith("plain:"):
                 start_epoch = int(start_val[6:])
             else:
                 try:
                     start_epoch = int(self._crypto.decrypt(start_val))
                 except Exception:
-                    continue  # Skip entries with undecryptable timestamps
-            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000))
+                    decryptable = False
+                    start_epoch = 0  # placeholder; _print_entry handles display
+            if not decryptable and not start_val.startswith("plain:"):
+                # Still include so _print_entry can show placeholder
+                pass
+            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000)) if decryptable else "unknown"
             if date_str not in staged_by_date:
                 staged_by_date[date_str] = []
             staged_by_date[date_str].append({"source": "staged", "data": entry["data"], "date": date_str})
@@ -630,6 +635,9 @@ class CLIInterface:
         """Helper method to print an entry (synced or staged)."""
         data = entry_data["data"]
 
+        title = data.get("title", "?")
+        duration = data.get("duration", 0)
+
         start_val = data.get("startTime_enc")
         if not start_val:
             return
@@ -639,7 +647,10 @@ class CLIInterface:
             try:
                 start_epoch = int(self._crypto.decrypt(start_val))
             except Exception:
-                return  # Skip entries with undecryptable timestamps
+                # Can't decrypt — show placeholder instead of silently skipping
+                source_indicator = " (Staged)" if entry_data.get("source") == "staged" else ""
+                print(f"  [encrypted] {title}{source_indicator} ({duration // 60000}m) [run 'ph login' to decrypt]")
+                return
 
         if data["endTime_enc"]:
             end_val = data["endTime_enc"]

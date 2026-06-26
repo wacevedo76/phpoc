@@ -37,6 +37,22 @@
 
 ---
 
+## Build 56 — SyncService Transport Reconfiguration (C2 Fix) — 2026-06-25
+
+**Solution B implemented — `reconfigure(transport)` on SyncService:**
+- `SyncService.reconfigure(transport)` method (~15 LOC): replaces `this._transport` + `this._remote`, invalidates genesis gate cache
+- `Settings.jsx`: calls `services.sync.reconfigure(transport)` after genesis check (inside try block), `services.sync.reconfigure(null)` when URL cleared
+- `sync_service_test.mjs` — Group K (6 tests): null→transport, transport→null, transport swap + ping, genesis cache cleared, staging data preserved, null→transport transition
+
+**Files changed:**
+- `phpoc-web/src/sync/sync.js` — `reconfigure()` method added
+- `phpoc-web/src/components/screens/Settings.jsx` — 2 reconfigure calls
+- `phpoc-web/test/sync_service_test.mjs` — 6 new tests (Group K)
+
+**Result:** All 71 SyncService tests pass (was 65). C2 Browser E2E test now passes — Sync Now uses new transport after Settings save. Full tradeoff analysis at [`docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md`](../design/TRANSPORT_RECONFIGURATION_ANALYSIS.md).
+
+---
+
 ## Crypto Core Status
 
 | Layer | CLI (Reference) | Web/Mobile PoC |
@@ -147,10 +163,25 @@ The WASM `get_device_id(MK)` returns `HMAC(MK, "device:id")` — deterministic f
 
 ### Other Issues
 
-- **Duplicate Entry Race Condition** (Step 33): Fixed read-modify-write race in `LocalCache.update()`. Three guards: early committed check, index-out-of-range check, entry_id + committed race check. (2026-06-16)
+- **TDZ Crash: `triggerReauth` before initialization** (2026-06-23): Cookie TTL monitor `useEffect` in `DevModeContext.jsx` referenced `triggerReauth` in its dependency array, but `const triggerReauth = useCallback(...)` was declared later in the component. Caused blank white page. Fixed by moving re-auth state + callbacks above the cookie TTL monitor `useEffect`.
+- **WASM CryptoService: dynamic import unresolved in production build** (2026-06-24): Vite's `build.rollupOptions.external` excluded `phpoc_crypto_core` from bundling. Fixed by copying WASM artifacts into `src/crypto/wasm/` and removing the exclusion — Vite's native pipeline bundles + content-hashes the `.wasm` binary via `new URL()` asset references.
+- **Export Ledger: error swallowing + staging-only export** (2026-06-24): (1) `handleExport` re-threw errors but PassphraseModal called `onSubmit` without awaiting — errors became unhandled promise rejections. Fixed by adding `exportError` state. (2) `exportLedgerAction` used v1 (staging-only) → empty after commit. Fixed by switching to `exportLedgerFull()` (v2).
+- **Genesis gate: empty remote treated as incompatible** (2026-06-21): Empty R2 bucket returned `{compatible: false}`, permanently blocking sync. Fixed: empty remote now returns `compatible: true` (first boot, no conflict).
+- **Genesis merge result never persisted** (2026-06-21): `checkAndSync()` cached `_genesisCompatible` boolean but discarded `mergedChain`. Fixed: writes merged chain + index to storage.
+- **"Sync Now" button only synced staging blob, never committed** (2026-06-21): `SyncSettings` sync called `checkAndSync()` but never committed entries to ledger. Fixed: auto-commits completed entries after sync.
+- **HttpTransport.delete(): `timeoutMs` unused** (2026-06-20): `AbortSignal.timeout()` wired into all four methods (`pull`, `push`, `listFiles`, `delete`).
+- **MockRemoteBackend `listFiles()` returned full paths** (2026-06-20): Worker strips prefix to return basenames. Fixed: `MockRemoteBackend` now strips prefix to match Worker contract.
+- **ETag caching stale in long-running daemon** (2026-06-20): Added `cacheTtlMs`/`cache_ttl_s` to JS `HttpTransport` and Python `HttpStagingTransport`. Entries auto-evicted on access when older than TTL.
+- **IndexedDB unavailable in private browsing** (2026-06-20): Fell back to in-memory Map (data lost on refresh). Fixed: cascade fallback IndexedDB → SessionStorageBackend (survives refresh) → in-memory Map.
+- **`isWasmDerivedUuid` regex too broad** (2026-06-20): Matched MD5 (32 chars) and SHA-1 (40). Fixed: tightened to exactly 64 hex chars (SHA-256).
+- **Index-based staging operations had stale-index race** (2026-06-20): Added `update_by_entry_id`, `add_pause_by_entry_id`, `close_pause_by_entry_id` to `LocalStagingCache` — find by stable UUID instead of positional index.
+- **`_getDeviceId()` called twice in push operations** (2026-06-20): Reduced from 2–3 calls to 1 via `pushBlobOnly()` accepting optional `deviceId` param.
+- **`createStoragePlugin` lan/saas returned `HttpBackend` directly** (2026-06-20): Fixed to return `IndexedDBBackend` — storage and transport are separate concerns.
+- **`apiKey` normalization differed between factories** (2026-06-20): `readRemoteConfig()` used `''`, `createRemoteTransport()` used `null`. Normalized to `null`.
+- **Code review: `useAutoSync.js` (6 findings)** (2026-06-20): Stale closures, `require('react')` in ES module, 100ms polling, `_syncing` state leak, dead `_disposed` check, silent `{}` fallback. All resolved.
+- **Duplicate Entry Race Condition** (Step 33): Fixed read-modify-write race in `LocalCache.update()`. Three guards. (2026-06-16)
 - **Sync Screen Enter-Key Bug** (Step 32): Enter in tag-add input collapsed the card. Fixed with `stopPropagation()`. (2026-06-16)
-- **Cross-platform JSON:** JavaScript `JSON.stringify()` and Python `json.dumps()` produce different whitespace and key ordering. The `jsonDumps()` helper in `ledger_import.js` bridges this gap for raw chain verification. (2026-06-18)
-- **Export Ledger: error swallowing + staging-only export** (2026-06-24): Two bugs: (1) `handleExport` re-threw errors but PassphraseModal called `onSubmit` without awaiting — errors became unhandled promise rejections, modal stayed open with no feedback. Fixed by adding `exportError` state + passing `errorMessage` to PassphraseModal. (2) `exportLedgerAction` used v1 (`exportLedger()`, staging-only). Once entries are committed, staging is empty → "No entries to export." silently swallowed. Fixed by switching to `exportLedgerFull()` (v2, committed blocks + staging) in both fast and slow paths. Browser E2E verified. Zero regressions.
+- **Cross-platform JSON:** `JSON.stringify()` and `json.dumps()` produce different whitespace. Fixed with `jsonSort()` helper producing Python-compatible JSON. (2026-06-18)
 
 ---
 

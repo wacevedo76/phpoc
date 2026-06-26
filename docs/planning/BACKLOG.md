@@ -3,20 +3,24 @@
 > Issues parked for future attention. Completed items are tracked in `CHANGELOG.md`
 > and `WEB_ROADMAP.md`. This file only tracks what remains.
 
-## Entry Hash Format Alignment — Gap
+## Entry Hash Format — Eventual indent=2 Consolidation
 
-**Pause rationale:** Sole user, no immediate need. Migration script's `verify_chain()` only
-checks no-indent entry hashes (`json.dumps(data, sort_keys=True)`). After the
-2026-06-25 entry hash alignment, new entries use `indent=2`. Mixed-format chains
-(old no-indent + new indent=2) would fail `verify_chain()` in the migration script.
-`chain.py`'s `_verify_entry_hash_flex()` handles both — the migration script should too.
+**Status (2026-06-25):** CLI engine (`engine.py`, `chain.py`) and web app (`utils.js`) now
+both use `indent=2` for entry hashes. `onboarding_file.py` verifies entries in both formats.
+`chain.py`'s `_verify_entry_hash_flex()` handles both. New entries are all indent=2.
 
-**Unblock criteria:** Mixed-format chain appears, or pre-v0.4.0 migration is needed
-on a chain with post-alignment entries.
+**Pause rationale:** Sole user, no immediate need. No production mixed-format chains exist.
+When the last pre-alignment chain is retired (all entries using old no-indent hashes),
+the dual-format verification shims can be removed and `indent=2` becomes the canonical
+single format.
 
-### Remaining
+**Unblock criteria:** All existing ledger chains have been migrated or retired.
+
+### Remaining (pre-removal cleanup)
 - [ ] Update `scripts/migrate_format_version.py` `verify_chain()` to try both
       entry hash formats (no-indent + indent=2), matching `_verify_entry_hash_flex()`
+- [ ] Once all chains are indent=2 only, remove `_verify_entry_hash_flex()` from `chain.py`
+      and `onboarding_file.py`, simplify to single-format verification
 
 ## P3 — Remote Sync (git-based) — Paused
 

@@ -8,6 +8,7 @@ issues, adding features, or reviewing code.
 ## Ownership
 - `ph-view-workflow-updated.md` — Auth gate proxy workflow (staging sync gate)
 - `onboarding-workflow.md` — CLI onboarding flows: remote import + local file import
+- `ph-transport-set-workflow.md` — Transport configuration: show / set git / set http / set http cloudflare
 
 ## Local Contracts
 - **Agent-only** — concise tables, decision trees, invariants, checkpoints, gaps.

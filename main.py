@@ -1194,10 +1194,12 @@ def _config_generate_template(config):
     sections = [
         ("storage", "File paths for ledger data and metadata"),
         ("remote", "Remote sync settings (git transport)"),
+        ("http", "HTTP transport settings (generic / Cloudflare Worker)"),
         ("auth", "Authentication / passphrase settings"),
         ("device", "Device identity for multi-device use"),
         ("debug", "Debug and diagnostics (trace logging)"),
         ("timeouts", "Timeout values for sync operations"),
+        ("cookie", "Auth cookie settings (TTL, renewal)"),
         ("staging", "Staging blob size limits"),
     ]
 
@@ -1254,8 +1256,14 @@ def _get_config_comment(full_key: str) -> str:
         "storage.config": "Filename for this config file (self-reference)",
         "remote.staging_path": "Remote path for staging (e.g. SSH-style path)",
         "remote.ledger_path": "Remote path for the ledger",
-        "remote.transport": "Transport: 'git' (default), 'rsync', etc.",
+        "remote.transport": "Transport: 'git' (default) or 'http'",
         "remote.git_remote_url": "Git remote URL for push/pull (e.g. git@example.com:user/phpoc.git)",
+        "http.provider": "HTTP provider: 'cloudflare', 'generic', or null",
+        "http.base_url": "HTTP base URL (e.g. https://phpoc-staging.username.workers.dev)",
+        "http.api_key": "API key for HTTP transport (or leave null to use $PHPOC_CLOUDFLARE_API_KEY)",
+        "cookie.ttl_minutes": "How long a device cookie stays valid before renewal is required",
+        "cookie.enabled": "Set false to disable auth cookie tracking",
+        "cookie.renewal_threshold": "Fraction of TTL at which the cookie is auto-renewed (0.0-1.0)",
         "auth.cache_timeout_minutes": "How long to cache the passphrase before re-prompting",
         "auth.passphrase_required": "Set false to allow no-auth mode for add/start/end",
         "device.device_id": "Unique device identifier (auto-generated on init)",

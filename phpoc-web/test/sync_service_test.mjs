@@ -1066,6 +1066,120 @@ async function run() {
       'J5. pushToRemote → _getDeviceId called exactly once');
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Group K: reconfigure() Transport Hot-Swap
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group K: reconfigure() Transport Hot-Swap ──\n');
+
+  // K1. reconfigure(null) on a service with transport → isRemoteAvailable false
+  {
+    const { sync } = createSyncService({ withTransport: true });
+    t.assert(sync.isRemoteAvailable, 'K1. initially → remote available');
+
+    sync.reconfigure(null);
+    t.assert(!sync.isRemoteAvailable, 'K1b. after reconfigure(null) → remote NOT available');
+  }
+
+  // K2. reconfigure(newTransport) on a service with no transport → isRemoteAvailable true
+  {
+    const { sync } = createSyncService({ withTransport: false });
+    t.assert(!sync.isRemoteAvailable, 'K2. initially → remote NOT available');
+
+    const newTransport = new MockTransport();
+    sync.reconfigure(newTransport);
+    t.assert(sync.isRemoteAvailable, 'K2b. after reconfigure(newTransport) → remote available');
+  }
+
+  // K3. reconfigure swaps to a different transport → operations use the new one
+  {
+    const { sync, storage } = createSyncService({ withTransport: true, withMasterKey: true });
+    t.assert(sync.isRemoteAvailable, 'K3. original transport available');
+
+    // Create a new transport with a cookie already present
+    const newTransport = new MockTransport();
+    await pushRemoteCookie(newTransport, 'dev-0001', 'spec-k3');
+
+    sync.reconfigure(newTransport);
+    t.assert(sync.isRemoteAvailable, 'K3b. after reconfigure → remote still available');
+
+    // Verify the new transport is used: checkRemotePing should succeed
+    // (cookie exists on new transport)
+    const pingOk = await sync.checkRemotePing();
+    t.assert(pingOk, 'K3c. checkRemotePing succeeds against new transport');
+  }
+
+  // K4. reconfigure cleans up active genesis check promise
+  // (If a genesis check was in-flight, reconfigure must NOT resolve
+  //  with a stale/null transport and then set stale cache.)
+  {
+    const mk = 'k4-reconf-k4-reconf-k4-reconf-k4-reconf-aa';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Prepare local chain so genesis gate will fire
+    const chain = buildTestChain({ mk });
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // First: compatible remote → cache = true
+    await pushRemoteChain(transport, chain);
+    const result1 = await sync.checkAndSync();
+    t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
+      'K4. first check → compatible (cache set)');
+
+    // Now reconfigure to a new transport with an INCOMPATIBLE chain
+    const newTransport = new MockTransport();
+    const badChain = buildTestChain({ mk: 'bad-k4---bad-k4---bad-k4---bad-k4---zz', username: 'evil' });
+    await pushRemoteChain(newTransport, badChain);
+
+    sync.reconfigure(newTransport);
+
+    // After reconfigure, genesis cache should be cleared → re-check detects mismatch
+    const result2 = await sync.checkAndSync();
+    t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
+      'K4b. after reconfigure → genesis re-checked, mismatch detected');
+  }
+
+  // K5. reconfigure does not affect local staging data
+  {
+    const { sync } = createSyncService({ withTransport: true, withMasterKey: true });
+
+    const entry = await sync.capture({ title: 'K5 entry', startEpoch: 1000 });
+    t.assert(entry, 'K5. entry captured before reconfigure');
+
+    const newTransport = new MockTransport();
+    sync.reconfigure(newTransport);
+
+    // Entry should still be in local cache
+    const entries = await sync.readEntries();
+    t.assertEq(entries.length, 1, 'K5b. local entry preserved after reconfigure');
+    t.assertEq(entries[0].title, 'K5 entry', 'K5c. entry data intact');
+  }
+
+  // K6. reconfigure from null → transport → transitions from local-only to remote-capable
+  {
+    const { sync } = createSyncService({
+      withTransport: false,
+      withMasterKey: true,
+    });
+
+    // No transport → checkAndSync short-circuits to READY
+    t.assert(!sync.isRemoteAvailable, 'K6. no transport → remote NOT available');
+    const result1 = await sync.checkAndSync();
+    t.assertEq(result1, SyncResult.READY, 'K6b. no transport → checkAndSync short-circuits to READY');
+
+    // Reconfigure with a transport → becomes remote-capable
+    const newTransport = new MockTransport();
+    sync.reconfigure(newTransport);
+    t.assert(sync.isRemoteAvailable, 'K6c. after reconfigure → remote available');
+
+    // checkRemotePing confirms the new transport is actually reachable
+    const pingOk = await sync.checkRemotePing();
+    t.assert(pingOk, 'K6d. checkRemotePing confirms new transport reachable');
+  }
+
   // ── Results ───────────────────────────────────────────────────────
   t.summary('SyncService Auth Gate & Reconcile');
 }

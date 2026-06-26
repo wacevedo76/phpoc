@@ -8,6 +8,9 @@ All notable changes to the PH Ledger (phpoc) project.
 
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
+### Fixed
+- **SyncService transport reconfiguration** — Added `reconfigure(transport)` method to `SyncService`. Settings calls it after genesis check so Sync Now uses the new transport instead of the stale bootstrap transport. Fixes C2 browser E2E test (Sync Now showing OFFLINE after Settings change). 6 new tests (Group K in `sync_service_test.mjs`). Tradeoff analysis at `docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md`. (2026-06-25)
+
 ### Changed
 - **Auth gate fix** — `checkAndSync()` now proceeds to `_reconcileAndClaim()` when the master key is cached but no local cookie exists (fresh device after onboarding/login). Previously returned `REAUTH_NEEDED` unconditionally, which was never handled by the reauth overlay.
 - **SyncSettings status fix** — `displayStatus` no longer overrides `STATUS_READY` with `STATUS_NOT_SYNCED` when uncommitted staging entries exist. Only shows `NOT_SYNCED` when `remoteStatus !== READY`.

@@ -1,7 +1,8 @@
 # SyncService Transport Reconfiguration — Tradeoff Analysis
 
-> **Status:** 🔴 DECISION PENDING  
+> **Status:** ✅ DECIDED — Solution B implemented  
 > **Date:** 2026-06-25  
+> **Resolution:** `reconfigure(transport)` method on SyncService, called from Settings after genesis check. 6 new tests (Group K, all GREEN). Browser E2E verified.  
 > **Context:** Settings Genesis Gate E2E testing (Category C, C2 failure)  
 > **Bug:** Changing Worker URL/API key in Settings updates `localStorage` but does not update the SyncService's transport instance. The SyncService is configured during bootstrap and caches its `HttpTransport` + `RemoteSync` wrapper. After Settings → Save → navigate to Sync → "Sync Now", the SyncService still uses the stale transport. `checkAndSync()` returns OFFLINE because the transport pulls from the old config.
 
@@ -197,7 +198,7 @@ DevModeContext owns config-change detection (watching localStorage), SyncService
 
 ## Decision Pending
 
-- [ ] Choose Solution A, B, or C (recommendation: B)
-- [ ] Implement chosen solution
-- [ ] Re-run Category C E2E test C2 (Sync Now after Settings change)
-- [ ] Re-run full test suite for regressions
+- [x] Choose Solution A, B, or C (recommendation: B) → **Chose B**
+- [x] Implement chosen solution → **16 LOC across 2 files**
+- [x] Re-run Category C E2E test C2 → **PASS** (Sync Now uses new transport)
+- [x] Re-run full test suite for regressions → **207 JS assertions, 0 failures**

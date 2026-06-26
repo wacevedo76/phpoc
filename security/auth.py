@@ -46,11 +46,15 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         self._key: Optional[bytes] = None
 
     def authenticate(self) -> bool:
-        # 1. Check cached session
+        # 1. Check cached session — verify against genesis seal before trusting
         if self.SESSION_FILE.exists():
             try:
-                self._key = self.SESSION_FILE.read_bytes()
-                return True
+                cached_key = self.SESSION_FILE.read_bytes()
+                if self._verify_cached_key(cached_key):
+                    self._key = cached_key
+                    return True
+                # Stale/wrong key — clear and fall through to passphrase prompt
+                self.SESSION_FILE.unlink()
             except Exception:
                 pass
 
@@ -126,6 +130,27 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         """
         self.clear_session()
         return self.authenticate()
+
+    def _verify_cached_key(self, key: bytes) -> bool:
+        """Verify that a cached key matches the ledger by checking genesis seal.
+
+        Returns True if the key correctly verifies the genesis block seal,
+        False if the key is stale, wrong, or the ledger can't be read.
+        """
+        try:
+            import json
+            from security.crypto import CryptoManager
+            ledger_data = json.loads(self.ledger_path.read_text())
+            genesis = ledger_data[0]
+            crypto = CryptoManager(key)
+            check_data = {k: v for k, v in genesis.items()
+                          if k not in ("day_hash", "signature")}
+            return crypto.verify_seal(
+                json.dumps(check_data, sort_keys=True),
+                genesis["day_hash"]
+            )
+        except Exception:
+            return False
 
     def clear_session(self):
         self._key = None

@@ -159,7 +159,7 @@ export default function Settings() {
     const prevUrl = localStorage.getItem('phpoc_worker_url') || '';
     const prevApiKey = localStorage.getItem('phpoc_api_key') || '';
 
-    // Clear URL: reset genesis status
+    // Clear URL: reset genesis status + disconnect transport
     if (!workerUrl.trim()) {
       localStorage.removeItem('phpoc_worker_url');
       localStorage.removeItem('phpoc_api_key');
@@ -169,6 +169,7 @@ export default function Settings() {
       setGenesisReason(null);
       setGenesisStats(null);
       setSaved(true);
+      services.sync?.reconfigure(null);
       setTimeout(() => setSaved(false), 2000);
       return;
     }
@@ -230,6 +231,9 @@ export default function Settings() {
           setGenesisStatus('incompatible');
           setGenesisReason(result.reason);
         }
+
+        // Push new transport into SyncService so Sync Now uses it
+        services.sync?.reconfigure(transport);
       } catch (err) {
         setGenesisStatus('offline');
         setGenesisReason(err.message || 'Network error');

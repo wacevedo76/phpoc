@@ -981,6 +981,28 @@ export class SyncService {
   }
 
   /**
+   * Replace the active transport with a new one.
+   *
+   * Call after Settings changes the Worker URL or API key so that
+   * subsequent sync operations use the new remote endpoint. Passing
+   * null gracefully degrades to local-only mode.
+   *
+   * Side effects:
+   * - Rebuilds the internal RemoteSync wrapper from the new transport
+   * - Invalides the genesis gate cache (different remote may have
+   *   different genesis)
+   *
+   * @param {import('./transport.js').HttpTransport|null} transport
+   */
+  reconfigure(transport) {
+    this._transport = transport || null;
+    this._remote = transport
+      ? new RemoteSync(transport, this._crypto)
+      : null;
+    this.resetGenesisGate();
+  }
+
+  /**
    * Quick reachability check.
    * @returns {Promise<boolean>}
    */
