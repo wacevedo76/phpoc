@@ -109,6 +109,16 @@ class AbstractCryptoManager(ABC):
     @abstractmethod
     def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool: pass
 
+    # ── CamelCase aliases for JS-ported modules (LedgerMerge) ──────
+
+    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
+        """CamelCase alias: delegates to verify_seal, ignores master_key."""
+        return self.verify_seal(data_str, signature)
+
+    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
+        """CamelCase alias: delegates to verify_signature."""
+        return self.verify_signature(data_str, signature, identity_secret)
+
 class CryptoManager(AbstractCryptoManager):
     def __init__(self, master_key: bytes):
         """
@@ -138,6 +148,14 @@ class CryptoManager(AbstractCryptoManager):
         """Verifies the HMAC signature."""
         expected = self.sign(data_str, identity_secret)
         return hmac.compare_digest(expected, signature)
+
+    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
+        """CamelCase alias: delegates to verify_seal, ignores master_key."""
+        return self.verify_seal(data_str, signature)
+
+    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
+        """CamelCase alias: delegates to verify_signature."""
+        return self.verify_signature(data_str, signature, identity_secret)
 
     def encrypt(self, text: str) -> str:
         salt = os.urandom(16)
@@ -216,3 +234,11 @@ class NoAuthCryptoManager(AbstractCryptoManager):
         return "unsigned"
     def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
         return signature == "unsigned"
+
+    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
+        """CamelCase alias: delegates to verify_seal, ignores master_key."""
+        return self.verify_seal(data_str, signature)
+
+    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
+        """CamelCase alias: delegates to verify_signature."""
+        return self.verify_signature(data_str, signature, identity_secret)

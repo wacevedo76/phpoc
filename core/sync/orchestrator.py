@@ -18,6 +18,7 @@ Revert lifecycle:
 """
 
 import logging
+import asyncio
 from typing import Optional, List, Dict, Any
 
 from domain.staging.service import StagingService
@@ -206,13 +207,14 @@ class SyncOrchestrator:
         Only runs when a transport and master_key are available.
         Failures are logged but not fatal — local ledger always takes priority.
 
-        Handles stale-remote recovery:
-          If the remote has blocks from an incompatible chain (e.g. after
-          ``ph recover`` force-pushed a shorter chain, leaving old blocks
-          from another device at higher indices), pull_blocks detects the
-          divergence and returns nothing. This method then force-pushes the
-          local chain to overwrite stale indices and purges the remaining
-          stale blocks with empty placeholders.
+        Handles two divergence scenarios:
+          1. Same-genesis divergence: two devices share a genesis but produced
+             different day blocks. Offers interactive merge via LedgerMerge.
+             If the user confirms, replaces local chain with merged result and
+             force-pushes to remote.
+          2. Stale-remote recovery: remote has blocks from an incompatible chain
+             (e.g. after ``ph recover`` force-pushed a shorter chain). Local
+             chain overwrites the stale indices.
         """
         if self._transport is None or self._master_key is None:
             return
@@ -222,7 +224,6 @@ class SyncOrchestrator:
         ledger_sync = RemoteLedgerSync(self._transport, self._master_key)
 
         # Fetch remote block indices once, share between pull and push.
-        # This avoids two redundant list_files() HTTP calls.
         try:
             existing_indices = ledger_sync._list_remote_block_indices()
         except Exception:
@@ -254,7 +255,31 @@ class SyncOrchestrator:
             all_blocks = self._ledger.chain.read_all()
             local_count = len(all_blocks)
 
-            # Check for stale remote blocks (from an incompatible chain)
+            # ── Same-genesis divergence detection ────────────────────
+            # pull_blocks returns (None, remote_count) when chains diverge.
+            # Check if it's same-genesis (mergeable) or stale (overwrite).
+            if new_blocks is None and remote_count > 0 and local_count > 0:
+                genesis_match = self._is_same_genesis(
+                    ledger_sync, all_blocks
+                )
+                if genesis_match:
+                    logger.warning(
+                        "SyncOrchestrator: chain divergence detected at "
+                        "block %d — remote has %d block(s) but shares same "
+                        "genesis",
+                        local_count,
+                        remote_count,
+                    )
+                    merged = self._try_ledger_merge(
+                        ledger_sync, all_blocks
+                    )
+                    if merged:
+                        # Merge succeeded — chain already replaced + pushed.
+                        # Update index from merged result and return.
+                        return
+                    # Merge declined or failed — fall through to stale handling
+
+            # ── Stale-remote handling ─────────────────────────────────
             has_stale_remote = (
                 new_blocks is None
                 and remote_count > local_count
@@ -262,12 +287,6 @@ class SyncOrchestrator:
             )
 
             if has_stale_remote:
-                # Remote has stale blocks from an incompatible chain.
-                # The last local block (index N-1) exists on remote as stale
-                # content from a different chain. Overwrite just that one
-                # block to keep remote consistent. Blocks >= N (from the
-                # other device) remain on remote but are ignored by pull
-                # (divergence detection skips them).
                 logger.warning(
                     "SyncOrchestrator: remote has %d stale block(s) from "
                     "an incompatible chain. Overwriting block %d.",
@@ -286,7 +305,6 @@ class SyncOrchestrator:
                         local_count - 1,
                     )
             else:
-                # Normal path: push only blocks remote doesn't have
                 pushed = ledger_sync.push_blocks(
                     all_blocks, existing_indices=existing_indices,
                 )
@@ -311,6 +329,227 @@ class SyncOrchestrator:
                 "SyncOrchestrator: failed to push index to remote: %s",
                 exc,
             )
+
+    # ── Merge helpers ────────────────────────────────────────────
+
+    def _is_same_genesis(
+        self,
+        ledger_sync: "RemoteLedgerSync",
+        local_blocks: List[Dict[str, Any]],
+    ) -> bool:
+        """Check if remote chain shares the same genesis block as local.
+
+        Pulls remote block 0 and compares hashes.
+        Returns False if remote genesis is unavailable or hashes differ.
+        """
+        from domain.ledger.remote_sync import RemoteLedgerSync
+
+        if not local_blocks:
+            return False
+        try:
+            remote_genesis = ledger_sync.pull_block_by_index(0)
+        except Exception:
+            return False
+        if remote_genesis is None:
+            return False
+
+        local_hash = (
+            local_blocks[0].get("day_hash")
+            or local_blocks[0].get("month_hash")
+            or local_blocks[0].get("year_hash")
+        )
+        remote_hash = (
+            remote_genesis.get("day_hash")
+            or remote_genesis.get("month_hash")
+            or remote_genesis.get("year_hash")
+        )
+        return local_hash == remote_hash
+
+    def _try_ledger_merge(
+        self,
+        ledger_sync: "RemoteLedgerSync",
+        local_blocks: List[Dict[str, Any]],
+    ) -> bool:
+        """Attempt same-genesis merge between local and remote chains.
+
+        1. Show interactive prompt (if ViewInterface available)
+        2. Pull full remote chain
+        3. Call LedgerMerge.merge()
+        4. Replace local chain and index with merged result
+        5. Force-push merged chain to remote
+        6. Notify view
+
+        Returns True if merge succeeded, False if declined, cancelled, or failed.
+        """
+        from domain.ledger.merge import LedgerMerge
+
+        # ── Interactive confirmation ──────────────────────────────
+        if self._view is None:
+            # Headless/auto mode — skip merge, keep local chain
+            logger.info(
+                "SyncOrchestrator: same-genesis divergence detected "
+                "but no view — skipping merge"
+            )
+            return False
+
+        remote_count = len(
+            ledger_sync._list_remote_block_indices()
+        )
+        self._view.render_warning(
+            f"Chain divergence detected: local has {len(local_blocks)} "
+            f"block(s), remote has {remote_count} block(s). Both share "
+            f"the same genesis."
+        )
+        choice = self._view.prompt_choice(
+            "\n[M]erge chains (combine entries from both), "
+            "[S]kip (keep local, overwrite remote later), "
+            "[C]ancel sync? ",
+            ("M", "S", "C"),
+            help_items={
+                "M": "Merge both chains — entries from both devices "
+                     "are combined, deduplicated, and sorted. The merged "
+                     "result replaces both local and remote chains.",
+                "S": "Skip — keep the local chain as-is. Remote blocks "
+                     "will be overwritten on the next sync push.",
+                "C": "Cancel — stop sync now, leave both chains unchanged.",
+            },
+        )
+        if choice == "C":
+            logger.info("SyncOrchestrator: merge cancelled by user")
+            return False
+        if choice == "S":
+            logger.info(
+                "SyncOrchestrator: merge skipped — keeping local chain"
+            )
+            return False
+        # choice == "M" — continue to merge
+
+        # ── Pull full remote chain ────────────────────────────────
+        try:
+            remote_blocks = ledger_sync.pull_full_chain()
+        except Exception as exc:
+            logger.error(
+                "SyncOrchestrator: failed to pull full remote chain: %s",
+                exc,
+            )
+            if self._view is not None:
+                self._view.render_error(
+                    f"Failed to pull remote chain: {exc}"
+                )
+            return False
+
+        if not remote_blocks:
+            logger.warning(
+                "SyncOrchestrator: no remote blocks to merge"
+            )
+            return False
+
+        # ── Run merge ─────────────────────────────────────────────
+        crypto = getattr(self._ledger, "crypto", None)
+        if crypto is None:
+            logger.error(
+                "SyncOrchestrator: cannot merge — no crypto manager "
+                "available"
+            )
+            return False
+
+        # idsecret as hex string (merge.py expects Optional[str])
+        identity_secret_bytes = getattr(
+            self._ledger, "identity_secret", None
+        )
+        identity_secret_hex = (
+            identity_secret_bytes.hex() if identity_secret_bytes else None
+        )
+        master_key_hex = self._master_key.hex()
+
+        try:
+            result = asyncio.run(
+                LedgerMerge.merge(
+                    local_chain=list(local_blocks),
+                    remote_chain=remote_blocks,
+                    crypto=crypto,
+                    master_key=master_key_hex,
+                    identity_secret=identity_secret_hex,
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "SyncOrchestrator: LedgerMerge.merge() failed: %s",
+                exc,
+            )
+            if self._view is not None:
+                self._view.render_error(
+                    f"Chain merge failed: {exc}"
+                )
+            return False
+
+        merged_chain = result.get("mergedChain", [])
+        merged_index = result.get("index", {})
+        stats = result.get("stats", {})
+
+        if not merged_chain:
+            logger.error(
+                "SyncOrchestrator: merge returned empty chain"
+            )
+            return False
+
+        # ── Replace local chain ───────────────────────────────────
+        # Truncate to genesis only (block 0). The merged chain shares
+        # the same genesis so we keep it, then append merged blocks.
+        chain = self._ledger.chain
+        total = len(chain.read_all())
+        if total > 1:
+            chain.truncate(total - 1)  # Keep genesis only
+
+        # Append merged blocks (skip genesis — already present)
+        for block in merged_chain[1:]:
+            chain.append(block)
+
+        # ── Replace index ─────────────────────────────────────────
+        index = self._ledger.index
+        index.clear()
+        for date_str, titles in merged_index.items():
+            for title, duration_ms in titles.items():
+                index.update(date_str, title, duration_ms)
+
+        # ── Force-push merged chain to remote ─────────────────────
+        try:
+            all_merged = chain.read_all()
+            pushed = ledger_sync.push_blocks(all_merged, force=True)
+            logger.info(
+                "SyncOrchestrator: force-pushed %d merged block(s) to remote",
+                pushed,
+            )
+        except Exception as exc:
+            logger.warning(
+                "SyncOrchestrator: failed to push merged chain: %s",
+                exc,
+            )
+
+        # Push merged index
+        try:
+            index_data = index.get_all()
+            if index_data:
+                ledger_sync.push_index(index_data)
+        except Exception as exc:
+            logger.warning(
+                "SyncOrchestrator: failed to push merged index: %s",
+                exc,
+            )
+
+        # ── Notify ────────────────────────────────────────────────
+        msg = (
+            f"Chains merged: {stats.get('mergedEntries', '?')} entries "
+            f"in {len(merged_chain)} blocks "
+            f"(fork at block {stats.get('forkIndex', '?')}, "
+            f"{stats.get('duplicatesSkipped', 0)} duplicates skipped)"
+        )
+        logger.info("SyncOrchestrator: %s", msg)
+        if self._view is not None:
+            self._view.render_success(msg)
+            self._view.notify(msg)
+
+        return True
 
     # ------------------------------------------------------------------
     # Revert flow

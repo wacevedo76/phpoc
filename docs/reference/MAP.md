@@ -17,14 +17,16 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import |
 | `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
-| `core/sync/orchestrator.py` | COLD | `SyncOrchestrator` — sync lifecycle coordinator |
+| `core/sync/orchestrator.py` | HOT | `SyncOrchestrator` — sync lifecycle coordinator + same-genesis merge via `LedgerMerge.merge()` |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
 | `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
 | `core/sync/transport_registry.py` | HOT | `TransportProvider` dataclass, `TransportRegistry` — extensible transport discovery for onboarding |
 | `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | COLD | Passphrase + Recovery authenticators |
 | `security/device_identity.py` | COLD | `DeviceIdentity`, `AbstractDeviceIdentityProvider` |
-| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification, `RemoteLedgerSync` |
+| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification |
+| `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()` |
+| `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
 | `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
 | `domain/staging/remote_sync.py` | COLD | Blob obfuscation, pull/push, device cookie |
 | `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id` |
@@ -70,9 +72,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-### Tests (38 files, ~16,000 lines, ~1776 tests)
+### Tests (39 files, ~22,000 lines, ~1823 tests)
 
 Key test files:
+- `tests/test_ledger_merge.py` — 47 tests for `LedgerMerge.merge()` — TDD GREEN phase (47 PASS, 0 FAIL)
 - `tests/test_staging_sync_optimization.py` — 85 tests, auth gate, cross-device, merge
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
@@ -89,10 +92,12 @@ Key test files:
 | `../spec/PHPSPEC.md` | Block structure, encryption, chain validation spec |
 | `../planning/WEB_ROADMAP.md` | Web/mobile build log — completed steps, bugs found, test plans |
 | `../../SESSION_HANDOFF.md` | Context restoration anchor — session-level snapshot |
+| `../planning/LEDGER_MERGE_PYTHON_PORT.md` | 🔜 **ACTIVE** — TDD test spec for Python LedgerMerge port: 41 tests across 10 groups (A–J), helper inventory, 7-step algorithm reference |
 | `../planning/ROADMAP.md` | Migration arc (CLI → Browser → Flutter) + feature roadmap |
 | `../planning/BACKLOG.md` | Paused issues |
 | `../planning/PUSHLEDGERBLOCKS_TDD_PLAN.md` | `pushLedgerBlocks()` TDD test plan — 31 tests across 7 categories (GREEN phase, 76 assertions) |
 | `../planning/COMMIT_PUSH_WIRING_TESTS.md` | Commit→push wiring TDD test outline — 14 tests across 4 categories, execution plan (RED, not started) |
+| `../planning/LEDGER_MERGE_PYTHON_PORT.md` | Porting `merge.js` → `merge.py` — 41+ test catalog, 7-step algorithm, wiring plan |
 | `../planning/REAUTH_TTL_TDD_PLAN.md` | Re-auth overlay for TTL expiry TDD test plan — ~47 tests across 2 new files + 3 additions, 9 categories (A–I) (🔴 RED, tests not yet written) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |

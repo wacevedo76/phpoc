@@ -548,5 +548,388 @@ class TestSyncLedgerBlocks(unittest.TestCase):
             orch._sync_ledger_blocks()
 
 
+# =========================================================================
+# Test: SyncOrchestrator._sync_ledger_blocks — same-genesis merge
+# =========================================================================
+
+class TestSyncLedgerBlocksMerge(unittest.TestCase):
+    """Verify same-genesis divergence detection and LedgerMerge integration.
+
+    When pull_blocks detects divergence (returns None) and genesis matches,
+    the orchestrator should offer interactive merge and call LedgerMerge.
+    """
+
+    def setUp(self):
+        from domain.staging.service import StagingService
+        from core.sync import SyncOrchestrator
+
+        # Mock crypto — needed by _try_ledger_merge for LedgerMerge.merge()
+        self.mock_crypto = MagicMock()
+        self.mock_crypto.seal.return_value = "a" * 64
+        self.mock_crypto.sign.return_value = "b" * 64
+        self.mock_crypto.decrypt.return_value = "1000000000"
+        self.mock_crypto.verifySeal.return_value = True
+        self.mock_crypto.verifySignature.return_value = True
+
+        self.svc = MagicMock(spec=StagingService)
+        self.engine = MagicMock()  # Not spec=LedgerEngine — need .chain .index
+        self.engine.crypto = self.mock_crypto
+        self.engine.identity_secret = None
+
+        # Chain mock — genesis + 2 day blocks
+        self.local_blocks = [
+            {"type": "genesis", "day_index": 0, "date": "2026-01-01",
+             "prev_hash": "0" * 64, "day_hash": "genhash", "entries": []},
+            {"type": "day", "day_index": 1, "date": "2026-01-02",
+             "prev_hash": "genhash", "day_hash": "block1",
+             "entries": [{"hash": "h1", "data": {"title": "Task A",
+                          "startTime_enc": "enc:1000000000",
+                          "endTime_enc": "enc:1000003600",
+                          "duration": 3600000}}]},
+            {"type": "day", "day_index": 2, "date": "2026-01-03",
+             "prev_hash": "block1", "day_hash": "block2",
+             "entries": [{"hash": "h2", "data": {"title": "Task B",
+                          "startTime_enc": "enc:2000000000",
+                          "endTime_enc": "enc:2000003600",
+                          "duration": 3600000}}]},
+        ]
+        self.engine.chain.read_all.return_value = list(self.local_blocks)
+
+        # Index mock
+        self.engine.index = MagicMock()
+        self.engine.index.get_all.return_value = {}
+
+        self.transport = MagicMock()
+        self.view = MagicMock()
+        self.view.prompt_choice.return_value = "M"  # Default: accept merge
+
+    def _make_orchestrator(self, view=True):
+        from core.sync import SyncOrchestrator
+        return SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            view_interface=self.view if view else None,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+    # ── Merge accepted ──────────────────────────────────────────
+
+    def test_merge_accepted_replaces_chain(self):
+        """User accepts merge → LedgerMerge called → chain/index replaced."""
+        from core.sync import SyncOrchestrator
+
+        orch = self._make_orchestrator()
+
+        # Remote genesis matches local
+        remote_genesis = dict(self.local_blocks[0])
+
+        # Remote chain has different blocks after genesis
+        remote_blocks = [
+            self.local_blocks[0],  # Same genesis
+            {"type": "day", "day_index": 1, "date": "2026-01-02",
+             "prev_hash": "genhash", "day_hash": "remote_block1",
+             "entries": [{"hash": "h3", "data": {"title": "Task C",
+                          "startTime_enc": "enc:1000000000",
+                          "endTime_enc": "enc:1000007200",
+                          "duration": 7200000}}]},
+        ]
+
+        merged_chain = [
+            self.local_blocks[0],  # Genesis
+            {"type": "day", "day_index": 1, "date": "2026-01-02",
+             "prev_hash": "genhash", "day_hash": "merged1",
+             "entries": [
+                 {"hash": "h1", "data": {"title": "Task A",
+                              "startTime_enc": "enc:1000000000",
+                              "endTime_enc": "enc:1000003600",
+                              "duration": 3600000}},
+                 {"hash": "h3", "data": {"title": "Task C",
+                              "startTime_enc": "enc:1000000000",
+                              "endTime_enc": "enc:1000007200",
+                              "duration": 7200000}},
+             ]},
+        ]
+        merged_index = {"2026-01-02": {"Task A": 3600000, "Task C": 7200000}}
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            # pull_blocks returns None, remote_count=2 → divergence detected
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.push_blocks.return_value = 2
+            # Genesis check: same genesis
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            # Full chain pull
+            mock_instance.pull_full_chain.return_value = remote_blocks
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            with patch("core.sync.orchestrator.asyncio.run") as mock_async_run:
+                mock_async_run.return_value = {
+                    "mergedChain": merged_chain,
+                    "index": merged_index,
+                    "stats": {
+                        "forkIndex": 0,
+                        "localEntries": 2,
+                        "remoteEntries": 1,
+                        "duplicatesSkipped": 0,
+                        "mergedEntries": 3,
+                        "newBlockCount": 1,
+                    },
+                }
+
+                orch._sync_ledger_blocks()
+
+        # Verify merge prompt was shown
+        self.view.render_warning.assert_called()
+        self.view.prompt_choice.assert_called_once()
+
+        # Verify chain was replaced (append called for new blocks)
+        self.engine.chain.truncate.assert_called()
+        self.engine.chain.append.assert_called()
+
+        # Verify index was cleared and updated
+        self.engine.index.clear.assert_called()
+        self.engine.index.update.assert_called()
+
+        # Verify force-push of merged chain
+        force_push_call = mock_instance.push_blocks.call_args
+        self.assertIsNotNone(force_push_call)
+        self.assertTrue(force_push_call[1].get("force", False))
+
+        # Success notification
+        self.view.render_success.assert_called()
+
+    # ── Merge cancelled by user ─────────────────────────────────
+
+    def test_merge_cancelled_returns_early(self):
+        """User cancels merge → no merge, no push, no error."""
+        orch = self._make_orchestrator()
+        self.view.prompt_choice.return_value = "C"  # Cancel
+
+        remote_genesis = dict(self.local_blocks[0])
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            orch._sync_ledger_blocks()
+
+        # Merge prompt shown, user chose Cancel
+        self.view.prompt_choice.assert_called_once()
+
+        # pull_full_chain should NOT be called (user cancelled before pull)
+        mock_instance.pull_full_chain.assert_not_called()
+
+        # LedgerMerge should NOT be called
+        self.engine.index.clear.assert_not_called()
+
+    # ── Merge skipped by user ───────────────────────────────────
+
+    def test_merge_skipped_falls_through(self):
+        """User skips merge → push_blocks proceeds normally (not force)."""
+        orch = self._make_orchestrator()
+        self.view.prompt_choice.return_value = "S"  # Skip
+
+        remote_genesis = dict(self.local_blocks[0])
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance.push_blocks.return_value = 0
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            orch._sync_ledger_blocks()
+
+        # Merge prompt shown
+        self.view.prompt_choice.assert_called_once()
+
+        # pull_full_chain should NOT be called
+        mock_instance.pull_full_chain.assert_not_called()
+
+        # push_blocks is still called (normal push, not force)
+        push_call = mock_instance.push_blocks.call_args
+        self.assertIsNotNone(push_call)
+        # Not a force push (skip falls through to normal push path)
+        self.assertFalse(push_call[1].get("force", False))
+
+    # ── No view interface ───────────────────────────────────────
+
+    def test_no_view_interface_skips_merge(self):
+        """Without ViewInterface, merge is skipped silently."""
+        orch = self._make_orchestrator(view=False)
+
+        remote_genesis = dict(self.local_blocks[0])
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance.push_blocks.return_value = 0
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            orch._sync_ledger_blocks()
+
+        # No merge attempted
+        mock_instance.pull_full_chain.assert_not_called()
+
+    # ── Genesis mismatch ────────────────────────────────────────
+
+    def test_genesis_mismatch_no_merge(self):
+        """When genesis hashes differ, no merge attempted → stale handling."""
+        orch = self._make_orchestrator()
+
+        # Different genesis hash
+        remote_genesis = dict(self.local_blocks[0])
+        remote_genesis["day_hash"] = "DIFFERENT_GENESIS_HASH"
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            # remote_count=5 > local_count=3 → stale condition triggers
+            mock_instance.pull_blocks.return_value = (None, 5)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance.push_blocks.return_value = 1
+            mock_instance._list_remote_block_indices.return_value = {0, 1, 2, 3, 4}
+            mock_rls.return_value = mock_instance
+
+            orch._sync_ledger_blocks()
+
+        # Merge prompt NOT shown (genesis mismatch)
+        self.view.prompt_choice.assert_not_called()
+        mock_instance.pull_full_chain.assert_not_called()
+
+        # Overwrite indices used (stale remote handling)
+        push_call = mock_instance.push_blocks.call_args
+        self.assertIn("overwrite_indices", push_call[1])
+
+    # ── Edge: pull_full_chain fails ────────────────────────────
+
+    def test_pull_full_chain_failure(self):
+        """If pull_full_chain raises, merge fails gracefully."""
+        orch = self._make_orchestrator()
+
+        remote_genesis = dict(self.local_blocks[0])
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance.pull_full_chain.side_effect = (
+                FileNotFoundError("Remote block missing")
+            )
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            orch._sync_ledger_blocks()
+
+        # Error should be rendered
+        self.view.render_error.assert_called()
+        # Merge should NOT proceed to index replacement
+        self.engine.index.clear.assert_not_called()
+
+    # ── Edge: merge() raises ────────────────────────────────────
+
+    def test_merge_raises_graceful_failure(self):
+        """If LedgerMerge.merge() raises, orchestrator handles gracefully."""
+        orch = self._make_orchestrator()
+
+        remote_genesis = dict(self.local_blocks[0])
+        remote_blocks = [self.local_blocks[0]]  # Just genesis
+
+        with patch("domain.ledger.remote_sync.RemoteLedgerSync") as mock_rls:
+            mock_instance = MagicMock()
+            mock_instance.pull_blocks.return_value = (None, 2)
+            mock_instance.pull_block_by_index.return_value = remote_genesis
+            mock_instance.pull_full_chain.return_value = remote_blocks
+            mock_instance._list_remote_block_indices.return_value = {0, 1}
+            mock_rls.return_value = mock_instance
+
+            with patch("core.sync.orchestrator.asyncio.run") as mock_async_run:
+                mock_async_run.side_effect = ValueError(
+                    "Genesis block mismatch"
+                )
+                orch._sync_ledger_blocks()
+
+        self.view.render_error.assert_called()
+        self.engine.index.clear.assert_not_called()
+
+    # ── is_same_genesis unit tests ──────────────────────────────
+
+    def test_is_same_genesis_true(self):
+        """_is_same_genesis returns True when genesis hashes match."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        mock_ledger_sync = MagicMock()
+        remote_genesis = dict(self.local_blocks[0])
+        mock_ledger_sync.pull_block_by_index.return_value = remote_genesis
+
+        result = orch._is_same_genesis(mock_ledger_sync, self.local_blocks)
+        self.assertTrue(result)
+
+    def test_is_same_genesis_false(self):
+        """_is_same_genesis returns False when genesis hashes differ."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        mock_ledger_sync = MagicMock()
+        remote_genesis = dict(self.local_blocks[0])
+        remote_genesis["day_hash"] = "DIFFERENT_HASH"
+        mock_ledger_sync.pull_block_by_index.return_value = remote_genesis
+
+        result = orch._is_same_genesis(mock_ledger_sync, self.local_blocks)
+        self.assertFalse(result)
+
+    def test_is_same_genesis_no_remote(self):
+        """_is_same_genesis returns False when remote has no genesis."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        mock_ledger_sync = MagicMock()
+        mock_ledger_sync.pull_block_by_index.return_value = None
+
+        result = orch._is_same_genesis(mock_ledger_sync, self.local_blocks)
+        self.assertFalse(result)
+
+    def test_is_same_genesis_empty_local(self):
+        """_is_same_genesis returns False when local has no blocks."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        mock_ledger_sync = MagicMock()
+        result = orch._is_same_genesis(mock_ledger_sync, [])
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -227,6 +227,55 @@ class RemoteLedgerSync:
             logger.warning("Failed to parse remote index: %s", exc)
             return None
 
+    def pull_full_chain(self) -> List[Dict[str, Any]]:
+        """Pull all remote ledger blocks without chain verification.
+
+        Used for same-genesis divergence merge — LedgerMerge.merge()
+        performs its own independent chain validation.
+
+        Returns:
+            List of all block dicts from remote, in index order.
+            Empty list if no blocks exist on remote.
+
+        Raises:
+            FileNotFoundError: If a block file is expected but missing.
+            ValueError: If a block fails deobfuscation or JSON parse.
+        """
+        indices = self._list_remote_block_indices()
+        if not indices:
+            return []
+        blocks: List[Dict[str, Any]] = []
+        for idx in sorted(indices):
+            filename = f"{idx:06d}.json"
+            path = self._blocks_prefix + filename
+            raw = self._transport.pull(path)
+            if raw is None:
+                raise FileNotFoundError(
+                    f"Remote block {filename} expected but not found"
+                )
+            block = self._deobfuscate_block(raw)
+            blocks.append(block)
+        return blocks
+
+    def pull_block_by_index(self, index: int) -> Optional[Dict[str, Any]]:
+        """Pull a single remote ledger block by index.
+
+        Args:
+            index: Block sequence number (0 = genesis).
+
+        Returns:
+            Block dict, or None if the block doesn't exist on remote.
+
+        Raises:
+            ValueError: If deobfuscation or JSON parse fails.
+        """
+        filename = f"{index:06d}.json"
+        path = self._blocks_prefix + filename
+        raw = self._transport.pull(path)
+        if raw is None:
+            return None
+        return self._deobfuscate_block(raw)
+
     def get_remote_block_count(self) -> int:
         """Count blocks on remote by listing block files.
 

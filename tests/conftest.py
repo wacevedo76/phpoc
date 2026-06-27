@@ -293,6 +293,8 @@ def pytest_collection_modifyitems(config, items):
         "test_staging_sync_optimization": 30,
         "test_hierarchy": 10,
         "test_modular": 30,
+        # Ledger merge
+        "test_ledger_merge": 30,
     }
 
     for item in items:
