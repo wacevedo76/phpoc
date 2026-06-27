@@ -1039,4 +1039,44 @@ export class SyncService {
   get lastPushAt() {
     return this._lastPushAt;
   }
+
+  /**
+   * Clear all known keys from the remote R2 bucket.
+   *
+   * Used when the user wants to overwrite a remote ledger with a
+   * different genesis (genesis mismatch override). Deletes the three
+   * known paths (ledger:blocks, staging:blob, cookie:json) via HTTP DELETE
+   * and resets the genesis compatibility gate so the next syncStart
+   * treats the remote as empty.
+   *
+   * @returns {Promise<void>}
+   * @throws {Error} If remote transport is not configured.
+   */
+  async clearRemote() {
+    if (!this._remote || !this._transport) {
+      throw new Error('No remote transport configured');
+    }
+
+    const keys = ['ledger:blocks', 'staging:blob', 'cookie:json'];
+    let failures = 0;
+
+    for (const key of keys) {
+      try {
+        await this._transport.delete(key);
+      } catch (err) {
+        failures++;
+        console.warn(`clearRemote: failed to delete ${key}: ${err.message}`);
+      }
+    }
+
+    if (failures === keys.length) {
+      throw new Error('Failed to clear any remote keys. The remote may be unreachable.');
+    }
+
+    // Reset genesis gate so next checkAndSync re-evaluates compatibility
+    this._genesisCompatible = null;
+
+    // Clear ETag cache so next pull is a fresh request
+    this._transport.resetCache();
+  }
 }

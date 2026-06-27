@@ -8,6 +8,9 @@ import { Icons } from '../ui/Icons.jsx';
  * Alternative entry point to start a task (the Dashboard also has
  * a new-task form in its lower pane). This screen gives more space
  * for the form and can include quick-add presets later.
+ *
+ * One-off mode: check "One-off activity" to log a task as already completed
+ * (both start and end timestamps set to now, is_active=false).
  */
 export default function NewTask() {
   const { services } = useApp();
@@ -16,6 +19,7 @@ export default function NewTask() {
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState('');
   const [comment, setComment] = useState('');
+  const [isOneOff, setIsOneOff] = useState(false);
   const [status, setStatus] = useState(null);
   const [success, setSuccess] = useState(false);
 
@@ -23,7 +27,8 @@ export default function NewTask() {
     e.preventDefault();
     if (!title.trim() || !sync) return;
 
-    setStatus('Starting...');
+    const now = Date.now();
+    setStatus(isOneOff ? 'Logging...' : 'Starting...');
     setSuccess(false);
 
     try {
@@ -31,14 +36,25 @@ export default function NewTask() {
         .map(t => t.trim())
         .filter(Boolean);
 
-      const hash = await sync.capture({
+      const captureParams = {
         title: title.trim(),
-        startEpoch: Date.now(),
+        startEpoch: now,
         tags: tagList,
         comment: comment.trim() || null,
-      });
+      };
 
-      setStatus(`✓ "${title.trim()}" started!`);
+      // One-off: set end_epoch = now, mark not active, compute duration = 0
+      if (isOneOff) {
+        captureParams.endEpoch = now;
+        captureParams.isActive = false;
+      }
+
+      await sync.capture(captureParams);
+
+      setStatus(isOneOff
+        ? `✓ "${title.trim()}" logged!`
+        : `✓ "${title.trim()}" started!`
+      );
       setSuccess(true);
 
       // Reset form after 2 seconds
@@ -46,13 +62,14 @@ export default function NewTask() {
         setTitle('');
         setTags('');
         setComment('');
+        setIsOneOff(false);
         setStatus(null);
         setSuccess(false);
       }, 2000);
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     }
-  }, [title, tags, comment, sync]);
+  }, [title, tags, comment, isOneOff, sync]);
 
   return (
     <div className="screen">
@@ -100,6 +117,18 @@ export default function NewTask() {
           />
         </div>
 
+        <div className="form-group">
+          <label className="oneoff-checkbox-label">
+            <input
+              type="checkbox"
+              checked={isOneOff}
+              onChange={(e) => setIsOneOff(e.target.checked)}
+              className="oneoff-checkbox"
+            />
+            <span>One-off activity <span className="form-label-hint">(already completed — no need to end later)</span></span>
+          </label>
+        </div>
+
         {status && (
           <p className={`form-status ${success ? 'form-status-ok' : status.startsWith('Error') ? 'form-status-error' : ''}`}>
             {status}
@@ -111,7 +140,11 @@ export default function NewTask() {
           className="btn btn-primary btn-start btn-start-lg"
           disabled={!title.trim() || !!success}
         >
-          <Icons.play size={16} /> Start Task
+          {isOneOff ? (
+            <><Icons.check size={16} /> Log Task</>
+          ) : (
+            <><Icons.play size={16} /> Start Task</>
+          )}
         </button>
       </form>
     </div>

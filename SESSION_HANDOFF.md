@@ -33,9 +33,9 @@
 
 ### ⏭ Remaining Gaps (future work)
 
-1. **Tier 2 — React component tests** (~9 tests): OnboardingScreen import form state machine — file picker gating, destroy warning display, checkbox gates, genesis error display.
-2. **Tier 3 — Browser E2E** (~4 tests): Real browser flow with Playwright — full import from file picker, export from Settings, roundtrip in a fresh session.
-3. **Same-genesis merge support**: `LedgerMerge.merge()` exists in `src/ledger/merge.js` but import rejects same-genesis with "merge not yet supported". Needs to be wired into `confirmImport`.
+1. **Same-genesis merge support** (next): When the remote Worker has the same genesis (same recovery seed) but a diverged commit history, Sync Now should detect the divergence and offer a reconciliation/merge process. `LedgerMerge.merge()` exists in `src/ledger/merge.js` but isn't wired into the sync flow. Currently, same-genesis remote data is silently pulled and merged via `_reconcileAndClaim()` with no divergence detection.
+2. **Tier 2 — React component tests** (~9 tests): OnboardingScreen import form state machine — file picker gating, destroy warning display, checkbox gates, genesis error display.
+3. **Tier 3 — Browser E2E** (~4 tests): Real browser flow with Playwright — full import from file picker, export from Settings, roundtrip in a fresh session.
 4. **Raw chain staging extraction**: CLI `ledger.json` import puts all entries inside `ledger:blocks` — no way to extract them into staging for editing or re-commit.
 
 ## Known Issues
@@ -44,6 +44,8 @@
 - **Stale session cache trusted without verification (2026-06-26):** ✅ FIXED. `PassphraseAuthenticator.authenticate()` blindly trusted the cached key (`/dev/shm/phpoc_session`) without verifying it against the genesis seal. A stale/wrong cached key caused `ph list all` to silently skip all entries (decryption failed, caught by bare `except:`). Fix: added `_verify_cached_key()` that checks genesis seal before trusting the cache; stale cache is auto-cleared. Also fixed `_print_entry` to show `[encrypted] title (Nm) [run 'ph login' to decrypt]` instead of silently skipping undecryptable entries.
 - **TTL cookie ignored for local-only ledgers (2026-06-27):** ✅ FIXED. `check_and_sync()` returned `READY` immediately when `_remote is None`, bypassing the device cookie TTL entirely. Read commands (`ph list`/`view`/`tags`) never prompted for a passphrase because the session cache at `/dev/shm/phpoc_session` has no TTL and the device cookie (which does) was never checked. Fix: `check_and_sync()` now checks `DeviceCookie.is_valid_locally()` even for local-only, returning `REAUTH_NEEDED` on expiry. `_reconcile_and_claim()` creates a local cookie via new `DeviceCookie.create_local()`. `ph login` and `ph recover` handlers also create local cookies. Changes in `domain/cookie/device_cookie.py`, `domain/staging/service.py`, `main.py`.
 - **phpoc-web: Remote sync settings not cleared on new ledger (2026-06-27):** ✅ FIXED. When `createNewLedger()` or `confirmImport()` cleared IndexedDB (`storage.clear()`), the `localStorage` keys `phpoc_worker_url` and `phpoc_api_key` were left intact. Result: after creating a new ledger or importing one, the Settings page still showed the previous Worker URL and API Key. Fix: both functions now call `localStorage.removeItem()` for both keys immediately after `storage.clear()`. Change in `phpoc-web/src/context/DevModeContext.jsx`.
+- **New Task — One-off activity checkbox (2026-06-27):** ✅ DONE. NewTask.jsx now has a "One-off activity" checkbox that captures entries as already completed (`is_active=false`, `end_epoch=startEpoch`). Uses existing CSS classes. Button changes from "Start Task" to "Log Task".
+- **Genesis mismatch override — Clear Remote & Overwrite (2026-06-27):** ✅ DONE. When Sync Now detects `GENESIS_MISMATCH`, the UI now shows an override panel requiring the user to type `DELETE` to confirm. Calls `sync.clearRemote()` (HTTP DELETE on ledger:blocks, staging:blob, cookie:json, resets genesis gate), then re-runs sync to push local ledger. CSS in App.css, logic in SyncSettings.jsx and sync.js.
 
 ## Browser E2E Testing Setup
 

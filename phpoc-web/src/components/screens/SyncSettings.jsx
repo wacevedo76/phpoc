@@ -96,6 +96,11 @@ export default function SyncSettings() {
   const [syncing, setSyncing] = useState(false);
   const [lastSyncResult, setLastSyncResult] = useState(null);
 
+  // ── Genesis mismatch override ───────────────────────────────────
+  const [overrideConfirmInput, setOverrideConfirmInput] = useState('');
+  const [clearingRemote, setClearingRemote] = useState(false);
+  const [overrideError, setOverrideError] = useState(null);
+
   // Display status: SYNCING (manual or auto) > remote status > NOT_SYNCED
   // (entries pending commit). When remote sync succeeded (READY), show the
   // remote status even if entries exist — "Not Synced" only appears when
@@ -682,6 +687,11 @@ export default function SyncSettings() {
         setLastSyncResult('Authentication required. Enter your passphrase.');
         return;
       }
+      if (result === 'GENESIS_MISMATCH') {
+        setRemoteStatus(result);
+        setLastSyncResult('GENESIS_MISMATCH');
+        return;
+      }
       setRemoteStatus(result);
 
       // Step 2 — commit all completed entries to the ledger.
@@ -731,6 +741,80 @@ export default function SyncSettings() {
       setSyncing(false);
     }
   }, [sync, syncing, triggerReauth, allEntries, commitEntries, refreshEntries]);
+
+  // ── Clear Remote & Overwrite (genesis mismatch override) ────────
+  // Deletes all blobs from the remote R2 bucket via HTTP DELETE,
+  // then re-syncs to push the local ledger as authoritative.
+
+  const handleClearAndOverwrite = useCallback(async () => {
+    if (!sync || overrideConfirmInput !== 'DELETE') return;
+    setClearingRemote(true);
+    setOverrideError(null);
+    try {
+      await sync.clearRemote();
+
+      // Clear the override UI state
+      setOverrideConfirmInput('');
+
+      // Re-run sync — remote is now empty, genesis will be compatible
+      setSyncing(true);
+      setRemoteStatus(STATUS_SYNCING);
+      setLastSyncResult(null);
+
+      const result = await sync.checkAndSync();
+      if (result === STATUS_REAUTH) {
+        triggerReauth();
+        setRemoteStatus(STATUS_REAUTH);
+        setLastSyncResult('Authentication required. Enter your passphrase.');
+        return;
+      }
+      setRemoteStatus(result);
+
+      // Commit completed entries
+      const freshEntries = await sync.readEntries();
+      const stoppedIds = freshEntries
+        .filter((e) => !e.is_active && !e.committed)
+        .map((e) => e.entry_id);
+
+      if (stoppedIds.length > 0) {
+        setCommitting(true);
+        try {
+          const commitResult = await commitEntries(stoppedIds);
+          if (commitResult?.committedEntryIds?.length > 0) {
+            setCommitResult({
+              type: 'success',
+              message: `Committed ${commitResult.committedEntryIds.length} entry${commitResult.committedEntryIds.length !== 1 ? 'ies' : 'y'}`,
+              count: commitResult.committedEntryIds.length,
+              blockIndex: commitResult.blockIndex,
+            });
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+            setExpandedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+          }
+          await refreshEntries();
+        } catch (err) {
+          setCommitError(err.message || 'Commit failed');
+        } finally {
+          setCommitting(false);
+        }
+      }
+
+      setLastSyncResult(result === STATUS_READY ? 'Remote cleared and sync completed' : result);
+    } catch (err) {
+      setOverrideError(err.message || 'Failed to clear remote');
+      setRemoteStatus(STATUS_OFFLINE);
+    } finally {
+      setClearingRemote(false);
+      setSyncing(false);
+    }
+  }, [sync, overrideConfirmInput, triggerReauth, commitEntries, refreshEntries]);
 
   // ── Auto-clear commit error after 8 seconds ─────────────────────
 
@@ -1098,7 +1182,7 @@ export default function SyncSettings() {
           {/* Last sync result */}
           {lastSyncResult && (
             <div className={`sync-result ${
-              lastSyncResult === 'Sync completed' || lastSyncResult === STATUS_READY
+              lastSyncResult === 'Sync completed' || lastSyncResult === STATUS_READY || lastSyncResult === 'Remote cleared and sync completed'
                 ? 'sync-result-ok'
                 : lastSyncResult.startsWith('Authentication required')
                 ? 'sync-result-reauth'
@@ -1106,10 +1190,63 @@ export default function SyncSettings() {
             }`}>
               {lastSyncResult === 'Sync completed' || lastSyncResult === STATUS_READY
                 ? '✓ Sync completed successfully'
+                : lastSyncResult === 'Remote cleared and sync completed'
+                ? '✓ Remote cleared and sync completed'
                 : lastSyncResult.startsWith('Authentication required')
                 ? `🔐 ${lastSyncResult}`
                 : `⚠ ${lastSyncResult}`
               }
+            </div>
+          )}
+
+          {/* Genesis mismatch — Clear Remote & Overwrite */}
+          {lastSyncResult === 'GENESIS_MISMATCH' && (
+            <div className="sync-result-override">
+              <div className="override-warning">
+                <Icons.syncPending size={16} />
+                <span>The remote ledger has a <strong>different genesis block</strong> from this device. It belongs to a different recovery seed.</span>
+              </div>
+
+              <p className="override-description">
+                To use this device's ledger with this remote, you must clear all
+                data from the remote bucket. This will <strong>permanently delete</strong> all
+                entries, staging data, and device cookies stored on the remote.
+              </p>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="override-confirm">
+                  Type <code>DELETE</code> to confirm:
+                </label>
+                <input
+                  id="override-confirm"
+                  type="text"
+                  className="form-input override-confirm-input"
+                  placeholder="DELETE"
+                  value={overrideConfirmInput}
+                  onChange={(e) => {
+                    setOverrideConfirmInput(e.target.value);
+                    setOverrideError(null);
+                  }}
+                  disabled={clearingRemote}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+
+              {overrideError && (
+                <p className="form-status form-status-error">{overrideError}</p>
+              )}
+
+              <button
+                className="btn btn-danger btn-override"
+                onClick={handleClearAndOverwrite}
+                disabled={overrideConfirmInput !== 'DELETE' || clearingRemote}
+              >
+                {clearingRemote
+                  ? '↻ Clearing Remote...'
+                  : '⚠ Clear Remote & Overwrite'
+                }
+              </button>
             </div>
           )}
 

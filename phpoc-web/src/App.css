@@ -1935,6 +1935,56 @@ a { color: var(--accent-blue); text-decoration: none; }
   text-align: center;
 }
 
+/* ── Genesis Mismatch Override ─────────────────────────────────── */
+.sync-result-override {
+  margin-top: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--accent-orange);
+  border-radius: var(--border-radius-sm);
+  background: var(--accent-orange-bg, rgba(255, 152, 0, 0.08));
+}
+
+.override-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--accent-orange, #ff9800);
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.override-warning span {
+  line-height: 1.4;
+}
+
+.override-description {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.45;
+}
+
+.override-confirm-input {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+.override-confirm-input:focus {
+  border-color: var(--accent-orange, #ff9800);
+  box-shadow: 0 0 0 2px rgba(255, 152, 0, 0.15);
+}
+
+.btn-override {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 /* -------------------------------------------------------------------
    Sync Indicator
    ------------------------------------------------------------------- */
