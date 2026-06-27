@@ -519,6 +519,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const storage = await createStorage();
     await storage.clear();
 
+    // Clear remote sync settings — a new ledger has no remote config
+    localStorage.removeItem('phpoc_worker_url');
+    localStorage.removeItem('phpoc_api_key');
+
     // Store seed for future logins
     await storage.set(STORED_SEED_KEY, seed);
 
@@ -688,6 +692,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Clear existing data
     const storage = await createStorage();
     await storage.clear();
+
+    // Clear remote sync settings — imported ledger may have different remote config
+    localStorage.removeItem('phpoc_worker_url');
+    localStorage.removeItem('phpoc_api_key');
 
     // Write seed for future logins
     await storage.set(STORED_SEED_KEY, seed);

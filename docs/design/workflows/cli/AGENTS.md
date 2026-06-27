@@ -7,6 +7,7 @@ issues, adding features, or reviewing code.
 
 ## Ownership
 - `ph-view-workflow-updated.md` — Auth gate proxy workflow (staging sync gate)
+- `ph-init-workflow.md` — New ledger initialization: seed generation, genesis creation, key derivation
 - `onboarding-workflow.md` — CLI onboarding flows: remote import + local file import
 - `ph-transport-set-workflow.md` — Transport configuration: show / set git / set http / set http cloudflare
 
