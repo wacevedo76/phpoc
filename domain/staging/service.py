@@ -483,7 +483,16 @@ class StagingService:
           for device identity, not the crypto key.
         """
         if self._remote is None:
-            return SyncCheckResult.READY
+            # Local-only: TTL gate via device cookie.
+            # After the TTL expires, the user must re-authenticate even
+            # for read-only commands (ph list, ph view, ph tags).
+            local_cookie = DeviceCookie.is_valid_locally(
+                self._data_dir, self._cookie_ttl_minutes
+            )
+            if local_cookie is not None:
+                return SyncCheckResult.READY
+            # Cookie missing or expired — require re-authentication
+            return SyncCheckResult.REAUTH_NEEDED
 
         # ------------------------------------------------------------------
         # FAST PATH: Local cookie valid → remote cookie match → READY
@@ -615,8 +624,11 @@ class StagingService:
         """After successful auth: claim staging ownership for this device.
 
         Called from ``check_and_sync()``'s auth gate and from ``ph login``.
-        Pulls remote cookie to check device_uuid, then:
 
+        For local-only (no remote transport), creates a device cookie for
+        TTL tracking and returns READY.
+
+        For remote-enabled:
           * Same device that last wrote -> push local blob (authoritative)
             and touch the local cookie (update creation_time, keep specifier,
             no remote cookie push) — Case A.
@@ -631,6 +643,11 @@ class StagingService:
         Returns:
             READY on success, OFFLINE if remote is unreachable.
         """
+        if self._remote is None:
+            # Local-only: create/refresh the device cookie for TTL tracking
+            DeviceCookie.create_local(self._data_dir)
+            return SyncCheckResult.READY
+
         # Pull remote cookie to discover which device last wrote
         try:
             remote_cookie_raw = self._remote.pull_cookie()

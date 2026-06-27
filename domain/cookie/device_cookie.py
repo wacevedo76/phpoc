@@ -118,6 +118,39 @@ class DeviceCookie:
             return None
 
     @staticmethod
+    def create_local(data_dir: Path) -> bool:
+        """Create a local-only device cookie (no remote counterpart).
+
+        Used for TTL tracking when no remote transport is configured.
+        Only the local cookie (``device_cookie.meta``) is written —
+        no remote cookie (``device_cookie.bin``) is produced.
+
+        Args:
+            data_dir: Local data directory (~/.local/share/phpoc/).
+
+        Returns:
+            True on success, False if the cookie file could not be written.
+        """
+        try:
+            specifier = DeviceCookie._generate_specifier()
+            epoch_ms = int(time.time() * 1000)
+            local_cookie = {
+                "device_specifier": specifier,
+                "creation_time": epoch_ms,
+            }
+            meta_path = data_dir / META_FILE
+            meta_path.parent.mkdir(parents=True, exist_ok=True)
+            meta_path.write_text(json.dumps(local_cookie))
+            logger.debug(
+                "Local-only device cookie created (spec=%s...)",
+                specifier[:8],
+            )
+            return True
+        except Exception as exc:
+            logger.error("Failed to create local device cookie: %s", exc)
+            return False
+
+    @staticmethod
     def is_valid_locally(data_dir: Path, ttl_minutes: int = 30) -> Optional[Dict[str, Any]]:
         """Check if a local device cookie exists and its TTL has not expired.
 

@@ -477,6 +477,12 @@ def main():
 
         # Cache the recovered master key so subsequent commands can decrypt entries
         auth._cache_key(mk)
+
+        # Create local device cookie for TTL tracking so the next
+        # command doesn't immediately prompt for passphrase again
+        from domain.cookie.device_cookie import DeviceCookie
+        DeviceCookie.create_local(CONFIG_DIR)
+
         print("Passphrase reset successful. You can now use your new passphrase.")
         return
 
@@ -511,6 +517,9 @@ def main():
                     print("\u2713 Remote staging reconciled and claimed.")
                 elif result == SyncCheckResult.OFFLINE:
                     print("\u26a0 Remote unreachable — staging not reconciled.")
+            else:
+                # Local-only: create device cookie for TTL tracking
+                DeviceCookie.create_local(CONFIG_DIR)
 
             print("\u2713 Authentication successful. Session cached.")
         else:
