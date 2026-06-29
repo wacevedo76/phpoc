@@ -26,6 +26,24 @@ import { TestHelpers } from './test_helpers.mjs';
 import { jsonSort } from '../src/ledger/utils.js';
 
 // ══════════════════════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert Uint8Array to base64. Works in Node.js.
+ */
+function _bytesToBase64(bytes) {
+  return Buffer.from(bytes).toString('base64');
+}
+
+/**
+ * Convert base64 string to Uint8Array. Works in Node.js.
+ */
+function _base64ToBytes(b64) {
+  return new Uint8Array(Buffer.from(b64, 'base64'));
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Mock Transport — simulates remote R2 storage in memory
 // ══════════════════════════════════════════════════════════════════════
 // Mock Transport — simulates remote R2 storage in memory.
@@ -68,6 +86,23 @@ class MockTransport {
   async delete(path) {
     if (this._offline) throw new Error('Network failure');
     this._store.delete(path);
+  }
+
+  /**
+   * List files under a remote prefix.
+   * Returns just the filenames (without the prefix).
+   * @param {string} prefix - e.g. "ledger/blocks/"
+   * @returns {Promise<string[]>}
+   */
+  async listFiles(prefix) {
+    if (this._offline) throw new Error('Network failure');
+    const results = [];
+    for (const [path] of this._store) {
+      if (path.startsWith(prefix)) {
+        results.push(path.slice(prefix.length));
+      }
+    }
+    return results;
   }
 
   resetCache() { /* no-op for mock transport */ }
@@ -886,10 +921,47 @@ async function run() {
     return [genesisContent, dayContent];
   }
 
-  async function pushRemoteChain(transport, chain) {
-    const json = JSON.stringify(chain);
-    const bytes = new TextEncoder().encode(json);
-    await transport.push(LEDGER_BLOCKS_KEY, bytes);
+  /**
+   * Push a chain to the mock remote in canonical blocks format.
+   * Each block is obfuscated and stored as ledger/blocks/NNNNNN.json.
+   * @param {MockTransport} transport
+   * @param {object[]} chain
+   * @param {string} [mk='deadbeef'] - Master key for obfuscation.
+   */
+  async function pushRemoteChain(transport, chain, mk = 'deadbeef') {
+    if (!chain || chain.length === 0) return;
+    const crypt = new MockCrypto();
+    for (let i = 0; i < chain.length; i++) {
+      const block = chain[i];
+      const dayIndex = block.day_index ?? i;
+      const filename = String(dayIndex).padStart(6, '0') + '.json';
+      const json = JSON.stringify(block);
+      const b64 = crypt.obfuscateBlob(json, mk);
+      const bytes = _base64ToBytes(b64);
+      await transport.push('ledger/blocks/' + filename, bytes);
+    }
+  }
+
+  /**
+   * Read a remote chain from block files for test assertions.
+   * @param {MockTransport} transport
+   * @param {string} [mk='deadbeef'] - Master key for deobfuscation.
+   * @returns {Promise<object[]|null>}
+   */
+  async function pullRemoteChain(transport, mk = 'deadbeef') {
+    const files = await transport.listFiles('ledger/blocks/');
+    if (!files || files.length === 0) return null;
+    const sorted = [...files].sort();
+    const crypt = new MockCrypto();
+    const chain = [];
+    for (const filename of sorted) {
+      const raw = await transport.pull('ledger/blocks/' + filename);
+      if (!raw) continue;
+      const b64 = _bytesToBase64(raw);
+      const json = crypt.deobfuscateBlob(b64, mk);
+      chain.push(JSON.parse(json));
+    }
+    return chain;
   }
 
   // I1. Genesis compatible → checkAndSync proceeds to auth gate
@@ -903,7 +975,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, chain);
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
 
     const result = await sync.checkAndSync();
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
@@ -926,7 +998,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mkRemote);
 
     const result = await sync.checkAndSync();
     t.assertEq(result, SyncResult.GENESIS_MISMATCH,
@@ -946,7 +1018,7 @@ async function run() {
     await storage.set(LEDGER_BLOCKS_KEY, chain);
 
     // First: compatible chain → cache set to true
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
     const result1 = await sync.checkAndSync();
     t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
       'I3. first check → compatible (cache set)');
@@ -956,7 +1028,7 @@ async function run() {
 
     // Push a different remote chain (different genesis)
     const badChain = buildTestChain({ mk: 'bad-bad-bad-bad-bad-bad-bad-bad-bad-zz', username: 'evil' });
-    await pushRemoteChain(transport, badChain);
+    await pushRemoteChain(transport, badChain, 'bad-bad-bad-bad-bad-bad-bad-bad-bad-zz');
 
     const result2 = await sync.checkAndSync();
     t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
@@ -979,7 +1051,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mkRemote);
 
     // First call: genesis mismatch → caches false
     const result1 = await sync.checkAndSync();
@@ -1214,7 +1286,7 @@ async function run() {
     await storage.set(LEDGER_BLOCKS_KEY, chain);
 
     // First: compatible remote → cache = true
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
     const result1 = await sync.checkAndSync();
     t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
       'K4. first check → compatible (cache set)');
@@ -1222,7 +1294,7 @@ async function run() {
     // Now reconfigure to a new transport with an INCOMPATIBLE chain
     const newTransport = new MockTransport();
     const badChain = buildTestChain({ mk: 'bad-k4---bad-k4---bad-k4---bad-k4---zz', username: 'evil' });
-    await pushRemoteChain(newTransport, badChain);
+    await pushRemoteChain(newTransport, badChain, mk);
 
     sync.reconfigure(newTransport);
 
@@ -1530,7 +1602,7 @@ async function run() {
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
 
     // Push remote chain to transport
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     // Two-phase cookie: none (enter reconcile), none (first-time Case B)
     transport.queueResponse(COOKIE_PATH, null);
@@ -1561,13 +1633,12 @@ async function run() {
     t.assert(localTitles.includes('Remote Entry'), 'M1e. remote entry merged in');
 
     // Verify merged chain was pushed to remote
-    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+    const pushedChain = await pullRemoteChain(transport, mk);
+    t.assert(pushedChain !== null && pushedChain.length > 0,
       'M1f. merged chain pushed to remote');
-    if (remoteRaw) {
-      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+    if (pushedChain) {
       let remoteTitles = [];
-      for (const b of remoteBlocks) {
+      for (const b of pushedChain) {
         if (b.type === 'day' || b.type === undefined) {
           for (const e of (b.entries || [])) {
             remoteTitles.push(e.data.title);
@@ -1593,7 +1664,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, chain);
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1632,7 +1703,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1676,7 +1747,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     // Set up cookie: valid local cookie, no remote cookie -> reconcile
     await storage.set('cookie', {
@@ -1740,7 +1811,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1799,7 +1870,7 @@ async function run() {
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
     // Remote only has the shared entry
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1822,13 +1893,12 @@ async function run() {
       `M5c. local has 2 entries (got ${localTitles.length})`);
 
     // Verify merged chain was pushed to remote
-    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+    const remoteChain = await pullRemoteChain(transport, mk);
+    t.assert(remoteChain !== null && remoteChain.length > 0,
       'M5d. merged chain pushed to remote (ledger:blocks not null)');
-    if (remoteRaw) {
-      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+    if (remoteChain) {
       let remoteTitles = [];
-      for (const b of remoteBlocks) {
+      for (const b of remoteChain) {
         if (b.type === 'day' || b.type === undefined) {
           for (const e of (b.entries || [])) {
             remoteTitles.push(e.data.title);
@@ -1860,7 +1930,7 @@ async function run() {
     // Local only has shared entry
     await storage.set(LEDGER_BLOCKS_KEY, chain);
     // Remote has shared + extra
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1884,13 +1954,12 @@ async function run() {
       `M6c. local has 2 entries after merge (got ${localTitles.length})`);
 
     // Verify merged chain was pushed to remote
-    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+    const pushedChain = await pullRemoteChain(transport, mk);
+    t.assert(pushedChain !== null && pushedChain.length > 0,
       'M6d. merged chain pushed to remote');
-    if (remoteRaw) {
-      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+    if (pushedChain) {
       let remoteTitles = [];
-      for (const b of remoteBlocks) {
+      for (const b of pushedChain) {
         if (b.type === 'day' || b.type === undefined) {
           for (const e of (b.entries || [])) {
             remoteTitles.push(e.data.title);
@@ -1926,7 +1995,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
-    await pushRemoteChain(transport, remoteChain);
+    await pushRemoteChain(transport, remoteChain, mk);
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1951,13 +2020,12 @@ async function run() {
     t.assert(localTitles.includes('Remote Y'), 'M7e. Remote Y present');
 
     // Verify merged chain was pushed to remote
-    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+    const pushedChain = await pullRemoteChain(transport, mk);
+    t.assert(pushedChain !== null && pushedChain.length > 0,
       'M7f. merged chain pushed to remote (4 entries)');
-    if (remoteRaw) {
-      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+    if (pushedChain) {
       let remoteTitles = [];
-      for (const b of remoteBlocks) {
+      for (const b of pushedChain) {
         if (b.type === 'day' || b.type === undefined) {
           for (const e of (b.entries || [])) {
             remoteTitles.push(e.data.title);
@@ -1984,18 +2052,21 @@ async function run() {
       masterKey: mk,
     });
 
-    // Pre-populate all three keys on remote
-    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+    // Pre-populate all keys on remote
+    await pushRemoteChain(transport, chain, mk);
     await transport.push('staging:blob', new TextEncoder().encode(JSON.stringify({ entries: [] })));
     await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
 
-    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N1. pre-condition: ledger:blocks exists');
+    const preFiles = await transport.listFiles('ledger/blocks/');
+    t.assert(preFiles && preFiles.length > 0, 'N1. pre-condition: block files exist');
     t.assert(transport.hasKey('staging:blob'), 'N1b. pre-condition: staging:blob exists');
     t.assert(transport.hasKey('cookie:json'), 'N1c. pre-condition: cookie:json exists');
 
     await sync.clearRemote();
 
-    t.assert(!transport.hasKey(LEDGER_BLOCKS_KEY), 'N1d. ledger:blocks deleted');
+    // Block files should be deleted
+    const filesAfter = await transport.listFiles('ledger/blocks/');
+    t.assert(!filesAfter || filesAfter.length === 0, 'N1d. block files deleted');
     t.assert(!transport.hasKey('staging:blob'), 'N1e. staging:blob deleted');
     t.assert(!transport.hasKey('cookie:json'), 'N1f. cookie:json deleted');
   }
@@ -2011,7 +2082,7 @@ async function run() {
     });
 
     await storage.set(LEDGER_BLOCKS_KEY, chain);
-    await pushRemoteChain(transport, chain);
+    await pushRemoteChain(transport, chain, mk);
 
     // Run checkAndSync to set _genesisCompatible = true
     const result1 = await sync.checkAndSync();
@@ -2023,7 +2094,7 @@ async function run() {
 
     // Push a bad chain to remote and re-check
     const badChain = buildTestChain({ mk: 'bad-key-n2-bad-key-n2-bad-key-n2-zz', username: 'evil' });
-    await pushRemoteChain(transport, badChain);
+    await pushRemoteChain(transport, badChain, mk);
 
     const result2 = await sync.checkAndSync();
     t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
@@ -2040,17 +2111,18 @@ async function run() {
       masterKey: mk,
     });
 
-    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+    await pushRemoteChain(transport, chain, mk);
 
-    // Verify key exists in store
-    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N3. pre-condition: key exists');
+    // Verify block files exist in store
+    const preFiles = await transport.listFiles('ledger/blocks/');
+    t.assert(preFiles && preFiles.length > 0, 'N3. pre-condition: block files exist');
 
     await sync.clearRemote();
 
-    // After clearRemote, pull should return null (fresh request)
-    const afterClear = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(afterClear === null || afterClear === undefined,
-      'N3b. after clearRemote → pull returns null (key was deleted)');
+    // After clearRemote, block files should be gone
+    const afterFiles = await transport.listFiles('ledger/blocks/');
+    t.assert(!afterFiles || afterFiles.length === 0,
+      'N3b. after clearRemote → block files deleted');
   }
 
   // N4. One key deletion fails (404 on staging:blob) → other keys still deleted → method succeeds
@@ -2063,18 +2135,20 @@ async function run() {
       masterKey: mk,
     });
 
-    // Only pre-populate ledger:blocks and cookie:json (staging:blob is absent = 404)
-    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+    // Only pre-populate block files and cookie:json (staging:blob is absent = 404)
+    await pushRemoteChain(transport, chain, mk);
     await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n4' })));
 
-    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N4. pre-condition: ledger:blocks exists');
+    const preFiles = await transport.listFiles('ledger/blocks/');
+    t.assert(preFiles && preFiles.length > 0, 'N4. pre-condition: block files exist');
     t.assert(!transport.hasKey('staging:blob'), 'N4b. pre-condition: staging:blob absent (simulates 404)');
     t.assert(transport.hasKey('cookie:json'), 'N4c. pre-condition: cookie:json exists');
 
     // Should not throw — partial failure is OK
     await sync.clearRemote();
 
-    t.assert(!transport.hasKey(LEDGER_BLOCKS_KEY), 'N4d. ledger:blocks still deleted');
+    const postFiles = await transport.listFiles('ledger/blocks/');
+    t.assert(!postFiles || postFiles.length === 0, 'N4d. block files still deleted');
     t.assert(!transport.hasKey('cookie:json'), 'N4e. cookie:json still deleted');
   }
 
@@ -2131,7 +2205,7 @@ async function run() {
 
     // Pre-populate remote with a bad chain (different genesis) to simulate stale data
     const badChain = buildTestChain({ mk: 'bad-key-n7-bad-key-n7-bad-key-n7-ee', username: 'evil' });
-    await pushRemoteChain(transport, badChain);
+    await pushRemoteChain(transport, badChain, mk);
 
     // First check: should detect mismatch
     const result1 = await sync.checkAndSync();
@@ -2149,9 +2223,9 @@ async function run() {
       'N7c. after clearRemote → proceeds to READY or REAUTH_NEEDED (got: ' + result2 + ')');
 
     // Verify fresh chain was pushed to remote
-    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
-    t.assert(remoteRaw !== null && remoteRaw !== undefined,
-      'N7d. fresh ledger:blocks pushed to remote');
+    const pushedChain = await pullRemoteChain(transport, mk);
+    t.assert(pushedChain !== null && pushedChain.length > 0,
+      'N7d. fresh ledger blocks pushed to remote');
   }
 
   // ── Results ───────────────────────────────────────────────────────

@@ -79,6 +79,19 @@ function _base64ToBytes(b64) {
   return new Uint8Array(Buffer.from(b64, 'base64'));
 }
 
+/**
+ * Convert Uint8Array to base64 string.
+ * Works in browser (btoa) and Node.js (Buffer).
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function _bytesToBase64(bytes) {
+  if (typeof btoa !== 'undefined') {
+    return btoa(String.fromCharCode(...bytes));
+  }
+  return Buffer.from(bytes).toString('base64');
+}
+
 export class SyncService {
   /**
    * @param {import('./storage.js').StorageBackend} storage - Storage backend.
@@ -461,10 +474,9 @@ export class SyncService {
               if (result.stats) {
                 this._lastMergeStats = result.stats;
               }
-              // Push merged chain to remote (best-effort, non-fatal)
-              await this._pushFullLedgerChain(
-                result.mergedChain, result.index || null
-              );
+              // Push merged chain to remote (force all blocks — merged
+              // blocks may have new content under the same day index)
+              await this.pushLedgerBlocks({ forceAll: true });
             } catch (err) {
               console.warn('Failed to persist merged ledger chain:', err.message);
             }
@@ -900,7 +912,7 @@ export class SyncService {
   // ------------------------------------------------------------------
 
   /**
-   * Push local ledger blocks to remote that don't exist there yet.
+   * Push local ledger blocks to remote.
    *
    * Lists remote indices via transport.listFiles('ledger/blocks/'),
    * then pushes only blocks whose index is not already on remote.
@@ -910,9 +922,11 @@ export class SyncService {
    * Skipped when: no transport, no master key, or no local blocks.
    * Errors are logged but never thrown — push is best-effort.
    *
+   * @param {{ forceAll?: boolean }} [opts]
    * @returns {Promise<number>} Number of blocks pushed (0 = nothing to do or error).
    */
-  async pushLedgerBlocks() {
+  async pushLedgerBlocks(opts = {}) {
+    const forceAll = opts.forceAll === true;
     // ---- Skip conditions ----
     if (!this._remote) return 0;
 
@@ -947,7 +961,7 @@ export class SyncService {
       const idx = block.day_index ?? block.index;
       if (idx == null) continue;
 
-      if (remoteIndices.has(idx)) continue;
+      if (!forceAll && remoteIndices.has(idx)) continue;
 
       try {
         const json = JSON.stringify(block);
@@ -977,46 +991,6 @@ export class SyncService {
     }
 
     return pushed;
-  }
-
-  /**
-   * Push the full merged ledger chain to remote as a single blob.
-   *
-   * Called after GenesisGate.merge() produces a merged chain to
-   * ensure the remote has the authoritative merged result. Uses the
-   * same `ledger:blocks` key that GenesisGate.check() pulls from.
-   *
-   * Best-effort: errors are logged but never thrown. The local merge
-   * persist happens before this call, so a push failure leaves local
-   * state correct.
-   *
-   * @param {object[]} chain - Merged ledger chain.
-   * @param {object|null} index - Merged index (optional).
-   * @private
-   */
-  async _pushFullLedgerChain(chain, index) {
-    if (!this._remote) return;
-
-    const mk = this._crypto.getMasterKey();
-    if (!mk) return;
-
-    try {
-      const json = JSON.stringify(chain);
-      const bytes = new TextEncoder().encode(json);
-      await this._transport.push('ledger:blocks', bytes);
-    } catch (err) {
-      console.warn('_pushFullLedgerChain: chain push failed:', err.message);
-    }
-
-    if (index) {
-      try {
-        const json = JSON.stringify(index);
-        const bytes = new TextEncoder().encode(json);
-        await this._transport.push('ledger/index.json', bytes);
-      } catch (err) {
-        console.warn('_pushFullLedgerChain: index push failed:', err.message);
-      }
-    }
   }
 
   // ------------------------------------------------------------------
@@ -1106,10 +1080,9 @@ export class SyncService {
    * Clear all known keys from the remote R2 bucket.
    *
    * Used when the user wants to overwrite a remote ledger with a
-   * different genesis (genesis mismatch override). Deletes the three
-   * known paths (ledger:blocks, staging:blob, cookie:json) via HTTP DELETE
-   * and resets the genesis compatibility gate so the next syncStart
-   * treats the remote as empty.
+   * different genesis (genesis mismatch override). Deletes staging
+   * blob, cookie, and all ledger block files via HTTP DELETE and
+   * resets the genesis compatibility gate.
    *
    * @returns {Promise<void>}
    * @throws {Error} If remote transport is not configured.
@@ -1119,10 +1092,35 @@ export class SyncService {
       throw new Error('No remote transport configured');
     }
 
-    const keys = ['ledger:blocks', 'staging:blob', 'cookie:json'];
     let failures = 0;
+    let blockFileCount = 0;
 
-    for (const key of keys) {
+    // Delete ledger block files (canonical protocol)
+    try {
+      const files = await this._transport.listFiles('ledger/blocks/');
+      if (files && files.length > 0) {
+        blockFileCount = files.length;
+        for (const filename of files) {
+          try {
+            await this._transport.delete('ledger/blocks/' + filename);
+          } catch (err) {
+            failures++;
+            console.warn(`clearRemote: failed to delete ledger/blocks/${filename}: ${err.message}`);
+          }
+        }
+      }
+      // Also delete the index file
+      try {
+        await this._transport.delete('ledger/index.json');
+      } catch { /* may not exist */ }
+    } catch (err) {
+      failures++;
+      console.warn(`clearRemote: failed to list ledger blocks: ${err.message}`);
+    }
+
+    // Delete staging blob and cookie
+    const metaKeys = ['staging:blob', 'cookie:json'];
+    for (const key of metaKeys) {
       try {
         await this._transport.delete(key);
       } catch (err) {
@@ -1131,7 +1129,7 @@ export class SyncService {
       }
     }
 
-    if (failures === keys.length) {
+    if (failures >= 2 + blockFileCount) {
       throw new Error('Failed to clear any remote keys. The remote may be unreachable.');
     }
 

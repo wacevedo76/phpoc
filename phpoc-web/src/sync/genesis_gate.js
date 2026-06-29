@@ -33,10 +33,6 @@
 import { LedgerMerge } from '../ledger/merge.js';
 import { getBlockHash } from '../ledger/utils.js';
 
-// ── Static resources ────────────────────────────────────────────────
-
-const _textDecoder = new TextDecoder();
-
 // ── In-flight dedup ─────────────────────────────────────────────────
 
 /** @type {Promise<object>|null} */
@@ -88,10 +84,12 @@ export class GenesisGate {
       return { compatible: false, reason: 'no_local_ledger' };
     }
 
-    // ── 2. Fetch remote ledger ────────────────────────────────────
-    let raw;
+    // ── 2. Fetch remote ledger (canonical blocks format) ────────
+    let remoteChain;
     try {
-      raw = await remoteTransport.pull('ledger:blocks');
+      remoteChain = await GenesisGate._pullRemoteChain(
+        remoteTransport, crypto, masterKey
+      );
     } catch (err) {
       const msg = err.message || '';
       if (msg.includes('403')) {
@@ -100,9 +98,9 @@ export class GenesisGate {
       return { compatible: false, reason: 'network_error' };
     }
 
-    // ── 3. Check for empty remote ─────────────────────────────────
+    // ── 3. Check for empty remote ───────────────────────────────
     // Empty bucket is not a conflict — local chain is authoritative.
-    if (raw === null || raw === undefined) {
+    if (remoteChain === null || remoteChain.length === 0) {
       return {
         compatible: true,
         mergedChain: localChain,
@@ -111,39 +109,20 @@ export class GenesisGate {
       };
     }
 
-    // ── 4. Parse remote chain ─────────────────────────────────────
-    let remoteChain;
-    try {
-      const json = _textDecoder.decode(raw);
-      remoteChain = JSON.parse(json);
-    } catch (err) {
-      return { compatible: false, reason: 'invalid_format' };
-    }
-
-    // ── 5. Validate format ────────────────────────────────────────
-    if (!Array.isArray(remoteChain)) {
-      return { compatible: false, reason: 'invalid_format' };
-    }
-
-    if (remoteChain.length === 0) {
-      return { compatible: false, reason: 'no_remote_ledger' };
-    }
-
-    // ── 6. Validate genesis block type ────────────────────────────
+    // ── 4. Validate genesis block type ──────────────────────────
     const remoteGenesis = remoteChain[0];
     if (remoteGenesis.type !== 'genesis') {
       return { compatible: false, reason: 'invalid_genesis' };
     }
 
-    // ── 7. Verify remote chain integrity ──────────────────────────
-    // Validates block seals, prev_hash linkage, and entry hashes.
+    // ── 5. Verify remote chain integrity ────────────────────────
     try {
       await LedgerMerge._verifyChain('remote', remoteChain, crypto, masterKey, null);
     } catch (err) {
       return { compatible: false, reason: 'invalid_chain' };
     }
 
-    // ── 8. Compare genesis hashes ─────────────────────────────────
+    // ── 6. Compare genesis hashes ───────────────────────────────
     const localGenesisHash = getBlockHash(localGenesis);
     const remoteGenesisHash = getBlockHash(remoteGenesis);
 
@@ -151,12 +130,49 @@ export class GenesisGate {
       return { compatible: false, reason: 'genesis_mismatch' };
     }
 
-    // ── 9. Genesis matches — merge chains ─────────────────────────
+    // ── 7. Genesis matches — merge chains ───────────────────────
     const result = await LedgerMerge.merge(
       localChain, remoteChain, crypto, masterKey
     );
     const { mergedChain, stats, index } = result;
 
     return { compatible: true, mergedChain, stats, index };
+  }
+
+  /**
+   * Pull the full remote ledger chain in the canonical blocks format.
+   *
+   * Protocol: ledger/blocks/000000.json, 000001.json, …
+   * Each file is an obfuscated (AES-CTR) JSON block. Lists the
+   * directory, fetches and deobfuscates every file, and assembles
+   * the chain array.
+   *
+   * @param {object} transport - Transport with pull(path) and listFiles(prefix).
+   * @param {object} crypto - CryptoService-like object.
+   * @param {string} masterKey - Hex master key for deobfuscation.
+   * @returns {Promise<object[]|null>} Assembled chain, or null if no blocks exist.
+   */
+  static async _pullRemoteChain(transport, crypto, masterKey) {
+    const files = await transport.listFiles('ledger/blocks/');
+    if (!files || files.length === 0) return null;
+
+    const sorted = [...files].sort();
+    const chain = [];
+    for (const filename of sorted) {
+      const path = 'ledger/blocks/' + filename;
+      const raw = await transport.pull(path);
+      if (raw === null || raw === undefined) continue;
+
+      // Convert bytes to base64 for deobfuscation
+      let b64;
+      if (typeof btoa !== 'undefined') {
+        b64 = btoa(String.fromCharCode(...raw));
+      } else {
+        b64 = Buffer.from(raw).toString('base64');
+      }
+      const plaintext = crypto.deobfuscateBlob(b64, masterKey);
+      chain.push(JSON.parse(plaintext));
+    }
+    return chain;
   }
 }

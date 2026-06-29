@@ -24,13 +24,14 @@
 86 new tests across 3 files (all GREEN). Code changes:
 - **✅ Phase 1:** `connectToWorker()` — delete `ledger:blocks` from R2 after blocks-format onboarding **(DONE — 2026-06-29)**
 - **✅ Phase 2:** `bootstrapServices()` — auto-clear on GENESIS_MISMATCH **(DONE — 2026-06-29)**
-- **✅ Phase 3:** `OnboardingScreen.jsx` `handleWorkerFetch()` — dual-format fallback UX **(DONE — 2026-06-29, revised 2026-06-29)**
-  - Parallel fetch of both `ledger:blocks` and `ledger/blocks/` key schemes
-  - When both formats exist on R2: **prefer single-blob path** (shows username — better UX)
-  - Subtle "Use CLI format instead →" link in unlock step for the rare stale-blob case
-  - Phase 1 (`connectToWorker`) auto-deletes stale `ledger:blocks` after blocks-format onboarding,
-    so this fallback is almost never needed after the first successful onboarding
-  - 23 pure-logic tests in `onboarding_cloud_conflict.test.mjs` (all GREEN)
+- **✅ Phase 3:** Protocol unification — single canonical `ledger/blocks/` format **(DONE — 2026-06-29)**
+  - Genesis gate now checks `ledger/blocks/000000.json` (blocks format) instead of `ledger:blocks` (blob)
+  - `_pushFullLedgerChain()` replaced with `pushLedgerBlocks()` (pushes obfuscated individual block files)
+  - `pushLedgerBlocks()` gained `{ forceAll: true }` option for post-merge pushes (same-index overwrite)
+  - `clearRemote()` now lists and deletes individual block files
+  - `connectToWorker()`: removed single-blob path, stale `ledger:blocks` delete hack — only blocks-format onboarding
+  - `OnboardingScreen.jsx` `handleWorkerFetch()`: blocks-only discovery, seed always required
+  - CLI and web app now share the same R2 key scheme — one canonical protocol
 
 Full investigation and action plan: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
 

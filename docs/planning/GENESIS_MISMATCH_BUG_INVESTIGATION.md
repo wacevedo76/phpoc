@@ -1,7 +1,6 @@
 # Investigation: GENESIS_MISMATCH on Sync Now After Cloud Onboarding
 
-> **Status:** ✅ Fix complete — all three phases done (2026-06-29).
-> Phase 3 revised (2026-06-29): prefer blob path with CLI fallback link instead of standalone conflict UI.
+> **Status:** ✅ Fix complete — all three phases done, protocol unified (2026-06-29).
 > **Created:** 2026-06-29 | **Updated:** 2026-06-29 (Phase 3 done: dual-format conflict detection UX in handleWorkerFetch)
 > **Bug:** After onboarding a CLI-pushed ledger from Cloudflare Worker / R2 to
 > the web app, pressing "Sync Now" reports `GENESIS_MISMATCH` even though

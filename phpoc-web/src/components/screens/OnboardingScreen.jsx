@@ -375,12 +375,6 @@ export default function OnboardingScreen({
   const [connectSeed, setConnectSeed] = useState('');
   const [connecting, setConnecting] = useState(false);
 
-  // ── Dual-format fallback: when CLI blocks also exist alongside
-  // ledger:blocks on R2, store block count so the unlock step can
-  // offer a subtle "Use CLI format instead" fallback.
-  const [connectCliFallback, setConnectCliFallback] = useState(null);
-  // { blockCount } | null
-
   // Reset connect state when entering worker-connect phase
   useEffect(() => {
     if (phase === 'worker-connect') {
@@ -390,7 +384,6 @@ export default function OnboardingScreen({
       setConnectPassphrase('');
       setConnectSeed('');
       setConnecting(false);
-      setConnectCliFallback(null);
       setLocalError('');
     }
   }, [phase]);
@@ -413,120 +406,38 @@ export default function OnboardingScreen({
         apiKey: workerApiKey.trim() || null,
       });
 
-      // ── Fetch both formats in parallel to detect conflicts ──
-      const [blobRaw, cliFiles] = await Promise.all([
-        transport.pull('ledger:blocks').catch(() => null),
-        transport.listFiles('ledger/blocks/').catch(() => []),
-      ]);
-
-      const hasBlob = blobRaw !== null && blobRaw !== undefined;
-      const hasCli = Array.isArray(cliFiles) && cliFiles.length > 0;
-
-      // ── Both formats exist: prefer single-blob path ────────
-      // ledger:blocks shows the username — better UX.
-      // Store CLI info for a subtle fallback link in the unlock
-      // step in case the blob belongs to a different identity.
-      // Phase 1 (connectToWorker) auto-deletes stale ledger:blocks
-      // after a blocks-format onboarding, so this is now rare.
-      if (hasBlob && hasCli) {
-        setConnectCliFallback({ blockCount: cliFiles.length });
-        // Fall through to blob validation below
-      }
-
-      // ── Single-blob format only: plain JSON array of blocks ──
-      if (hasBlob) {
-        let chain;
-        try {
-          const json = new TextDecoder().decode(blobRaw);
-          chain = JSON.parse(json);
-        } catch {
-          setConnectStatus({ type: 'error', message: 'Invalid data received from server.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
+      // ── Canonical blocks format: ledger/blocks/000000.json ──
+      let blockFiles;
+      try {
+        blockFiles = await transport.listFiles('ledger/blocks/');
+      } catch (err) {
+        const msg = err.message || '';
+        if (msg.includes('403')) {
+          setConnectStatus({ type: '403', message: 'Access denied. Check your API key.' });
+        } else {
+          setConnectStatus({ type: 'offline', message: 'Cannot reach remote server. ' + msg });
         }
-
-        if (!Array.isArray(chain) || chain.length === 0) {
-          setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        const genesis = chain[0];
-
-        // Validate genesis structure
-        if (genesis.type !== 'genesis') {
-          setConnectStatus({ type: 'error', message: 'Remote ledger does not have a valid genesis block.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        if (!genesis.format_version) {
-          setConnectStatus({ type: 'error', message: 'Genesis block is missing format version.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        if (!genesis.identity) {
-          setConnectStatus({ type: 'error', message: 'Genesis block is missing identity data.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        if (!genesis.identity.username) {
-          setConnectStatus({ type: 'error', message: 'Genesis block is missing username.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        if (!genesis.identity.recovery_seed_enc) {
-          setConnectStatus({ type: 'error', message: 'Genesis block is missing recovery seed.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        if (!genesis.day_hash) {
-          setConnectStatus({ type: 'error', message: 'Genesis block is missing integrity seal.' });
-          setConnectStep('form');
-          setConnecting(false);
-          return;
-        }
-
-        // Genesis looks valid
-        setFetchedGenesis({ genesis, chain, format: 'blob' });
-        setConnectStatus({
-          type: 'compatible',
-          message: `Ledger found for "${genesis.identity.username}"` +
-            (genesis.identity.email ? ` (${genesis.identity.email})` : ''),
-        });
-        setConnectStep('compatible');
+        setConnectStep('form');
         setConnecting(false);
         return;
       }
 
-      // ── CLI block format only (ledger/blocks/000000.json) ────
-      if (hasCli) {
-        // Blocks are obfuscated — can't preview username until after auth.
-        // The unlock step will de-obfuscate after passphrase entry.
-        setFetchedGenesis({ blockCount: cliFiles.length, format: 'blocks' });
-        setConnectStatus({
-          type: 'compatible',
-          message: `Ledger found with ${cliFiles.length} block${cliFiles.length !== 1 ? 's' : ''}.`,
-        });
-        setConnectStep('compatible');
+      if (!blockFiles || blockFiles.length === 0) {
+        setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
+        setConnectStep('form');
         setConnecting(false);
         return;
       }
 
-      // ── Neither format found ──
-      setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
-      setConnectStep('form');
+      // ── Ledger found in canonical blocks format ─────────────
+      // Blocks are obfuscated — can't preview username until after auth.
+      // The unlock step will de-obfuscate after passphrase + seed entry.
+      setFetchedGenesis({ blockCount: blockFiles.length, format: 'blocks' });
+      setConnectStatus({
+        type: 'compatible',
+        message: `Ledger found with ${blockFiles.length} block${blockFiles.length !== 1 ? 's' : ''}.`,
+      });
+      setConnectStep('compatible');
       setConnecting(false);
     } catch (err) {
       const msg = err.message || '';
@@ -540,31 +451,14 @@ export default function OnboardingScreen({
     }
   };
 
-  /**
-   * Switch from single-blob path to CLI blocks format.
-   * Used when both formats exist but the blob may belong to
-   * a different identity — user clicks the "Use CLI format" link.
-   */
-  const handleSwitchToCliFormat = () => {
-    const info = connectCliFallback;
-    if (!info || !info.blockCount) return;
-    setFetchedGenesis({ blockCount: info.blockCount, format: 'blocks' });
-    setConnectStatus({
-      type: 'compatible',
-      message: `Ledger found with ${info.blockCount} block${info.blockCount !== 1 ? 's' : ''}.`,
-    });
-    setConnectCliFallback(null); // hide the fallback link
-  };
-
   const handleWorkerUnlock = async (e) => {
     e.preventDefault();
     if (!connectPassphrase.trim()) {
       setLocalError('Please enter your passphrase.');
       return;
     }
-    // CLI block format requires seed (blocks are obfuscated)
-    if (fetchedGenesis.format === 'blocks' && !connectSeed.trim()) {
-      setLocalError('Please enter your recovery seed (required for CLI-format ledgers).');
+    if (!connectSeed.trim()) {
+      setLocalError('Please enter your recovery seed.');
       return;
     }
     if (!onWorkerConnect) {
@@ -581,14 +475,12 @@ export default function OnboardingScreen({
         baseUrl: workerUrl.trim(),
         apiKey: workerApiKey.trim() || null,
         passphrase: connectPassphrase.trim(),
-        userSeed: connectSeed.trim() || null,
-        genesisBlock: fetchedGenesis.genesis || null,
-        chain: fetchedGenesis.chain || null,
-        format: fetchedGenesis.format || 'blob',
+        userSeed: connectSeed.trim(),
+        format: 'blocks',
       });
       // Success — parent will transition phase to ready
     } catch (err) {
-      setLocalError(err.message || 'Failed to unlock. Check your passphrase.');
+      setLocalError(err.message || 'Failed to unlock. Check your passphrase and seed.');
       setConnectStep('compatible');
       setConnecting(false);
     }
@@ -1318,20 +1210,18 @@ export default function OnboardingScreen({
               />
             </div>
 
-            {fetchedGenesis.format === 'blocks' && (
-              <div className="form-group">
-                <label htmlFor="connect-seed" className="auth-label">Recovery Seed</label>
-                <input
-                  id="connect-seed"
-                  type="text"
-                  className="auth-input"
-                  placeholder="Base64 recovery seed from onboarding"
-                  value={connectSeed}
-                  onChange={(e) => setConnectSeed(e.target.value)}
-                  disabled={connecting}
-                />
-              </div>
-            )}
+            <div className="form-group">
+              <label htmlFor="connect-seed" className="auth-label">Recovery Seed</label>
+              <input
+                id="connect-seed"
+                type="text"
+                className="auth-input"
+                placeholder="Base64 recovery seed from onboarding"
+                value={connectSeed}
+                onChange={(e) => setConnectSeed(e.target.value)}
+                disabled={connecting}
+              />
+            </div>
 
             {displayError && <p className="auth-error-msg">{displayError}</p>}
 
@@ -1343,37 +1233,6 @@ export default function OnboardingScreen({
               {connecting ? 'Unlocking...' : 'Unlock'}
             </button>
           </form>
-
-          {/* CLI blocks fallback — shown when both formats exist on R2
-              but the user may need the CLI format (e.g. stale blob case) */}
-          {connectCliFallback && fetchedGenesis.format === 'blob' && (
-            <div style={{
-              textAlign: 'center',
-              marginTop: '0.5rem',
-              paddingTop: '0.5rem',
-              borderTop: '1px solid #e0e0e0',
-            }}>
-              <p style={{ fontSize: '0.8rem', color: '#888', margin: 0 }}>
-                Not your ledger?{' '}
-                <button
-                  type="button"
-                  className="btn-link"
-                  onClick={handleSwitchToCliFormat}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#1565c0',
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
-                    fontSize: '0.8rem',
-                    padding: 0,
-                  }}
-                >
-                  Use CLI format instead →
-                </button>
-              </p>
-            </div>
-          )}
 
           <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
             <button
