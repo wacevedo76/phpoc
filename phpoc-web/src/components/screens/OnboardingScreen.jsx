@@ -375,12 +375,11 @@ export default function OnboardingScreen({
   const [connectSeed, setConnectSeed] = useState('');
   const [connecting, setConnecting] = useState(false);
 
-  // ── Dual-format conflict detection state ─────────────────
-  const [connectConflict, setConnectConflict] = useState(false);
-  const [connectConflictBlobInfo, setConnectConflictBlobInfo] = useState(null);
-  // { genesis, chain, username, email } from ledger:blocks
-  const [connectConflictCliInfo, setConnectConflictCliInfo] = useState(null);
-  // { blockCount } from ledger/blocks/
+  // ── Dual-format fallback: when CLI blocks also exist alongside
+  // ledger:blocks on R2, store block count so the unlock step can
+  // offer a subtle "Use CLI format instead" fallback.
+  const [connectCliFallback, setConnectCliFallback] = useState(null);
+  // { blockCount } | null
 
   // Reset connect state when entering worker-connect phase
   useEffect(() => {
@@ -391,9 +390,7 @@ export default function OnboardingScreen({
       setConnectPassphrase('');
       setConnectSeed('');
       setConnecting(false);
-      setConnectConflict(false);
-      setConnectConflictBlobInfo(null);
-      setConnectConflictCliInfo(null);
+      setConnectCliFallback(null);
       setLocalError('');
     }
   }, [phase]);
@@ -425,33 +422,15 @@ export default function OnboardingScreen({
       const hasBlob = blobRaw !== null && blobRaw !== undefined;
       const hasCli = Array.isArray(cliFiles) && cliFiles.length > 0;
 
-      // ── Dual-format conflict: both key schemes exist on R2 ──
-      // A stale ledger:blocks from a prior web session may shadow
-      // CLI-pushed ledger/blocks/ files with a different genesis.
-      // Let the user choose which format to onboard from.
-      // See docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md Phase 3.
+      // ── Both formats exist: prefer single-blob path ────────
+      // ledger:blocks shows the username — better UX.
+      // Store CLI info for a subtle fallback link in the unlock
+      // step in case the blob belongs to a different identity.
+      // Phase 1 (connectToWorker) auto-deletes stale ledger:blocks
+      // after a blocks-format onboarding, so this is now rare.
       if (hasBlob && hasCli) {
-        // Extract blob identity for the conflict choice UI
-        let blobInfo = null;
-        try {
-          const chain = JSON.parse(new TextDecoder().decode(blobRaw));
-          if (Array.isArray(chain) && chain.length > 0 && chain[0].type === 'genesis') {
-            const genesis = chain[0];
-            blobInfo = {
-              genesis,
-              chain,
-              username: genesis.identity?.username || 'Unknown',
-              email: genesis.identity?.email || '',
-            };
-          }
-        } catch { /* blob parse failure — still show conflict, just without detail */ }
-
-        setConnectConflictBlobInfo(blobInfo);
-        setConnectConflictCliInfo({ blockCount: cliFiles.length });
-        setConnectConflict(true);
-        setConnectStep('conflict');
-        setConnecting(false);
-        return;
+        setConnectCliFallback({ blockCount: cliFiles.length });
+        // Fall through to blob validation below
       }
 
       // ── Single-blob format only: plain JSON array of blocks ──
@@ -562,40 +541,19 @@ export default function OnboardingScreen({
   };
 
   /**
-   * Handle user choice when both ledger formats exist on R2.
-   * @param {'blob' | 'blocks'} choice
+   * Switch from single-blob path to CLI blocks format.
+   * Used when both formats exist but the blob may belong to
+   * a different identity — user clicks the "Use CLI format" link.
    */
-  const handleConflictChoice = async (choice) => {
-    setConnectConflict(false);
-
-    if (choice === 'blob') {
-      const info = connectConflictBlobInfo;
-      if (!info || !info.genesis) {
-        setConnectStatus({ type: 'error', message: 'Invalid web ledger data.' });
-        setConnectStep('form');
-        return;
-      }
-      setFetchedGenesis({ genesis: info.genesis, chain: info.chain, format: 'blob' });
-      setConnectStatus({
-        type: 'compatible',
-        message: `Ledger found for "${info.username}"` +
-          (info.email ? ` (${info.email})` : ''),
-      });
-      setConnectStep('compatible');
-    } else {
-      const info = connectConflictCliInfo;
-      if (!info || !info.blockCount) {
-        setConnectStatus({ type: 'error', message: 'Invalid CLI ledger data.' });
-        setConnectStep('form');
-        return;
-      }
-      setFetchedGenesis({ blockCount: info.blockCount, format: 'blocks' });
-      setConnectStatus({
-        type: 'compatible',
-        message: `Ledger found with ${info.blockCount} block${info.blockCount !== 1 ? 's' : ''}.`,
-      });
-      setConnectStep('compatible');
-    }
+  const handleSwitchToCliFormat = () => {
+    const info = connectCliFallback;
+    if (!info || !info.blockCount) return;
+    setFetchedGenesis({ blockCount: info.blockCount, format: 'blocks' });
+    setConnectStatus({
+      type: 'compatible',
+      message: `Ledger found with ${info.blockCount} block${info.blockCount !== 1 ? 's' : ''}.`,
+    });
+    setConnectCliFallback(null); // hide the fallback link
   };
 
   const handleWorkerUnlock = async (e) => {
@@ -1317,102 +1275,6 @@ export default function OnboardingScreen({
         </>
       )}
 
-      {/* ── Step 1b: Dual-format conflict — choose ledger ────── */}
-      {connectStep === 'conflict' && (
-        <>
-          <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>⚠️ Two Ledgers Found</h2>
-          <p className="auth-subtitle">
-            This server holds two different ledgers. Choose which one to unlock.
-          </p>
-
-          {/* Conflict warning banner */}
-          <div style={{
-            background: '#fff3e0',
-            border: '1px solid #e67e22',
-            borderRadius: '8px',
-            padding: '0.75rem',
-            marginBottom: '0.75rem',
-          }}>
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#e65100' }}>
-              <strong>⚠️ A stale web ledger exists alongside CLI blocks.</strong>
-            </p>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#bf360c' }}>
-              This can happen when a previous web session used this server
-              with a different identity. The stale data will be cleaned up
-              after you choose a ledger.
-            </p>
-          </div>
-
-          {/* Option 1: Web ledger (ledger:blocks) */}
-          {connectConflictBlobInfo && (
-            <div style={{
-              background: '#e3f2fd',
-              border: '1px solid #1976d2',
-              borderRadius: '8px',
-              padding: '0.75rem',
-              marginBottom: '0.75rem',
-            }}>
-              <p style={{ margin: 0, fontWeight: 600, color: '#1565c0', fontSize: '0.95rem' }}>
-                🌐 Web Ledger
-              </p>
-              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#1976d2' }}>
-                Owner: {connectConflictBlobInfo.username}
-                {connectConflictBlobInfo.email ? ` (${connectConflictBlobInfo.email})` : ''}
-              </p>
-              <button
-                type="button"
-                className="auth-btn"
-                onClick={() => handleConflictChoice('blob')}
-                style={{ marginTop: '0.5rem' }}
-              >
-                Unlock Web Ledger
-              </button>
-            </div>
-          )}
-
-          {/* Option 2: CLI ledger (ledger/blocks/) */}
-          {connectConflictCliInfo && (
-            <div style={{
-              background: '#e8f5e9',
-              border: '1px solid #4caf50',
-              borderRadius: '8px',
-              padding: '0.75rem',
-              marginBottom: '0.75rem',
-            }}>
-              <p style={{ margin: 0, fontWeight: 600, color: '#2e7d32', fontSize: '0.95rem' }}>
-                🖥️ CLI Ledger
-              </p>
-              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#388e3c' }}>
-                {connectConflictCliInfo.blockCount} block{connectConflictCliInfo.blockCount !== 1 ? 's' : ''} — requires recovery seed
-              </p>
-              <button
-                type="button"
-                className="auth-btn"
-                onClick={() => handleConflictChoice('blocks')}
-                style={{ marginTop: '0.5rem' }}
-              >
-                Unlock CLI Ledger
-              </button>
-            </div>
-          )}
-
-          <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                setConnectStep('form');
-                setConnectStatus(null);
-                setConnectConflict(false);
-                setConnectConflictBlobInfo(null);
-                setConnectConflictCliInfo(null);
-              }}
-            >
-              ← Back
-            </button>
-          </div>
-        </>
-      )}
-
       {/* ── Step 2: Genesis found — enter passphrase ──────────── */}
       {connectStep === 'compatible' && (
         <>
@@ -1481,6 +1343,37 @@ export default function OnboardingScreen({
               {connecting ? 'Unlocking...' : 'Unlock'}
             </button>
           </form>
+
+          {/* CLI blocks fallback — shown when both formats exist on R2
+              but the user may need the CLI format (e.g. stale blob case) */}
+          {connectCliFallback && fetchedGenesis.format === 'blob' && (
+            <div style={{
+              textAlign: 'center',
+              marginTop: '0.5rem',
+              paddingTop: '0.5rem',
+              borderTop: '1px solid #e0e0e0',
+            }}>
+              <p style={{ fontSize: '0.8rem', color: '#888', margin: 0 }}>
+                Not your ledger?{' '}
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={handleSwitchToCliFormat}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#1565c0',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    fontSize: '0.8rem',
+                    padding: 0,
+                  }}
+                >
+                  Use CLI format instead →
+                </button>
+              </p>
+            </div>
+          )}
 
           <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
             <button

@@ -1,6 +1,7 @@
 # Investigation: GENESIS_MISMATCH on Sync Now After Cloud Onboarding
 
 > **Status:** ✅ Fix complete — all three phases done (2026-06-29).
+> Phase 3 revised (2026-06-29): prefer blob path with CLI fallback link instead of standalone conflict UI.
 > **Created:** 2026-06-29 | **Updated:** 2026-06-29 (Phase 3 done: dual-format conflict detection UX in handleWorkerFetch)
 > **Bug:** After onboarding a CLI-pushed ledger from Cloudflare Worker / R2 to
 > the web app, pressing "Sync Now" reports `GENESIS_MISMATCH` even though
@@ -343,17 +344,23 @@ try {
 4. Network error during `delete('ledger:blocks')` → genesis gate handles null
    return gracefully
 
-### ✅ Phase 3 — UX Hardening (DONE — 2026-06-29)
+### ✅ Phase 3 — UX Hardening (DONE — 2026-06-29, revised 2026-06-29)
+
+**Original approach (reverted):** Standalone two-card conflict choice UI ("Two Ledgers Found").
+Problem: After Phase 1 fix, both formats exist on R2 with the SAME genesis — the
+conflict UI was a false positive in the common case.
+
+**Revised approach:** When both formats exist, prefer the single-blob path (shows
+username — best UX). A subtle "Not your ledger? Use CLI format instead →" link
+appears in the unlock step as a fallback for the rare stale-blob case.
 
 1. ~~Implement **UX Enhancement** — dual-format detection in onboarding~~ ✅ **DONE**
    - Modified `handleWorkerFetch()` in `OnboardingScreen.jsx` to fetch both
      `ledger:blocks` and `ledger/blocks/` in parallel via `Promise.all()`
-   - Added `connectConflict`, `connectConflictBlobInfo`, `connectConflictCliInfo` state
-   - Added `handleConflictChoice()` handler for user selection
-   - New `conflict` step in render flow: shows both format options with
-     owner name/email (blob) and block count (CLI), plus explanatory warning banner
-   - Back button returns to URL entry form; choosing CLI blocks triggers
-     `connectToWorker()` which auto-deletes stale `ledger:blocks` (Phase 1)
+   - When both exist → prefer blob path, store `connectCliFallback` for optional switch
+   - Added `handleSwitchToCliFormat()` — switches `fetchedGenesis` to blocks format
+   - CLI fallback link shows only when `connectCliFallback` is set and format is 'blob'
+   - Selecting CLI format hides the fallback link and shows block count + seed field
 2. ~~Add automated E2E test for the stale-`ledger:blocks` scenario~~ ✅ **DONE**
    - Tests: `onboarding_cloud_conflict.test.mjs` — 23 pure-logic tests covering
      C1 (different genesis → conflict), C2 (same genesis → no conflict),
@@ -428,10 +435,11 @@ After implementing Phase 1–3:
       null return gracefully
 - [x] After fix: R2 bucket has coherent state — `ledger:blocks` matches
       `ledger/blocks/` genesis
-- [x] Dual-format conflict detected — both `ledger:blocks` and `ledger/blocks/`
-      exist → conflict choice UI shown → user picks blocks → stale blob deleted
-      → onboarding proceeds
-- [x] Same genesis in both formats → no conflict shown → single-blob path (safe)
+- [x] Dual-format detected → blob path preferred (shows username), CLI fallback
+      link shown in unlock step
+- [x] Same genesis in both formats → no interruption, user sees their username
+- [x] Stale blob (different genesis) → user sees wrong username → clicks
+      "Use CLI format instead" → enters seed + passphrase → Phase 1 deletes stale blob
 - [x] Only CLI blocks → blocks-format path (no regression)
 - [x] Only ledger:blocks → single-blob path (no regression)
-- [x] User backs out of conflict UI → returns to URL entry form (non-destructive)
+- [x] Fallback link hidden after switching to CLI format (non-sticky)

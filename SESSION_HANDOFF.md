@@ -24,13 +24,12 @@
 86 new tests across 3 files (all GREEN). Code changes:
 - **✅ Phase 1:** `connectToWorker()` — delete `ledger:blocks` from R2 after blocks-format onboarding **(DONE — 2026-06-29)**
 - **✅ Phase 2:** `bootstrapServices()` — auto-clear on GENESIS_MISMATCH **(DONE — 2026-06-29)**
-- **✅ Phase 3:** `OnboardingScreen.jsx` `handleWorkerFetch()` — dual-format conflict detection UX **(DONE — 2026-06-29)**
+- **✅ Phase 3:** `OnboardingScreen.jsx` `handleWorkerFetch()` — dual-format fallback UX **(DONE — 2026-06-29, revised 2026-06-29)**
   - Parallel fetch of both `ledger:blocks` and `ledger/blocks/` key schemes
-  - When both formats exist on R2, shows a conflict choice UI letting the user pick which to unlock
-  - CLI blocks option: user provides seed + passphrase; stale `ledger:blocks` auto-deleted in `connectToWorker()`
-  - Web ledger option: proceeds via single-blob path with PDK-based auth
-  - Conflict UI shows web ledger owner name/email and CLI ledger block count
-  - Back button returns to URL entry form
+  - When both formats exist on R2: **prefer single-blob path** (shows username — better UX)
+  - Subtle "Use CLI format instead →" link in unlock step for the rare stale-blob case
+  - Phase 1 (`connectToWorker`) auto-deletes stale `ledger:blocks` after blocks-format onboarding,
+    so this fallback is almost never needed after the first successful onboarding
   - 23 pure-logic tests in `onboarding_cloud_conflict.test.mjs` (all GREEN)
 
 Full investigation and action plan: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
