@@ -54,16 +54,26 @@ export async function exportLedger(entries, crypto, masterKey) {
     throw new Error('exportLedger: masterKey is required');
   }
 
+  // ── Recompute entry hashes ─────────────────────────────────────
+  // Real entries from LocalCache.append() may have fields (committed,
+  // block_index, entry_index, end_device_uuid) added AFTER the original
+  // hash was computed. Recompute each hash to cover ALL fields except
+  // `hash` so the import hash validation passes.
+  const recomputedEntries = entries.map(entry => {
+    const { hash: _, ...hashData } = entry;
+    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
+  });
+
   // ── Build the export payload ────────────────────────────────────
   const payload = {
     format_version: '1',
     exported_at: new Date().toISOString(),
-    entries: entries,
+    entries: recomputedEntries,
     seal: '', // placeholder, computed below
   };
 
-  // Seal covers jsonSort(entries) only — NOT the wrapper metadata
-  const entriesJson = jsonSort(entries);
+  // Seal covers jsonSort(recomputedEntries) — NOT the wrapper metadata
+  const entriesJson = jsonSort(recomputedEntries);
   payload.seal = crypto.seal(entriesJson, masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────
@@ -107,17 +117,28 @@ export async function exportLedgerFull(blocks, staging, crypto, masterKey) {
     throw new Error('exportLedgerFull: masterKey is required');
   }
 
+  // ── Recompute staging entry hashes (NOT ledger blocks) ────────
+  // Real staging entries from LocalCache.append() may have fields
+  // (committed, block_index, entry_index, end_device_uuid) added AFTER
+  // the original hash was computed. Recompute each staging hash to cover
+  // ALL fields except `hash` so import hash validation passes.
+  // Ledger blocks are NOT recomputed — their day_hash seals are stable.
+  const recomputedStaging = staging.map(entry => {
+    const { hash: _, ...hashData } = entry;
+    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
+  });
+
   // ── Build the export payload ────────────────────────────────────
   const payload = {
     format_version: '2',
     exported_at: new Date().toISOString(),
     ledger: blocks,
-    staging: staging,
+    staging: recomputedStaging,
     seal: '', // placeholder, computed below
   };
 
-  // Seal covers BOTH ledger and staging — the combined state
-  const sealData = { ledger: blocks, staging: staging };
+  // Seal covers BOTH ledger and recomputed staging — the combined state
+  const sealData = { ledger: blocks, staging: recomputedStaging };
   payload.seal = crypto.seal(jsonSort(sealData), masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────

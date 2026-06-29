@@ -8,6 +8,7 @@ for a single workflow so an agent can trace issues without reading source.
 ## Ownership
 - `cli/` — CLI-specific workflows (`ph` command, daemon, background sync)
 - `web/` — Web-specific workflows (React app, sync, auth, import/export)
+- `Cross_Device_Staging-Workflow.md` — Cross-device staging sharing: CLI ↔ Web via Worker/R2
 
 ## Local Contracts
 - **Agent-only** — these docs are written for and consumed by AI agents during
@@ -35,3 +36,4 @@ None — workflow docs are specifications, verified indirectly through test suit
 ## Child DOX Index
 - `cli/AGENTS.md` — CLI workflow specifications
 - `web/AGENTS.md` — Web workflow specifications
+- `Cross_Device_Staging-Workflow.md` — Cross-device staging sharing: sync gate, merge engine, device cookie, genesis gate across CLI and Web

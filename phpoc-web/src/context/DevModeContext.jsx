@@ -225,48 +225,35 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     return { ...services, sync: wrappedSync };
   }, [services]);
 
-  // ── Re-auth overlay state ───────────────────────────────────────
-  // Triggered by sync when cookie TTL expires or device mismatch detected.
-  // The overlay prompts for passphrase; on success re-runs bootstrap.
-  //
-  // NOTE: Must be defined BEFORE the cookie TTL monitor useEffect below,
-  // since that effect references triggerReauth in its dependency array.
-  const [reauthActive, setReauthActive] = useState(false);
+  // ── TTL warning banner state ───────────────────────────────────
+  // Shown when the cookie is within 5 minutes of expiry.
+  // Cleared on logout or when the user logs in.
+  const [ttlWarning, setTtlWarning] = useState(false);
 
-  const triggerReauth = useCallback(() => {
-    setReauthActive(true);
+  const dismissTtlWarning = useCallback(() => {
+    setTtlWarning(false);
   }, []);
 
-  const dismissReauth = useCallback(() => {
-    setReauthActive(false);
-  }, []);
-
-  /**
-   * Handle re-auth: re-derive the master key from passphrase + stored seed,
-   * set it on the existing crypto instance, then dismiss the overlay.
-   * Unlike login(), this does NOT re-bootstrap — it only refreshes the
-   * in-memory master key so checkAndSync() can proceed.
-   */
-  const handleReauth = useCallback(async (passphrase) => {
-    // Re-derive master key from stored seed and set on existing crypto.
-    // authenticate() is deterministic — same passphrase+seed → same MK.
-    // This ONLY caches the MK; sync is triggered separately by the user
-    // pressing "Sync Now".
-    if (!services.storage) {
-      throw new Error('Storage not initialized. Please refresh the page.');
+  // ── TTL expiry handler ─────────────────────────────────────────
+  // Called by the cookie monitor when TTL expires. Sends the user back
+  // to the landing screen (same as manual logout). Must be defined
+  // BEFORE the cookie monitor useEffect below.
+  const handleTtlExpiry = useCallback(() => {
+    // Dispose cookie TTL monitor (stops polling)
+    if (cookieMonitorRef.current) {
+      cookieMonitorRef.current.dispose();
+      cookieMonitorRef.current = null;
     }
-    if (!services.crypto) {
-      throw new Error('Crypto not initialized. Please refresh the page.');
+    if (services.crypto) {
+      services.crypto.clearMasterKey();
     }
-    const seed = await services.storage.get(STORED_SEED_KEY);
-    if (!seed) {
-      throw new Error('No recovery seed found. Cannot re-authenticate.');
-    }
-    const mk = services.crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
-    services.crypto.setMasterKey(mk);
-    // Success — dismiss overlay (user must press "Sync Now" manually)
-    setReauthActive(false);
-  }, [services]);
+    setTtlWarning(false);
+    setHasExistingData(true);
+    setPhase('landing');
+    setServices({ crypto: null, sync: null, storage: services.storage });
+    setIdentityInfo({ username: null, email: null });
+    setLoading(false);
+  }, [services.crypto, services.storage]);
 
   // ── Cookie TTL monitor ─────────────────────────────────────────
   // Monitors the local device cookie TTL. When the cookie expires,
@@ -296,7 +283,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const monitor = createCookieMonitor(storage, crypto, {
       cookieTtlMinutes: 30,
       pollIntervalMs: 60_000, // check every 60 seconds
-      onExpired: triggerReauth,
+      warningThresholdMinutes: 5,
+      onWarning: () => setTtlWarning(true),
+      onExpired: handleTtlExpiry,
     });
 
     cookieMonitorRef.current = monitor;
@@ -307,7 +296,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       monitor.dispose();
       cookieMonitorRef.current = null;
     };
-  }, [phase, effectiveServices?.crypto, effectiveServices?.storage, triggerReauth]);
+  }, [phase, effectiveServices?.crypto, effectiveServices?.storage, handleTtlExpiry]);
 
   // Clean up auto-sync on unmount (cancels pending debounce)
   useEffect(() => {
@@ -406,7 +395,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const syncResult = await sync.checkAndSync();
       if (syncResult === SyncResult.GENESIS_MISMATCH) {
-        console.warn('Genesis mismatch — remote ledger has a different genesis block.');
+        console.warn('Genesis mismatch — attempting auto-clear of stale remote data.');
+        try {
+          await sync.clearRemote();
+          await sync.checkAndSync(); // Re-run — should be compatible now
+        } catch (err) {
+          console.warn('Auto-clear after genesis mismatch failed:', err.message);
+        }
       }
     } catch {
       // Non-critical
@@ -874,6 +869,19 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
       await storage.set('ledger:blocks', chain);
 
+      // ── Clean up stale ledger:blocks from prior web sessions ──
+      // The genesis gate (which runs during bootstrapServices) checks
+      // ledger:blocks. If a previous web session on this bucket pushed
+      // a chain with a different genesis, the gate rejects our newly-
+      // onboarded chain. Delete it now so the gate sees an empty remote
+      // and treats our local chain as authoritative.
+      // See docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md.
+      try {
+        await transport.delete('ledger:blocks');
+      } catch {
+        // Non-critical — genesis gate handles null gracefully
+      }
+
       // ── Save remote config ─────────────────────────────────────
       localStorage.setItem('phpoc_worker_url', baseUrl);
       if (apiKey) {
@@ -1261,6 +1269,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     if (services.crypto) {
       services.crypto.clearMasterKey();
     }
+    setTtlWarning(false);
     setHasExistingData(true);
     setPhase('landing');
     // Keep storage in services so in-memory data survives logout
@@ -1371,11 +1380,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Commit entries to ledger
     commitEntries,
 
-    // Re-auth overlay
-    reauthActive,
-    triggerReauth,
-    dismissReauth,
-    handleReauth,
+    // TTL warning banner
+    ttlWarning,
+    dismissTtlWarning,
   };
 
   return (

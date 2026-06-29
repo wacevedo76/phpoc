@@ -323,5 +323,316 @@ console.log('\n=== 13. Chain-Like Structure Roundtrip (as v2) ===');
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// Group C: Roundtrip with readEntries()-shaped entries (Step 5 TDD)
+// ═════════════════════════════════════════════════════════════════════
+
+console.log('\n=== 14. C1 — Roundtrip with readEntries()-shaped entries (v1) ===');
+
+{
+  // REPRODUCER: entries shaped like real readEntries() output, where
+  // extra fields (committed, block_index, entry_index, end_device_uuid)
+  // were added AFTER the original hash was computed.
+  const entry1 = {
+    entry_id: 'c1-0001-0000-4000-a000-000000000001',
+    title: 'C1 Task 1',
+    start_epoch: 1717920000000,
+    end_epoch: 1717921800000,
+    duration: 1800000,
+    is_active: false,
+    is_paused: false,
+    pauses: [],
+    tags: ['test'],
+    comment: null,
+    media: [],
+    device_uuid: 'dev-dummy-001',
+    end_device_uuid: 'dev-dummy-001',
+    metadata: {},
+    // Extra fields added by LocalCache.append() after hash computation
+    committed: false,
+    block_index: null,
+    entry_index: 0,
+  };
+  // Compute stale hash over core fields only (mimics the real bug)
+  const core1 = {};
+  for (const k of Object.keys(entry1).sort()) {
+    if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
+      core1[k] = entry1[k];
+    }
+  }
+  entry1.hash = crypto.sha256(jsonSort(core1));
+
+  const entry2 = {
+    entry_id: 'c1-0002-0000-4000-a000-000000000002',
+    title: 'C1 Task 2',
+    start_epoch: 1717930000000,
+    end_epoch: 1717933600000,
+    duration: 3600000,
+    is_active: false,
+    is_paused: false,
+    pauses: [],
+    tags: ['work'],
+    comment: 'Some notes',
+    media: [],
+    device_uuid: 'dev-dummy-001',
+    end_device_uuid: 'dev-dummy-001',
+    metadata: { priority: 'low' },
+    committed: false,
+    block_index: null,
+    entry_index: 1,
+  };
+  const core2 = {};
+  for (const k of Object.keys(entry2).sort()) {
+    if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
+      core2[k] = entry2[k];
+    }
+  }
+  entry2.hash = crypto.sha256(jsonSort(core2));
+
+  // Export → Import roundtrip
+  const exportBlob = await exportLedger([entry1, entry2], crypto, MASTER_KEY);
+  t.assert(exportBlob instanceof Blob, 'C1: export returns Blob');
+
+  const result = await importLedger(exportBlob, crypto, MASTER_KEY);
+  t.assertEq(result.count, 2, 'C1: import count = 2');
+  t.assertEq(result.formatVersion, '1', 'C1: formatVersion = "1"');
+
+  // Verify all fields preserved including extra fields
+  const imported = result.entries;
+  t.assertEq(imported[0].title, 'C1 Task 1', 'C1: entry[0] title preserved');
+  t.assertEq(imported[0].committed, false, 'C1: entry[0] committed preserved');
+  t.assertEq(imported[0].block_index, null, 'C1: entry[0] block_index preserved');
+  t.assertEq(imported[0].entry_index, 0, 'C1: entry[0] entry_index preserved');
+  t.assertEq(imported[1].title, 'C1 Task 2', 'C1: entry[1] title preserved');
+  t.assertEq(imported[1].committed, false, 'C1: entry[1] committed preserved');
+  t.assertEq(imported[1].entry_index, 1, 'C1: entry[1] entry_index preserved');
+  t.assertEq(imported[1].metadata.priority, 'low', 'C1: entry[1] metadata preserved');
+}
+
+console.log('\n=== 15. C2 — Roundtrip with readEntries()-shaped entries (v2) ===');
+
+{
+  // Two staging entries with extra fields + two ledger blocks
+  const staging = [
+    {
+      entry_id: 'c2-stg1-0000-4000-a000-000000000001',
+      title: 'C2 Staging 1',
+      start_epoch: 1717920000000,
+      end_epoch: 1717921800000,
+      duration: 1800000,
+      is_active: false,
+      is_paused: false,
+      pauses: [],
+      tags: ['c2'],
+      comment: null,
+      media: [],
+      device_uuid: 'dev-dummy-001',
+      end_device_uuid: 'dev-dummy-001',
+      metadata: {},
+      committed: false,
+      block_index: null,
+      entry_index: 0,
+    },
+    {
+      entry_id: 'c2-stg2-0000-4000-a000-000000000002',
+      title: 'C2 Staging 2',
+      start_epoch: 1717930000000,
+      end_epoch: 1717933600000,
+      duration: 3600000,
+      is_active: false,
+      is_paused: false,
+      pauses: [],
+      tags: ['c2'],
+      comment: null,
+      media: [],
+      device_uuid: 'dev-dummy-001',
+      end_device_uuid: 'dev-dummy-001',
+      metadata: {},
+      committed: false,
+      block_index: null,
+      entry_index: 1,
+    },
+  ];
+
+  // Set stale hashes (core fields only, without committed/block_index/entry_index)
+  for (const entry of staging) {
+    const core = {};
+    for (const k of Object.keys(entry).sort()) {
+      if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
+        core[k] = entry[k];
+      }
+    }
+    entry.hash = crypto.sha256(jsonSort(core));
+  }
+
+  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, staging, crypto, MASTER_KEY);
+  t.assert(exportBlob instanceof Blob, 'C2: export returns Blob');
+
+  const result = await importLedger(exportBlob, crypto, MASTER_KEY);
+  t.assertEq(result.formatVersion, '2', 'C2: formatVersion = "2"');
+  t.assertEq(result.count, 2, 'C2: import staging count = 2');
+
+  // C2.1: Staging entries match (including extra fields)
+  t.assertEq(result.entries[0].title, 'C2 Staging 1', 'C2: staging[0] title preserved');
+  t.assertEq(result.entries[0].committed, false, 'C2: staging[0] committed preserved');
+  t.assertEq(result.entries[0].entry_index, 0, 'C2: staging[0] entry_index preserved');
+  t.assertEq(result.entries[1].title, 'C2 Staging 2', 'C2: staging[1] title preserved');
+
+  // C2.2: Ledger blocks match
+  t.assertDeepEq(result.ledger, SAMPLE_BLOCKS, 'C2: ledger blocks match');
+  t.assertEq(result.genesisHash, SAMPLE_BLOCKS[0].day_hash, 'C2: genesisHash preserved');
+}
+
+console.log('\n=== 16. C3 — Active entry with missing fields ===');
+
+{
+  // Active entries from LocalCache.append() have different shape:
+  // no end_device_uuid, end_epoch: null. Roundtrip must preserve these.
+  const active = {
+    entry_id: 'c3-active-0000-4000-a000-000000000001',
+    title: 'C3 Active Task',
+    start_epoch: 1717920000000,
+    end_epoch: null,
+    duration: 0,
+    is_active: true,
+    is_paused: false,
+    pauses: [],
+    tags: ['active'],
+    comment: null,
+    media: [],
+    device_uuid: 'dev-dummy-001',
+    metadata: {},
+    // Extra fields from app flow
+    committed: false,
+    block_index: null,
+    entry_index: 0,
+  };
+
+  const stopped = {
+    entry_id: 'c3-stopped-0000-4000-a000-000000000002',
+    title: 'C3 Stopped Task',
+    start_epoch: 1717930000000,
+    end_epoch: 1717933600000,
+    duration: 3600000,
+    is_active: false,
+    is_paused: false,
+    pauses: [],
+    tags: ['done'],
+    comment: null,
+    media: [],
+    device_uuid: 'dev-dummy-001',
+    end_device_uuid: 'dev-dummy-001',
+    metadata: {},
+    committed: false,
+    block_index: null,
+    entry_index: 1,
+  };
+
+  // Set stale hashes (core fields only)
+  for (const entry of [active, stopped]) {
+    const core = {};
+    for (const k of Object.keys(entry).sort()) {
+      if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
+        core[k] = entry[k];
+      }
+    }
+    entry.hash = crypto.sha256(jsonSort(core));
+  }
+
+  const exportBlob = await exportLedger([active, stopped], crypto, MASTER_KEY);
+  const result = await importLedger(exportBlob, crypto, MASTER_KEY);
+
+  t.assertEq(result.count, 2, 'C3: import count = 2');
+
+  // C3.1: Active entry: end_epoch is null, no end_device_uuid
+  t.assertEq(result.entries[0].end_epoch, null, 'C3: active entry end_epoch is null');
+  t.assertEq(result.entries[0].end_device_uuid, undefined, 'C3: active entry has no end_device_uuid');
+  t.assertEq(result.entries[0].is_active, true, 'C3: active entry is_active = true');
+
+  // C3.2: Stopped entry: end_epoch is a number, end_device_uuid present
+  t.assert(typeof result.entries[1].end_epoch === 'number', 'C3: stopped entry end_epoch is a number');
+  t.assertEq(result.entries[1].end_device_uuid, 'dev-dummy-001', 'C3: stopped entry end_device_uuid present');
+  t.assertEq(result.entries[1].is_active, false, 'C3: stopped entry is_active = false');
+}
+
+console.log('\n=== 17. C4 — Single active entry from app flow (v2) ===');
+
+{
+  // Mimic the exact E2E export scenario that failed: 1 genesis block +
+  // 1 active staging entry + 1 stopped staging entry, with extra app fields.
+  const appStaging = [
+    {
+      entry_id: 'c4-act-0000-4000-a000-000000000001',
+      title: 'C4 Active Work',
+      start_epoch: 1717920000000,
+      end_epoch: null,
+      duration: 0,
+      is_active: true,
+      is_paused: false,
+      pauses: [],
+      tags: ['work'],
+      comment: 'In progress',
+      media: [],
+      device_uuid: 'dev-dummy-001',
+      metadata: {},
+      committed: false,
+      block_index: null,
+      entry_index: 0,
+    },
+    {
+      entry_id: 'c4-stp-0000-4000-a000-000000000002',
+      title: 'C4 Completed Task',
+      start_epoch: 1717930000000,
+      end_epoch: 1717933600000,
+      duration: 3600000,
+      is_active: false,
+      is_paused: false,
+      pauses: [],
+      tags: ['done'],
+      comment: 'All finished',
+      media: [],
+      device_uuid: 'dev-dummy-001',
+      end_device_uuid: 'dev-dummy-001',
+      metadata: {},
+      committed: false,
+      block_index: null,
+      entry_index: 1,
+    },
+  ];
+
+  // Set stale hashes for both
+  for (const entry of appStaging) {
+    const core = {};
+    for (const k of Object.keys(entry).sort()) {
+      if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
+        core[k] = entry[k];
+      }
+    }
+    entry.hash = crypto.sha256(jsonSort(core));
+  }
+
+  // Use genesis-only blocks (matching real app scenario)
+  const genesisBlocks = [SAMPLE_BLOCKS[0]];
+
+  const exportBlob = await exportLedgerFull(genesisBlocks, appStaging, crypto, MASTER_KEY);
+  t.assert(exportBlob instanceof Blob, 'C4: export v2 returns Blob');
+
+  const result = await importLedger(exportBlob, crypto, MASTER_KEY);
+  t.assertEq(result.formatVersion, '2', 'C4: formatVersion = "2"');
+  t.assertEq(result.count, 2, 'C4: import count = 2');
+
+  // C4.1: Genesis hash extracted correctly
+  t.assertEq(result.genesisHash, SAMPLE_BLOCKS[0].day_hash, 'C4: genesisHash extracted');
+
+  // C4.2: Both entries roundtripped with all fields intact
+  t.assertEq(result.entries[0].title, 'C4 Active Work', 'C4: active entry title preserved');
+  t.assertEq(result.entries[0].is_active, true, 'C4: active entry flag preserved');
+  t.assertEq(result.entries[0].comment, 'In progress', 'C4: active entry comment preserved');
+  t.assertEq(result.entries[1].title, 'C4 Completed Task', 'C4: stopped entry title preserved');
+  t.assertEq(result.entries[1].duration, 3600000, 'C4: stopped entry duration preserved');
+  t.assertEq(result.entries[1].comment, 'All finished', 'C4: stopped entry comment preserved');
+  t.assertDeepEq(result.ledger, genesisBlocks, 'C4: genesis block roundtripped');
+}
+
+// ═════════════════════════════════════════════════════════════════════
 const failures = t.summary('ledger_roundtrip_test');
 process.exit(failures > 0 ? 1 : 0);

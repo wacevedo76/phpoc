@@ -4,17 +4,74 @@
 > Before making edits, consult the Documentation Impact Contract in root `AGENTS.md` to identify which docs this session's changes affect. Update those docs as part of the work.
 
 ## Current State
-- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done)
+- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done, Step 5 export/import fix ✅ done)
 - **CLI:** Maintenance mode — onboarding redesign complete (Phase 5d), 1493 tests
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
 - **Storage (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON)
 - **Auth gate:** Cookie-only fast path. Full implementation in `src/sync/sync.js` (60 tests)
 - **Architecture:** Multi-deployment via `StorageBackend` interface — standalone PWA (IndexedDB), self-hosted LAN/Docker (bridge server), SaaS (Worker→R2)
 - **WASM crypto:** Bundled by Vite's native pipeline — `src/crypto/wasm/`, real WASM in both dev and production. No DummyCryptoService fallbacks.
+- **phpoc-web IndexedDB state:** Active ledger — username `William Acevedo`, email `william.acevedo@gmail.com`. 1 genesis block, 2 staging entries (1 stopped, 1 active), 0 committed. Recovery seed: `Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`. Dev server on port 5174 (5173 was occupied).
 
 ## Immediate Next Steps
 
-### ✅ Step 1: Python port of LedgerMerge — TDD GREEN Phase (DONE)
+### ✅ Step 5: Fix export/import seal & hash mismatch bug (DONE — 2026-06-28)
+
+**Status:** ✅ GREEN — TDD complete. 185/185 tests pass across 3 test files.
+
+### ✅ Step 6b: Implement GENESIS_MISMATCH fix in DevModeContext.jsx (DONE — 2026-06-29)
+
+86 new tests across 3 files (all GREEN). Code changes:
+- **✅ Phase 1:** `connectToWorker()` — delete `ledger:blocks` from R2 after blocks-format onboarding **(DONE — 2026-06-29)**
+- **✅ Phase 2:** `bootstrapServices()` — auto-clear on GENESIS_MISMATCH **(DONE — 2026-06-29)**
+- **✅ Phase 3:** `OnboardingScreen.jsx` `handleWorkerFetch()` — dual-format conflict detection UX **(DONE — 2026-06-29)**
+  - Parallel fetch of both `ledger:blocks` and `ledger/blocks/` key schemes
+  - When both formats exist on R2, shows a conflict choice UI letting the user pick which to unlock
+  - CLI blocks option: user provides seed + passphrase; stale `ledger:blocks` auto-deleted in `connectToWorker()`
+  - Web ledger option: proceeds via single-blob path with PDK-based auth
+  - Conflict UI shows web ledger owner name/email and CLI ledger block count
+  - Back button returns to URL entry form
+  - 23 pure-logic tests in `onboarding_cloud_conflict.test.mjs` (all GREEN)
+
+Full investigation and action plan: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
+
+### 🔜 Step 6a: Align web staging sharing with CLI (PLANNING — 2026-06-29)
+
+Plan created at `docs/planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md`. 5 phases:
+1. Remove MK bypass in `checkAndSync()` — no cookie → always `REAUTH_NEEDED`
+2. Add `ReauthOverlay.jsx` — passphrase prompt → derive MK → reconcile → resume
+3. Remove fallback `DeviceCookie.create('local', ...)` from `bootstrapServices()`
+4. Handle `GENESIS_MISMATCH` in re-auth flow (deferred)
+5. Test coverage across 7 test files
+
+9 files to touch (1 new component). No code changes yet — planning only.
+
+### 🟡 Step 6: Resume Tier 3 Browser E2E tests
+
+Once Step 5 is fixed, continue E2E testing:
+- E2E-03: Import file upload + same-genesis rejection ✅ (verified via eval), auth error paths
+- E2E-04: Import with wrong passphrase/seed → error display
+- E2E-05: Full roundtrip — export → clear local → import → verify data integrity
+- E2E-06: Export with wrong passphrase → error display
+- E2E-07: Onboarding import flow (logout → onboarding → import from file)
+
+**Setup:** Vivaldi on port 9222, tab t7 at `http://localhost:5174/?dev=false`. See `docs/planning/BROWSER_E2E_TEST_PLAN.md` for test details and known limitations (file input React integration, blob download capture).
+
+### ⏭ Step 7: Consider Playwright for file input E2E tests
+
+agent_browser's `fill` on file inputs doesn't trigger React `onChange` (known limitation C5 from handoff). For reliable file picker E2E tests, consider adding Playwright as a dev dependency. Playwright's `page.setInputFiles()` properly triggers React synthetic events. See `docs/planning/BROWSER_E2E_TEST_PLAN.md` for the test cases that need file input interaction.
+
+### ✅ Step 1: Fix getCompleted() duplication bug (DONE — 2026-06-28)
+
+**Bug:** `SyncService.getCompleted()` returns every committed entry twice — once from the ledger chain (`ledger:blocks`) and once from the staging cache (`entries`) which still holds committed entries.
+
+**Root cause:** `src/sync/sync.js` line 312 filters staging entries by `!e.is_active` only — committed entries with `committed:true` pass this filter. The `markCommitted()` call in the commit flow sets `committed:true` but never removes entries from staging, and `removeSynced()` is never called.
+
+**Fix:** Changed line 312 from `entries.filter((e) => !e.is_active)` to `entries.filter((e) => !e.is_active && !e.committed)`.
+
+**Tests:** Added Group L (4 tests) to `test/sync_service_test.mjs` — covers committed dedup (L1), uncommitted staging-only (L2), mixed committed+uncommitted (L3), and active exclusion (L4). All 89 tests pass.
+
+### ✅ Step 2: Python port of LedgerMerge — TDD GREEN Phase (DONE)
 
 Port `LedgerMerge.merge()` from `phpoc-web/src/ledger/merge.js` to Python as `domain/ledger/merge.py` (~300 lines).
 
@@ -37,7 +94,7 @@ Port `LedgerMerge.merge()` from `phpoc-web/src/ledger/merge.js` to Python as `do
 
 **Fix implemented:** Solution B — `reconfigure(transport)` method on SyncService. Settings calls `services.sync.reconfigure(transport)` after genesis check, and `services.sync.reconfigure(null)` when URL is cleared. 6 new tests in Group K of `sync_service_test.mjs`. Analysis at `docs/design/TRANSPORT_RECONFIGURATION_ANALYSIS.md`.
 
-### 🔜 Step 2: Wiring LedgerMerge into orchestrator — CLI (NEXT)
+### ✅ Step 3: Wiring LedgerMerge into orchestrator — CLI (DONE)
 
 **Target:** Python CLI (`core/sync/orchestrator.py` + `domain/ledger/remote_sync.py`)
 
@@ -51,21 +108,46 @@ Changes:
 - `core/sync/orchestrator.py`: `_sync_ledger_blocks()` now detects same-genesis divergence via `_is_same_genesis()`, offers interactive [M]erge/[S]kip/[C]ancel prompt via `_try_ledger_merge()`, calls `LedgerMerge.merge()` via `asyncio.run()`, replaces local chain + index, force-pushes merged result. Merge skipped when no `ViewInterface` (headless).
 - `tests/test_phase6c_orchestrator_cli.py`: 11 new tests in `TestSyncLedgerBlocksMerge` covering merge accepted/cancelled/skipped, no-view, genesis mismatch, pull/merge failures, `_is_same_genesis()` unit cases.
 
+### 🟢 Step 4: Same-genesis merge for phpoc-web — GREEN Phase (DONE — 2026-06-28)
+
+**Goal:** Wire `LedgerMerge.merge()` (already in `src/ledger/merge.js`) into the phpoc-web sync flow. `GenesisGate.check()` already calls `LedgerMerge.merge()` and returns `mergedChain` + `stats` + `index`, and `checkAndSync()` already persisted the merged chain locally. Two gaps fixed:
+
+1. **Push merged chain to remote** — New `_pushFullLedgerChain()` method pushes raw JSON to `ledger:blocks` (same key `GenesisGate.check()` pulls from). Called after local persist in `checkAndSync()`. Best-effort (errors logged, non-fatal).
+2. **Expose merge stats** — New `get lastMergeStats()` getter returns `{ forkIndex, localEntries, remoteEntries, duplicatesSkipped, mergedEntries, newBlockCount }` from the last genesis-gate merge. Initialized to `null` in constructor.
+
+**Tests:** Group M (8 tests) — 129/129 pass (was 118/5 RED → 129/0 GREEN).
+
+Changes in `src/sync/sync.js`:
+- Constructor: Added `this._lastMergeStats = null`
+- `checkAndSync()` genesis gate block: Store `result.stats` into `_lastMergeStats`, call `_pushFullLedgerChain(result.mergedChain, result.index)` after local persist
+- New getter `lastMergeStats`: Returns `_lastMergeStats` (null if no merge yet)
+- New method `_pushFullLedgerChain(chain, index)`: Pushes raw JSON chain to `ledger:blocks`, index to `ledger/index.json`. Best-effort.
+
+MockTransport/Crypto changes in test file:
+- `_pushError` field on MockTransport (push rejection for M4)
+- `decrypt(ciphertextHex, masterKey)` on MockCrypto (for `LedgerMerge.merge()` date grouping)
+- Helper functions `makeChainEntry()` and `makeChain()` for multi-block chain construction
+
 ### ⏭ Remaining Gaps (future work)
 
-1. **Same-genesis merge support (phpoc-web)**: Wire `LedgerMerge.merge()` (already in `src/ledger/merge.js`) into the phpoc-web sync flow — `SyncService.checkAndSync()` or `_reconcileAndClaim()` should detect same-genesis divergence and offer reconciliation. Currently same-genesis remote data is silently pulled and merged via `_reconcileAndClaim()` with no divergence detection.
-2. **Tier 2 — React component tests** (~9 tests): OnboardingScreen import form state machine — file picker gating, destroy warning display, checkbox gates, genesis error display.
-3. **Tier 3 — Browser E2E** (~4 tests): Real browser flow with Playwright — full import from file picker, export from Settings, roundtrip in a fresh session.
+1. ~~**Same-genesis merge support (phpoc-web)**~~ — ✅ DONE. `_pushFullLedgerChain()` + `lastMergeStats` getter. See Step 4 above.
+2. ~~**Tier 2 — React component tests**~~ — ✅ DONE (2026-06-28). 21 Vitest+RTL tests at `phpoc-web/test/onboarding_import_component.test.mjs`. Covers file picker gating (I2–I3), destroy warning display (I4–I5), checkbox gates (I6–I7), error display (I8), import source selection (I1), and back navigation (I9). All 21 pass, 0 failures. See WEB_ROADMAP.md Build 57.
+3. **Tier 3 — Browser E2E** (~4 tests): 🟡 IN PROGRESS (2026-06-28). Export flow ✅, Import dialog UI ✅, file upload via eval ⚠️ (React onChange limitation), roundtrip ✅ unblocked (Step 5 fix). See `docs/planning/BROWSER_E2E_TEST_PLAN.md`.
 4. **Raw chain staging extraction**: CLI `ledger.json` import puts all entries inside `ledger:blocks` — no way to extract them into staging for editing or re-commit.
 
 ## Known Issues
 
+- **phpoc-web: getCompleted() returns duplicate entries (2026-06-28):** ✅ FIXED. Changed staging filter from `!e.is_active` to `!e.is_active && !e.committed` in `src/sync/sync.js` line 312. Added Group L (4 tests) to `test/sync_service_test.mjs`. All 89 tests pass.
 - **SyncService transport not updated on Settings change (2026-06-25):** ✅ FIXED. Solution B implemented — `SyncService.reconfigure(transport)` exposed, called from Settings after genesis check. 6 new tests (Group K). C2 E2E test now passes.
 - **Stale session cache trusted without verification (2026-06-26):** ✅ FIXED. `PassphraseAuthenticator.authenticate()` blindly trusted the cached key (`/dev/shm/phpoc_session`) without verifying it against the genesis seal. A stale/wrong cached key caused `ph list all` to silently skip all entries (decryption failed, caught by bare `except:`). Fix: added `_verify_cached_key()` that checks genesis seal before trusting the cache; stale cache is auto-cleared. Also fixed `_print_entry` to show `[encrypted] title (Nm) [run 'ph login' to decrypt]` instead of silently skipping undecryptable entries.
 - **TTL cookie ignored for local-only ledgers (2026-06-27):** ✅ FIXED. `check_and_sync()` returned `READY` immediately when `_remote is None`, bypassing the device cookie TTL entirely. Read commands (`ph list`/`view`/`tags`) never prompted for a passphrase because the session cache at `/dev/shm/phpoc_session` has no TTL and the device cookie (which does) was never checked. Fix: `check_and_sync()` now checks `DeviceCookie.is_valid_locally()` even for local-only, returning `REAUTH_NEEDED` on expiry. `_reconcile_and_claim()` creates a local cookie via new `DeviceCookie.create_local()`. `ph login` and `ph recover` handlers also create local cookies. Changes in `domain/cookie/device_cookie.py`, `domain/staging/service.py`, `main.py`.
+- **phpoc-web: Login blank screen (2026-06-28):** ✅ FIXED. Added `ErrorBoundary` class component to `App.jsx` — catches render crashes and shows diagnostics + reload button instead of blank white screen. Wraps entire `<DevModeProvider><AppInner/></DevModeProvider>` tree. Root cause: no error boundary existed; any render crash unmounted entire component tree silently.
+- **phpoc-web: Reauth overlay → TTL warning + landing redirect (2026-06-28):** ✅ REPLACED. Cookie TTL expiry now calls `handleTtlExpiry` which sends the user to the landing screen (same as logout — re-login runs bootstrapServices). A 5-minute warning banner appears before expiry with a dismiss button. Removed `reauthActive`, `triggerReauth`, `dismissReauth`, `handleReauth` from DevModeContext. Added `ttlWarning`/`dismissTtlWarning` state. `createCookieMonitor` gained `onWarning` callback + `warningThresholdMinutes` option. SyncSettings REAUTH_NEEDED message changed to "Log out and log back in."
 - **phpoc-web: Remote sync settings not cleared on new ledger (2026-06-27):** ✅ FIXED. When `createNewLedger()` or `confirmImport()` cleared IndexedDB (`storage.clear()`), the `localStorage` keys `phpoc_worker_url` and `phpoc_api_key` were left intact. Result: after creating a new ledger or importing one, the Settings page still showed the previous Worker URL and API Key. Fix: both functions now call `localStorage.removeItem()` for both keys immediately after `storage.clear()`. Change in `phpoc-web/src/context/DevModeContext.jsx`.
 - **New Task — One-off activity checkbox (2026-06-27):** ✅ DONE. NewTask.jsx now has a "One-off activity" checkbox that captures entries as already completed (`is_active=false`, `end_epoch=startEpoch`). Uses existing CSS classes. Button changes from "Start Task" to "Log Task".
 - **Genesis mismatch override — Clear Remote & Overwrite (2026-06-27):** ✅ DONE. When Sync Now detects `GENESIS_MISMATCH`, the UI now shows an override panel requiring the user to type `DELETE` to confirm. Calls `sync.clearRemote()` (HTTP DELETE on ledger:blocks, staging:blob, cookie:json, resets genesis gate), then re-runs sync to push local ledger. CSS in App.css, logic in SyncSettings.jsx and sync.js.
+- **Export/Import roundtrip: seal & entry hash mismatch (2026-06-28):** ✅ FIXED. Export now recomputes each staging entry's hash to cover ALL fields except `hash` before computing the seal. This ensures entries with extra app-added fields (`committed`, `block_index`, `entry_index`, `end_device_uuid`) survive import re-validation. Fix in `phpoc-web/src/services/ledger_export.js` (both `exportLedger()` and `exportLedgerFull()`). 37 new/updated tests (185 total across 3 test files). TDD: RED → GREEN.
+- **Genesis mismatch on Sync Now after cloud onboarding (2026-06-29):** ✅ FIXED. Three-phase fix. Phase 1: `connectToWorker()` deletes stale `ledger:blocks` after blocks-format onboarding. Phase 2: `bootstrapServices()` auto-clears and retries on GENESIS_MISMATCH. Phase 3: `handleWorkerFetch()` in OnboardingScreen.jsx detects dual-format conflicts (both `ledger:blocks` and `ledger/blocks/` exist on R2) and shows a choice UI letting the user pick which ledger to unlock. 86 tests across 3 files + 23 pure-logic tests (109 total, all GREEN). See `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
 
 ## Browser E2E Testing Setup
 
@@ -78,10 +160,22 @@ Changes:
 
 ## Test Ledger Credentials
 
+- **Active Browser Ledger Credentials (William Acevedo — 2026-06-28)**
+
+- **Passphrase:** `VZQKp6TrIBK/GUtsjoof75HRyzd7w8S0`
+- **Recovery Seed:** `Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`
+- **Username:** `William Acevedo` | **Email:** `william.acevedo@gmail.com`
+- **Ledger:** 1 genesis block, 2 staging entries (0 committed)
+- **Export file:** `testdata/e2e_export.phpledger` (v2, 2.7KB)
+
+- **Original Test Ledger Credentials (for reference)**
+
 - **Passphrase:** `VZQKp6TrIBK/GUtsjoof75HRyzd7w8S0`
 - **Master seed:** `hopULgZOX/cpcLTlur/T0jbt9gV5Q/w/FEBMpLnR6oA=`
-- **Username:** `testuser` | **Email:** `test@example.com`
-- **Ledger:** 2 blocks (genesis + 1 day block), 2 entries committed
+- **Username (original):** `testuser` | **Email:** `test@example.com`
+- **Username (IndexedDB):** `testuser01` | **Email:** `testuser01@testemail.com`
+- **Seed (IndexedDB):** `3NSUU8u14HeKokyV0ZSKQ3m3uVocd50S6tIU6lOUnDo=`
+- **Ledger:** 2 blocks (genesis + 1 day block), 3 entries ("Working on Phpoc-web" ×2, "Pushups") + 1 test entry "Test Duplication Bug"
 
 ## Testing Quick Reference
 
@@ -90,7 +184,7 @@ Changes:
 | **Worker URL** | `https://phpoc-staging-testing.wacevedo.workers.dev` |
 | **R2 bucket** | `phpoc-data-testing` |
 | **Test ledger path** | `~/code/phpoc-testing-data/phpoc-robertwallace.json` |
-| **phpoc-web URL** | `http://localhost:5173/?dev=false` |
+| **phpoc-web URL** | `http://localhost:5174/?dev=false` (5173 occupied; 5174 assigned) |
 | **Worker configs** | `worker/wrangler.toml` (production, `phpoc-data`) / `worker/wrangler.testing.toml` (testing, `phpoc-data-testing`) |
 
 > **Credentials** (API key, passphrase, recovery seed, wrangler token) are stored locally outside the repo. Ask the user to provide them if needed.

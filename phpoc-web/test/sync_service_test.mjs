@@ -40,6 +40,8 @@ class MockTransport {
     this._queue = new Map();
     this._offline = false;
     this._corrupt = false;
+    /** If set, push() throws this error. */
+    this._pushError = null;
   }
 
   /** Queue a response value (or null) for the next pull() of this path. FIFO. */
@@ -59,7 +61,20 @@ class MockTransport {
 
   async push(path, data) {
     if (this._offline) throw new Error('Network failure');
+    if (this._pushError) throw this._pushError;
     this._store.set(path, data);
+  }
+
+  async delete(path) {
+    if (this._offline) throw new Error('Network failure');
+    this._store.delete(path);
+  }
+
+  resetCache() { /* no-op for mock transport */ }
+
+  /** @returns {boolean} whether a key exists in the store */
+  hasKey(path) {
+    return this._store.has(path);
   }
 }
 
@@ -145,6 +160,30 @@ class MockCrypto {
     } catch {
       throw new Error('deobfuscation failed');
     }
+  }
+
+  /**
+   * Decrypt using the cached master key.
+   * For tests, handles plain: prefix passthrough.
+   */
+  /**
+   * Decrypt a hex ciphertext using a master key.
+   * Used by LedgerMerge.merge() to decrypt startTime_enc for date grouping.
+   * For tests, strips the 'enc:' prefix (matching the test convention).
+   */
+  decrypt(ciphertextHex, _masterKey) {
+    if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('enc:')) {
+      return ciphertextHex.slice(4);
+    }
+    return ciphertextHex;
+  }
+
+  decryptWithCachedKey(ciphertextHex) {
+    if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('plain:')) {
+      return ciphertextHex.slice(6);
+    }
+    // Fallback: return as-is (numbers-as-strings pass through)
+    return ciphertextHex;
   }
 }
 
@@ -251,6 +290,18 @@ async function run() {
     const { sync } = createSyncService({ withTransport: true });
     const result = await sync.checkAndSync();
     t.assertEq(result, SyncResult.REAUTH_NEEDED, 'A2. no cookie at all → REAUTH_NEEDED');
+  }
+
+  // A2b. No local cookie + MK cached → REAUTH_NEEDED (no bypass)
+  // Matches CLI behavior: cookie is the truth, not the cached key.
+  {
+    const { sync } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'a2b-test-key-a2b-test-key-a2b-test-key-a2b1234abc',
+    });
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.REAUTH_NEEDED, 'A2b. no cookie + cached MK → REAUTH_NEEDED (no bypass)');
   }
 
   // A3. Local cookie valid + no remote cookie + no master key → REAUTH_NEEDED
@@ -912,6 +963,45 @@ async function run() {
       'I3b. after reset → re-checks and detects mismatch');
   }
 
+  // I4. Cached incompatible genesis → second call returns GENESIS_MISMATCH
+  //   (does NOT fall through to fast path/auth gate where cookie/blob
+  //    pulls could fail with 403, producing a misleading OFFLINE status)
+  {
+    const mkLocal = 'genesis-cache-false-genesis-cache-fals-dd';
+    const mkRemote = 'genesis-cache-evil-genesis-cache-evil-ee';
+    const localChain = buildTestChain({ mk: mkLocal, username: 'local' });
+    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote' });
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    // First call: genesis mismatch → caches false
+    const result1 = await sync.checkAndSync();
+    t.assertEq(result1, SyncResult.GENESIS_MISMATCH,
+      'I4. first call → GENESIS_MISMATCH (cache set)');
+
+    // Second call: _genesisCompatible is false (cached)
+    // Must return GENESIS_MISMATCH immediately, not fall through
+    // to the fast path. To verify it doesn't hit the transport,
+    // we can break the transport and confirm it still returns
+    // GENESIS_MISMATCH (not OFFLINE).
+    const origPull = transport.pull.bind(transport);
+    transport.pull = () => { throw new Error('Network error (403)'); };
+
+    const result2 = await sync.checkAndSync();
+    t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
+      'I4b. second call → GENESIS_MISMATCH (cached, did not fall through to fast path)');
+
+    // Restore transport for cleanup
+    transport.pull = origPull;
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // Group J: _getDeviceId() call-count optimization
   // ═══════════════════════════════════════════════════════════════
@@ -1178,6 +1268,890 @@ async function run() {
     // checkRemotePing confirms the new transport is actually reachable
     const pingOk = await sync.checkRemotePing();
     t.assert(pingOk, 'K6d. checkRemotePing confirms new transport reachable');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group L: getCompleted() Deduplication
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug: getCompleted() returns committed entries twice — once from
+  // the ledger chain (ledger:blocks) and once from the staging cache
+  // (entries). The staging filter `!e.is_active` does not exclude
+  // committed entries. Fix: `!e.is_active && !e.committed`.
+  //
+  console.log('\n── Group L: getCompleted() Deduplication ──\n');
+
+  /** Build a minimal block for placing a committed entry in the chain. */
+  function buildBlockWithEntry(entryId, title, startEpoch, endEpoch, duration) {
+    return {
+      type: 'day',
+      day_index: 0,
+      date: new Date(startEpoch).toISOString().slice(0, 10),
+      prev_hash: '0'.repeat(64),
+      day_hash: 'aa'.repeat(32),
+      entries: [{
+        hash: `hash-${entryId}`,
+        data: {
+          entry_id: entryId,
+          title,
+          startTime_enc: `plain:${startEpoch}`,
+          endTime_enc: `plain:${endEpoch}`,
+          duration: duration || 0,
+          is_active: false,
+          is_paused: false,
+          pauses_enc: 'plain:[]',
+          metadata_enc: 'plain:{}',
+          tags: [],
+          comment: null,
+          media: [],
+          device_uuid: '',
+          end_device_uuid: '',
+        },
+      }],
+    };
+  }
+
+  // L1. Capture → end → commit → getCompleted returns exactly 1 (from chain, not staging)
+  {
+    const { sync, storage } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'l1-dedup-l1-dedup-l1-dedup-l1-dedup-l1-aa',
+    });
+
+    await sync.capture({ title: 'L1 Dedup Task', startEpoch: 1000 });
+    const allEntries = await sync.readEntries();
+    const entry = allEntries.find(e => e.title === 'L1 Dedup Task');
+    t.assert(entry, 'L1. entry captured');
+    t.assert(entry.entry_id, 'L1b. entry has entry_id');
+
+    await sync.end('L1 Dedup Task', 2000);
+
+    // Place the committed entry in the ledger chain
+    const block = buildBlockWithEntry(entry.entry_id, 'L1 Dedup Task', 1000, 2000, 1000);
+    await storage.set('ledger:blocks', [block]);
+
+    // Mark committed in staging — this sets committed=true, is_active=false
+    await sync.markCommitted([entry.entry_id], 1);
+
+    const completed = await sync.getCompleted();
+    t.assertEq(completed.length, 1,
+      `L1c. getCompleted returns exactly 1 entry (got ${completed.length})`);
+    if (completed.length === 1) {
+      t.assertEq(completed[0].title, 'L1 Dedup Task', 'L1d. correct entry returned');
+      t.assert(completed[0].committed === true, 'L1e. entry marked committed');
+    }
+  }
+
+  // L2. End entry without commit → getCompleted returns 1 (from staging only)
+  {
+    const { sync } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'l2-staging-l2-staging-l2-staging-l2-staging-bb',
+    });
+
+    const entry = await sync.capture({ title: 'L2 Staging Only', startEpoch: 3000 });
+    t.assert(entry, 'L2. entry captured');
+
+    await sync.end('L2 Staging Only', 4000);
+    // NOT committed — stays in staging with committed=false, is_active=false
+
+    const completed = await sync.getCompleted();
+    t.assertEq(completed.length, 1,
+      `L2b. getCompleted returns 1 uncommitted entry (got ${completed.length})`);
+    if (completed.length === 1) {
+      t.assertEq(completed[0].title, 'L2 Staging Only', 'L2c. correct entry');
+      t.assert(!completed[0].committed, 'L2d. entry NOT marked committed');
+    }
+  }
+
+  // L3. Mixed: 1 committed (in chain) + 1 uncommitted → getCompleted returns exactly 2
+  {
+    const { sync, storage } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'l3-mixed-l3-mixed-l3-mixed-l3-mixed-l3-cc',
+    });
+
+    // Entry A: capture → end → commit (will be in chain)
+    await sync.capture({ title: 'L3 Committed', startEpoch: 5000 });
+    let allEntries = await sync.readEntries();
+    const entryA = allEntries.find(e => e.title === 'L3 Committed');
+    t.assert(entryA && entryA.entry_id, 'L3a. committed entry captured');
+    await sync.end('L3 Committed', 6000);
+    const block = buildBlockWithEntry(entryA.entry_id, 'L3 Committed', 5000, 6000, 1000);
+    await storage.set('ledger:blocks', [block]);
+    await sync.markCommitted([entryA.entry_id], 1);
+
+    // Entry B: capture → end (no commit — stays in staging only)
+    await sync.capture({ title: 'L3 Uncommitted', startEpoch: 7000 });
+    await sync.end('L3 Uncommitted', 8000);
+
+    const completed = await sync.getCompleted();
+    t.assertEq(completed.length, 2,
+      `L3. getCompleted returns exactly 2 entries (got ${completed.length})`);
+
+    const titles = completed.map(e => e.title).sort();
+    t.assertDeepEq(titles, ['L3 Committed', 'L3 Uncommitted'],
+      'L3b. both entries present, no duplicates');
+
+    // Verify one is committed, one is not
+    const committedOnes = completed.filter(e => e.committed);
+    t.assertEq(committedOnes.length, 1, 'L3c. exactly 1 committed entry');
+    const uncommittedOnes = completed.filter(e => !e.committed);
+    t.assertEq(uncommittedOnes.length, 1, 'L3d. exactly 1 uncommitted entry');
+  }
+
+  // L4. Active entry (is_active=true) excluded from getCompleted
+  {
+    const { sync } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: 'l4-active-l4-active-l4-active-l4-active-l4-dd',
+    });
+
+    // Active entry — never ended
+    await sync.capture({ title: 'L4 Active Task', startEpoch: 9000 });
+
+    // Also create a completed entry to ensure getCompleted isn't just empty
+    const done = await sync.capture({ title: 'L4 Done Task', startEpoch: 10000 });
+    await sync.end('L4 Done Task', 11000);
+
+    const completed = await sync.getCompleted();
+    t.assertEq(completed.length, 1,
+      `L4. getCompleted excludes active entry (got ${completed.length})`);
+    if (completed.length >= 1) {
+      t.assertEq(completed[0].title, 'L4 Done Task',
+        'L4b. only the completed entry returned');
+    }
+
+    // Confirm active entry exists in staging
+    const activeEntries = await sync.getActive();
+    t.assertEq(activeEntries.length, 1, 'L4c. active entry still in staging');
+    t.assertEq(activeEntries[0].title, 'L4 Active Task', 'L4d. correct active entry');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group M: Same-Genesis Merge + Remote Push
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group M: Same-Genesis Merge + Remote Push ──\n');
+
+  /**
+   * Build a single entry with content_hash for merge dedup.
+   * Uses 'enc:' prefix convention matching the existing buildTestChain.
+   */
+  function makeChainEntry(crypto, { title, startEpoch, endEpoch }) {
+    const duration = endEpoch ? endEpoch - startEpoch : 0;
+    const data = {
+      title,
+      startTime_enc: `enc:${startEpoch}`,
+      endTime_enc: endEpoch != null ? `enc:${endEpoch}` : undefined,
+      duration,
+      content_hash: crypto.sha256(JSON.stringify({ title, duration })),
+      tags: [],
+      pauses_enc: 'enc:[]',
+      metadata_enc: 'enc:{}',
+      comment: '',
+      media: [],
+    };
+    return {
+      hash: crypto.sha256(JSON.stringify(data, null, 2)),
+      data,
+    };
+  }
+
+  /**
+   * Build a full ledger chain: genesis + day blocks grouped by date.
+   * Each entry spec: { title, startEpoch, endEpoch }
+   */
+  function makeChain(mk, entrySpecs) {
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    // Genesis block
+    const genesisContent = {
+      type: 'genesis',
+      format_version: '0.3.0',
+      day_index: 0,
+      date: '2026-01-01',
+      identity: {
+        username: 'testuser',
+        email: 'test@example.com',
+        recovery_seed_enc: 'enc:mockseed',
+        identity_pub_key: 'mockpubkey0000000000000000000000000000000000000000000000000000',
+        identity_secret_enc_fallback: 'enc:mocksecret',
+      },
+      prev_hash: '0'.repeat(64),
+      entries: [],
+    };
+    genesisContent.day_hash = crypt.sealBlock({ ...genesisContent });
+
+    const chain = [genesisContent];
+    let dayIndex = 1;
+
+    for (const spec of entrySpecs) {
+      const entry = makeChainEntry(crypt, spec);
+      const dateStr = new Date(spec.startEpoch).toISOString().slice(0, 10);
+      const prevHash = crypt.sealBlock({ ...chain[chain.length - 1] });
+
+      const dayContent = {
+        type: 'day',
+        day_index: dayIndex,
+        date: dateStr,
+        prev_hash: prevHash,
+        entries: [entry],
+      };
+      dayContent.day_hash = crypt.sealBlock({ ...dayContent });
+      chain.push(dayContent);
+      dayIndex++;
+    }
+
+    return chain;
+  }
+
+  // ── M1: Same-genesis divergence → merged chain pushed to remote ──
+  {
+    const mk = 'm1-merge---m1-merge---m1-merge---m1-merge---aa';
+    const localChain = makeChain(mk, [
+      { title: 'Local Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Remote Entry', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Set up local ledger
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+
+    // Push remote chain to transport
+    await pushRemoteChain(transport, remoteChain);
+
+    // Two-phase cookie: none (enter reconcile), none (first-time Case B)
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'M1. same-genesis divergence → NOT genesis mismatch');
+
+    // Verify local chain was merged (both entries present)
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    t.assert(Array.isArray(localBlocks), 'M1b. local blocks still an array');
+
+    // Count entries across all day blocks in merged chain
+    let localEntryCount = 0;
+    const localTitles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          localEntryCount++;
+          localTitles.push(e.data.title);
+        }
+      }
+    }
+    t.assertEq(localEntryCount, 2,
+      `M1c. local chain has 2 entries after merge (got ${localEntryCount})`);
+    t.assert(localTitles.includes('Local Entry'), 'M1d. local entry preserved');
+    t.assert(localTitles.includes('Remote Entry'), 'M1e. remote entry merged in');
+
+    // Verify merged chain was pushed to remote
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+      'M1f. merged chain pushed to remote');
+    if (remoteRaw) {
+      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+      let remoteTitles = [];
+      for (const b of remoteBlocks) {
+        if (b.type === 'day' || b.type === undefined) {
+          for (const e of (b.entries || [])) {
+            remoteTitles.push(e.data.title);
+          }
+        }
+      }
+      t.assert(remoteTitles.includes('Local Entry'),
+        'M1g. remote now has Local Entry (was local-only)');
+    }
+  }
+
+  // ── M2: Identical chains → no unnecessary push, stats show 0 changes ──
+  {
+    const mk = 'm2-ident---m2-ident---m2-ident---m2-ident---bb';
+    const chain = makeChain(mk, [
+      { title: 'Same Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'M2. identical chains → NOT genesis mismatch');
+
+    // Verify local chain unchanged (still 1 entry)
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let entryCount = 0;
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        entryCount += (b.entries || []).length;
+      }
+    }
+    t.assertEq(entryCount, 1,
+      `M2b. local chain unchanged (1 entry, got ${entryCount})`);
+  }
+
+  // ── M3: Merge stats exposed to caller ──
+  {
+    const mk = 'm3-stats---m3-stats---m3-stats---m3-stats---cc';
+    const localChain = makeChain(mk, [
+      { title: 'Alpha', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Beta', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+      { title: 'Gamma', startEpoch: 1700200000000, endEpoch: 1700203600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.checkAndSync();
+
+    const stats = sync.lastMergeStats;
+    t.assert(stats !== null && stats !== undefined,
+      'M3. lastMergeStats is populated after merge');
+    if (stats) {
+      t.assertEq(stats.localEntries, 1,
+        `M3b. localEntries = 1 (got ${stats.localEntries})`);
+      t.assertEq(stats.remoteEntries, 2,
+        `M3c. remoteEntries = 2 (got ${stats.remoteEntries})`);
+      t.assertEq(stats.duplicatesSkipped, 0,
+        `M3d. duplicatesSkipped = 0 (got ${stats.duplicatesSkipped})`);
+      t.assertEq(stats.mergedEntries, 3,
+        `M3e. mergedEntries = 3 (got ${stats.mergedEntries})`);
+      // forkIndex should be 0 (common: genesis only)
+      t.assertEq(stats.forkIndex, 0,
+        `M3f. forkIndex = 0 (got ${stats.forkIndex})`);
+      t.assert(typeof stats.newBlockCount === 'number',
+        'M3g. newBlockCount is a number');
+    }
+  }
+
+  // ── M4: Local merge survives reconciliation failures ──
+  {
+    const mk = 'm4-resilient-m4-resilient-m4-resilient-aa';
+    const localChain = makeChain(mk, [
+      { title: 'Keep Me', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Add Me', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    // Set up cookie: valid local cookie, no remote cookie -> reconcile
+    await storage.set('cookie', {
+      device_specifier: 'spec-m4',
+      creation_time: Date.now(),
+    });
+
+    // No remote cookie (two-phase: outer null, inner null → first-time Case B)
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    // Case B reconcile will try pushBlobOnly — make it fail to verify
+    // that an earlier ledger merge survived the later staging failure.
+    transport._pushError = new Error('Simulated push failure');
+
+    // checkAndSync should not throw — the genesis gate merge runs first,
+    // so even if reconcile fails, the merged chain is persisted.
+    await sync.checkAndSync().catch(() => {
+      // Expected: reconcile push failure is non-fatal for ledger merge
+    });
+
+    // Ledger chain merge happened BEFORE the staging blob push —
+    // local merged chain should still be intact.
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let titles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          titles.push(e.data.title);
+        }
+      }
+    }
+    t.assert(titles.includes('Keep Me'),
+      'M4. local entry preserved despite reconciliation failure');
+    t.assert(titles.includes('Add Me'),
+      'M4b. remote entry merged into local despite reconciliation failure');
+    t.assertEq(titles.length, 2,
+      `M4c. local has 2 merged entries (got ${titles.length})`);
+
+    // Clean up for subsequent tests
+    transport._pushError = null;
+  }
+
+  // ── M4b: Push failure during ledger chain upload → local preserved ──
+  // (This test will be meaningful in GREEN phase when ledger push exists.
+  //  For now, it verifies the RED-phase gap: no push happens, remote
+  //  still has the old pre-merge data.)
+  {
+    const mk = 'm4b-pushgap-m4b-pushgap-m4b-pushgap-m4b-bb';
+    const localChain = makeChain(mk, [
+      { title: 'Only Mine', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Only Theirs', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.checkAndSync();
+
+    // Local should have both entries (merged)
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let localTitles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          localTitles.push(e.data.title);
+        }
+      }
+    }
+    t.assert(localTitles.includes('Only Mine'), 'M4b1. local entry preserved');
+    t.assert(localTitles.includes('Only Theirs'), 'M4b2. remote entry merged in');
+
+    // RED-PHASE ASSERTION: remote still has only the original chain.
+    // This SHOULD fail (no push yet). In GREEN phase, this will become:
+    // "remote should have merged chain with both entries".
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    if (remoteRaw) {
+      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+      let remoteTitles = [];
+      for (const b of remoteBlocks) {
+        if (b.type === 'day' || b.type === undefined) {
+          for (const e of (b.entries || [])) {
+            remoteTitles.push(e.data.title);
+          }
+        }
+      }
+      // RED phase: remote has old chain (1 entry). GREEN phase: should have 2.
+      t.assert(remoteTitles.includes('Only Mine'),
+        'M4b3. RED→GREEN: remote should have Only Mine after ledger push');
+    }
+  }
+
+  // ── M5: Only local has extra blocks → remote gets merged result ──
+  {
+    const mk = 'm5-localx--m5-localx--m5-localx--m5-localx--ee';
+    const chain = makeChain(mk, [
+      { title: 'Shared Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const localChain = makeChain(mk, [
+      { title: 'Shared Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+      { title: 'Local Only', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    // Remote only has the shared entry
+    await pushRemoteChain(transport, chain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.checkAndSync();
+
+    // Local should still have both entries
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let localTitles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          localTitles.push(e.data.title);
+        }
+      }
+    }
+    t.assert(localTitles.includes('Shared Entry'), 'M5. shared entry in local');
+    t.assert(localTitles.includes('Local Only'), 'M5b. local-only entry preserved');
+    t.assertEq(localTitles.length, 2,
+      `M5c. local has 2 entries (got ${localTitles.length})`);
+
+    // Verify merged chain was pushed to remote
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+      'M5d. merged chain pushed to remote (ledger:blocks not null)');
+    if (remoteRaw) {
+      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+      let remoteTitles = [];
+      for (const b of remoteBlocks) {
+        if (b.type === 'day' || b.type === undefined) {
+          for (const e of (b.entries || [])) {
+            remoteTitles.push(e.data.title);
+          }
+        }
+      }
+      t.assert(remoteTitles.includes('Local Only'),
+        'M5e. remote now has Local Only entry');
+    }
+  }
+
+  // ── M6: Only remote has extra blocks → local updated + remote pushed ──
+  {
+    const mk = 'm6-remotex-m6-remotex-m6-remotex-m6-remotex-ff';
+    const chain = makeChain(mk, [
+      { title: 'Shared Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Shared Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+      { title: 'Remote Only', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Local only has shared entry
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    // Remote has shared + extra
+    await pushRemoteChain(transport, remoteChain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.checkAndSync();
+
+    // Local should now have both entries (remote entry merged in)
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let localTitles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          localTitles.push(e.data.title);
+        }
+      }
+    }
+    t.assert(localTitles.includes('Shared Entry'), 'M6. shared entry in local');
+    t.assert(localTitles.includes('Remote Only'),
+      'M6b. remote-only entry merged into local');
+    t.assertEq(localTitles.length, 2,
+      `M6c. local has 2 entries after merge (got ${localTitles.length})`);
+
+    // Verify merged chain was pushed to remote
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+      'M6d. merged chain pushed to remote');
+    if (remoteRaw) {
+      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+      let remoteTitles = [];
+      for (const b of remoteBlocks) {
+        if (b.type === 'day' || b.type === undefined) {
+          for (const e of (b.entries || [])) {
+            remoteTitles.push(e.data.title);
+          }
+        }
+      }
+      t.assert(remoteTitles.includes('Remote Only'),
+        'M6e. remote now has Remote Only entry');
+      t.assert(remoteTitles.includes('Shared Entry'),
+        'M6f. remote retains Shared Entry');
+    }
+  }
+
+  // ── M7: Multiple divergent blocks post-fork on both sides ──
+  {
+    const mk = 'm7-multidiv-m7-multidiv-m7-multidiv-m7-multidiv';
+    // Local: genesis + day1(Local A) + day2(Local B)
+    // Remote: genesis + day1(Remote X) + day2(Remote Y)
+    // Post-merge: genesis + rebuilt blocks with all 4 entries, deduped, sorted
+    const localChain = makeChain(mk, [
+      { title: 'Local A', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+      { title: 'Local B', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Remote X', startEpoch: 1700050000000, endEpoch: 1700053600000 },
+      { title: 'Remote Y', startEpoch: 1700150000000, endEpoch: 1700153600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain);
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    await sync.checkAndSync();
+
+    // After merge, local should have 4 unique entries
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    let localTitles = [];
+    for (const b of localBlocks) {
+      if (b.type === 'day' || b.type === undefined) {
+        for (const e of (b.entries || [])) {
+          localTitles.push(e.data.title);
+        }
+      }
+    }
+    t.assertEq(localTitles.length, 4,
+      `M7. merged chain has 4 entries (got ${localTitles.length})`);
+    t.assert(localTitles.includes('Local A'), 'M7b. Local A present');
+    t.assert(localTitles.includes('Local B'), 'M7c. Local B present');
+    t.assert(localTitles.includes('Remote X'), 'M7d. Remote X present');
+    t.assert(localTitles.includes('Remote Y'), 'M7e. Remote Y present');
+
+    // Verify merged chain was pushed to remote
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+      'M7f. merged chain pushed to remote (4 entries)');
+    if (remoteRaw) {
+      const remoteBlocks = JSON.parse(new TextDecoder().decode(remoteRaw));
+      let remoteTitles = [];
+      for (const b of remoteBlocks) {
+        if (b.type === 'day' || b.type === undefined) {
+          for (const e of (b.entries || [])) {
+            remoteTitles.push(e.data.title);
+          }
+        }
+      }
+      t.assertEq(remoteTitles.length, 4,
+        `M7g. remote has 4 entries (got ${remoteTitles.length})`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group N: clearRemote() — Remote Key Deletion
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group N: clearRemote() ──\n');
+
+  // N1. clearRemote deletes all three known keys from R2
+  {
+    const mk = 'clear-remote-n1-clear-remote-n1-clear-xx';
+    const chain = buildTestChain({ mk });
+    const { sync, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Pre-populate all three keys on remote
+    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+    await transport.push('staging:blob', new TextEncoder().encode(JSON.stringify({ entries: [] })));
+    await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
+
+    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N1. pre-condition: ledger:blocks exists');
+    t.assert(transport.hasKey('staging:blob'), 'N1b. pre-condition: staging:blob exists');
+    t.assert(transport.hasKey('cookie:json'), 'N1c. pre-condition: cookie:json exists');
+
+    await sync.clearRemote();
+
+    t.assert(!transport.hasKey(LEDGER_BLOCKS_KEY), 'N1d. ledger:blocks deleted');
+    t.assert(!transport.hasKey('staging:blob'), 'N1e. staging:blob deleted');
+    t.assert(!transport.hasKey('cookie:json'), 'N1f. cookie:json deleted');
+  }
+
+  // N2. clearRemote resets _genesisCompatible to null
+  {
+    const mk = 'clear-remote-n2-clear-remote-n2-clear-yy';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain);
+
+    // Run checkAndSync to set _genesisCompatible = true
+    const result1 = await sync.checkAndSync();
+    t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
+      'N2. first check → genesis compatible');
+
+    // Now clear remote — should reset genesis gate
+    await sync.clearRemote();
+
+    // Push a bad chain to remote and re-check
+    const badChain = buildTestChain({ mk: 'bad-key-n2-bad-key-n2-bad-key-n2-zz', username: 'evil' });
+    await pushRemoteChain(transport, badChain);
+
+    const result2 = await sync.checkAndSync();
+    t.assertEq(result2, SyncResult.GENESIS_MISMATCH,
+      'N2b. after clearRemote → genesis re-checked → mismatch detected');
+  }
+
+  // N3. clearRemote resets ETag cache (fresh pull on next request)
+  {
+    const mk = 'clear-remote-n3-clear-remote-n3-clear-aa';
+    const chain = buildTestChain({ mk });
+    const { sync, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+
+    // Verify key exists in store
+    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N3. pre-condition: key exists');
+
+    await sync.clearRemote();
+
+    // After clearRemote, pull should return null (fresh request)
+    const afterClear = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(afterClear === null || afterClear === undefined,
+      'N3b. after clearRemote → pull returns null (key was deleted)');
+  }
+
+  // N4. One key deletion fails (404 on staging:blob) → other keys still deleted → method succeeds
+  {
+    const mk = 'clear-remote-n4-clear-remote-n4-clear-bb';
+    const chain = buildTestChain({ mk });
+    const { sync, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Only pre-populate ledger:blocks and cookie:json (staging:blob is absent = 404)
+    await transport.push(LEDGER_BLOCKS_KEY, new TextEncoder().encode(JSON.stringify(chain)));
+    await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n4' })));
+
+    t.assert(transport.hasKey(LEDGER_BLOCKS_KEY), 'N4. pre-condition: ledger:blocks exists');
+    t.assert(!transport.hasKey('staging:blob'), 'N4b. pre-condition: staging:blob absent (simulates 404)');
+    t.assert(transport.hasKey('cookie:json'), 'N4c. pre-condition: cookie:json exists');
+
+    // Should not throw — partial failure is OK
+    await sync.clearRemote();
+
+    t.assert(!transport.hasKey(LEDGER_BLOCKS_KEY), 'N4d. ledger:blocks still deleted');
+    t.assert(!transport.hasKey('cookie:json'), 'N4e. cookie:json still deleted');
+  }
+
+  // N5. All three deletions fail → throws error
+  {
+    const mk = 'clear-remote-n5-clear-remote-n5-clear-cc';
+    const { sync, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Make transport offline so all deletes fail
+    transport._offline = true;
+
+    try {
+      await sync.clearRemote();
+      t.assert(false, 'N5. all deletes fail → should throw');
+    } catch (err) {
+      t.assert(err.message.includes('Failed to clear'),
+        'N5. all deletes fail → throws (got: ' + err.message + ')');
+    }
+
+    transport._offline = false;
+  }
+
+  // N6. No transport configured → throws
+  {
+    const { sync } = createSyncService({
+      withTransport: false,
+      withMasterKey: true,
+    });
+
+    try {
+      await sync.clearRemote();
+      t.assert(false, 'N6. no transport → should throw');
+    } catch (err) {
+      t.assert(err.message.includes('No remote transport'),
+        'N6. no transport → throws (got: ' + err.message + ')');
+    }
+  }
+
+  // N7. After clearRemote, next checkAndSync treats remote as empty → genesis compatible → pushes fresh ledger:blocks
+  {
+    const mk = 'clear-remote-n7-clear-remote-n7-clear-dd';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // Pre-populate remote with a bad chain (different genesis) to simulate stale data
+    const badChain = buildTestChain({ mk: 'bad-key-n7-bad-key-n7-bad-key-n7-ee', username: 'evil' });
+    await pushRemoteChain(transport, badChain);
+
+    // First check: should detect mismatch
+    const result1 = await sync.checkAndSync();
+    t.assertEq(result1, SyncResult.GENESIS_MISMATCH,
+      'N7. first check → GENESIS_MISMATCH (stale remote)');
+
+    // Clear remote (simulates deleting stale data)
+    await sync.clearRemote();
+
+    // After clear, check should treat remote as empty → compatible → push fresh chain
+    const result2 = await sync.checkAndSync();
+    t.assertNeq(result2, SyncResult.GENESIS_MISMATCH,
+      'N7b. after clearRemote → genesis re-checked → NOT mismatch');
+    t.assert(result2 === SyncResult.READY || result2 === SyncResult.REAUTH_NEEDED,
+      'N7c. after clearRemote → proceeds to READY or REAUTH_NEEDED (got: ' + result2 + ')');
+
+    // Verify fresh chain was pushed to remote
+    const remoteRaw = await transport.pull(LEDGER_BLOCKS_KEY);
+    t.assert(remoteRaw !== null && remoteRaw !== undefined,
+      'N7d. fresh ledger:blocks pushed to remote');
   }
 
   // ── Results ───────────────────────────────────────────────────────

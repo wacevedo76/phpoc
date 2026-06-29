@@ -56,7 +56,8 @@ export default function Settings() {
   const [apiKey, setApiKey] = React.useState(
     () => localStorage.getItem('phpoc_api_key') || ''
   );
-  const [saved, setSaved] = React.useState(false);
+  const [saved, setSaved] = React.useState('idle');
+  // 'idle' | 'checking' | 'ok' | 'error'
 
   // ── Genesis gate status ───────────────────────────────────────
   const [genesisStatus, setGenesisStatus] = useState('idle');
@@ -168,18 +169,58 @@ export default function Settings() {
       setGenesisStatus('idle');
       setGenesisReason(null);
       setGenesisStats(null);
-      setSaved(true);
+      setSaved('ok');
       services.sync?.reconfigure(null);
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout(() => setSaved('idle'), 2000);
       return;
     }
 
-    // Persist config
+    // ── Step 1: Verify credentials with a quick ping ──────────
+    setSaved('checking');
+    setGenesisStatus('checking');
+    setGenesisReason(null);
+    setGenesisStats(null);
+
+    try {
+      const pingResp = await fetch(workerUrl, {
+        method: 'GET',
+        headers: apiKey ? { 'X-Api-Key': apiKey } : {},
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!pingResp.ok && pingResp.status !== 404) {
+        // 403 = auth failure, other 4xx/5xx = server error
+        setSaved('error');
+        if (pingResp.status === 403) {
+          setGenesisStatus('offline');
+          setGenesisReason('Authentication failed. Check your API key.');
+        } else {
+          setGenesisStatus('error');
+          setGenesisReason(`Server returned HTTP ${pingResp.status}`);
+        }
+        setTimeout(() => setSaved('idle'), 3000);
+        return;
+      }
+      // 200 or 404 means server is reachable and auth passed (root
+      // key may not exist, which is expected).
+    } catch (err) {
+      setSaved('error');
+      setGenesisStatus('offline');
+      setGenesisReason(
+        err.name === 'TimeoutError'
+          ? 'Connection timed out. Check your Worker URL.'
+          : 'Cannot reach server. Check your Worker URL.'
+      );
+      setTimeout(() => setSaved('idle'), 3000);
+      return;
+    }
+
+    // ── Step 2: Credentials verified — persist config ─────────
     localStorage.setItem('phpoc_worker_url', workerUrl);
     if (apiKey) localStorage.setItem('phpoc_api_key', apiKey);
-    setSaved(true);
+    setSaved('ok');
 
-    // Trigger genesis check if URL or API key changed
+    // ── Step 3: Genesis check if URL or API key changed ───────
     const urlChanged = workerUrl !== prevUrl;
     const apiKeyChanged = apiKey !== prevApiKey;
 
@@ -196,7 +237,7 @@ export default function Settings() {
         if (blocks.length === 0 || !masterKey) {
           // No local ledger or not authenticated — skip check
           setGenesisStatus('idle');
-          setTimeout(() => setSaved(false), 2000);
+          setTimeout(() => setSaved('idle'), 2000);
           return;
         }
 
@@ -208,7 +249,7 @@ export default function Settings() {
         if (!transport) {
           setGenesisStatus('error');
           setGenesisReason('Invalid Worker URL');
-          setTimeout(() => setSaved(false), 2000);
+          setTimeout(() => setSaved('idle'), 2000);
           return;
         }
 
@@ -239,9 +280,9 @@ export default function Settings() {
         setGenesisReason(err.message || 'Network error');
       }
 
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout(() => setSaved('idle'), 2000);
     } else {
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout(() => setSaved('idle'), 2000);
     }
   };
 
@@ -296,8 +337,15 @@ export default function Settings() {
                 onChange={(e) => setApiKey(e.target.value)}
               />
             </div>
-            <button type="submit" className="btn btn-primary btn-sm">
-              {saved ? '✓ Saved' : 'Save'}
+            <button
+              type="submit"
+              className={`btn btn-primary btn-sm${saved === 'error' ? ' btn-danger' : ''}`}
+              disabled={saved === 'checking'}
+            >
+              {saved === 'checking' ? '⏳ Checking…' :
+               saved === 'ok' ? '✓ Saved' :
+               saved === 'error' ? '✗ Failed' :
+               'Check & Save'}
             </button>
           </form>
 

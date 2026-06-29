@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, Component } from 'react';
 import { DevModeProvider, useApp } from './context/DevModeContext.jsx';
 import LandingScreen from './components/screens/LandingScreen.jsx';
 import OnboardingScreen from './components/screens/OnboardingScreen.jsx';
@@ -15,6 +15,64 @@ import Configuration from './components/screens/Configuration.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
 
 import './App.css';
+
+/**
+ * ErrorBoundary — catches render errors and shows diagnostics instead of a blank screen.
+ */
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App crashed:', error, errorInfo);
+    this.setState({ errorInfo });
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="app-error" style={{ padding: '2rem', maxWidth: 600, margin: '2rem auto' }}>
+          <h2>⚠ Something went wrong</h2>
+          <p style={{ color: '#c62828', fontWeight: 600 }}>
+            {this.state.error.message || String(this.state.error)}
+          </p>
+          {this.state.errorInfo && (
+            <details style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#666' }}>
+              <summary>Stack trace</summary>
+              <pre style={{
+                background: '#f5f5f5',
+                padding: '0.75rem',
+                borderRadius: 4,
+                overflowX: 'auto',
+                fontSize: '0.8rem',
+              }}>
+                {this.state.errorInfo.componentStack}
+              </pre>
+            </details>
+          )}
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              this.setState({ error: null, errorInfo: null });
+              window.location.reload();
+            }}
+            style={{ marginTop: '1rem' }}
+          >
+            Reload page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 /**
  * AppInner — renders the correct screen based on the current phase.
@@ -54,9 +112,8 @@ function AppInner() {
     logout,
     cryptoStatus,
     storageStatus,
-    reauthActive,
-    handleReauth,
-    dismissReauth,
+    ttlWarning,
+    dismissTtlWarning,
   } = useApp();
 
   const [currentScreen, setCurrentScreen] = useState('dashboard');
@@ -71,8 +128,7 @@ function AppInner() {
 
   const handleLogout = useCallback(() => {
     logout();
-    dismissReauth();
-  }, [logout, dismissReauth]);
+  }, [logout]);
 
   // ── Recovery seed display (one-time after new ledger creation) ──
   const [recoverySeed, setRecoverySeed] = useState(null);
@@ -219,12 +275,19 @@ function AppInner() {
         {renderScreen()}
       </AppLayout>
 
-      {/* Re-auth overlay: triggered by sync when cookie TTL expires or device mismatch */}
-      {reauthActive && (
-        <AuthScreen
-          overlay
-          onAuthenticated={handleReauth}
-        />
+      {/* TTL warning banner: shown 5 minutes before cookie expires */}
+      {ttlWarning && (
+        <div className="ttl-warning-banner">
+          <span className="ttl-warning-icon">⚠</span>
+          Session expires soon — save your work.
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={dismissTtlWarning}
+            style={{ marginLeft: 'auto', fontSize: '0.8rem' }}
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       {/* Recovery seed overlay: one-time display after new ledger creation */}
@@ -261,8 +324,10 @@ function AppInner() {
  */
 export default function App() {
   return (
-    <DevModeProvider defaultDevMode={false}>
-      <AppInner />
-    </DevModeProvider>
+    <ErrorBoundary>
+      <DevModeProvider defaultDevMode={false}>
+        <AppInner />
+      </DevModeProvider>
+    </ErrorBoundary>
   );
 }

@@ -90,6 +90,10 @@ export async function checkCookieTtl(storage, ttlMinutes = DEFAULT_TTL_MINUTES) 
  *   2. Calls onExpired() (if provided)
  *   3. Stops polling (single-fire — onExpired called only once)
  *
+ * Before expiry, when the cookie is still valid but within the warning
+ * threshold, calls onWarning() (if provided). onWarning fires only once
+ * per session — subsequent polls skip it (idempotent).
+ *
  * onExpired is always called after clearMasterKey, and is called
  * even if clearMasterKey throws (D6 guarantee).
  *
@@ -105,6 +109,8 @@ export async function checkCookieTtl(storage, ttlMinutes = DEFAULT_TTL_MINUTES) 
  * @param {object} [options]
  * @param {number} [options.cookieTtlMinutes=30] - Cookie TTL in minutes
  * @param {number} [options.pollIntervalMs=60000] - Poll interval in milliseconds
+ * @param {number} [options.warningThresholdMinutes=5] - Minutes before TTL to fire onWarning
+ * @param {() => void} [options.onWarning] - Callback when cookie is within warning threshold (single-fire)
  * @param {() => void} [options.onExpired] - Callback when cookie expires
  * @returns {{
  *   start: () => Promise<void>,
@@ -115,10 +121,13 @@ export async function checkCookieTtl(storage, ttlMinutes = DEFAULT_TTL_MINUTES) 
 export function createCookieMonitor(storage, crypto, {
   cookieTtlMinutes = DEFAULT_TTL_MINUTES,
   pollIntervalMs = DEFAULT_POLL_MS,
+  warningThresholdMinutes = 5,
+  onWarning,
   onExpired,
 } = {}) {
   let _timer = null;
   let _expired = false;
+  let _warned = false;
   let _disposed = false;
 
   /**
@@ -171,6 +180,23 @@ export function createCookieMonitor(storage, crypto, {
         clearInterval(_timer);
         _timer = null;
       }
+    } else if (!_warned && typeof onWarning === 'function') {
+      // Cookie valid but nearing expiry — check remaining time
+      try {
+        const cookie = await storage.get('cookie');
+        if (cookie && cookie.creation_time) {
+          const elapsedMs = Date.now() - cookie.creation_time;
+          const ttlMs = cookieTtlMinutes * 60 * 1000;
+          const remainingMs = ttlMs - elapsedMs;
+          const warningMs = warningThresholdMinutes * 60 * 1000;
+          if (remainingMs > 0 && remainingMs <= warningMs) {
+            _warned = true;
+            onWarning();
+          }
+        }
+      } catch {
+        // Storage read error — skip warning this cycle
+      }
     }
   }
 
@@ -184,6 +210,7 @@ export function createCookieMonitor(storage, crypto, {
     async start() {
       _disposed = false;
       _expired = false;
+      _warned = false;
 
       // Clear any stale timer from a previous cycle
       if (_timer !== null) {

@@ -1,0 +1,70 @@
+{
+  "format_version": "2",
+  "exported_at": "2026-06-28T11:58:03.255Z",
+  "ledger": [
+    {
+      "type": "genesis",
+      "format_version": "0.3.0",
+      "day_index": 0,
+      "date": "2026-06-11",
+      "identity": {
+        "username": "William Acevedo",
+        "email": "william.acevedo@gmail.com",
+        "recovery_seed_enc": "739652def9454d066ab5567a2806760ecd441da59f7cae89e0ab84abd8d31871d3f60c252aeaa652b8bba96c982b6cfe324da11df0cc7f4262ebeedbaa2e041ec09b70579dacf9d8c09067594512be3887f14ea68c3d5b87e189d58d0c2d810c1b2e351f",
+        "identity_pub_key": "082f027f9c4c548d8b4d88c23bd86bbd7c614bd9a5ed71bf2c9694370cb272f6",
+        "identity_secret_enc_fallback": "432e3b716b5de35af3890ac07b83bbc7c49b75b23d064fe81b7e4bbe17157d6009af74529c39adb8f4855ae989593893581a8f535f7b61d36b72da8492222814114bead10c8e121d715269373749249d1b8bcd5cba885be73bfe2af585b4f61ce52cb13f9e77e46b22a23d3d2ed0f07d1c4e4a64e56556c6"
+      },
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "entries": [],
+      "day_hash": "9a5532c24764df70178e43f8fc4db72f807a264a739734d562a3a37f8955f9d5",
+      "signature": "[REDACTED]"
+    }
+  ],
+  "staging": [
+    {
+      "entry_id": "6d8de229-d34e-4296-8aad-62e416b2a7ff",
+      "title": "Working on Phpoc-web",
+      "duration": 1090313,
+      "is_active": false,
+      "is_paused": false,
+      "start_epoch": 1781194868856,
+      "end_epoch": 1781195959169,
+      "pauses": [],
+      "tags": [
+        "coding",
+        "it",
+        "training"
+      ],
+      "media": [],
+      "device_uuid": "fcf8c67d4a6c3dbe8e690eeaac1e214a237f8685a3854bc2419fa374017cd686",
+      "metadata": {},
+      "comment": "Took my laptop to Sensory Integration to work on Phpoc-web",
+      "hash": "ab48738fbf8a8f1cb92f10cb2dcdd8def5ea338eec5fd65772c6f3c66847258c",
+      "committed": false,
+      "block_index": null,
+      "end_device_uuid": "fcf8c67d4a6c3dbe8e690eeaac1e214a237f8685a3854bc2419fa374017cd686"
+    },
+    {
+      "entry_id": "017287f7-82eb-4235-a634-0f654ed16c36",
+      "title": "Working on Phpoc-web",
+      "duration": 0,
+      "is_active": true,
+      "is_paused": false,
+      "start_epoch": 1781196336591,
+      "end_epoch": null,
+      "pauses": [],
+      "tags": [
+        "coding",
+        "it",
+        "practice"
+      ],
+      "media": [],
+      "device_uuid": "fcf8c67d4a6c3dbe8e690eeaac1e214a237f8685a3854bc2419fa374017cd686",
+      "metadata": {},
+      "hash": "8aa35521dcdb497a7ee68f98b9f30b0a5b4d05c6987d85a687f2346e57da27b8",
+      "committed": false,
+      "block_index": null
+    }
+  ],
+  "seal": "d5f1a2ca638bfb17c9ef0edd63bfee90f757b471630dd6eb04a7ad09cbb53b34"
+}

@@ -10,6 +10,7 @@ issues, adding features, or reviewing code.
 - `ph-init-workflow.md` — New ledger initialization: seed generation, genesis creation, key derivation
 - `onboarding-workflow.md` — CLI onboarding flows: remote import + local file import
 - `ph-transport-set-workflow.md` — Transport configuration: show / set git / set http / set http cloudflare
+- `CLI_Staging_Interaction-Workflow.md` — CLI staging interaction + multi-machine sharing via Worker/R2
 
 ## Local Contracts
 - **Agent-only** — concise tables, decision trees, invariants, checkpoints, gaps.
@@ -22,4 +23,4 @@ Key Invariants, Diagnostic Checkpoints, Known Gaps.
 None — verified indirectly through test suites.
 
 ## Child DOX Index
-None — flat directory structure.
+- `CLI_Staging_Interaction-Workflow.md` — CLI staging interaction: command flow, multi-machine sharing, WAL, daemon, onboarding

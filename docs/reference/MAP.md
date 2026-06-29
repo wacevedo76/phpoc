@@ -40,15 +40,18 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/genesis_gate.js` | HOT | GenesisGate.check() — genesis compatibility gate (GREEN, 89 tests) |
 | `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (all GREEN) |
 | `phpoc-web/test/settings_genesis_test.mjs` | HOT | 13-test Settings UI genesis gate integration |
-| `phpoc-web/test/sync_service_test.mjs` | HOT | 45 tests (SyncService auth gate + 3 new genesis gate integration tests) |
+| `phpoc-web/test/sync_service_test.mjs` | HOT | 153 tests — SyncService auth gate + Group N clearRemote (7 tests) (2026-06-29) |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
+| `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
+| `phpoc-web/test/onboarding_import_component.test.mjs` | 🟢 GREEN | **NEW** — 21 Vitest+RTL component tests for OnboardingScreen import form state machine (file picker gating, destroy warnings, checkbox gates, error display, back navigation) |
+| `phpoc-web/test/onboarding_cloud_conflict.test.mjs` | 🟢 GREEN | **NEW** — 23 tests: Phase 3 deferred — cloud onboarding dual-format conflict detection (`probeDualFormats()`) (2026-06-29) |
 | `phpoc-web/src/sync/remote_import.js` | HOT | `WorkerImportSource` — cloud backup import source (list, fetch, validate). 57-test suite. (2026-06-20) |
 | `phpoc-web/test/remote_import_test.mjs` | HOT | 57 assertions — 6 groups (connection, list, fetch, validate happy/error, edge cases) |
 | `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | 5 onboarding paths including "From Cloud" import sub-option (2026-06-20) |
 | `phpoc-web/src/crypto/index.js` | HOT | `CryptoService` — singleton WASM wrapper (20 exports), master key cache, ready guards. Imports from `./wasm/` (bundled by Vite, not external). |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
-| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `handleReauth` (reauth overlay). Dev mode no longer bootstraps mock services — same boot path as production. All DummyCryptoService fallbacks removed (2026-06-24). |
+| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Reauth overlay removed (2026-06-28). |
 | `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()` — Python-compatible JSON serialization (2026-06-20) |
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
@@ -63,14 +66,16 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/ledger_import_v2_test.mjs` | 🟢 GREEN | **NEW** — 42 tests for v2 format import path (genesis hash extraction, ledger+staging preservation, empty edge cases) |
 | `phpoc-web/test/import_orchestration_test.mjs` | 🟢 GREEN | **NEW** — 51 tests for two-phase validate→confirm orchestration (in-memory storage, genesis gating, staging merge dedup, identity persistence) |
 | `phpoc-web/test/ledger_roundtrip_test.mjs` | 🟢 GREEN | **NEW** — 46 tests for full export→import fidelity (v1, v2, active/paused entries, deterministic seal, wrong key rejection) |
-| `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing, wired into DevModeContext ready-phase boot (GREEN, 89 combined assertions, 0 failures) |
+| `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback (pre-expiry), wired into DevModeContext (2026-06-28) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
 | `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote (uses `day_index` + `index` fallback for cross-engine compatibility), index push |
-| `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (now uses extracted `computeDisplayStatus` + `isAutoSyncing`), reauth overlay triggering, commit flow. |
+| `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
-| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay rendering (`AuthScreen overlay`) via context `reauthActive` state. |
+| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
+
+**Test files:** phpoc-web has 45 test files (3 new: `worker_connect_blocks_format.test.mjs`, `onboarding_cloud_conflict.test.mjs`, plus Group N added to `sync_service_test.mjs`). All GREEN.
 
 ### Tests (39 files, ~22,000 lines, ~1823 tests)
 
@@ -99,15 +104,18 @@ Key test files:
 | `../planning/COMMIT_PUSH_WIRING_TESTS.md` | Commit→push wiring TDD test outline — 14 tests across 4 categories, execution plan (RED, not started) |
 | `../planning/LEDGER_MERGE_PYTHON_PORT.md` | Porting `merge.js` → `merge.py` — 41+ test catalog, 7-step algorithm, wiring plan |
 | `../planning/REAUTH_TTL_TDD_PLAN.md` | Re-auth overlay for TTL expiry TDD test plan — ~47 tests across 2 new files + 3 additions, 9 categories (A–I) (🔴 RED, tests not yet written) |
+| `../planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` | 🔜 **ACTIVE** — Plan to align web staging sharing behavior with CLI multi-machine pattern: 5 phases, 9 files touched |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
 | `../design/workflows/cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
 | `../design/workflows/cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
+| `../design/workflows/cli/CLI_Staging_Interaction-Workflow.md` | CLI staging interaction + multi-machine sharing via Worker/R2 |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `../design/workflows/web/Local_Import-Export-Workflow.md` | File-based import/export workflow: v1/v2/raw-chain, two-phase validation, genesis gating |
+| `../design/workflows/Cross_Device_Staging-Workflow.md` | Cross-device staging sharing: CLI ↔ Web via Worker/R2 — sync gate, merge engine, device cookie, genesis gate |
 | `../design/TRANSPORT_RECONFIGURATION_ANALYSIS.md` | SyncService transport reconfiguration tradeoff analysis (Solutions A/B/C). 🔴 Decision pending. |
 | `MAP.md` | This file — project map |
 

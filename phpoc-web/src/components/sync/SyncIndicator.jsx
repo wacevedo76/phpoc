@@ -17,12 +17,13 @@ import { Icons } from '../ui/Icons.jsx';
  */
 export default function SyncIndicator({ status, compact = false }) {
   const config = {
-    READY:         { icon: Icons.syncReady, label: 'Synced',      className: 'sync-ready' },
-    NOT_SYNCED:    { icon: Icons.syncPending, label: 'Not synced', className: 'sync-pending' },
-    PENDING:       { icon: Icons.syncPending, label: 'Pending...',  className: 'sync-pending' },
-    SYNCING:       { icon: Icons.syncing, label: 'Syncing...',  className: 'sync-syncing' },
-    OFFLINE:       { icon: Icons.offline, label: 'Offline',     className: 'sync-offline' },
-    REAUTH_NEEDED: { icon: Icons.reauthNeeded, label: 'Re-auth',    className: 'sync-reauth' },
+    READY:              { icon: Icons.syncReady, label: 'Synced',          className: 'sync-ready' },
+    NOT_SYNCED:         { icon: Icons.syncPending, label: 'Not synced',     className: 'sync-pending' },
+    PENDING:            { icon: Icons.syncPending, label: 'Pending...',      className: 'sync-pending' },
+    SYNCING:            { icon: Icons.syncing, label: 'Syncing...',      className: 'sync-syncing' },
+    OFFLINE:            { icon: Icons.offline, label: 'Offline',         className: 'sync-offline' },
+    REAUTH_NEEDED:      { icon: Icons.reauthNeeded, label: 'Re-auth',        className: 'sync-reauth' },
+    GENESIS_MISMATCH:   { icon: Icons.syncPending, label: 'Genesis mismatch', className: 'sync-pending' },
   };
 
   const c = config[status] || config.OFFLINE;

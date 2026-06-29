@@ -375,6 +375,13 @@ export default function OnboardingScreen({
   const [connectSeed, setConnectSeed] = useState('');
   const [connecting, setConnecting] = useState(false);
 
+  // ── Dual-format conflict detection state ─────────────────
+  const [connectConflict, setConnectConflict] = useState(false);
+  const [connectConflictBlobInfo, setConnectConflictBlobInfo] = useState(null);
+  // { genesis, chain, username, email } from ledger:blocks
+  const [connectConflictCliInfo, setConnectConflictCliInfo] = useState(null);
+  // { blockCount } from ledger/blocks/
+
   // Reset connect state when entering worker-connect phase
   useEffect(() => {
     if (phase === 'worker-connect') {
@@ -384,6 +391,9 @@ export default function OnboardingScreen({
       setConnectPassphrase('');
       setConnectSeed('');
       setConnecting(false);
+      setConnectConflict(false);
+      setConnectConflictBlobInfo(null);
+      setConnectConflictCliInfo(null);
       setLocalError('');
     }
   }, [phase]);
@@ -406,19 +416,49 @@ export default function OnboardingScreen({
         apiKey: workerApiKey.trim() || null,
       });
 
-      // ── Try single-blob format first (ledger:blocks) ────────
-      let raw = null;
-      try {
-        raw = await transport.pull('ledger:blocks');
-      } catch {
-        // Network/auth errors will be caught by outer try/catch
+      // ── Fetch both formats in parallel to detect conflicts ──
+      const [blobRaw, cliFiles] = await Promise.all([
+        transport.pull('ledger:blocks').catch(() => null),
+        transport.listFiles('ledger/blocks/').catch(() => []),
+      ]);
+
+      const hasBlob = blobRaw !== null && blobRaw !== undefined;
+      const hasCli = Array.isArray(cliFiles) && cliFiles.length > 0;
+
+      // ── Dual-format conflict: both key schemes exist on R2 ──
+      // A stale ledger:blocks from a prior web session may shadow
+      // CLI-pushed ledger/blocks/ files with a different genesis.
+      // Let the user choose which format to onboard from.
+      // See docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md Phase 3.
+      if (hasBlob && hasCli) {
+        // Extract blob identity for the conflict choice UI
+        let blobInfo = null;
+        try {
+          const chain = JSON.parse(new TextDecoder().decode(blobRaw));
+          if (Array.isArray(chain) && chain.length > 0 && chain[0].type === 'genesis') {
+            const genesis = chain[0];
+            blobInfo = {
+              genesis,
+              chain,
+              username: genesis.identity?.username || 'Unknown',
+              email: genesis.identity?.email || '',
+            };
+          }
+        } catch { /* blob parse failure — still show conflict, just without detail */ }
+
+        setConnectConflictBlobInfo(blobInfo);
+        setConnectConflictCliInfo({ blockCount: cliFiles.length });
+        setConnectConflict(true);
+        setConnectStep('conflict');
+        setConnecting(false);
+        return;
       }
 
-      if (raw !== null && raw !== undefined) {
-        // ── Single-blob format: plain JSON array of blocks ────
+      // ── Single-blob format only: plain JSON array of blocks ──
+      if (hasBlob) {
         let chain;
         try {
-          const json = new TextDecoder().decode(raw);
+          const json = new TextDecoder().decode(blobRaw);
           chain = JSON.parse(json);
         } catch {
           setConnectStatus({ type: 'error', message: 'Invalid data received from server.' });
@@ -491,38 +531,23 @@ export default function OnboardingScreen({
         return;
       }
 
-      // ── Fall back to CLI block format (ledger/blocks/000000.json) ──
-      let blockFiles;
-      try {
-        blockFiles = await transport.listFiles('ledger/blocks/');
-      } catch (err) {
-        const msg = err.message || '';
-        if (msg.includes('403')) {
-          setConnectStatus({ type: '403', message: 'Access denied. Check your API key.' });
-        } else {
-          setConnectStatus({ type: 'offline', message: 'Cannot reach remote server. ' + msg });
-        }
-        setConnectStep('form');
+      // ── CLI block format only (ledger/blocks/000000.json) ────
+      if (hasCli) {
+        // Blocks are obfuscated — can't preview username until after auth.
+        // The unlock step will de-obfuscate after passphrase entry.
+        setFetchedGenesis({ blockCount: cliFiles.length, format: 'blocks' });
+        setConnectStatus({
+          type: 'compatible',
+          message: `Ledger found with ${cliFiles.length} block${cliFiles.length !== 1 ? 's' : ''}.`,
+        });
+        setConnectStep('compatible');
         setConnecting(false);
         return;
       }
 
-      if (!blockFiles || blockFiles.length === 0) {
-        setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
-        setConnectStep('form');
-        setConnecting(false);
-        return;
-      }
-
-      // ── Ledger found in CLI block format ────────────────────
-      // Blocks are obfuscated — can't preview username until after auth.
-      // The unlock step will de-obfuscate after passphrase entry.
-      setFetchedGenesis({ blockCount: blockFiles.length, format: 'blocks' });
-      setConnectStatus({
-        type: 'compatible',
-        message: `Ledger found with ${blockFiles.length} block${blockFiles.length !== 1 ? 's' : ''}.`,
-      });
-      setConnectStep('compatible');
+      // ── Neither format found ──
+      setConnectStatus({ type: 'no_ledger', message: 'No ledger found on this server.' });
+      setConnectStep('form');
       setConnecting(false);
     } catch (err) {
       const msg = err.message || '';
@@ -533,6 +558,43 @@ export default function OnboardingScreen({
       }
       setConnectStep('form');
       setConnecting(false);
+    }
+  };
+
+  /**
+   * Handle user choice when both ledger formats exist on R2.
+   * @param {'blob' | 'blocks'} choice
+   */
+  const handleConflictChoice = async (choice) => {
+    setConnectConflict(false);
+
+    if (choice === 'blob') {
+      const info = connectConflictBlobInfo;
+      if (!info || !info.genesis) {
+        setConnectStatus({ type: 'error', message: 'Invalid web ledger data.' });
+        setConnectStep('form');
+        return;
+      }
+      setFetchedGenesis({ genesis: info.genesis, chain: info.chain, format: 'blob' });
+      setConnectStatus({
+        type: 'compatible',
+        message: `Ledger found for "${info.username}"` +
+          (info.email ? ` (${info.email})` : ''),
+      });
+      setConnectStep('compatible');
+    } else {
+      const info = connectConflictCliInfo;
+      if (!info || !info.blockCount) {
+        setConnectStatus({ type: 'error', message: 'Invalid CLI ledger data.' });
+        setConnectStep('form');
+        return;
+      }
+      setFetchedGenesis({ blockCount: info.blockCount, format: 'blocks' });
+      setConnectStatus({
+        type: 'compatible',
+        message: `Ledger found with ${info.blockCount} block${info.blockCount !== 1 ? 's' : ''}.`,
+      });
+      setConnectStep('compatible');
     }
   };
 
@@ -1249,6 +1311,102 @@ export default function OnboardingScreen({
 
           <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
             <button className="btn btn-secondary btn-sm" onClick={() => setPhase('menu')}>
+              ← Back
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── Step 1b: Dual-format conflict — choose ledger ────── */}
+      {connectStep === 'conflict' && (
+        <>
+          <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>⚠️ Two Ledgers Found</h2>
+          <p className="auth-subtitle">
+            This server holds two different ledgers. Choose which one to unlock.
+          </p>
+
+          {/* Conflict warning banner */}
+          <div style={{
+            background: '#fff3e0',
+            border: '1px solid #e67e22',
+            borderRadius: '8px',
+            padding: '0.75rem',
+            marginBottom: '0.75rem',
+          }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#e65100' }}>
+              <strong>⚠️ A stale web ledger exists alongside CLI blocks.</strong>
+            </p>
+            <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#bf360c' }}>
+              This can happen when a previous web session used this server
+              with a different identity. The stale data will be cleaned up
+              after you choose a ledger.
+            </p>
+          </div>
+
+          {/* Option 1: Web ledger (ledger:blocks) */}
+          {connectConflictBlobInfo && (
+            <div style={{
+              background: '#e3f2fd',
+              border: '1px solid #1976d2',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              marginBottom: '0.75rem',
+            }}>
+              <p style={{ margin: 0, fontWeight: 600, color: '#1565c0', fontSize: '0.95rem' }}>
+                🌐 Web Ledger
+              </p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#1976d2' }}>
+                Owner: {connectConflictBlobInfo.username}
+                {connectConflictBlobInfo.email ? ` (${connectConflictBlobInfo.email})` : ''}
+              </p>
+              <button
+                type="button"
+                className="auth-btn"
+                onClick={() => handleConflictChoice('blob')}
+                style={{ marginTop: '0.5rem' }}
+              >
+                Unlock Web Ledger
+              </button>
+            </div>
+          )}
+
+          {/* Option 2: CLI ledger (ledger/blocks/) */}
+          {connectConflictCliInfo && (
+            <div style={{
+              background: '#e8f5e9',
+              border: '1px solid #4caf50',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              marginBottom: '0.75rem',
+            }}>
+              <p style={{ margin: 0, fontWeight: 600, color: '#2e7d32', fontSize: '0.95rem' }}>
+                🖥️ CLI Ledger
+              </p>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#388e3c' }}>
+                {connectConflictCliInfo.blockCount} block{connectConflictCliInfo.blockCount !== 1 ? 's' : ''} — requires recovery seed
+              </p>
+              <button
+                type="button"
+                className="auth-btn"
+                onClick={() => handleConflictChoice('blocks')}
+                style={{ marginTop: '0.5rem' }}
+              >
+                Unlock CLI Ledger
+              </button>
+            </div>
+          )}
+
+          <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setConnectStep('form');
+                setConnectStatus(null);
+                setConnectConflict(false);
+                setConnectConflictBlobInfo(null);
+                setConnectConflictCliInfo(null);
+              }}
+            >
               ← Back
             </button>
           </div>

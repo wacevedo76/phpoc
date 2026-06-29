@@ -28,7 +28,7 @@ import { useApp } from '../../context/DevModeContext.jsx';
 import { useActiveTasks } from '../../hooks/useActiveTasks.js';
 import SyncIndicator from '../sync/SyncIndicator.jsx';
 import { Icons } from '../ui/Icons.jsx';
-import { computeDisplayStatus, STATUS_READY, STATUS_NOT_SYNCED, STATUS_OFFLINE, STATUS_REAUTH_NEEDED, STATUS_SYNCING } from '../../sync/display_status.js';
+import { computeDisplayStatus, STATUS_READY, STATUS_NOT_SYNCED, STATUS_OFFLINE, STATUS_REAUTH_NEEDED, STATUS_SYNCING, STATUS_GENESIS_MISMATCH } from '../../sync/display_status.js';
 
 // ── Aliases (kept for local brevity) ────────────────────────────────
 const STATUS_REAUTH = STATUS_REAUTH_NEEDED;
@@ -61,7 +61,7 @@ function formatTime(ts) {
 // ── Sync Screen Component ────────────────────────────────────────────
 
 export default function SyncSettings() {
-  const { services, commitEntries, triggerReauth, reauthActive, isAutoSyncing } = useApp();
+  const { services, commitEntries, isAutoSyncing } = useApp();
   const sync = services.sync;
 
   // ── Active tasks (for live elapsed timer on running entries) ─────
@@ -682,14 +682,13 @@ export default function SyncSettings() {
       // Step 1 — sync staging with remote
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
-        triggerReauth();
         setRemoteStatus(STATUS_REAUTH);
-        setLastSyncResult('Authentication required. Enter your passphrase.');
+        setLastSyncResult('Authentication required. Log out and log back in to continue.');
         return;
       }
-      if (result === 'GENESIS_MISMATCH') {
+      if (result === STATUS_GENESIS_MISMATCH) {
         setRemoteStatus(result);
-        setLastSyncResult('GENESIS_MISMATCH');
+        setLastSyncResult(STATUS_GENESIS_MISMATCH);
         return;
       }
       setRemoteStatus(result);
@@ -740,7 +739,7 @@ export default function SyncSettings() {
     } finally {
       setSyncing(false);
     }
-  }, [sync, syncing, triggerReauth, allEntries, commitEntries, refreshEntries]);
+  }, [sync, syncing, allEntries, commitEntries, refreshEntries]);
 
   // ── Clear Remote & Overwrite (genesis mismatch override) ────────
   // Deletes all blobs from the remote R2 bucket via HTTP DELETE,
@@ -763,9 +762,8 @@ export default function SyncSettings() {
 
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
-        triggerReauth();
         setRemoteStatus(STATUS_REAUTH);
-        setLastSyncResult('Authentication required. Enter your passphrase.');
+        setLastSyncResult('Authentication required. Log out and log back in to continue.');
         return;
       }
       setRemoteStatus(result);
@@ -814,7 +812,7 @@ export default function SyncSettings() {
       setClearingRemote(false);
       setSyncing(false);
     }
-  }, [sync, overrideConfirmInput, triggerReauth, commitEntries, refreshEntries]);
+  }, [sync, overrideConfirmInput, commitEntries, refreshEntries]);
 
   // ── Auto-clear commit error after 8 seconds ─────────────────────
 
@@ -830,18 +828,6 @@ export default function SyncSettings() {
       if (errorTimer.current) clearTimeout(errorTimer.current);
     };
   }, [commitError, commitResult]);
-
-  // When reauth overlay dismisses, clear the REAUTH_NEEDED error so the
-  // user sees a clean slate. They can press "Sync Now" to retry (the
-  // master key is now cached so it should succeed).
-  const prevReauthRef = useRef(false);
-  useEffect(() => {
-    if (prevReauthRef.current && !reauthActive) {
-      setRemoteStatus(STATUS_NOT_SYNCED);
-      setLastSyncResult(null);
-    }
-    prevReauthRef.current = reauthActive;
-  }, [reauthActive]);
 
   // ── Compute live elapsed for all entries ────────────────────────
   // Use the activeElapsedMap for running entries, compute static
@@ -1200,7 +1186,7 @@ export default function SyncSettings() {
           )}
 
           {/* Genesis mismatch — Clear Remote & Overwrite */}
-          {lastSyncResult === 'GENESIS_MISMATCH' && (
+          {lastSyncResult === STATUS_GENESIS_MISMATCH && (
             <div className="sync-result-override">
               <div className="override-warning">
                 <Icons.syncPending size={16} />

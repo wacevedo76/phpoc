@@ -275,8 +275,11 @@ console.log('\n── Category F: Full TTL Expiry → Re-auth → Recovery ─�
     t.assertEq(result1, SyncResult.READY, 'F1a. initial sync → READY (cookie valid)');
 
     // Now: simulate TTL expiry — make cookie old, clear MK, trigger overlay
-    await createExpiredCookie(storage, 1); // TTL=1 min, cookie is 70s old
+    // Also clear the transport store — the post-reauth sync should work
+    // without stale blob from the previous session.
+    await createExpiredCookie(storage, 30); // Must be older than default 30-min TTL
     crypto.clearMasterKey();
+    transport._store.clear(); // Wipe stale blobs from previous session
     t.assertEq(crypto.hasMasterKey(), false, 'F1b. MK cleared after TTL expiry');
 
     // Simulate re-auth overlay triggered
@@ -288,17 +291,21 @@ console.log('\n── Category F: Full TTL Expiry → Re-auth → Recovery ─�
     t.assertEq(crypto.hasMasterKey(), true, 'F1c. MK restored after reauth');
     reauthActive = false;
 
-    // Now sync should work again — creates new cookie, reconciles
-    // No remote cookie for new session → re-derive from reconcile
+    // After reauth, explicitly reconcile and claim staging ownership.
+    // This is the new flow: reauth derives MK, then _reconcileAndClaim
+    // creates a fresh cookie and syncs the staging blob.
+    // No remote cookie → Case B: pull blob, merge, push, create cookie
     transport.queueResponse(COOKIE_PATH, null);
-    transport.queueResponse(COOKIE_PATH, null);
+    const reconcileResult = await sync._reconcileAndClaim(newMk);
+    t.assertEq(reconcileResult, SyncResult.READY, 'F1d. _reconcileAndClaim → READY after reauth');
 
+    // After reconcile, sync should now work (cookie exists and is fresh)
     const result2 = await sync.checkAndSync();
-    t.assertEq(result2, SyncResult.READY, 'F1d. sync → READY after reauth');
+    t.assertEq(result2, SyncResult.READY, 'F1e. checkAndSync → READY after reconcile');
 
     // New cookie should be created
     const cookieAfter = await storage.get('cookie');
-    t.assert(!!cookieAfter && !!cookieAfter.device_specifier, 'F1e. new cookie created after reauth sync');
+    t.assert(!!cookieAfter && !!cookieAfter.device_specifier, 'F1f. new cookie created after reconcile');
 
     // TODO: verify monitor disposed after reauth
   } else {
@@ -504,11 +511,11 @@ console.log('\n── Category G: Auth Gate Interaction ──\n');
   t.assertEq(result, SyncResult.REAUTH_NEEDED, 'G2b. auth gate returns REAUTH_NEEDED');
 }
 
-// G3. Cookie TTL expired but MK still cached → checkAndSync proceeds via _reconcileAndClaim
+// G3. Cookie TTL expired but MK still cached → REAUTH_NEEDED (no bypass)
 {
-  console.log('\n  G3. Expired cookie + cached MK → reconcile');
+  console.log('\n  G3. Expired cookie + cached MK → REAUTH_NEEDED (no bypass)');
   const mk = 'eeee2eee-eeee2eee-eeee2eee-eeee2eee-g3';
-  const { sync, storage, transport } = createSyncService({
+  const { sync, storage } = createSyncService({
     withTransport: true,
     withMasterKey: true,
     masterKey: mk,
@@ -516,18 +523,15 @@ console.log('\n── Category G: Auth Gate Interaction ──\n');
 
   // Expired cookie but MK still cached (simulates edge case where monitor
   // isn't running but user still has MK from a prior login)
-  await createExpiredCookie(storage, 1);
-
-  // Remote has no cookie → reconcile path
-  transport.queueResponse(COOKIE_PATH, null);
-  transport.queueResponse(COOKIE_PATH, null);
+  // Must be older than the SyncService default TTL of 30 minutes.
+  await createExpiredCookie(storage, 30);
 
   const result = await sync.checkAndSync();
-  t.assertEq(result, SyncResult.READY, 'G3. expired cookie + cached MK → READY via reconcile');
+  t.assertEq(result, SyncResult.REAUTH_NEEDED, 'G3. expired cookie + cached MK → REAUTH_NEEDED (no bypass)');
 
-  // New cookie should be created
+  // No cookie should be created — re-auth must happen first
   const cookieAfter = await storage.get('cookie');
-  t.assert(!!cookieAfter && !!cookieAfter.device_specifier, 'G3b. new cookie created via reconcile');
+  t.assertEq(cookieAfter, undefined, 'G3b. stale cookie cleaned up, no new cookie without re-auth');
 }
 
 // G4. Specifier mismatch still returns REAUTH_NEEDED even with valid TTL
@@ -725,14 +729,13 @@ console.log('\n── Category I: Edge Cases ──\n');
     creation_time: oldCreationTime,
   });
 
-  // With MK cached, expired cookie → reconcile → READY (design invariant)
+  // With MK cached but cookie expired → REAUTH_NEEDED (no bypass)
   const result = await sync.checkAndSync();
-  t.assertEq(result, SyncResult.READY, 'I3. expired cookie + MK → reconcile → READY');
+  t.assertEq(result, SyncResult.REAUTH_NEEDED, 'I3. expired cookie + MK → REAUTH_NEEDED (no bypass)');
 
-  // Old cookie removed, new fresh cookie created by reconcile
+  // Old cookie should be cleaned up, no new cookie without re-auth
   const cookieAfter = await storage.get('cookie');
-  t.assert(!!cookieAfter && !!cookieAfter.device_specifier, 'I3b. new fresh cookie created during reconcile');
-  t.assert(cookieAfter.creation_time > oldCreationTime, 'I3c. cookie creation_time updated (fresh cookie)');
+  t.assertEq(cookieAfter, undefined, 'I3b. stale cookie cleaned up, no new cookie without re-auth');
 }
 
 // I4. Multiple rapid start()/dispose() cycles don't leak timers

@@ -113,6 +113,8 @@ export class SyncService {
     this._genesisCompatible = null;
     /** @private — genesis check promise for in-flight dedup */
     this._genesisCheckPromise = null;
+    /** @private — stats from the last genesis-gate merge (null = no merge yet) */
+    this._lastMergeStats = null;
   }
 
   // ------------------------------------------------------------------
@@ -309,7 +311,7 @@ export class SyncService {
    */
   async getCompleted() {
     const entries = await this._local.readEntries();
-    const stagingCompleted = entries.filter((e) => !e.is_active);
+    const stagingCompleted = entries.filter((e) => !e.is_active && !e.committed);
 
     // Also read committed entries from the ledger chain
     const committedDTOs = [];
@@ -449,20 +451,34 @@ export class SyncService {
           return SyncResult.GENESIS_MISMATCH;
         } else if (result.compatible === true) {
           // Genesis compatible — persist merged chain to storage.
-          // Previously a known gap: merge result was computed but
-          // never written, so every checkAndSync() re-merged.
           if (result.mergedChain) {
             try {
               await this._storage.set('ledger:blocks', result.mergedChain);
               if (result.index) {
                 await this._storage.set('ledger:index', result.index);
               }
+              // Store merge stats for UI consumption
+              if (result.stats) {
+                this._lastMergeStats = result.stats;
+              }
+              // Push merged chain to remote (best-effort, non-fatal)
+              await this._pushFullLedgerChain(
+                result.mergedChain, result.index || null
+              );
             } catch (err) {
               console.warn('Failed to persist merged ledger chain:', err.message);
             }
           }
         }
       }
+    }
+
+    // If genesis was already checked and is incompatible, short-circuit.
+    // This prevents falling through to the fast path/auth gate where
+    // individual blob/cookie pulls may fail with 403/network errors,
+    // producing a misleading OFFLINE status instead of GENESIS_MISMATCH.
+    if (this._genesisCompatible === false) {
+      return SyncResult.GENESIS_MISMATCH;
     }
 
     // ------------------------------------------------------------------
@@ -508,14 +524,10 @@ export class SyncService {
       return SyncResult.REAUTH_NEEDED;
     }
 
-    // TTL expired or no local cookie — force auth UNLESS the master key
-    // is already cached (fresh device after onboarding/login). In that case
-    // proceed to _reconcileAndClaim to establish a first-time cookie and sync.
+    // TTL expired or no local cookie — always force auth.
+    // The cookie is the source of truth, not the cached crypto key.
+    // This matches the CLI behavior.
     if (!localCookie) {
-      const mk = this._crypto.getMasterKey();
-      if (mk) {
-        return this._reconcileAndClaim(mk);
-      }
       return SyncResult.REAUTH_NEEDED;
     }
 
@@ -967,6 +979,46 @@ export class SyncService {
     return pushed;
   }
 
+  /**
+   * Push the full merged ledger chain to remote as a single blob.
+   *
+   * Called after GenesisGate.merge() produces a merged chain to
+   * ensure the remote has the authoritative merged result. Uses the
+   * same `ledger:blocks` key that GenesisGate.check() pulls from.
+   *
+   * Best-effort: errors are logged but never thrown. The local merge
+   * persist happens before this call, so a push failure leaves local
+   * state correct.
+   *
+   * @param {object[]} chain - Merged ledger chain.
+   * @param {object|null} index - Merged index (optional).
+   * @private
+   */
+  async _pushFullLedgerChain(chain, index) {
+    if (!this._remote) return;
+
+    const mk = this._crypto.getMasterKey();
+    if (!mk) return;
+
+    try {
+      const json = JSON.stringify(chain);
+      const bytes = new TextEncoder().encode(json);
+      await this._transport.push('ledger:blocks', bytes);
+    } catch (err) {
+      console.warn('_pushFullLedgerChain: chain push failed:', err.message);
+    }
+
+    if (index) {
+      try {
+        const json = JSON.stringify(index);
+        const bytes = new TextEncoder().encode(json);
+        await this._transport.push('ledger/index.json', bytes);
+      } catch (err) {
+        console.warn('_pushFullLedgerChain: index push failed:', err.message);
+      }
+    }
+  }
+
   // ------------------------------------------------------------------
   // Diagnostics
   // ------------------------------------------------------------------
@@ -1038,6 +1090,16 @@ export class SyncService {
    */
   get lastPushAt() {
     return this._lastPushAt;
+  }
+
+  /**
+   * Stats from the last genesis-gate merge, or null if no merge occurred.
+   * @returns {{ forkIndex: number, localEntries: number, remoteEntries: number,
+   *             duplicatesSkipped: number, mergedEntries: number,
+   *             newBlockCount: number }|null}
+   */
+  get lastMergeStats() {
+    return this._lastMergeStats;
   }
 
   /**

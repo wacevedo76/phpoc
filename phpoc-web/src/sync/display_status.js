@@ -6,11 +6,12 @@
 
 // ── Status constants ──────────────────────────────────────────────────
 
-export const STATUS_READY         = 'READY';
-export const STATUS_NOT_SYNCED    = 'NOT_SYNCED';
-export const STATUS_SYNCING       = 'SYNCING';
-export const STATUS_OFFLINE       = 'OFFLINE';
-export const STATUS_REAUTH_NEEDED = 'REAUTH_NEEDED';
+export const STATUS_READY              = 'READY';
+export const STATUS_NOT_SYNCED         = 'NOT_SYNCED';
+export const STATUS_SYNCING            = 'SYNCING';
+export const STATUS_OFFLINE            = 'OFFLINE';
+export const STATUS_REAUTH_NEEDED      = 'REAUTH_NEEDED';
+export const STATUS_GENESIS_MISMATCH   = 'GENESIS_MISMATCH';
 
 // ── Display status derivation ─────────────────────────────────────────
 

@@ -37,6 +37,129 @@
 
 ---
 
+## Build 57 — Tier 2 React Component Tests (Onboarding Import Form) — 2026-06-28
+
+**21 Vitest + RTL component tests written for OnboardingScreen import form state machine:**
+- I1 (Import source selection, 2 tests): file/cloud options visible after clicking Import, back button returns to menu
+- I2 (File picker gating — disabled, 3 tests): submit disabled without file, without passphrase, without seed
+- I3 (File picker gating — enabled, 1 test): Import Ledger enabled when file + seed + passphrase all filled
+- I4 (Destroy warning with existing data, 3 tests): destroy banner, committed block count, staging entry count
+- I5 (No destroy warning without data, 2 tests): absent when IndexedDB empty, absent when hasExistingData=false
+- I6 (Confirm destroy checkbox gate, 2 tests): checkbox required for submit enable, uncheck disables again
+- I7 (Keep staging checkbox, 3 tests): appears with staging count, checked by default, absent when no staging
+- I8 (Error display, 3 tests): prop error rendered, cleared on back navigation, uses auth-error-msg class
+- I9 (Back navigation, 2 tests): file form → source selection, source selection → menu
+
+**Infrastructure:**
+- Mocked `indexedDB.open()` with configurable block/staging counts for `probeExistingData()`
+- Mocked dynamic imports (`transport.js`, `remote_import.js`) to prevent resolution errors
+- Uses `getByRole('checkbox', { name: /regex/i })` for implicit-label checkboxes (keep staging, I understand)
+- File: `phpoc-web/test/onboarding_import_component.test.mjs`
+
+**Result:** 21/21 pass, 0 failures. Zero regressions across existing test suites.
+
+## Build 59 — GENESIS_MISMATCH Fix Phase 1 (connectToWorker) — 2026-06-29
+
+**Phase 1 of GENESIS_MISMATCH bug fix implemented:**
+- In `connectToWorker()` blocks-format path: after storing chain to IndexedDB, deletes stale `ledger:blocks` key from R2 before `bootstrapServices()` runs
+- Prevents the genesis gate (which checks `ledger:blocks`) from seeing a stale chain from a prior web session with a different genesis
+- Best-effort: caught errors are non-critical — genesis gate handles null gracefully
+- Only fires in blocks-format path (`if (format === 'blocks')`); single-blob path unaffected
+
+**Files changed:**
+- `phpoc-web/src/context/DevModeContext.jsx` — 9 lines added (~line 866)
+
+**Result:** All 232 tests pass (56 worker_connect_blocks_format + 153 sync_service + 23 onboarding_cloud_conflict). Zero regressions.
+
+Full investigation: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
+
+## Build 58 — GENESIS_MISMATCH Bug Fix Tests — 2026-06-29
+
+**86 tests across 3 files for the GENESIS_MISMATCH bug fix (all GREEN):**
+
+**New file: `test/worker_connect_blocks_format.test.mjs` (56 tests)**
+- Group A — Blocks-format onboarding: stale `ledger:blocks` delete (7 scenarios, 39 assertions)
+  - A1: delete called after storage write, before bootstrap
+  - A2: stale ledger:blocks with different genesis → delete clears it from R2
+  - A3: no stale blob → delete is 404 no-op
+  - A4: network error during delete → caught gracefully
+  - A5: end-to-end: onboard → delete stale → gate compatible → fresh blob pushed
+  - A6: single-blob format → delete NOT called
+  - A7: same genesis in both formats → delete fires safely
+- Group B — bootstrapServices auto-clear recovery (5 scenarios, 17 assertions)
+  - B1: mismatch → clearRemote → retry → READY
+  - B2: retry still mismatched → graceful degradation
+  - B3: clearRemote fails (network error) → caught, app still boots
+  - B4: compatible → clearRemote NOT called
+  - B5: after recovery, Sync Now returns READY
+
+**Modified file: `test/sync_service_test.mjs` Group N (7 tests)**
+- N1: clearRemote deletes all three keys
+- N2: resets _genesisCompatible to null
+- N3: ETag cache reset
+- N4: partial failure (404 on one key) handled gracefully
+- N5: all deletes fail → throws
+- N6: no transport → throws
+- N7: end-to-end: mismatch → clearRemote → re-check → compatible
+
+MockTransport gained `delete()`, `resetCache()`, and `hasKey()` methods (used by Group N and above).
+
+**New file: `test/onboarding_cloud_conflict.test.mjs` (23 tests — Phase 3 deferred)**
+- C1: Both formats, different genesis → `status: 'conflict'`
+- C2: Both formats, same genesis → no conflict
+- C3: Only CLI blocks → blocks-format path
+- C4: Only ledger:blocks → single-blob path
+- C5: Conflict → user chooses blocks → stale blob deleted → CLI intact
+
+**Code changes:** The tests validate the fix logic. Two code changes in `DevModeContext.jsx`:
+1. ✅ `connectToWorker()` — `await transport.delete('ledger:blocks')` after blocks-format storage write (Phase 1, 2026-06-29)
+2. `bootstrapServices()` — replace silent `console.warn` with `sync.clearRemote()` + retry
+
+Full investigation: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
+
+**Result:** 86/86 pass across 3 files. Zero regressions (sync_service_test.mjs 153/153, genesis_gate_test.mjs 94/94, transport_test.mjs 66/66, worker_connect_onboarding_test.mjs 65/65).
+
+### Login Blank Screen Fix — 2026-06-28
+
+**Bug:** When logging into an existing ledger, the screen sometimes goes completely blank.
+
+**Root cause:** No React error boundary existed in the app. Any render crash (from a component,
+hook, or child) unmounted the entire component tree, producing a blank white screen with no
+diagnostics. Console confirmed: `The above error occurred in the <AppInner> component`,
+`Consider adding an error boundary to your tree`.
+
+**Fix:** Added `ErrorBoundary` class component to `App.jsx`:
+- Catches any render-time crash in the `<DevModeProvider><AppInner/></DevModeProvider>` tree
+- Shows diagnostic message with error text + collapsible stack trace
+- Provides "Reload page" button for recovery
+- Logs full error to console for debugging
+
+**Before:** Render crash → blank white screen (no recovery).
+**After:** Render crash → error message with diagnostics + reload option.
+
+### Cookie TTL Expiry Repurposed — 2026-06-28
+
+**Before:** Cookie TTL expiry showed a reauth overlay (`AuthScreen overlay`). User entered
+passphrase, MK was re-derived, overlay dismissed, user pressed "Sync Now" manually.
+
+**After:** Cookie TTL expiry calls `handleTtlExpiry` which sends user to landing screen
+(same behavior as manual logout). User clicks "Log in to this ledger" and enters passphrase
+— the full `bootstrapServices` flow runs, including `checkAndSync` and cookie creation.
+
+**Warning banner:** `createCookieMonitor` now fires `onWarning` 5 minutes before TTL expires.
+A fixed-position bottom banner appears: "Session expires soon — save your work." with
+dismiss button. Fires once per session.
+
+**Changes:**
+- `useCookieMonitor.js` — Added `onWarning` callback + `warningThresholdMinutes` option (default 5)
+- `DevModeContext.jsx` — Removed `reauthActive`, `triggerReauth`, `dismissReauth`, `handleReauth`.
+  Added `ttlWarning`/`dismissTtlWarning` state + `handleTtlExpiry` for cookie monitor to call.
+- `App.jsx` — Removed `<AuthScreen overlay/>` reauth block. Added TTL warning banner.
+- `SyncSettings.jsx` — Removed `triggerReauth()` calls on REAUTH_NEEDED. Message changed to
+  "Log out and log back in to continue."
+- `App.css` — Added `.ttl-warning-banner` styles (orange, fixed bottom, slide-up animation)
+
+
 ## Build 56 — SyncService Transport Reconfiguration (C2 Fix) — 2026-06-25
 
 **Solution B implemented — `reconfigure(transport)` on SyncService:**
@@ -146,6 +269,7 @@
 | 52 | **WASM Resolution Fix** — WASM artifacts (`phpoc_crypto_core.js` + `_bg.wasm`) copied from `phpoc-crypto-core/pkg/` into `phpoc-web/src/crypto/wasm/`. Import path updated from `../../../phpoc-crypto-core/pkg/` to `./wasm/`. Removed `build.rollupOptions.external` exclusion and `optimizeDeps.exclude` — WASM is now bundled by Vite's native pipeline (`.wasm` handled via `new URL()` asset references, content-hashed in output). Removed `fs.allow` parent-directory workaround no longer needed for WASM. Production build verified: `phpoc_crypto_core_bg-30LYJKWU.wasm` (134KB) + `phpoc_crypto_core-D9wuZLDO.js` (10KB). Browser E2E verified: WASM crypto loads with no yellow warning banner. All 96 crypto tests pass (22 smoke + 74 integration). | ✅ | 96 | Jun 24 2026 |
 | 53 | **Import/Export Test Coverage — Tier 1** — 4 new test files for web local import/export workflow coverage. **ledger_import_chain_test.mjs** (31 tests): raw chain import path — genesis detection, block seal verification, prev_hash linkage, entry hash validation, mixed block types, error cases (empty, missing genesis, broken linkage, tampered seal, wrong key, bad entry hash, unknown type, missing hash field). **ledger_import_v2_test.mjs** (42 tests): v2 format import — genesis hash extraction, ledger+staging preservation, empty edge cases, multiple entries, active task preservation, seal tampering, wrong key, missing arrays. **import_orchestration_test.mjs** (51 tests): two-phase validate→confirm orchestration — fresh install, existing data detection, genesis gating (v1 skips, v2 checks), staging merge dedup, ID collision resolution, identity persistence (username/email from genesis), ledger:blocks write, call guard (confirm without validate). **ledger_roundtrip_test.mjs** (46 tests): full export→import fidelity — v1 roundtrip (5 entries, active, paused, rich metadata, empty), v2 roundtrip (blocks+staging, empty staging, active staging), deterministic seal, wrong key rejection. **Total: 170 new tests, zero regressions across all existing suites (112 existing + 170 new = 282 total).** | ✅ | 170 (0 fail) | Jun 24 2026 |
 | 54 | **Export Ledger Fix** — Two bugs: (1) Error swallowing: `handleExport` re-threw errors but PassphraseModal called `onSubmit` without awaiting — errors became unhandled promise rejections, modal stayed open with no feedback. Fixed by adding `exportError` state + passing `errorMessage` to PassphraseModal. (2) Wrong export format: `exportLedgerAction` used v1 (`exportLedger()`, staging-only). Once entries are committed, staging is empty → "No entries to export." Fixed by switching to `exportLedgerFull()` (v2, committed blocks + staging) in both fast and slow paths of `exportLedgerAction`. Browser E2E verified. Zero regressions across 40 test files (~1900 tests). | ✅ | — | Jun 24 2026 |
+| 55 | **Export/Import Hash Recomputation Fix (Step 5 TDD)** — Entry hashes were preserved as-is during export, but real entries have fields (`committed`, `block_index`, `entry_index`) added by `LocalCache.append()` after hash computation. Import re-validated over ALL fields → hash mismatch → roundtrip broken. Fix: `exportLedger()` and `exportLedgerFull()` now recompute each staging entry's hash to cover all fields except `hash` before computing the seal. Ledger blocks NOT recomputed. 37 new/updated tests: Group A (6 new in `ledger_export_test.mjs`), Group B (7 new in `ledger_export_full_test.mjs`), Group C (24 new in `ledger_roundtrip_test.mjs`), 3 existing tests updated. Total: 185/185 pass (30+71+84). TDD: RED → GREEN. | ✅ | 185 (0 fail) | Jun 28 2026 |
 
 ---
 

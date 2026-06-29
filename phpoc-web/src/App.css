@@ -258,6 +258,40 @@ a { color: var(--accent-blue); text-decoration: none; }
   }
 }
 
+/* ── TTL warning banner ─────────────────────────────────────── */
+.ttl-warning-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.2rem;
+  background: rgba(255, 152, 0, 0.12);
+  border-top: 2px solid #ff9800;
+  color: #ffb74d;
+  font-size: 0.85rem;
+  font-weight: 500;
+  animation: ttl-warning-slideup 0.3s ease-out;
+}
+
+.ttl-warning-icon {
+  font-size: 1.1rem;
+}
+
+@keyframes ttl-warning-slideup {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* ===================================================================
    Landing Screen
    =================================================================== */

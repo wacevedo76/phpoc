@@ -8,6 +8,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `BACKLOG.md` — Paused issues awaiting future attention
 - `WEB_ROADMAP.md` — Web/mobile build log (completed steps, bugs found, test plans)
 - `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` — React web UI design decisions and multi-deployment architecture
+- `ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` — Plan to align web staging sharing behavior with CLI multi-machine pattern
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)

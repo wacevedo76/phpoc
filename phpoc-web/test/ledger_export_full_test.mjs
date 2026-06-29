@@ -207,7 +207,12 @@ if (typeof exportLedgerFull === 'function') {
   const blob = await exportLedgerFull(SAMPLE_BLOCKS, SAMPLE_STAGING, crypto, MASTER_KEY);
   const parsed = JSON.parse(await blob.text());
 
-  t.assertDeepEq(parsed.staging, SAMPLE_STAGING, 'staging entries match input exactly');
+  // Staging entries match input after hash recomputation
+  const expectedStaging = SAMPLE_STAGING.map(entry => {
+    const { hash: _, ...hashData } = entry;
+    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
+  });
+  t.assertDeepEq(parsed.staging, expectedStaging, 'staging entries match recomputed input');
   t.assertEq(parsed.staging.length, 2, 'staging entry count preserved');
   t.assertEq(parsed.staging[0].title, 'Unfinished Task', 'active staging entry title preserved');
   t.assertEq(parsed.staging[1].title, 'Completed but Uncommitted', 'stopped staging entry title preserved');
@@ -220,10 +225,14 @@ if (typeof exportLedgerFull === 'function') {
   const blob = await exportLedgerFull(SAMPLE_BLOCKS, SAMPLE_STAGING, crypto, MASTER_KEY);
   const parsed = JSON.parse(await blob.text());
 
-  // Seal covers {ledger, staging} only — NOT wrapper metadata
-  const sealData = jsonSort({ ledger: SAMPLE_BLOCKS, staging: SAMPLE_STAGING });
+  // Seal covers {ledger, recomputedStaging} — recomputed hashes change the seal
+  const recomputedStaging = SAMPLE_STAGING.map(entry => {
+    const { hash: _, ...hashData } = entry;
+    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
+  });
+  const sealData = jsonSort({ ledger: SAMPLE_BLOCKS, staging: recomputedStaging });
   const expectedSeal = crypto.seal(sealData, MASTER_KEY);
-  t.assertEq(parsed.seal, expectedSeal, 'seal = HMAC(jsonSort({ledger, staging}), masterKey)');
+  t.assertEq(parsed.seal, expectedSeal, 'seal = HMAC(jsonSort({ledger, recomputedStaging}), masterKey)');
 
   // Seal does NOT cover wrapper metadata (format_version, exported_at)
   const withMeta = JSON.stringify({
@@ -281,11 +290,15 @@ if (typeof exportLedgerFull === 'function') {
   t.assertDeepEq(p1.staging, [], 'empty staging array works');
   t.assert(typeof p1.seal === 'string' && p1.seal.length === 64, 'empty data still produces seal');
 
-  // Empty ledger, with staging
+  // Empty ledger, with staging — staging hashes recomputed
   const blob2 = await exportLedgerFull([], SAMPLE_STAGING, crypto, MASTER_KEY);
   const p2 = JSON.parse(await blob2.text());
   t.assertDeepEq(p2.ledger, [], 'empty ledger with staging — ledger is []');
-  t.assertDeepEq(p2.staging, SAMPLE_STAGING, 'empty ledger with staging — staging preserved');
+  const expectedStg = SAMPLE_STAGING.map(entry => {
+    const { hash: _, ...hashData } = entry;
+    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
+  });
+  t.assertDeepEq(p2.staging, expectedStg, 'empty ledger with staging — staging preserved (hashes recomputed)');
   t.assertNeq(p2.seal, p1.seal, 'empty ledger seal differs when staging is added');
 
   // With ledger, empty staging
@@ -484,6 +497,108 @@ if (typeof exportLedgerFull === 'function') {
   const sealData = jsonSort({ ledger: largeBlocks, staging: [] });
   const expectedSeal = crypto.seal(sealData, MASTER_KEY);
   t.assertEq(parsed.seal, expectedSeal, 'large export: seal validates on 100 blocks');
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// Group B: Hash Recomputation in v2 (Step 5 TDD)
+// ═════════════════════════════════════════════════════════════════════
+
+console.log('\n=== 16. B1 — Staging entry hash recomputation in v2 ===');
+
+if (typeof exportLedgerFull === 'function') {
+  // Staging entries with extra fields (committed, block_index, entry_index)
+  // whose original hashes were computed WITHOUT those fields — like real
+  // entries from LocalCache.append() → readEntries().
+  const stagingWithExtras = JSON.parse(JSON.stringify(SAMPLE_STAGING));
+
+  // Add extra app fields to both staging entries (these were added AFTER
+  // the original hash was computed in the real app flow)
+  stagingWithExtras[0].committed = false;
+  stagingWithExtras[0].block_index = null;
+  stagingWithExtras[0].entry_index = 0;
+  stagingWithExtras[0].end_device_uuid = stagingWithExtras[0].end_device_uuid || 'dev-test-001';
+  stagingWithExtras[0].is_paused = stagingWithExtras[0].is_paused ?? false;
+  stagingWithExtras[0].pauses = stagingWithExtras[0].pauses ?? [];
+  stagingWithExtras[0].metadata = stagingWithExtras[0].metadata ?? {};
+  stagingWithExtras[0].comment = stagingWithExtras[0].comment ?? null;
+  stagingWithExtras[0].media = stagingWithExtras[0].media ?? [];
+
+  stagingWithExtras[1].committed = false;
+  stagingWithExtras[1].block_index = null;
+  stagingWithExtras[1].entry_index = 1;
+  stagingWithExtras[1].metadata = stagingWithExtras[1].metadata ?? {};
+  stagingWithExtras[1].comment = stagingWithExtras[1].comment ?? null;
+  stagingWithExtras[1].media = stagingWithExtras[1].media ?? [];
+
+  // Preserve ORIGINAL stale hashes (computed without extra fields)
+  const staleHash0 = stagingWithExtras[0].hash;
+  const staleHash1 = stagingWithExtras[1].hash;
+
+  const blob = await exportLedgerFull(SAMPLE_BLOCKS, stagingWithExtras, crypto, MASTER_KEY);
+  const parsed = JSON.parse(await blob.text());
+
+  // B1.1: Staging entry 0 hash must be recomputed (≠ original stale hash)
+  t.assertNeq(parsed.staging[0].hash, staleHash0,
+    'B1.1: staging[0] hash recomputed (≠ original stale hash)');
+
+  // B1.2: Staging entry 1 hash must be recomputed
+  t.assertNeq(parsed.staging[1].hash, staleHash1,
+    'B1.2: staging[1] hash recomputed (≠ original stale hash)');
+
+  // B1.3: Ledger block day_hash fields unchanged (blocks NOT recomputed)
+  t.assertEq(parsed.ledger[0].day_hash, SAMPLE_BLOCKS[0].day_hash,
+    'B1.3: genesis day_hash unchanged');
+  t.assertEq(parsed.ledger[1].day_hash, SAMPLE_BLOCKS[1].day_hash,
+    'B1.3: day block day_hash unchanged');
+}
+
+console.log('\n=== 17. B2 — Seal covers recomputed staging in v2 ===');
+
+if (typeof exportLedgerFull === 'function') {
+  // Same setup as B1
+  const stagingWithExtras = JSON.parse(JSON.stringify(SAMPLE_STAGING));
+  stagingWithExtras[0].committed = false;
+  stagingWithExtras[0].block_index = null;
+  stagingWithExtras[0].entry_index = 0;
+  stagingWithExtras[1].committed = false;
+  stagingWithExtras[1].block_index = null;
+  stagingWithExtras[1].entry_index = 1;
+
+  const blob = await exportLedgerFull(SAMPLE_BLOCKS, stagingWithExtras, crypto, MASTER_KEY);
+  const parsed = JSON.parse(await blob.text());
+
+  // B2.1: Seal computed with ORIGINAL staging hashes ≠ actual seal
+  const sealWithOriginals = crypto.seal(
+    jsonSort({ ledger: SAMPLE_BLOCKS, staging: stagingWithExtras }),
+    MASTER_KEY
+  );
+  t.assertNeq(parsed.seal, sealWithOriginals,
+    'B2.1: seal ≠ seal computed with original staging hashes');
+
+  // B2.2: Seal computed with RECOMPUTED staging hashes = actual seal
+  const sealWithRecomputed = crypto.seal(
+    jsonSort({ ledger: SAMPLE_BLOCKS, staging: parsed.staging }),
+    MASTER_KEY
+  );
+  t.assertEq(parsed.seal, sealWithRecomputed,
+    'B2.2: seal = seal computed with recomputed staging hashes');
+}
+
+console.log('\n=== 18. B3 — Empty staging unaffected ===');
+
+if (typeof exportLedgerFull === 'function') {
+  const blob = await exportLedgerFull(SAMPLE_BLOCKS, [], crypto, MASTER_KEY);
+  const parsed = JSON.parse(await blob.text());
+
+  // B3.1: Export succeeds with empty staging, seal is valid
+  const expectedSeal = crypto.seal(
+    jsonSort({ ledger: SAMPLE_BLOCKS, staging: [] }),
+    MASTER_KEY
+  );
+  t.assertEq(parsed.seal, expectedSeal,
+    'B3.1: empty staging export succeeds, seal validates');
+  t.assertDeepEq(parsed.staging, [], 'B3.1: staging is empty array');
+  t.assertEq(parsed.ledger.length, SAMPLE_BLOCKS.length, 'B3.1: blocks preserved');
 }
 
 // ═════════════════════════════════════════════════════════════════════
