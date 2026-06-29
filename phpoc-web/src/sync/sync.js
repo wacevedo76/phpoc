@@ -1118,9 +1118,9 @@ export class SyncService {
       console.warn(`clearRemote: failed to list ledger blocks: ${err.message}`);
     }
 
-    // Delete staging blob and cookie
-    const metaKeys = ['staging:blob', 'cookie:json'];
-    for (const key of metaKeys) {
+    // Delete staging blob and cookie (canonical paths)
+    const stagingKeys = ['staging/blobs/current.json', 'staging/blobs/device_cookie.bin'];
+    for (const key of stagingKeys) {
       try {
         await this._transport.delete(key);
       } catch (err) {

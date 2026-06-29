@@ -2054,21 +2054,21 @@ async function run() {
 
     // Pre-populate all keys on remote
     await pushRemoteChain(transport, chain, mk);
-    await transport.push('staging:blob', new TextEncoder().encode(JSON.stringify({ entries: [] })));
-    await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
+    await transport.push('staging/blobs/current.json', new TextEncoder().encode(JSON.stringify({ entries: [] })));
+    await transport.push('staging/blobs/device_cookie.bin', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
 
     const preFiles = await transport.listFiles('ledger/blocks/');
     t.assert(preFiles && preFiles.length > 0, 'N1. pre-condition: block files exist');
-    t.assert(transport.hasKey('staging:blob'), 'N1b. pre-condition: staging:blob exists');
-    t.assert(transport.hasKey('cookie:json'), 'N1c. pre-condition: cookie:json exists');
+    t.assert(transport.hasKey('staging/blobs/current.json'), 'N1b. pre-condition: staging blob exists');
+    t.assert(transport.hasKey('staging/blobs/device_cookie.bin'), 'N1c. pre-condition: cookie exists');
 
     await sync.clearRemote();
 
     // Block files should be deleted
     const filesAfter = await transport.listFiles('ledger/blocks/');
     t.assert(!filesAfter || filesAfter.length === 0, 'N1d. block files deleted');
-    t.assert(!transport.hasKey('staging:blob'), 'N1e. staging:blob deleted');
-    t.assert(!transport.hasKey('cookie:json'), 'N1f. cookie:json deleted');
+    t.assert(!transport.hasKey('staging/blobs/current.json'), 'N1e. staging blob deleted');
+    t.assert(!transport.hasKey('staging/blobs/device_cookie.bin'), 'N1f. cookie deleted');
   }
 
   // N2. clearRemote resets _genesisCompatible to null
@@ -2135,21 +2135,21 @@ async function run() {
       masterKey: mk,
     });
 
-    // Only pre-populate block files and cookie:json (staging:blob is absent = 404)
+    // Only pre-populate block files and cookie (staging blob is absent = 404)
     await pushRemoteChain(transport, chain, mk);
-    await transport.push('cookie:json', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n4' })));
+    await transport.push('staging/blobs/device_cookie.bin', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n4' })));
 
     const preFiles = await transport.listFiles('ledger/blocks/');
     t.assert(preFiles && preFiles.length > 0, 'N4. pre-condition: block files exist');
-    t.assert(!transport.hasKey('staging:blob'), 'N4b. pre-condition: staging:blob absent (simulates 404)');
-    t.assert(transport.hasKey('cookie:json'), 'N4c. pre-condition: cookie:json exists');
+    t.assert(!transport.hasKey('staging/blobs/current.json'), 'N4b. pre-condition: staging blob absent (simulates 404)');
+    t.assert(transport.hasKey('staging/blobs/device_cookie.bin'), 'N4c. pre-condition: cookie exists');
 
     // Should not throw — partial failure is OK
     await sync.clearRemote();
 
     const postFiles = await transport.listFiles('ledger/blocks/');
     t.assert(!postFiles || postFiles.length === 0, 'N4d. block files still deleted');
-    t.assert(!transport.hasKey('cookie:json'), 'N4e. cookie:json still deleted');
+    t.assert(!transport.hasKey('staging/blobs/device_cookie.bin'), 'N4e. cookie still deleted');
   }
 
   // N5. All three deletions fail → throws error
