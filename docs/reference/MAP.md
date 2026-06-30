@@ -58,6 +58,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
 | `phpoc-web/test/ledger_sync_test.mjs` | 🟢 GREEN | 31-test TDD suite for `pushLedgerBlocks()` — GREEN phase complete, 76 assertions all passing |
 | `phpoc-web/test/commit_push_integration_test.mjs` | 🟢 GREEN | 14-test Commit→Push Wiring suite — all 60 assertions pass (wiring complete) |
+| `phpoc-web/test/cross_client_web_test.mjs` | 🟢 GREEN | **NEW** — 78 tests: auth gate (5), reconcile merge (15), full round-trip (15), auth timing (6), pause/unpause lifecycle across devices (37) (2026-06-30) |
 | `phpoc-web/test/sync_indicator_test.mjs` | 🟢 GREEN | 32-test SyncIndicator unit test — status config, 6 status mappings, compact mode, fallback |
 | `phpoc-web/test/display_status_test.mjs` | 🟢 GREEN | 20-test `computeDisplayStatus()` unit test — SYNCING priority, NOT_SYNCED, READY passthrough, edge cases |
 | `phpoc-web/test/reauth_ttl_test.mjs` | 🟢 GREEN | 50-test (was 35) suite for `checkCookieTtl()` + `createCookieMonitor()` — all 50 pass (GREEN phase complete) |
@@ -110,6 +111,7 @@ Key test files:
 | `../planning/LEDGER_MERGE_PYTHON_PORT.md` | Porting `merge.js` → `merge.py` — 41+ test catalog, 7-step algorithm, wiring plan |
 | `../planning/REAUTH_TTL_TDD_PLAN.md` | Re-auth overlay for TTL expiry TDD test plan — ~47 tests across 2 new files + 3 additions, 9 categories (A–I) (🔴 RED, tests not yet written) |
 | `../planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` | 🔜 **ACTIVE** — Plan to align web staging sharing behavior with CLI multi-machine pattern: 5 phases, 9 files touched |
+| `../planning/E2E_CROSS_CLIENT_BUGS.md` | 🔴 **ACTIVE** — E2E cross-client test findings: 4 bugs + 1 plumbing issue blocking CLI↔Web staging/ledger sync (2026-06-30) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |

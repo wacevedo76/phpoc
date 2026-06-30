@@ -15,60 +15,33 @@
 
 ## Immediate Next Steps
 
-### ✅ Step 5: Fix export/import seal & hash mismatch bug (DONE — 2026-06-28)
+### 🔴 E2E Cross-Client Bugs (2026-06-30)
 
-**Status:** ✅ GREEN — TDD complete. 185/185 tests pass across 3 test files.
+Full roundtrip test (CLI → R2 → Web → R2 → CLI) blocked by 4 bugs + 1 plumbing issue discovered 2026-06-30. Test used: passphrase `NewPass456!`, recovery seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, Worker API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`, isolated dir `/tmp/phpoc-e2e`.
 
-### ✅ Step 6b: Implement GENESIS_MISMATCH fix in DevModeContext.jsx (DONE — 2026-06-29)
+See full investigation: `docs/planning/E2E_CROSS_CLIENT_BUGS.md`
 
-86 new tests across 3 files (all GREEN). Code changes:
-- **✅ Phase 1:** `connectToWorker()` — delete `ledger:blocks` from R2 after blocks-format onboarding **(DONE — 2026-06-29)**
-- **✅ Phase 2:** `bootstrapServices()` — auto-clear on GENESIS_MISMATCH **(DONE — 2026-06-29)**
-- **✅ Phase 3:** Protocol unification — single canonical `ledger/blocks/` format **(DONE — 2026-06-29)**
-  - Genesis gate now checks `ledger/blocks/000000.json` (blocks format) instead of `ledger:blocks` (blob)
-  - `_pushFullLedgerChain()` replaced with `pushLedgerBlocks()` (pushes obfuscated individual block files)
-  - `pushLedgerBlocks()` gained `{ forceAll: true }` option for post-merge pushes (same-index overwrite)
-  - `clearRemote()` now lists and deletes individual block files
-  - `connectToWorker()`: removed single-blob path, stale `ledger:blocks` delete hack — only blocks-format onboarding
-  - `OnboardingScreen.jsx` `handleWorkerFetch()`: blocks-only discovery, seed always required
-  - CLI and web app now share the same R2 key scheme — one canonical protocol
+| Bug | Severity | What's blocked | File(s) |
+|-----|----------|---------------|---------|
+| **Bug 1:** Genesis mismatch indiscriminate | High | All ledger block sync | `phpoc-web/src/sync/sync.js`, `genesis_gate.js` |
+| **Bug 2:** Month summary blocks dropped on push | High | Complete chain upload | `phpoc-web/src/sync/sync.js` (pushLedgerBlocks) |
+| **Bug 3a:** Same device UUID → staging overwrite | High | Staging sync web→CLI | `domain/staging/service.py` (_reconcile_and_claim) |
+| **Bug 3b:** Entry format mismatch web↔CLI | High | Staging merge produces 0 entries | `domain/staging/service.py` (_raw_entry_to_dto), `phpoc-web/src/sync/remote_sync.js` (pushBlob) |
+| **Bug 4:** Genesis seal creation≠verification | Medium | File onboarding, session cache | `core/factory.py` vs `cli/onboarding_file.py`, `security/auth.py` |
+| **Bonus:** sync stdin consumed by auth.login | Low | Interactive merge prompt | `main.py` sync handler |
 
-Full investigation and action plan: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
+### ✅ Cross-Client Web Tests — GREEN (DONE — 2026-06-30)
 
-### ✅ Step 6c: Stable device specifier on writes — GREEN phase (DONE — 2026-06-30)
+**Tests:** `phpoc-web/test/cross_client_web_test.mjs` — 78 tests, 0 failures. 4 groups:
+- **Group 1 (5 tests):** Auth gate — cookie TTL, specifier mismatch, fast path, no bypass
+- **Group 2 (15 tests):** Reconcile merge — cross-device entry dedup (entry_id), remote-wins, active/stopped propagation
+- **Group 3 (15 tests):** Full round-trip — Device A creates → Device B stops → Device A sees stopped
+- **Group 4 (6 tests):** Auth required at correct points — fast path stays READY, auth only when needed
+- **Group 5 (37 tests):** Pause/unpause lifecycle — CLI creates → Web pauses → CLI sees paused → CLI unpauses → Web sees unpaused → Web ends (staging-only, not committed) → CLI sees ended with pause history preserved
 
-TDD: 5 tests in Group O of `phpoc-web/test/sync_service_test.mjs`. All 167 pass, 0 fail.
+**Fix:** Field name mismatch in `pushRemoteBlob` helper (`e.start_epoch` vs caller `startEpoch`). Standardized on camelCase. Extended helper to carry `pauses`, `metadata`, `device_uuid`, `end_device_uuid` through raw blob format.
 
-**Fix:** Modified `pushToRemote()` in `phpoc-web/src/sync/sync.js` — checks for existing local cookie with `device_specifier`, reuses it (only updates `creation_time`) instead of calling `destroyLocally()` + `_pushCookie()` which always generated a new specifier. `DeviceCookie.create()` is only called for first push (no local cookie). `_pushCookie()` remains unchanged for `_reconcileAndClaim()` Case B cross-device takeover path.
-
-Remote cookie pushed as `{device_uuid, device_specifier}` only — no `creation_time` leaks to remote.
-
-### ✅ Step 6d: Refactoring — Modularity, Clarity, Security, User Efficiency (DONE — 2026-06-30)
-
-All 167 sync tests pass + 21 Vitest component tests pass. No regressions.
-
-**Modularity (3 new modules, ~180 lines deduped):**
-- `src/sync/base64.js` — shared `base64ToBytes`/`bytesToBase64` (removed duplicates in sync.js, remote_sync.js, genesis_gate.js)
-- `src/sync/keys.js` — 7 canonical path constants (`REMOTE_STAGING_BLOB`, `REMOTE_DEVICE_COOKIE`, `REMOTE_LEDGER_BLOCKS_PREFIX`, `REMOTE_LEDGER_INDEX`, `LOCAL_COOKIE`, `LOCAL_LEDGER_BLOCKS`, `LOCAL_LEDGER_INDEX`) — replaced 30+ hardcoded strings
-- `src/sync/entry_dto.js` — DTO conversion extracted from sync.js: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON` (~130 lines removed from SyncService)
-
-**Clarity (5 improvements):**
-- `checkAndSync()` decomposed into `_genesisGatePhase()` / `_fastPathPhase()` / `_authGatePhase()` (~35 lines each)
-- `_reconcileAndClaim()` split into `_reconcileSameDevice()` / `_reconcileDifferentDevice()` (~25 lines each)
-- `_pushRemoteCookie(deviceId, specifier)` helper replaces 3 duplicated cookie-encode blocks
-- `cookie.js` stale header fixed (no longer says "every write generates new specifier")
-- Removed unused `timeoutMs` param from `checkAndSync()` signature
-
-**Security (2 fixes):**
-- **cookie.js TTL fallback bug:** `(ttlMinutes || DEFAULT_TTL_MS / 60000)` → `(ttlMinutes ?? DEFAULT_TTL_MS / 60000)`. When `ttlMinutes=0`, the old `||` fell back to 30s instead of 30min. Now uses nullish coalescing.
-- `matches()` redundant `!!` removed — expression is already boolean.
-
-**User Efficiency (3 improvements):**
-- `_deviceId` cached in `this._deviceId` — avoids repeated `getOrCreateDeviceUuid()` + WASM calls per operation
-- `pushLedgerBlocks()` skips `listFiles` when `forceAll=true` (genesis merge path)
-- `clearRemote()` uses `keys.js` constants instead of hardcoded paths
-
-**Files touched:** 8 changed, 3 new. All pre-existing test failures confirmed unchanged.
+**Files:** `test/cross_client_web_test.mjs` (816 lines, +165). `src/sync/sync.js` (debug cleanup only).
 
 ### 🔜 Step 6a: Align web staging sharing with CLI (PLANNING — 2026-06-29)
 
@@ -183,8 +156,10 @@ MockTransport/Crypto changes in test file:
 - **Genesis mismatch override — Clear Remote & Overwrite (2026-06-27):** ✅ DONE. When Sync Now detects `GENESIS_MISMATCH`, the UI now shows an override panel requiring the user to type `DELETE` to confirm. Calls `sync.clearRemote()` (HTTP DELETE on ledger:blocks, staging:blob, cookie:json, resets genesis gate), then re-runs sync to push local ledger. CSS in App.css, logic in SyncSettings.jsx and sync.js.
 - **Export/Import roundtrip: seal & entry hash mismatch (2026-06-28):** ✅ FIXED. Export now recomputes each staging entry's hash to cover ALL fields except `hash` before computing the seal. This ensures entries with extra app-added fields (`committed`, `block_index`, `entry_index`, `end_device_uuid`) survive import re-validation. Fix in `phpoc-web/src/services/ledger_export.js` (both `exportLedger()` and `exportLedgerFull()`). 37 new/updated tests (185 total across 3 test files). TDD: RED → GREEN.
 - **Genesis mismatch on Sync Now after cloud onboarding (2026-06-29):** ✅ FIXED. Three-phase fix. Phase 1: `connectToWorker()` deletes stale `ledger:blocks` after blocks-format onboarding. Phase 2: `bootstrapServices()` auto-clears and retries on GENESIS_MISMATCH. Phase 3: Protocol unification — single canonical `ledger/blocks/` format. 231 tests across 3 files, all GREEN. See `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
+- **Split-ledger prevention (2026-06-29):** ✅ FIXED. Two-phase fix in `DevModeContext.jsx`. Phase A: `createNewLedger()` checks if remote already has blocks before allowing creation — shows `window.confirm()` warning. Phase B: `bootstrapServices()` no longer auto-clears remote on `GENESIS_MISMATCH` — sets `genesisMismatch` state flag instead, user must explicitly clear via SyncSettings "Clear Remote & Overwrite" button. Root cause: boot-time auto-clear destroyed CLI's remote ledger when web client had a different genesis. All 257+ sync/reauth tests pass, no regressions.</newText>
 - **Web re-rolls device cookie on every write (2026-06-29):** ✅ FIXED (2026-06-30). `pushToRemote()` now reuses existing device specifier instead of destroying + recreating cookie on every write. Only calls `DeviceCookie.create()` on first push (no local cookie). Remote cookie format: `{device_uuid, device_specifier}` — no `creation_time` leaked. Group O: 14 assertions, 0 failures. Plan: `docs/planning/STABLE_DEVICE_SPECIFIER_ON_WRITES.md`.
 - **CLI read commands block on specifier mismatch (2026-06-29):** 🟡 PLANNED. `ph view`/`ph list`/`ph tags` bail entirely when another device holds the cookie, showing nothing — not even local data. Fix: add `check_and_sync_readonly()` that pulls remote blob without claiming ownership. Plan: `docs/planning/CLI_READONLY_STAGING_SYNC.md`.
+- **E2E cross-client sync blocked by 4 bugs (2026-06-30):** 🔴 ACTIVE. Full investigation at `docs/planning/E2E_CROSS_CLIENT_BUGS.md`. Bugs: (1) genesis mismatch detection is indiscriminate — treats network errors as permanent genesis incompatibility, (2) month_summary blocks silently dropped during push — no `day_index`/`index` field, (3a) same device UUID causes CLI to overwrite web's staging blob on remote, (3b) web flat entry format vs CLI nested `{hash,data:{..._enc}}` format — merge produces 0 entries, (4) genesis seal computed with `signature: ""` in JSON but verified excluding it. Bonus: stdin consumed by `auth.login()` during sync merge prompt.
 - **clearRemote() deletes wrong staging keys (2026-06-29):** ✅ FIXED (5244371). Was deleting `staging:blob` and `cookie:json` instead of canonical `staging/blobs/current.json` and `staging/blobs/device_cookie.bin`. This bug existed since the web app was built — staging data was never actually cleaned from R2. Tests updated. Added `scripts/compare_ledgers.py` tool for R2 format comparison.
 
 ## Browser E2E Testing Setup
@@ -224,5 +199,7 @@ MockTransport/Crypto changes in test file:
 | **Test ledger path** | `~/code/phpoc-testing-data/phpoc-robertwallace.json` |
 | **phpoc-web URL** | `http://localhost:5174/?dev=false` (5173 occupied; 5174 assigned) |
 | **Worker configs** | `worker/wrangler.toml` (production, `phpoc-data`) / `worker/wrangler.testing.toml` (testing, `phpoc-data-testing`) |
+| **E2E test dir** | `/tmp/phpoc-e2e` (isolated CLI data, `--dir /tmp/phpoc-e2e`) |
+| **E2E test creds** | passphrase `NewPass456!`, seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO` |
 
 > **Credentials** (API key, passphrase, recovery seed, wrangler token) are stored locally outside the repo. Ask the user to provide them if needed.
