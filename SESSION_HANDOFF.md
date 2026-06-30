@@ -15,6 +15,25 @@
 
 ## Immediate Next Steps
 
+### 🔴 CLI Onboarding: Chain divergence at block 1 (2026-06-30)
+
+**Symptom:** `ph onboarding http cloudflare` pulls 105 remote blocks (indices 0–104 from R2) but `_verify_chain()` reports divergence at block 1 — only genesis (block 0) is accepted.
+
+**Root cause (stale blocks):** The blocks on R2 were created by an earlier ledger instance that the user no longer has locally. The web app's current IndexedDB state shows 0 committed entries and a different recovery seed (`Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`) which fails to decrypt the remote blocks (integrity tag mismatch). This means:
+- The current local genesis was pushed to R2 as `000000.json` (overwriting any old genesis)
+- Old day blocks at `000001.json`–`000104.json` survived from the previous ledger
+- Block 1's `prev_hash` references the old genesis's `day_hash`, not the current genesis's
+
+**Compound bug (Bug 2 from E2E list — summary blocks dropped on push):**
+Even after a proper clear-and-repush, day blocks' `prev_hash` fields reference summary blocks' hashes (`year_hash`/`month_hash`), which are NEVER pushed to R2. The first month or year boundary would break the chain at the block index where a summary block sits between day blocks.
+
+**Possible fixes:**
+1. **Immediate workaround:** User needs to re-run "Clear Remote & Overwrite" in the web app (Sync Settings) to delete all stale blocks, then re-sync to push fresh ones. The CLI onboarding would then find a consistent chain.
+2. **Proper fix (Bug 2):** Either (a) push summary blocks to R2 alongside day blocks so the chain is complete, or (b) add a `prev_day_hash` field to day blocks that always points to the previous day block's `day_hash` (ignoring summary blocks) so the chain can be verified day-to-day without summary blocks present.
+3. **Better UX:** Have `_verify_chain()` scan for the longer valid chain prefix across multiple possible hash fields, rather than failing on the first mismatch.
+
+**Next step:** Investigate and fix the "summary blocks dropped on push" issue (Bug 2) in the web app, then verify the fix handles both the stale-blocks and chain-verification scenarios. See `docs/planning/E2E_CROSS_CLIENT_BUGS.md` for full bug report.
+
 ### 🔴 E2E Cross-Client Bugs (2026-06-30)
 
 Full roundtrip test (CLI → R2 → Web → R2 → CLI) blocked by 4 bugs + 1 plumbing issue discovered 2026-06-30. Test used: passphrase `NewPass456!`, recovery seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, Worker API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`, isolated dir `/tmp/phpoc-e2e`.
@@ -160,7 +179,8 @@ MockTransport/Crypto changes in test file:
 - **Web re-rolls device cookie on every write (2026-06-29):** ✅ FIXED (2026-06-30). `pushToRemote()` now reuses existing device specifier instead of destroying + recreating cookie on every write. Only calls `DeviceCookie.create()` on first push (no local cookie). Remote cookie format: `{device_uuid, device_specifier}` — no `creation_time` leaked. Group O: 14 assertions, 0 failures. Plan: `docs/planning/STABLE_DEVICE_SPECIFIER_ON_WRITES.md`.
 - **CLI read commands block on specifier mismatch (2026-06-29):** 🟡 PLANNED. `ph view`/`ph list`/`ph tags` bail entirely when another device holds the cookie, showing nothing — not even local data. Fix: add `check_and_sync_readonly()` that pulls remote blob without claiming ownership. Plan: `docs/planning/CLI_READONLY_STAGING_SYNC.md`.
 - **Onboarding `ph onboarding http cloudflare` crashes with TypeError (2026-06-30):** ✅ FIXED. `_prompt_http_transport()` returned `(transport, config_update)` but main.py unpacks as `config_update, transport` — tuple order swapped. Fixed in `cli/onboarding.py` line 152.
-- **E2E cross-client sync blocked by 4 bugs (2026-06-30):** 🔴 ACTIVE. Full investigation at `docs/planning/E2E_CROSS_CLIENT_BUGS.md`. Bugs: (1) genesis mismatch detection is indiscriminate — treats network errors as permanent genesis incompatibility, (2) month_summary blocks silently dropped during push — no `day_index`/`index` field, (3a) same device UUID causes CLI to overwrite web's staging blob on remote, (3b) web flat entry format vs CLI nested `{hash,data:{..._enc}}` format — merge produces 0 entries, (4) genesis seal computed with `signature: ""` in JSON but verified excluding it. Bonus: stdin consumed by `auth.login()` during sync merge prompt.
+- **CLI onboarding fails at block 1 — stale remote blocks from previous ledger (2026-06-30):** 🛑 ACTIVE. `ph onboarding http cloudflare` can only accept genesis (block 0) because blocks at `000001.json`–`000104.json` on R2 are from a different ledger instance. The web app's current recovery seed (`Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`) cannot decrypt the old blocks (tag mismatch), confirming the blocks are from an earlier ledger. "Clear Remote & Overwrite" in web app is the immediate workaround. **Root cause:** old day blocks survived a ledger re-initialization cycle.
+- **E2E cross-client sync blocked by 4 bugs (2026-06-30):** 🔴 ACTIVE. Full investigation at `docs/planning/E2E_CROSS_CLIENT_BUGS.md`. Bugs: (1) genesis mismatch detection is indiscriminate — treats network errors as permanent genesis incompatibility, (2) month_summary blocks silently dropped during push — no `day_index`/`index` field (#1 next step), (3a) same device UUID causes CLI to overwrite web's staging blob on remote, (3b) web flat entry format vs CLI nested `{hash,data:{..._enc}}` format — merge produces 0 entries, (4) genesis seal computed with `signature: ""` in JSON but verified excluding it. Bonus: stdin consumed by `auth.login()` during sync merge prompt.
 - **clearRemote() deletes wrong staging keys (2026-06-29):** ✅ FIXED (5244371). Was deleting `staging:blob` and `cookie:json` instead of canonical `staging/blobs/current.json` and `staging/blobs/device_cookie.bin`. This bug existed since the web app was built — staging data was never actually cleaned from R2. Tests updated. Added `scripts/compare_ledgers.py` tool for R2 format comparison.
 
 ## Browser E2E Testing Setup
