@@ -50,7 +50,7 @@ def _prompt_http_transport() -> tuple:
     both the transport instance and a config dict to persist.
 
     Returns:
-        Tuple of (HttpStagingTransport, config_update_dict), or
+        Tuple of (config_update_dict, HttpStagingTransport), or
         (None, None) if the user cancels.
     """
     from core.sync.http_transport import HttpStagingTransport
@@ -142,7 +142,7 @@ def _prompt_http_transport() -> tuple:
         },
     }
 
-    return transport, config_update
+    return config_update, transport
 
 
 def run_onboarding_picker(

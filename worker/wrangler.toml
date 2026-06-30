@@ -2,9 +2,7 @@ name = "phpoc-staging"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
 
-# R2 bucket binding — the opaque byte store for all phpoc data.
-# Swap R2 ↔ S3 ↔ Backblaze B2 by changing only this binding and
-# the Worker code that talks to it (not the Python transport).
+# R2 bucket binding — test bucket, separate from production.
 [[r2_buckets]]
 binding = "PHPOC_BUCKET"
 bucket_name = "phpoc-data"
