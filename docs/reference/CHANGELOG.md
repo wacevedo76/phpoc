@@ -8,6 +8,9 @@ All notable changes to the PH Ledger (phpoc) project.
 
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
+### Added
+- **Cross-client staging sync tests** — `test/cross_client_web_test.mjs` (78 tests, 0 failures). Covers auth gate (5), reconcile merge (15), full round-trip (15), auth timing (6), and pause/unpause lifecycle across simulated CLI↔Web devices (37). Validates pause state serialization through raw blob format (`pauses_enc`, `is_paused`), closed-pause propagation, and end-in-staging (not yet committed) round-trip. Bug fix: camelCase standardization in `pushRemoteBlob` helper. (2026-06-30)
+
 ### Fixed
 - **Stable device specifier on writes** — `pushToRemote()` in `phpoc-web/src/sync/sync.js` no longer re-rolls the `device_specifier` on every web write. Checks for existing local cookie, reuses specifier (only updates `creation_time`), pushes `{device_uuid, device_specifier}` to remote. Only calls `DeviceCookie.create()` on first push. Fixes spurious CLI `REAUTH_NEEDED` on every web write. 14 new assertions in Group O of `sync_service_test.mjs`. Plan: `docs/planning/STABLE_DEVICE_SPECIFIER_ON_WRITES.md`. (2026-06-30)
 - **Cookie TTL fallback bug** — `DeviceCookie.isValidLocally()` used `||` for TTL defaulting: `(ttlMinutes || DEFAULT_TTL_MS / 60000)` evaluated to 0.5 (30 seconds) when `ttlMinutes=0`. Changed to `??` (nullish coalescing), preserving 30-minute default when `undefined` but respecting `0` as intentional. File: `phpoc-web/src/sync/cookie.js`. (2026-06-30)

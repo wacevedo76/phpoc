@@ -312,6 +312,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
   const [error, setError] = useState(null);
   const [hasExistingData, setHasExistingData] = useState(false);
 
+  // ── Genesis mismatch state (surfaced from bootstrapServices) ───
+  const [genesisMismatch, setGenesisMismatch] = useState(false);
+
   // ── Identity info (loaded during bootstrap) ───────────────────────
   const [identityInfo, setIdentityInfo] = useState({ username: null, email: null });
 
@@ -391,17 +394,14 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setIdentityInfo({ username: loadedUsername || null, email: loadedEmail || null });
 
     // Run checkAndSync for local-only (no transport = READY)
-    // Genesis gate runs inside checkAndSync if transport is configured
+    // Genesis gate runs inside checkAndSync if transport is configured.
+    // Mismatches are surfaced to the user via genesisMismatch state —
+    // they must explicitly decide to clear remote via SyncSettings.
     try {
       const syncResult = await sync.checkAndSync();
       if (syncResult === SyncResult.GENESIS_MISMATCH) {
-        console.warn('Genesis mismatch — attempting auto-clear of stale remote data.');
-        try {
-          await sync.clearRemote();
-          await sync.checkAndSync(); // Re-run — should be compatible now
-        } catch (err) {
-          console.warn('Auto-clear after genesis mismatch failed:', err.message);
-        }
+        console.warn('Genesis mismatch — remote ledger differs from local.');
+        setGenesisMismatch(true);
       }
     } catch {
       // Non-critical
@@ -503,6 +503,31 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const { CryptoService } = await import('../crypto/index.js');
     const crypto = await CryptoService.create();
     setCryptoStatus('wasm');
+
+    // Phase A: Check if remote already has ledger data before creating new.
+    // Prevents accidentally overwriting an existing remote ledger.
+    try {
+      const checkTransport = createTransportFromDeployment();
+      if (checkTransport) {
+        const remoteFiles = await checkTransport.listFiles('ledger/blocks/');
+        if (remoteFiles && remoteFiles.length > 0) {
+          const proceed = window.confirm(
+            `A ledger already exists on the remote server (${remoteFiles.length} blocks found).\n\n` +
+            'Creating a new ledger will leave the remote data orphaned — ' +
+            'the new ledger will have a different genesis and cannot sync ' +
+            'with the existing remote data.\n\n' +
+            'Consider importing from the remote instead.\n\n' +
+            'Create a new ledger anyway?'
+          );
+          if (!proceed) {
+            setLoading(false);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Network error — proceed with creation
+    }
 
     // Generate seed
     const seed = crypto.generateSeed();
@@ -1288,6 +1313,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // TTL warning banner
     ttlWarning,
     dismissTtlWarning,
+
+    // Genesis mismatch (surfaced from bootstrapServices)
+    genesisMismatch,
+    setGenesisMismatch,
   };
 
   return (

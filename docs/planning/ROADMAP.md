@@ -81,6 +81,7 @@ None — all historical blockers (R1, R2, R3, R4) resolved.
 | Blind duration index (index.json) | ✅ | — | Reputation queries without decryption |
 | Recovery Seed with encryption (PDK) | ✅ | — | Seed encrypted with passphrase-derived key |
 | **Media Witness linkage** | 🔜 | Medium | Content hashes linked to activities. |
+| **Split-ledger prevention** — Warn before creating new ledger when remote already has blocks; remove destructive auto-clear on genesis mismatch | ✅ | — | Phases A+B implemented. `bootstrapServices()` no longer auto-clears remote on genesis mismatch. `createNewLedger()` checks remote before allowing creation. |
 | **Plausible deniability mode** | 🔮 | Low | Decoy passphrase reveals fake history. |
 
 ### Blocked By

@@ -119,6 +119,24 @@ Full investigation: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
 
 **Result:** All 167 sync tests pass + 21 Vitest component tests pass. Zero regressions.
 
+## Build 59 — Cross-Client Sync Tests (Pause/Unpause Lifecycle) — 2026-06-30
+
+**78 tests in `test/cross_client_web_test.mjs` (all GREEN):**
+
+- **Group 1 (5 tests):** Auth gate — cookie TTL, specifier mismatch, fast path, no cached-MK bypass
+- **Group 2 (15 tests):** Reconcile merge — cross-device entry dedup via `entry_id`, remote-wins, active/stopped propagation
+- **Group 3 (15 tests):** Full round-trip — Device A creates, Device B stops, Device A sees stopped
+- **Group 4 (6 tests):** Auth required at correct points — fast path stays READY, auth only when needed
+- **Group 5 (37 tests):** Pause/unpause lifecycle across simulated CLI↔Web devices:
+  1. CLI creates task → Web syncs, sees active
+  2. Web pauses (epoch 2000) → CLI syncs, sees paused with open pause record
+  3. CLI unpauses (epoch 3000) → Web syncs, sees unpaused with closed pause
+  4. Web ends (epoch 4000, staging-only, not committed) → CLI syncs, sees ended with pause history preserved
+
+**Bug fix:** `pushRemoteBlob` helper used `e.start_epoch` (snake_case) but test callers passed `startEpoch` (camelCase). This caused `startTime_enc = "plain:undefined"`, crashing `rawEntryToDTO` when `new Date(NaN).toISOString()` threw. Standardized on camelCase. Extended helper to carry `pauses`, `metadata`, `device_uuid`, and `end_device_uuid` through raw blob format.
+
+**Result:** 78/78 pass. 167/167 sync tests pass. No regressions.
+
 ## Build 58 — GENESIS_MISMATCH Bug Fix Tests — 2026-06-29
 
 **86 tests across 3 files for the GENESIS_MISMATCH bug fix (all GREEN):**
