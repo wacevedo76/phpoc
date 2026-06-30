@@ -23,10 +23,8 @@
  *   push(path, data) → Promise<void>
  */
 
-// Remote paths — must match the CLI constants from
-// domain/staging/remote_sync.py and domain/ledger/remote_sync.py
-const BLOB_PATH = 'staging/blobs/current.json';
-const COOKIE_PATH = 'staging/blobs/device_cookie.bin';
+import { base64ToBytes, bytesToBase64 } from './base64.js';
+import { REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE } from './keys.js';
 
 /**
  * Sentinel returned by pullBlob() when a remote blob exists but cannot be
@@ -64,7 +62,7 @@ export class RemoteSync {
    *   cannot be decrypted.
    */
   async pullBlob(masterKeyHex) {
-    const rawBytes = await this._transport.pull(BLOB_PATH);
+    const rawBytes = await this._transport.pull(REMOTE_STAGING_BLOB);
     if (rawBytes === null) return null;
 
     // Try plaintext JSON first (backward compat)
@@ -84,7 +82,7 @@ export class RemoteSync {
 
     try {
       // deobfuscateBlob takes base64, returns JSON string
-      const b64 = this._bytesToBase64(rawBytes);
+      const b64 = bytesToBase64(rawBytes);
       const plaintext = this._crypto.deobfuscateBlob(b64, effectiveKey);
       return JSON.parse(plaintext);
     } catch {
@@ -120,10 +118,10 @@ export class RemoteSync {
       // Obfuscate via CryptoService (pad + encrypt with blob sub-key)
       const plaintext = new TextDecoder().decode(blobBytes);
       const b64 = this._crypto.obfuscateBlob(plaintext, effectiveKey);
-      blobBytes = this._base64ToBytes(b64);
+      blobBytes = base64ToBytes(b64);
     }
 
-    await this._transport.push(BLOB_PATH, blobBytes);
+    await this._transport.push(REMOTE_STAGING_BLOB, blobBytes);
   }
 
   // ------------------------------------------------------------------
@@ -140,7 +138,7 @@ export class RemoteSync {
    *   no cookie exists on remote.
    */
   async pullCookie() {
-    return this._transport.pull(COOKIE_PATH);
+    return this._transport.pull(REMOTE_DEVICE_COOKIE);
   }
 
   /**
@@ -151,7 +149,7 @@ export class RemoteSync {
    * @returns {Promise<void>}
    */
   async pushCookie(cookieBytes) {
-    await this._transport.push(COOKIE_PATH, cookieBytes);
+    await this._transport.push(REMOTE_DEVICE_COOKIE, cookieBytes);
   }
 
   // ------------------------------------------------------------------
@@ -165,7 +163,7 @@ export class RemoteSync {
    */
   async checkRemoteAvailable() {
     try {
-      const result = await this._transport.pull(BLOB_PATH);
+      const result = await this._transport.pull(REMOTE_STAGING_BLOB);
       // Transport responded — treat as available even if blob is empty
       return true;
     } catch {
@@ -173,46 +171,5 @@ export class RemoteSync {
     }
   }
 
-  // ------------------------------------------------------------------
-  // Internal: Base64 ↔ Uint8Array conversion
-  // ------------------------------------------------------------------
-
-  /**
-   * Convert a Uint8Array to a base64 string.
-   * Uses browser btoa for web, Buffer for Node.js.
-   *
-   * @param {Uint8Array} bytes
-   * @returns {string}
-   * @private
-   */
-  _bytesToBase64(bytes) {
-    if (typeof btoa !== 'undefined') {
-      // Browser path
-      const binary = String.fromCharCode(...bytes);
-      return btoa(binary);
-    }
-    // Node.js path
-    return Buffer.from(bytes).toString('base64');
-  }
-
-  /**
-   * Convert a base64 string to a Uint8Array.
-   *
-   * @param {string} b64
-   * @returns {Uint8Array}
-   * @private
-   */
-  _base64ToBytes(b64) {
-    if (typeof atob !== 'undefined') {
-      // Browser path
-      const binary = atob(b64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return bytes;
-    }
-    // Node.js path
-    return new Uint8Array(Buffer.from(b64, 'base64'));
-  }
+  // (base64 utilities imported from ./base64.js)
 }

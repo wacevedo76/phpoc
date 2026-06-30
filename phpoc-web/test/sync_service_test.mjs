@@ -2228,6 +2228,154 @@ async function run() {
       'N7d. fresh ledger blocks pushed to remote');
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Group O: Stable Device Specifier on Writes
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug: pushToRemote() destroys the local cookie and creates a new
+  // one on every push, generating a fresh device_specifier each time.
+  // This causes the CLI to see spurious cookie mismatches on every
+  // web write. Fix: reuse existing specifier from local cookie.
+  //
+  console.log('\n── Group O: Stable Specifier on Writes ──\n');
+
+  // O1. First push (no local cookie) → generates new specifier
+  {
+    const mk = 'o1-first---o1-first---o1-first---o1-first---aa';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // No local cookie pre-populated — this is the first push after onboarding
+    await sync.capture({ title: 'O1 Task', startEpoch: 1000 });
+    await sync.pushToRemote(mk);
+
+    // Local cookie should be created with a specifier
+    const localCookie = await storage.get('cookie');
+    t.assert(!!localCookie, 'O1. local cookie created on first push');
+    t.assert(!!localCookie.device_specifier, 'O1b. local cookie has specifier');
+    t.assert(typeof localCookie.creation_time === 'number',
+      'O1c. local cookie has creation_time');
+
+    // Remote cookie should be pushed with matching specifier
+    const remoteCookieBytes = await transport.pull(COOKIE_PATH);
+    t.assert(remoteCookieBytes !== null, 'O1d. remote cookie pushed');
+    const remoteCookie = JSON.parse(new TextDecoder().decode(remoteCookieBytes));
+    t.assertEq(remoteCookie.device_specifier, localCookie.device_specifier,
+      'O1e. remote cookie specifier matches local');
+  }
+
+  // O2. Second push (existing local cookie) → REUSES same specifier
+  //     RED: current code destroys + re-creates, generating a NEW specifier.
+  //     This test WILL FAIL until the fix is applied.
+  {
+    const mk = 'o2-reuse---o2-reuse---o2-reuse---o2-reuse---bb';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Pre-populate local cookie with a known specifier
+    const ORIGINAL_SPEC = 'spec-stable-o2';
+    await storage.set('cookie', {
+      device_specifier: ORIGINAL_SPEC,
+      creation_time: Date.now() - 60_000,
+    });
+
+    await sync.capture({ title: 'O2 Task', startEpoch: 2000 });
+    await sync.pushToRemote(mk);
+
+    // Local cookie specifier MUST be unchanged (not re-rolled)
+    const localCookie = await storage.get('cookie');
+    t.assertEq(localCookie.device_specifier, ORIGINAL_SPEC,
+      'O2. specifier REUSED (not re-rolled) — RED: fails, GREEN: passes');
+
+    // creation_time should be updated (TTL extended)
+    t.assert(localCookie.creation_time >= Date.now() - 5000,
+      'O2b. creation_time updated to extend TTL');
+
+    // Remote cookie should have the SAME specifier
+    const remoteCookieBytes = await transport.pull(COOKIE_PATH);
+    const remoteCookie = JSON.parse(new TextDecoder().decode(remoteCookieBytes));
+    t.assertEq(remoteCookie.device_specifier, ORIGINAL_SPEC,
+      'O2c. remote cookie has same specifier — RED: fails, GREEN: passes');
+  }
+
+  // O3. Three consecutive pushes → specifier stays stable across all
+  //     RED: current code re-rolls specifier on every push.
+  {
+    const mk = 'o3-multi---o3-multi---o3-multi---o3-multi---cc';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const ORIGINAL_SPEC = 'spec-stable-o3';
+    await storage.set('cookie', {
+      device_specifier: ORIGINAL_SPEC,
+      creation_time: Date.now(),
+    });
+
+    // Push 1
+    await sync.capture({ title: 'O3 Task 1', startEpoch: 1000 });
+    await sync.pushToRemote(mk);
+    let local = await storage.get('cookie');
+    t.assertEq(local.device_specifier, ORIGINAL_SPEC,
+      'O3a. push 1: specifier unchanged');
+
+    // Push 2
+    await sync.capture({ title: 'O3 Task 2', startEpoch: 2000 });
+    await sync.pushToRemote(mk);
+    local = await storage.get('cookie');
+    t.assertEq(local.device_specifier, ORIGINAL_SPEC,
+      'O3b. push 2: specifier unchanged — RED: fails, GREEN: passes');
+
+    // Push 3
+    await sync.capture({ title: 'O3 Task 3', startEpoch: 3000 });
+    await sync.pushToRemote(mk);
+    local = await storage.get('cookie');
+    t.assertEq(local.device_specifier, ORIGINAL_SPEC,
+      'O3c. push 3: specifier unchanged — RED: fails, GREEN: passes');
+
+    // Remote cookie should still have the same specifier after 3 pushes
+    const remoteCookieBytes = await transport.pull(COOKIE_PATH);
+    const remoteCookie = JSON.parse(new TextDecoder().decode(remoteCookieBytes));
+    t.assertEq(remoteCookie.device_specifier, ORIGINAL_SPEC,
+      'O3d. remote cookie has same specifier after 3 pushes — RED: fails, GREEN: passes');
+  }
+
+  // O4. Remote cookie format: {device_uuid, device_specifier} only
+  //     Local-only fields (creation_time) must NOT leak to remote.
+  {
+    const mk = 'o4-format--o4-format--o4-format--o4-format--dd';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-format-o4',
+      creation_time: Date.now(),
+    });
+
+    await sync.capture({ title: 'O4 Task', startEpoch: 4000 });
+    await sync.pushToRemote(mk);
+
+    const remoteCookieBytes = await transport.pull(COOKIE_PATH);
+    const remoteCookie = JSON.parse(new TextDecoder().decode(remoteCookieBytes));
+    t.assert(remoteCookie.device_specifier !== undefined,
+      'O4. remote cookie has device_specifier');
+    t.assert(remoteCookie.device_uuid !== undefined,
+      'O4b. remote cookie has device_uuid');
+    t.assert(remoteCookie.creation_time === undefined,
+      'O4c. remote cookie does NOT leak local creation_time');
+  }
+
   // ── Results ───────────────────────────────────────────────────────
   t.summary('SyncService Auth Gate & Reconcile');
 }

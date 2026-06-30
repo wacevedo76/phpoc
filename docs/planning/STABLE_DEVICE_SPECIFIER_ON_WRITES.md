@@ -1,6 +1,6 @@
 # Plan: Stop Re-Rolling Device Cookie on Same-Device Writes
 
-> **Status:** 🔜 Planning
+> **Status:** ✅ Done (2026-06-30)
 > **Created:** 2026-06-29
 > **Problem:** Web app's `pushToRemote()` creates a brand-new `device_specifier` on every write, causing the CLI to see a specifier mismatch and lock out read commands.
 

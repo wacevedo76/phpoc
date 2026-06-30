@@ -37,10 +37,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 | File | Temp | Key contents |
 |---|---|---|
-| `phpoc-web/src/sync/genesis_gate.js` | HOT | GenesisGate.check() — genesis compatibility gate (GREEN, 89 tests) |
-| `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (all GREEN) |
+| `phpoc-web/src/sync/genesis_gate.js` | HOT | GenesisGate.check() — genesis compatibility gate, uses shared `base64.js` + `keys.js` (2026-06-30 refactor) |
+| `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (mock needs `listFiles` — TBD) |
 | `phpoc-web/test/settings_genesis_test.mjs` | HOT | 13-test Settings UI genesis gate integration |
-| `phpoc-web/test/sync_service_test.mjs` | HOT | 153 tests — SyncService auth gate + Group N clearRemote (7 tests) (2026-06-29) |
+| `phpoc-web/test/sync_service_test.mjs` | HOT | 167 tests — SyncService auth gate + Group N clearRemote (7 tests) + Group O stable specifier (14 assertions) (2026-06-30) |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
 | `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
 | `phpoc-web/test/onboarding_import_component.test.mjs` | 🟢 GREEN | **NEW** — 21 Vitest+RTL component tests for OnboardingScreen import form state machine (file picker gating, destroy warnings, checkbox gates, error display, back navigation) |
@@ -68,14 +68,19 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/ledger_roundtrip_test.mjs` | 🟢 GREEN | **NEW** — 46 tests for full export→import fidelity (v1, v2, active/paused entries, deterministic seal, wrong key rejection) |
 | `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback (pre-expiry), wired into DevModeContext (2026-06-28) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
-| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` auth gate, `_reconcileAndClaim`, **`pushLedgerBlocks()`** — ledger block sync to remote (uses `day_index` + `index` fallback for cross-engine compatibility), index push |
+| `phpoc-web/src/sync/base64.js` | HOT | **NEW** — shared `base64ToBytes`/`bytesToBase64` utilities, used by sync.js, remote_sync.js, genesis_gate.js (2026-06-30) |
+| `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (7 keys: remote staging/cookie/ledger, local cookie/blocks/index), single source of truth (2026-06-30) |
+| `phpoc-web/src/sync/entry_dto.js` | HOT | **NEW** — DTO conversion extracted from sync.js: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON` (2026-06-30) |
+| `phpoc-web/src/sync/remote_sync.js` | HOT | `RemoteSync` — blob pull/push, cookie pull/push via transport. Uses shared `base64.js` + `keys.js` (2026-06-30 refactor) |
+| `phpoc-web/src/sync/cookie.js` | HOT | `DeviceCookie` — TTL fallback bug fixed (nullish coalescing), stale header updated, `matches()` redundant `!!` removed, uses `COOKIE_KEY` constant (2026-06-30) |
+| `phpoc-web/src/sync/sync.js` | HOT | `checkAndSync()` decomposed into `_genesisGatePhase`/`_fastPathPhase`/`_authGatePhase`, `_reconcileAndClaim` split into `_reconcileSameDevice`/`_reconcileDifferentDevice`, DTO extracted to `entry_dto.js`, `_pushRemoteCookie()` helper, `_deviceId` cached, uses `keys.js` constants, `pushLedgerBlocks()` skips listFiles on forceAll (2026-06-30 refactor) |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-**Test files:** phpoc-web has 45 test files (3 new: `worker_connect_blocks_format.test.mjs`, `onboarding_cloud_conflict.test.mjs`, plus Group N added to `sync_service_test.mjs`). All GREEN.
+**Test files:** phpoc-web has 48 test files (6 new: `worker_connect_blocks_format.test.mjs`, `onboarding_cloud_conflict.test.mjs`, `onboarding_import_component.test.mjs`, plus 3 new sync modules: `base64.js`, `keys.js`, `entry_dto.js`). All GREEN.
 
 ### Tests (39 files, ~22,000 lines, ~1823 tests)
 

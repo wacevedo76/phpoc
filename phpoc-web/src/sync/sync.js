@@ -45,6 +45,17 @@ import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
 import { getOrCreateDeviceUuid } from './device_uuid.js';
 import { GenesisGate } from './genesis_gate.js';
+import { base64ToBytes, bytesToBase64 } from './base64.js';
+import { rawCommittedEntryToDTO, rawEntryToDTO } from './entry_dto.js';
+import {
+  REMOTE_STAGING_BLOB,
+  REMOTE_DEVICE_COOKIE,
+  REMOTE_LEDGER_BLOCKS_PREFIX,
+  REMOTE_LEDGER_INDEX,
+  LOCAL_COOKIE,
+  LOCAL_LEDGER_BLOCKS,
+  LOCAL_LEDGER_INDEX,
+} from './keys.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
@@ -56,41 +67,6 @@ export const SyncResult = Object.freeze({
 });
 
 const DEFAULT_COOKIE_TTL = 30; // minutes
-
-// ------------------------------------------------------------------
-// Internal helpers
-// ------------------------------------------------------------------
-
-/**
- * Convert base64 string to Uint8Array.
- * Works in browser (atob) and Node.js (Buffer).
- * @param {string} b64
- * @returns {Uint8Array}
- */
-function _base64ToBytes(b64) {
-  if (typeof atob !== 'undefined') {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-  return new Uint8Array(Buffer.from(b64, 'base64'));
-}
-
-/**
- * Convert Uint8Array to base64 string.
- * Works in browser (btoa) and Node.js (Buffer).
- * @param {Uint8Array} bytes
- * @returns {string}
- */
-function _bytesToBase64(bytes) {
-  if (typeof btoa !== 'undefined') {
-    return btoa(String.fromCharCode(...bytes));
-  }
-  return Buffer.from(bytes).toString('base64');
-}
 
 export class SyncService {
   /**
@@ -128,6 +104,9 @@ export class SyncService {
     this._genesisCheckPromise = null;
     /** @private — stats from the last genesis-gate merge (null = no merge yet) */
     this._lastMergeStats = null;
+
+    /** @private — cached device UUID to avoid repeated storage/WASM calls */
+    this._deviceId = null;
   }
 
   // ------------------------------------------------------------------
@@ -145,9 +124,12 @@ export class SyncService {
    * @private
    */
   async _getDeviceId() {
+    if (this._deviceId) return this._deviceId;
+
     // Preferred path: per-device UUID from storage (survives logout/re-login)
     try {
       const storedUuid = await getOrCreateDeviceUuid(this._storage);
+      this._deviceId = storedUuid;
       return storedUuid;
     } catch {
       // Storage read failed — fall through to WASM path
@@ -157,7 +139,9 @@ export class SyncService {
     const mk = this._crypto.getMasterKey();
     if (!mk) return null;
     try {
-      return this._crypto.getDeviceId(mk);
+      const wasmId = this._crypto.getDeviceId(mk);
+      this._deviceId = wasmId;
+      return wasmId;
     } catch {
       return null;
     }
@@ -329,12 +313,12 @@ export class SyncService {
     // Also read committed entries from the ledger chain
     const committedDTOs = [];
     try {
-      const blocks = (await this._storage.get('ledger:blocks')) || [];
+      const blocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
       for (let bi = 0; bi < blocks.length; bi++) {
         const block = blocks[bi];
         if (!block.entries || !Array.isArray(block.entries)) continue;
         for (const raw of block.entries) {
-          const dto = this._rawCommittedEntryToDTO(raw);
+          const dto = rawCommittedEntryToDTO(raw, this._crypto);
           if (dto) {
             dto.committed = true;
             dto.block_index = bi;
@@ -380,9 +364,9 @@ export class SyncService {
    */
   async _touchLocalCookie() {
     try {
-      const localCookie = await this._storage.get('cookie');
+      const localCookie = await this._storage.get(LOCAL_COOKIE);
       if (!localCookie?.device_specifier) return;
-      await this._storage.set('cookie', {
+      await this._storage.set(LOCAL_COOKIE, {
         device_specifier: localCookie.device_specifier,
         creation_time: Date.now(),
       });
@@ -422,123 +406,150 @@ export class SyncService {
    * ledger shares the same genesis block. If genesis is incompatible,
    * returns GENESIS_MISMATCH and no blob operations proceed.
    *
-   * @param {number} [timeoutMs=500] - Unused in this port; the
-   *   underlying transport handles timeouts.
    * @returns {Promise<SyncCheckResult>}
    */
-  async checkAndSync(timeoutMs = 500) {
+  async checkAndSync() {
     if (!this._remote) {
       return SyncResult.READY;
     }
 
-    // ------------------------------------------------------------------
-    // GENESIS GATE: Verify remote ledger shares same genesis block.
-    // Only runs when a local ledger exists — if there are no committed
-    // blocks yet, there's nothing to protect and gate is skipped.
-    // ------------------------------------------------------------------
+    // ── Genesis Gate ────────────────────────────────────────────
+    const genesisResult = await this._genesisGatePhase();
+    if (genesisResult !== null) return genesisResult;
+
+    // ── Fast Path ───────────────────────────────────────────────
+    const fastResult = await this._fastPathPhase();
+    if (fastResult !== null) return fastResult;
+
+    // ── Auth Gate ───────────────────────────────────────────────
+    return this._authGatePhase();
+  }
+
+  // ── checkAndSync phases ──────────────────────────────────────────
+
+  /**
+   * Genesis gate phase: verify remote ledger shares same genesis block.
+   * Only runs when a local ledger exists. On success, persists any merged
+   * chain and returns null (continue to fast path). On mismatch/error,
+   * returns a SyncCheckResult (short-circuit).
+   * @returns {Promise<SyncCheckResult|null>}
+   * @private
+   */
+  async _genesisGatePhase() {
     const masterKey = this._crypto.getMasterKey();
-    if (masterKey && this._genesisCompatible === null) {
-      const blocks = (await this._storage.get('ledger:blocks')) || [];
-      if (blocks.length > 0) {
-        if (!this._genesisCheckPromise) {
-          this._genesisCheckPromise = (async () => {
-            try {
-              const result = await GenesisGate.check(
-                blocks, this._transport, this._crypto, masterKey
-              );
-              this._genesisCompatible = result.compatible;
-              return result;
-            } catch {
-              // Network error during genesis check — don't cache, retry next time
-              return null;
-            }
-          })();
-        }
+    if (!masterKey || this._genesisCompatible !== null) return null;
 
-        const result = await this._genesisCheckPromise;
-        this._genesisCheckPromise = null;
+    const blocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
+    if (blocks.length === 0) return null;
 
-        if (result === null) {
-          // Network error — genesis not cached, fall through to OFFLINE below
-        } else if (result.compatible === false) {
-          return SyncResult.GENESIS_MISMATCH;
-        } else if (result.compatible === true) {
-          // Genesis compatible — persist merged chain to storage.
-          if (result.mergedChain) {
-            try {
-              await this._storage.set('ledger:blocks', result.mergedChain);
-              if (result.index) {
-                await this._storage.set('ledger:index', result.index);
-              }
-              // Store merge stats for UI consumption
-              if (result.stats) {
-                this._lastMergeStats = result.stats;
-              }
-              // Push merged chain to remote (force all blocks — merged
-              // blocks may have new content under the same day index)
-              await this.pushLedgerBlocks({ forceAll: true });
-            } catch (err) {
-              console.warn('Failed to persist merged ledger chain:', err.message);
-            }
-          }
+    if (!this._genesisCheckPromise) {
+      this._genesisCheckPromise = (async () => {
+        try {
+          const result = await GenesisGate.check(
+            blocks, this._transport, this._crypto, masterKey
+          );
+          this._genesisCompatible = result.compatible;
+          return result;
+        } catch {
+          return null; // Network error — don't cache, retry next time
         }
+      })();
+    }
+
+    const result = await this._genesisCheckPromise;
+    this._genesisCheckPromise = null;
+
+    if (result === null) {
+      return null; // Network error — fall through to OFFLINE below
+    }
+
+    if (result.compatible === false) {
+      return SyncResult.GENESIS_MISMATCH;
+    }
+
+    // Genesis compatible — persist merged chain to storage
+    if (result.mergedChain) {
+      try {
+        await this._storage.set(LOCAL_LEDGER_BLOCKS, result.mergedChain);
+        if (result.index) {
+          await this._storage.set(LOCAL_LEDGER_INDEX, result.index);
+        }
+        if (result.stats) {
+          this._lastMergeStats = result.stats;
+        }
+        await this.pushLedgerBlocks({ forceAll: true });
+      } catch (err) {
+        console.warn('Failed to persist merged ledger chain:', err.message);
       }
     }
 
-    // If genesis was already checked and is incompatible, short-circuit.
-    // This prevents falling through to the fast path/auth gate where
-    // individual blob/cookie pulls may fail with 403/network errors,
-    // producing a misleading OFFLINE status instead of GENESIS_MISMATCH.
+    return null;
+  }
+
+  /**
+   * Fast path: local cookie valid → pull remote cookie → specifier match → READY.
+   * Returns SyncCheckResult on match/OFFLINE, or null to fall through to auth gate.
+   * @returns {Promise<SyncCheckResult|null>}
+   * @private
+   */
+  async _fastPathPhase() {
     if (this._genesisCompatible === false) {
       return SyncResult.GENESIS_MISMATCH;
     }
 
-    // ------------------------------------------------------------------
-    // FAST PATH: Local cookie valid → remote cookie match → READY
-    // ------------------------------------------------------------------
     const localCookie = await DeviceCookie.isValidLocally(
       this._storage,
       this._cookieTtlMinutes
     );
 
-    let specifierMismatch = false;
+    if (!localCookie) return null; // Fall through to auth gate
 
-    if (localCookie) {
-      let remoteCookieRaw;
-      try {
-        remoteCookieRaw = await this._remote.pullCookie();
-      } catch {
-        return SyncResult.OFFLINE;
-      }
-
-      if (remoteCookieRaw) {
-        const remoteCookie = DeviceCookie.parseRemote(remoteCookieRaw);
-        if (remoteCookie && DeviceCookie.matches(localCookie, remoteCookie)) {
-          // Same device session — fast path
-          await this._pushOnFastPath(localCookie);
-          return SyncResult.READY;
-        }
-        if (remoteCookie) {
-          // Remote cookie parsed but specifiers differ
-          specifierMismatch = true;
-        }
-        // else: remote cookie can't parse — treat as no remote cookie,
-        // fall through to auth gate
-      }
+    let remoteCookieRaw;
+    try {
+      remoteCookieRaw = await this._remote.pullCookie();
+    } catch {
+      return SyncResult.OFFLINE;
     }
 
-    // ------------------------------------------------------------------
-    // AUTH GATE
-    // ------------------------------------------------------------------
+    if (!remoteCookieRaw) return null; // No remote cookie — fall through
+
+    const remoteCookie = DeviceCookie.parseRemote(remoteCookieRaw);
+    if (remoteCookie && DeviceCookie.matches(localCookie, remoteCookie)) {
+      // Same device session — fast path
+      await this._pushOnFastPath(localCookie);
+      return SyncResult.READY;
+    }
+
+    // Remote cookie parsed but specifiers differ → auth gate with mismatch flag.
+    // Store mismatch state so _authGatePhase can read it without re-fetching.
+    if (remoteCookie) {
+      this._specifierMismatch = true;
+    }
+
+    return null; // Fall through to auth gate
+  }
+
+  /**
+   * Auth gate: decide READY, REAUTH_NEEDED, or delegate to _reconcileAndClaim.
+   * @returns {Promise<SyncCheckResult>}
+   * @private
+   */
+  async _authGatePhase() {
+    const specifierMismatch = this._specifierMismatch === true;
+    this._specifierMismatch = false;
 
     // Specifier mismatch ALWAYS forces auth, regardless of cached crypto key.
     if (specifierMismatch) {
       return SyncResult.REAUTH_NEEDED;
     }
 
+    // Check local cookie TTL (re-check in case _fastPathPhase was skipped)
+    const localCookie = await DeviceCookie.isValidLocally(
+      this._storage,
+      this._cookieTtlMinutes
+    );
+
     // TTL expired or no local cookie — always force auth.
-    // The cookie is the source of truth, not the cached crypto key.
-    // This matches the CLI behavior.
     if (!localCookie) {
       return SyncResult.REAUTH_NEEDED;
     }
@@ -549,7 +560,6 @@ export class SyncService {
       return SyncResult.REAUTH_NEEDED;
     }
 
-    // Reconcile and claim staging ownership
     return this._reconcileAndClaim(mk);
   }
 
@@ -560,23 +570,15 @@ export class SyncService {
   /**
    * After successful auth: claim staging ownership for this device.
    *
-   * Called from checkAndSync()'s auth gate. Pulls remote cookie to
-   * check device_uuid, then:
-   *
-   *   Same device that last wrote → push local blob (authoritative)
-   *     and touch local cookie (update creation_time, keep specifier,
-   *     no remote cookie push).
-   *
-   *   Different device / first time → pull remote blob, reconcile
-   *     (merge remote entries into local), push merged blob, then
-   *     create a fresh device cookie (new specifier, local + remote).
+   * Pulls remote cookie to discover which device last wrote, then:
+   *   Same device → _reconcileSameDevice (push only, touch cookie)
+   *   Different device / first time → _reconcileDifferentDevice (pull, merge, push, new cookie)
    *
    * @param {string} masterKeyHex - 64-char hex master key.
    * @returns {Promise<SyncCheckResult>}
    * @private
    */
   async _reconcileAndClaim(masterKeyHex) {
-    // Pull remote cookie to discover which device last wrote
     let remoteCookieRaw;
     try {
       remoteCookieRaw = await this._remote.pullCookie();
@@ -598,234 +600,107 @@ export class SyncService {
     const localDeviceUuid = await this._getDeviceId() || '';
 
     if (remoteDeviceUuid && remoteDeviceUuid === localDeviceUuid) {
-      // Case A — Same device that last wrote: push only, touch cookie
-      await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
+      return this._reconcileSameDevice(masterKeyHex, localDeviceUuid, remoteCookieSpecifier);
+    }
 
-      // Touch local cookie: update creation_time, keep specifier,
-      // no remote cookie push (remote already has matching specifier).
-      if (remoteCookieSpecifier) {
-        try {
-          await this._storage.set('cookie', {
-            device_specifier: remoteCookieSpecifier,
-            creation_time: Date.now(),
-          });
-        } catch {
-          // Non-critical
-        }
-      }
-    } else {
-      // Case B — Different device or first-time setup: pull, reconcile, push
-      let remoteBlob;
+    return this._reconcileDifferentDevice(masterKeyHex, localDeviceUuid);
+  }
+
+  /**
+   * Case A — Same device that last wrote: push only, touch cookie.
+   * No remote cookie push (remote already has the matching specifier).
+   * @returns {Promise<SyncCheckResult>}
+   * @private
+   */
+  async _reconcileSameDevice(masterKeyHex, localDeviceUuid, remoteCookieSpecifier) {
+    await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
+
+    // Touch local cookie: update creation_time, keep specifier
+    if (remoteCookieSpecifier) {
       try {
-        remoteBlob = await this._remote.pullBlob(masterKeyHex);
+        await this._storage.set(LOCAL_COOKIE, {
+          device_specifier: remoteCookieSpecifier,
+          creation_time: Date.now(),
+        });
       } catch {
-        return SyncResult.OFFLINE;
-      }
-
-      // If remote blob exists but can't be decrypted (wrong master key),
-      // DON'T overwrite it — abort and signal OFFLINE.
-      if (remoteBlob === BLOB_KEY_MISMATCH) {
-        console.warn(
-          'Remote staging blob exists but cannot be decrypted ' +
-          '(wrong master key). Aborting to avoid data loss.'
-        );
-        return SyncResult.OFFLINE;
-      }
-
-      if (remoteBlob && Array.isArray(remoteBlob.entries)) {
-        try {
-          const localEntries = await this._local.readEntries();
-          // Convert remote raw entries to DTOs before merge
-          const remoteDTOs = remoteBlob.entries
-            .map((raw) => this._rawEntryToDTO(raw))
-            .filter(Boolean);
-          const merged = mergeEntries(localEntries, remoteDTOs);
-          await this._local.writeEntries(merged);
-        } catch (err) {
-          // Merge failure — push local as-is
-          console.warn('Merge failed, pushing local blob:', err.message);
-        }
-      }
-
-      // Push the (merged or local) blob to remote
-      await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
-
-      // Create new device cookie (fresh specifier, local + remote)
-      try {
-        await DeviceCookie.destroyLocally(this._storage);
-        const remoteCookie = await DeviceCookie.create(
-          localDeviceUuid,
-          this._storage,
-          this._crypto
-        );
-        if (remoteCookie) {
-          const cookieBytes = new TextEncoder().encode(
-            JSON.stringify(remoteCookie)
-          );
-          await this._remote.pushCookie(cookieBytes);
-        }
-      } catch {
-        // Non-critical: cookie creation failure doesn't block READY
+        // Non-critical
       }
     }
 
     return SyncResult.READY;
   }
 
-  // ------------------------------------------------------------------
-  // Raw entry → DTO conversion
-  // ------------------------------------------------------------------
-
   /**
-   * Decrypt and convert a raw committed entry from a ledger block into a DTO.
-   * Unlike staging entries (which use plain: prefixed values), committed
-   * entries have encrypted hex fields that must be decrypted first.
-   * @param {object} rawEntry - Raw entry dict with `data`, `hash`
-   * @returns {object|null} Decrypted DTO, or null if decryption fails.
+   * Case B — Different device or first-time setup: pull, reconcile, push, new cookie.
+   * @returns {Promise<SyncCheckResult>}
    * @private
    */
-  _rawCommittedEntryToDTO(rawEntry) {
+  async _reconcileDifferentDevice(masterKeyHex, localDeviceUuid) {
+    let remoteBlob;
     try {
-      const data = rawEntry.data || {};
-
-      // Decrypt timestamp fields from hex ciphertext
-      const startEpochStr = data.startTime_enc
-        ? this._crypto.decryptWithCachedKey(data.startTime_enc)
-        : null;
-      const startEpoch = startEpochStr ? parseInt(startEpochStr, 10) : null;
-      if (!startEpoch) return null;
-
-      const endEpochStr = data.endTime_enc
-        ? this._crypto.decryptWithCachedKey(data.endTime_enc)
-        : null;
-      const endEpoch = endEpochStr ? parseInt(endEpochStr, 10) : null;
-
-      // Decrypt metadata
-      let metadata = {};
-      if (data.metadata_enc) {
-        try {
-          const metaStr = this._crypto.decryptWithCachedKey(data.metadata_enc);
-          metadata = JSON.parse(metaStr);
-        } catch { /* ignore corrupt metadata */ }
-      }
-
-      const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
-
-      return {
-        entry_id: data.entry_id || rawEntry.hash || '',
-        entry_index: -1, // committed entries have no staging index
-        title: data.title || '',
-        start_epoch: startEpoch,
-        end_epoch: endEpoch,
-        duration: data.duration || 0,
-        is_active: false,
-        is_paused: false,
-        pauses: [],
-        tags: data.tags || [],
-        comment: data.comment || null,
-        media: [],
-        metadata,
-        date: dateStr,
-        source: 'ledger',
-        hash: rawEntry.hash || '',
-        device_uuid: data.device_uuid || '',
-        end_device_uuid: data.end_device_uuid || '',
-      };
+      remoteBlob = await this._remote.pullBlob(masterKeyHex);
     } catch {
-      return null;
+      return SyncResult.OFFLINE;
     }
-  }
 
-  /**
-   * Convert a single raw staging entry (from remote blob) to a DTO.
-   *
-   * Remote blob entries are stored in raw format with encrypted fields.
-   * Since the deobfuscated blob is plain JSON (decrypted), the fields
-   * are already plain text (the `plain:` prefix convention from the CLI).
-   *
-   * @param {object} rawEntry - Raw entry dict with `data`, `hash`, etc.
-   * @returns {object|null} Decrypted DTO, or null if corrupt.
-   * @private
-   */
-  _rawEntryToDTO(rawEntry) {
-    try {
-      const data = rawEntry.data || {};
-
-      // Parse timestamps from plain: prefix format
-      const startEpochStr = data.startTime_enc || '';
-      const startEpoch = this._parsePlainInt(startEpochStr);
-      if (startEpoch == null) return null;
-
-      const endEpochStr = data.endTime_enc;
-      const endEpoch = endEpochStr ? this._parsePlainInt(endEpochStr) : null;
-
-      const pausesRaw = data.pauses_enc || 'plain:[]';
-      const pauses = this._parsePlainJSON(pausesRaw) || [];
-
-      const metadataRaw = data.metadata_enc || 'plain:{}';
-      const metadata = this._parsePlainJSON(metadataRaw) || {};
-
-      const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
-
-      return {
-        entry_id: data.entry_id || '',
-        title: data.title || '',
-        start_epoch: startEpoch,
-        end_epoch: endEpoch,
-        duration: data.duration || 0,
-        is_active: data.is_active || false,
-        is_paused: data.is_paused || false,
-        pauses,
-        tags: data.tags || [],
-        comment: data.comment || null,
-        media: data.media || [],
-        metadata,
-        date: dateStr,
-        source: 'remote',
-        hash: rawEntry.hash || '',
-        device_uuid: data.device_uuid || '',
-        end_device_uuid: data.end_device_uuid || '',
-      };
-    } catch {
-      return null;
+    // If remote blob exists but can't be decrypted (wrong master key),
+    // DON'T overwrite it — abort and signal OFFLINE.
+    if (remoteBlob === BLOB_KEY_MISMATCH) {
+      console.warn(
+        'Remote staging blob exists but cannot be decrypted ' +
+        '(wrong master key). Aborting to avoid data loss.'
+      );
+      return SyncResult.OFFLINE;
     }
-  }
 
-  /**
-   * Parse a `plain:` prefixed string as an integer.
-   * @param {string} str - e.g. "plain:1714000000000"
-   * @returns {number|null}
-   * @private
-   */
-  _parsePlainInt(str) {
-    if (!str || typeof str !== 'string') return null;
-    if (str.startsWith('plain:')) {
-      return parseInt(str.slice(6), 10);
-    }
-    // Could be an already-decrypted value (just a number string)
-    return parseInt(str, 10);
-  }
-
-  /**
-   * Parse a `plain:` prefixed string as JSON.
-   * @param {string} str - e.g. 'plain:[{"pause_start":...}]'
-   * @returns {any|null}
-   * @private
-   */
-  _parsePlainJSON(str) {
-    if (!str || typeof str !== 'string') return null;
-    if (str.startsWith('plain:')) {
+    if (remoteBlob && Array.isArray(remoteBlob.entries)) {
       try {
-        return JSON.parse(str.slice(6));
-      } catch {
-        return null;
+        const localEntries = await this._local.readEntries();
+        const remoteDTOs = remoteBlob.entries
+          .map((raw) => rawEntryToDTO(raw))
+          .filter(Boolean);
+        const merged = mergeEntries(localEntries, remoteDTOs);
+        await this._local.writeEntries(merged);
+      } catch (err) {
+        console.warn('Merge failed, pushing local blob:', err.message);
       }
     }
+
+    // Push the (merged or local) blob to remote
+    await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
+
+    // Create new device cookie (fresh specifier, local + remote)
     try {
-      return JSON.parse(str);
+      await DeviceCookie.destroyLocally(this._storage);
+      this._deviceId = null; // Invalidate cached deviceId
+      const remoteCookie = await DeviceCookie.create(
+        localDeviceUuid,
+        this._storage,
+        this._crypto
+      );
+      if (remoteCookie) {
+        await this._pushRemoteCookie(remoteCookie);
+      }
     } catch {
-      return null;
+      // Non-critical: cookie creation failure doesn't block READY
     }
+
+    return SyncResult.READY;
+  }
+
+  // ------------------------------------------------------------------
+  // Cookie push helper
+  // ------------------------------------------------------------------
+
+  /**
+   * Push a remote cookie dict to the transport.
+   * Encodes {device_uuid, device_specifier} as JSON bytes.
+   * @param {{ device_uuid: string, device_specifier: string }} remoteCookie
+   * @private
+   */
+  async _pushRemoteCookie(remoteCookie) {
+    const cookieBytes = new TextEncoder().encode(JSON.stringify(remoteCookie));
+    await this._remote.pushCookie(cookieBytes);
   }
 
   // ------------------------------------------------------------------
@@ -854,8 +729,32 @@ export class SyncService {
 
     // Push cookie SECOND (soft failure)
     try {
-      await DeviceCookie.destroyLocally(this._storage);
-      await this._pushCookie(deviceId);
+      // Reuse existing device specifier when available — prevents
+      // re-rolling on every same-device write which causes spurious
+      // cookie mismatches for the CLI.
+      const existingCookie = await this._storage.get(LOCAL_COOKIE);
+      let specifier;
+
+      if (existingCookie?.device_specifier) {
+        // Same-device write — reuse existing specifier, only update creation_time
+        specifier = existingCookie.device_specifier;
+        await this._storage.set(LOCAL_COOKIE, {
+          device_specifier: specifier,
+          creation_time: Date.now(),
+        });
+      } else {
+        // First push after onboarding/re-auth — generate new specifier
+        const remoteCookie = await DeviceCookie.create(
+          deviceId, this._storage, this._crypto
+        );
+        specifier = remoteCookie?.device_specifier;
+      }
+
+      // Push remote cookie with the specifier (old or new).
+      // Remote format: {device_uuid, device_specifier} — no creation_time.
+      if (specifier) {
+        await this._pushRemoteCookie({ device_uuid: deviceId, device_specifier: specifier });
+      }
     } catch (err) {
       console.warn('Device cookie push failed:', err.message);
     }
@@ -880,10 +779,7 @@ export class SyncService {
       this._crypto
     );
     if (remoteCookie) {
-      const cookieBytes = new TextEncoder().encode(
-        JSON.stringify(remoteCookie)
-      );
-      await this._remote.pushCookie(cookieBytes);
+      await this._pushRemoteCookie(remoteCookie);
     }
   }
 
@@ -927,33 +823,34 @@ export class SyncService {
    */
   async pushLedgerBlocks(opts = {}) {
     const forceAll = opts.forceAll === true;
-    // ---- Skip conditions ----
+
     if (!this._remote) return 0;
 
     const mk = this._crypto.getMasterKey();
     if (!mk) return 0;
 
-    const blocks = (await this._storage.get('ledger:blocks')) || [];
+    const blocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
     if (blocks.length === 0) return 0;
 
-    // ---- Discover remote indices ----
+    // Discover remote indices (skip when force-pushing all blocks)
     /** @type {Set<number>} */
-    let remoteIndices;
-    try {
-      const remoteFiles = await this._transport.listFiles('ledger/blocks/');
-      remoteIndices = new Set(
-        remoteFiles
-          .filter(f => f.endsWith('.json'))
-          .map(f => parseInt(f.replace('.json', ''), 10))
-          .filter(n => !isNaN(n))
-      );
-    } catch (err) {
-      console.warn('pushLedgerBlocks: listFiles failed:', err.message);
-      return 0;
+    let remoteIndices = new Set();
+    if (!forceAll) {
+      try {
+        const remoteFiles = await this._transport.listFiles(REMOTE_LEDGER_BLOCKS_PREFIX);
+        remoteIndices = new Set(
+          remoteFiles
+            .filter(f => f.endsWith('.json'))
+            .map(f => parseInt(f.replace('.json', ''), 10))
+            .filter(n => !isNaN(n))
+        );
+      } catch (err) {
+        console.warn('pushLedgerBlocks: listFiles failed:', err.message);
+        return 0;
+      }
     }
 
-    // ---- Push new blocks (in ascending index order) ----
-    // Use day_index (LedgerEngine) with index fallback (test helpers / genesis).
+    // Push blocks in ascending index order
     const _blockIdx = (b) => b.day_index ?? b.index ?? 0;
     const sorted = [...blocks].sort((a, b) => _blockIdx(a) - _blockIdx(b));
     let pushed = 0;
@@ -966,8 +863,8 @@ export class SyncService {
       try {
         const json = JSON.stringify(block);
         const obfuscatedB64 = this._crypto.obfuscateBlob(json, mk);
-        const bytes = _base64ToBytes(obfuscatedB64);
-        const path = `ledger/blocks/${String(idx).padStart(6, '0')}.json`;
+        const bytes = base64ToBytes(obfuscatedB64);
+        const path = `${REMOTE_LEDGER_BLOCKS_PREFIX}${String(idx).padStart(6, '0')}.json`;
         await this._transport.push(path, bytes);
         pushed++;
       } catch (err) {
@@ -975,15 +872,15 @@ export class SyncService {
       }
     }
 
-    // ---- Push index ----
+    // Push index
     if (pushed > 0) {
       try {
-        const index = await this._storage.get('ledger:index');
+        const index = await this._storage.get(LOCAL_LEDGER_INDEX);
         if (index) {
           const json = JSON.stringify(index);
           const obfuscatedB64 = this._crypto.obfuscateBlob(json, mk);
-          const bytes = _base64ToBytes(obfuscatedB64);
-          await this._transport.push('ledger/index.json', bytes);
+          const bytes = base64ToBytes(obfuscatedB64);
+          await this._transport.push(REMOTE_LEDGER_INDEX, bytes);
         }
       } catch (err) {
         console.warn('pushLedgerBlocks: index push failed:', err.message);
@@ -1095,31 +992,30 @@ export class SyncService {
     let failures = 0;
     let blockFileCount = 0;
 
-    // Delete ledger block files (canonical protocol)
+    // Delete ledger block files
     try {
-      const files = await this._transport.listFiles('ledger/blocks/');
+      const files = await this._transport.listFiles(REMOTE_LEDGER_BLOCKS_PREFIX);
       if (files && files.length > 0) {
         blockFileCount = files.length;
         for (const filename of files) {
           try {
-            await this._transport.delete('ledger/blocks/' + filename);
+            await this._transport.delete(REMOTE_LEDGER_BLOCKS_PREFIX + filename);
           } catch (err) {
             failures++;
-            console.warn(`clearRemote: failed to delete ledger/blocks/${filename}: ${err.message}`);
+            console.warn(`clearRemote: failed to delete ${REMOTE_LEDGER_BLOCKS_PREFIX}${filename}: ${err.message}`);
           }
         }
       }
-      // Also delete the index file
       try {
-        await this._transport.delete('ledger/index.json');
+        await this._transport.delete(REMOTE_LEDGER_INDEX);
       } catch { /* may not exist */ }
     } catch (err) {
       failures++;
       console.warn(`clearRemote: failed to list ledger blocks: ${err.message}`);
     }
 
-    // Delete staging blob and cookie (canonical paths)
-    const stagingKeys = ['staging/blobs/current.json', 'staging/blobs/device_cookie.bin'];
+    // Delete staging blob and cookie
+    const stagingKeys = [REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE];
     for (const key of stagingKeys) {
       try {
         await this._transport.delete(key);
@@ -1133,10 +1029,7 @@ export class SyncService {
       throw new Error('Failed to clear any remote keys. The remote may be unreachable.');
     }
 
-    // Reset genesis gate so next checkAndSync re-evaluates compatibility
     this._genesisCompatible = null;
-
-    // Clear ETag cache so next pull is a fresh request
     this._transport.resetCache();
   }
 }

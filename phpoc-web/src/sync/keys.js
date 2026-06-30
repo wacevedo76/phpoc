@@ -1,0 +1,22 @@
+/**
+ * Canonical storage path constants.
+ *
+ * Single source of truth for all remote-storage and local-storage keys
+ * used across sync, genesis gate, remote sync, and clear-remote flows.
+ * Must match the CLI constants in:
+ *   domain/staging/remote_sync.py
+ *   domain/ledger/remote_sync.py
+ */
+
+// ── Remote paths (Worker → R2) ─────────────────────────────────────
+
+export const REMOTE_STAGING_BLOB = 'staging/blobs/current.json';
+export const REMOTE_DEVICE_COOKIE = 'staging/blobs/device_cookie.bin';
+export const REMOTE_LEDGER_BLOCKS_PREFIX = 'ledger/blocks/';
+export const REMOTE_LEDGER_INDEX = 'ledger/index.json';
+
+// ── Local storage keys (IndexedDB / in-memory) ─────────────────────
+
+export const LOCAL_COOKIE = 'cookie';
+export const LOCAL_LEDGER_BLOCKS = 'ledger:blocks';
+export const LOCAL_LEDGER_INDEX = 'ledger:index';

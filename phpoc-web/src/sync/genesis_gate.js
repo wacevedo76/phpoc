@@ -32,6 +32,8 @@
 
 import { LedgerMerge } from '../ledger/merge.js';
 import { getBlockHash } from '../ledger/utils.js';
+import { bytesToBase64 } from './base64.js';
+import { REMOTE_LEDGER_BLOCKS_PREFIX } from './keys.js';
 
 // ── In-flight dedup ─────────────────────────────────────────────────
 
@@ -153,23 +155,17 @@ export class GenesisGate {
    * @returns {Promise<object[]|null>} Assembled chain, or null if no blocks exist.
    */
   static async _pullRemoteChain(transport, crypto, masterKey) {
-    const files = await transport.listFiles('ledger/blocks/');
+    const files = await transport.listFiles(REMOTE_LEDGER_BLOCKS_PREFIX);
     if (!files || files.length === 0) return null;
 
     const sorted = [...files].sort();
     const chain = [];
     for (const filename of sorted) {
-      const path = 'ledger/blocks/' + filename;
+      const path = REMOTE_LEDGER_BLOCKS_PREFIX + filename;
       const raw = await transport.pull(path);
       if (raw === null || raw === undefined) continue;
 
-      // Convert bytes to base64 for deobfuscation
-      let b64;
-      if (typeof btoa !== 'undefined') {
-        b64 = btoa(String.fromCharCode(...raw));
-      } else {
-        b64 = Buffer.from(raw).toString('base64');
-      }
+      const b64 = bytesToBase64(raw);
       const plaintext = crypto.deobfuscateBlob(b64, masterKey);
       chain.push(JSON.parse(plaintext));
     }

@@ -7,8 +7,9 @@
  *   - Remote cookie:  {"device_uuid": "<UUID>", "device_specifier": "<random>"}
  *   - Local cookie:   {"device_specifier": "<same random>", "creation_time": "<epoch_ms>"}
  *
- * On every staging write, a new random specifier is generated, stored locally,
- * and pushed to remote as part of the cookie.
+ * On first push after onboarding/re-auth, a new random specifier is generated.
+ * Subsequent same-device writes reuse the existing specifier (only creation_time
+ * is updated). Cross-device takeovers create a fresh specifier.
  *
  * On every staging read (check_and_sync):
  *   1. Check local cookie exists and TTL hasn't expired
@@ -23,7 +24,7 @@
  *   - Remote stores no plaintext cookie key — just the random specifier + UUID
  *
  * Storage keys used:
- *   - 'cookie' : local cookie ({device_specifier, creation_time})
+ *   - COOKIE_KEY ('cookie') : local cookie ({device_specifier, creation_time})
  *
  * The remote cookie is NOT cached locally — it's pulled fresh from the
  * transport on every check_and_sync. The local cookie is the source of truth
@@ -32,6 +33,8 @@
 
 // Default TTL: 30 minutes (same as CLI default)
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
+
+const COOKIE_KEY = 'cookie';
 
 export class DeviceCookie {
   /**
@@ -64,7 +67,7 @@ export class DeviceCookie {
         creation_time: epochMs,
       };
 
-      await storage.set('cookie', localCookie);
+      await storage.set(COOKIE_KEY, localCookie);
       return remoteCookie;
     } catch (err) {
       console.error('DeviceCookie.create failed:', err);
@@ -82,30 +85,31 @@ export class DeviceCookie {
    */
   static async isValidLocally(storage, ttlMinutes = 30) {
     try {
-      const localCookie = await storage.get('cookie');
+      const localCookie = await storage.get(COOKIE_KEY);
       if (!localCookie) return null;
 
       const specifier = localCookie.device_specifier;
       const createdAt = localCookie.creation_time;
 
       if (!specifier || !createdAt) {
-        await storage.remove('cookie');
+        await storage.remove(COOKIE_KEY);
         return null;
       }
 
       const elapsedMs = Date.now() - createdAt;
-      const ttlMs = (ttlMinutes || DEFAULT_TTL_MS / 60000) * 60 * 1000;
+      const effectiveTtlMinutes = ttlMinutes ?? (DEFAULT_TTL_MS / 60000);
+      const ttlMs = effectiveTtlMinutes * 60 * 1000;
 
       if (elapsedMs > ttlMs) {
         // Cookie expired — clean up
-        await storage.remove('cookie');
+        await storage.remove(COOKIE_KEY);
         return null;
       }
 
       return localCookie;
     } catch (err) {
       console.warn('DeviceCookie.isValidLocally failed:', err);
-      await storage.remove('cookie');
+      await storage.remove(COOKIE_KEY);
       return null;
     }
   }
@@ -138,7 +142,7 @@ export class DeviceCookie {
   static matches(localCookie, remoteCookie) {
     const localSpec = localCookie?.device_specifier || '';
     const remoteSpec = remoteCookie?.device_specifier || '';
-    return !!(localSpec && remoteSpec && localSpec === remoteSpec);
+    return localSpec !== '' && remoteSpec !== '' && localSpec === remoteSpec;
   }
 
   /**
@@ -149,7 +153,7 @@ export class DeviceCookie {
    */
   static async destroyLocally(storage) {
     try {
-      await storage.remove('cookie');
+      await storage.remove(COOKIE_KEY);
     } catch (err) {
       console.warn('DeviceCookie.destroyLocally failed:', err);
     }

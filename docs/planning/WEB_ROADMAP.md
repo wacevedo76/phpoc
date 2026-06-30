@@ -73,6 +73,52 @@
 
 Full investigation: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
 
+## Build 60 — Stable Device Specifier on Writes (Step 6c) — 2026-06-30
+
+**Bug fix:** `pushToRemote()` in `sync.js` destroyed the local cookie and called `DeviceCookie.create()` on every push, generating a new random `device_specifier` each time. The CLI saw a cookie mismatch on every web write and blocked read commands (`ph view`, `ph list`).
+
+**Fix:** `pushToRemote()` now checks for an existing local `device_specifier`:
+- Has one → reuses it, only updates `creation_time` to extend TTL
+- No cookie → calls `DeviceCookie.create()` for a fresh specifier (first push after onboarding/re-auth)
+- Remote cookie pushed as `{device_uuid, device_specifier}` — no `creation_time` leaked
+
+`_pushCookie()` and `_reconcileAndClaim()` Case B are unchanged — cross-device takeover still generates a new specifier (correct semantics).
+
+**Files changed:**
+- `phpoc-web/src/sync/sync.js` — `pushToRemote()` modified (29-line block replaced)
+- `phpoc-web/test/sync_service_test.mjs` — Group O: 14 assertions (O1–O4), 5 test scenarios
+
+**Result:** 167/167 sync tests pass (was 161 pass / 6 fail RED). Plan: `docs/planning/STABLE_DEVICE_SPECIFIER_ON_WRITES.md`.
+
+## Build 61 — Sync Module Refactoring (Step 6d) — 2026-06-30
+
+**Major refactor of `src/sync/` across four dimensions: modularity, clarity, security, user efficiency.**
+
+**Modularity (3 new modules):**
+- `src/sync/base64.js` (35 lines) — shared `base64ToBytes`/`bytesToBase64`, removed duplicates from sync.js, remote_sync.js, genesis_gate.js
+- `src/sync/keys.js` (22 lines) — 7 canonical path constants, replaced 30+ hardcoded strings across 5 files
+- `src/sync/entry_dto.js` (159 lines) — DTO conversion extracted from sync.js: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON`
+
+**Clarity (5 improvements):**
+- `checkAndSync()` decomposed into `_genesisGatePhase()` / `_fastPathPhase()` / `_authGatePhase()` (~35 lines each)
+- `_reconcileAndClaim()` split into `_reconcileSameDevice()` / `_reconcileDifferentDevice()` (~25 lines each)
+- `_pushRemoteCookie()` helper replaces 3 duplicated cookie-encode blocks
+- `cookie.js` stale header fixed (no longer says "every write generates new specifier")
+- Removed unused `timeoutMs` param from `checkAndSync()`
+
+**Security (2 fixes):**
+- **cookie.js TTL fallback bug:** `(ttlMinutes || 0.5)` → `(ttlMinutes ?? 30)`. When `ttlMinutes=0`, old `||` fell back to 30s instead of 30min. Now uses nullish coalescing.
+- `matches()` redundant `!!` removed — expression already boolean
+
+**Efficiency (3 improvements):**
+- `_deviceId` cached in `this._deviceId` — avoids repeated storage + WASM calls per operation
+- `pushLedgerBlocks()` skips `listFiles` when `forceAll=true`
+- `clearRemote()` uses `keys.js` constants instead of hardcoded paths
+
+**Files changed:** 8 modified, 3 new. `sync.js`: 1,169 → 1,035 lines (−134). Net: ~180 lines of duplication removed.
+
+**Result:** All 167 sync tests pass + 21 Vitest component tests pass. Zero regressions.
+
 ## Build 58 — GENESIS_MISMATCH Bug Fix Tests — 2026-06-29
 
 **86 tests across 3 files for the GENESIS_MISMATCH bug fix (all GREEN):**
