@@ -14,7 +14,7 @@
 
 ## Bug 1 — Genesis mismatch detection is indiscriminate
 
-**Status:** 🔜 Planned  
+**Status:** ✅ Implemented  
 **Severity:** High — blocks all ledger block sync on transient errors  
 **Files:** `phpoc-web/src/sync/sync.js`, `phpoc-web/src/sync/genesis_gate.js`
 
@@ -54,7 +54,7 @@ Replace the `{ compatible: false, reason: '...' }` return pattern with typed err
 
 ## Bug 2 — Month summary blocks silently dropped during push
 
-**Status:** 🔜 Planned  
+**Status:** ✅ Implemented  
 **Severity:** High — causes incomplete chains on remote  
 **Files:** `phpoc-web/src/sync/sync.js` (`pushLedgerBlocks`)
 
@@ -90,9 +90,9 @@ for (const block of sorted) {
 
 ## Bug 3 — Web↔CLI staging format mismatch
 
-**Status:** 3a 🔜 Planned / 3b 🔜 Planned  
+**Status:** ✅ Implemented  
 **Severity:** High — blocks all staging sync between web and CLI  
-**Files:** `domain/staging/service.py`, `phpoc-web/src/sync/remote_sync.js`, `phpoc-web/src/sync/sync.js`
+**Files:** `domain/staging/service.py`, `phpoc-web/src/sync/remote_sync.js`, `phpoc-web/src/sync/sync.js`, `phpoc-web/src/sync/local_cache.js`, `phpoc-web/src/sync/device_uuid.js`, `security/device_identity.py`
 
 ### Sub-issue 3a: Same device UUID causes mass overwrite
 
@@ -178,9 +178,9 @@ Web changes required:
 
 ## Bug 4 — Genesis seal mismatch between creation and verification
 
-**Status:** 🔜 Planned  
+**Status:** ✅ Implemented  
 **Severity:** Medium — breaks `ph onboarding file` and `ph login`  
-**Files:** `core/factory.py`, `cli/onboarding_file.py`, `security/auth.py`
+**Files:** `core/factory.py`
 
 ### What happens
 

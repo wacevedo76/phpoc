@@ -25,8 +25,36 @@ export function deterministicHash(data) {
 }
 
 export class MockCrypto {
+  constructor() {
+    this._mk = null;
+  }
+
+  getMasterKey() { return this._mk; }
+  setMasterKey(k) { this._mk = k; }
+
   seal(data, masterKeyHex) {
     return deterministicHash(data + masterKeyHex);
+  }
+
+  /**
+   * Seal a block (JSON object). Sorts keys, removes signature,
+   * then calls seal(). Used by test chain builders.
+   */
+  sealBlock(block, masterKeyHex) {
+    const mk = masterKeyHex || this._mk || 'deadbeef';
+    // Strip day_hash and signature fields before sealing (spec behavior)
+    const content = {};
+    for (const [k, v] of Object.entries(block)) {
+      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature') {
+        content[k] = v;
+      }
+    }
+    // Sort keys for deterministic JSON
+    const sorted = {};
+    for (const k of Object.keys(content).sort()) {
+      sorted[k] = content[k];
+    }
+    return this.seal(JSON.stringify(sorted), mk);
   }
 
   verifySeal(data, sealHex, masterKeyHex) {
@@ -54,5 +82,34 @@ export class MockCrypto {
       return ciphertextHex.slice(4);
     }
     return ciphertextHex;
+  }
+
+  /**
+   * Obfuscate a plaintext blob for remote storage (mock).
+   * Returns base64-encoded obfuscation for transport push.
+   */
+  obfuscateBlob(plaintext, masterKeyHex) {
+    const obf = 'obf:' + plaintext;
+    return Buffer.from(obf).toString('base64');
+  }
+
+  /**
+   * Deobfuscate a base64-encoded blob from remote storage (mock).
+   * Returns plaintext.
+   */
+  deobfuscateBlob(b64, masterKeyHex) {
+    const obf = Buffer.from(b64, 'base64').toString('utf-8');
+    if (obf.startsWith('obf:')) {
+      return obf.slice(4);
+    }
+    // Try plaintext JSON directly
+    return obf;
+  }
+
+  /**
+   * Decrypt with the cached master key (for committed entry DTOs).
+   */
+  decryptWithCachedKey(ciphertextHex) {
+    return this.decrypt(ciphertextHex);
   }
 }

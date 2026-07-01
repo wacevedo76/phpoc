@@ -94,7 +94,7 @@ const definedStatuses = configEntries.map(e => e.status);
 for (const s of expectedStatuses) {
   assert(definedStatuses.includes(s), `T1.${s}: ${s} status is defined in config`);
 }
-assertEq(definedStatuses.length, 6, 'T1.count: exactly 6 statuses defined');
+assertEq(definedStatuses.length, 7, 'T1.count: exactly 7 statuses defined (includes GENESIS_MISMATCH)');
 
 // ── T2: READY status ──────────────────────────────────────────────────
 console.log('\n--- T2: READY status ---');

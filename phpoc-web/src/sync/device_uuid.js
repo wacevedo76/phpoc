@@ -15,8 +15,16 @@
  * via isWasmDerivedUuid() and replaced with a fresh UUID4.
  */
 
+// Client-type suffix for cross-client identity (Bug 3a fix).
+// CLI uses '-cli', web uses '-web'. Ensures CLI and web always
+// have distinct device identities — no same-device overwrite risk.
+const CLIENT_TYPE = 'web';
+
 // UUID4 regex for validation
 const UUID4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// UUID4-with-suffix regex: standard UUID4 followed by '-web'
+const UUID4_WITH_SUFFIX_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-[a-z]+$/i;
 
 /**
  * Get or create the device UUID.
@@ -44,13 +52,27 @@ export async function getOrCreateDeviceUuid(storage) {
     existing = undefined;
   }
 
-  // If exists and is NOT WASM-derived, return it
-  if (existing && typeof existing === 'string' && !isWasmDerivedUuid(existing)) {
+  // If exists and is already a suffixed UUID (e.g., '...-web'), return as-is
+  if (existing && typeof existing === 'string' && UUID4_WITH_SUFFIX_REGEX.test(existing)) {
     return existing;
   }
 
-  // Generate a fresh UUID4 (first boot or migration from WASM-derived)
-  const newUuid = crypto.randomUUID();
+  // If exists and is a bare UUID4 (no suffix), append the client suffix
+  if (existing && typeof existing === 'string' && UUID4_REGEX.test(existing)) {
+    const suffixed = existing + '-' + CLIENT_TYPE;
+    await storage.set('device_uuid', suffixed);
+    return suffixed;
+  }
+
+  // If exists and is WASM-derived (hex string), migrate to UUID4-web
+  if (existing && typeof existing === 'string' && isWasmDerivedUuid(existing)) {
+    const newUuid = crypto.randomUUID() + '-' + CLIENT_TYPE;
+    await storage.set('device_uuid', newUuid);
+    return newUuid;
+  }
+
+  // Generate a fresh UUID4 with client suffix (first boot)
+  const newUuid = crypto.randomUUID() + '-' + CLIENT_TYPE;
 
   // Persist it
   await storage.set('device_uuid', newUuid);

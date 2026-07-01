@@ -53,7 +53,11 @@ class LedgerFactory:
         }
         
         # 5. Seal and Sign the Genesis
-        genesis_json = json.dumps(genesis, sort_keys=True)
+        # Bug 4 fix: Strip signature before sealing, matching web behavior
+        # and verification paths (onboarding_file.py, auth.py). Including
+        # signature: "" in the sealed JSON produces a different hash.
+        seal_data = {k: v for k, v in genesis.items() if k != "signature"}
+        genesis_json = json.dumps(seal_data, sort_keys=True)
         genesis["day_hash"] = crypto.seal(genesis_json)
         genesis["signature"] = crypto.sign(genesis["day_hash"], identity_secret)
         

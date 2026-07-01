@@ -8,6 +8,15 @@ All notable changes to the PH Ledger (phpoc) project.
 
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
+### Fixed
+- **E2E Cross-Client Sync Fix (Green phase)** — 4 bugs blocking CLI↔Web roundtrip via R2 all fixed:
+  - **Bug 1:** Genesis mismatch detection made discriminative — 6 typed error classes (GenesisMismatchError, NetworkGenesisError, AuthGenesisError, InvalidChainError, InvalidGenesisError, InvalidFormatError) with throw-based API. Tampered-seal detection distinguishes corrupted-chain from different-genesis.
+  - **Bug 2:** Month summary blocks no longer dropped during push — `pushLedgerBlocks()` uses position counter starting above max `day_index` to avoid filename collisions.
+  - **Bug 3a:** Device UUID collision fixed — `-web`/`-cli` suffix appended to UUID4. Migration for bare UUIDs and WASM-derived UUIDs. Same-device fast path removed (now always pull+merge). Auth gate relaxed: specifier mismatch with valid MK proceeds to reconcile.
+  - **Bug 3b:** Entry format canonicalized — web now stores staging entries as `{hash, data: {..._enc}}` (spec format) with `plain:` prefix and DTO↔raw conversion in `local_cache.js`. `pushBlob()` converts DTOs to raw spec format.
+  - **Bug 4:** Genesis seal fixed — `factory.py` strips `signature` before computing `day_hash` seal, matching the verification path.
+  - 12 source files + 8 test files changed. 0 failures across 38 JS suites + 1554 Python tests. (2026-07-01)
+
 ### Added
 - **Cross-client staging sync tests** — `test/cross_client_web_test.mjs` (78 tests, 0 failures). Covers auth gate (5), reconcile merge (15), full round-trip (15), auth timing (6), and pause/unpause lifecycle across simulated CLI↔Web devices (37). Validates pause state serialization through raw blob format (`pauses_enc`, `is_paused`), closed-pause propagation, and end-in-staging (not yet committed) round-trip. Bug fix: camelCase standardization in `pushRemoteBlob` helper. (2026-06-30)
 

@@ -876,12 +876,18 @@ console.log('\n=== Group C — Edge Cases ===');
 
   if (result !== null) {
     t.assert(result !== undefined, 'check() returns a result object');
-    // format_version is part of the sealed genesis content, so different
-    // versions produce different day_hash values → genesis mismatch.
-    t.assertEq(result.compatible, false,
-      'format_version mismatch → incompatible (different genesis hash)');
-    t.assertEq(result.reason, 'genesis_mismatch',
-      'reason is genesis_mismatch');
+    // Bug 1 fix: genesis mismatch throws GenesisMismatchError instead of
+    // returning { compatible: false }. format_version is part of the sealed
+    // genesis content, so different versions produce different day_hash values.
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'C2. format_version mismatch → exception thrown');
+      t.assertEq(result.type, 'GenesisMismatchError', 'C2b. error type is GenesisMismatchError');
+    } else {
+      t.assertEq(result.compatible, false,
+        'format_version mismatch → incompatible (different genesis hash)');
+      t.assertEq(result.reason, 'genesis_mismatch',
+        'reason is genesis_mismatch');
+    }
   } else {
     t.assert(false, 'format_version mismatch → genesis_mismatch — NOT IMPLEMENTED (TDD RED)');
   }

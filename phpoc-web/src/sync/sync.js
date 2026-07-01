@@ -44,7 +44,15 @@ import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
 import { getOrCreateDeviceUuid } from './device_uuid.js';
-import { GenesisGate } from './genesis_gate.js';
+import {
+  GenesisGate,
+  GenesisMismatchError,
+  NetworkGenesisError,
+  AuthGenesisError,
+  InvalidChainError,
+  InvalidGenesisError,
+  InvalidFormatError,
+} from './genesis_gate.js';
 import { base64ToBytes, bytesToBase64 } from './base64.js';
 import { rawCommittedEntryToDTO, rawEntryToDTO } from './entry_dto.js';
 import {
@@ -443,27 +451,35 @@ export class SyncService {
     if (blocks.length === 0) return null;
 
     if (!this._genesisCheckPromise) {
-      this._genesisCheckPromise = (async () => {
-        try {
-          const result = await GenesisGate.check(
-            blocks, this._transport, this._crypto, masterKey
-          );
-          this._genesisCompatible = result.compatible;
-          return result;
-        } catch {
-          return null; // Network error — don't cache, retry next time
-        }
-      })();
+      this._genesisCheckPromise = GenesisGate.check(
+        blocks, this._transport, this._crypto, masterKey
+      );
     }
 
-    const result = await this._genesisCheckPromise;
+    let result;
+    try {
+      result = await this._genesisCheckPromise;
+    } catch (err) {
+      this._genesisCheckPromise = null;
+      if (err instanceof GenesisMismatchError) {
+        this._genesisCompatible = false; // Cache negative result
+        return SyncResult.GENESIS_MISMATCH;
+      }
+      if (
+        err instanceof NetworkGenesisError ||
+        err instanceof AuthGenesisError ||
+        err instanceof InvalidChainError ||
+        err instanceof InvalidGenesisError ||
+        err instanceof InvalidFormatError
+      ) {
+        return null; // Transient — fall through to offline/auth handling
+      }
+      throw err; // Unexpected
+    }
     this._genesisCheckPromise = null;
 
-    if (result === null) {
-      return null; // Network error — fall through to OFFLINE below
-    }
-
     if (result.compatible === false) {
+      this._genesisCompatible = false;
       return SyncResult.GENESIS_MISMATCH;
     }
 
@@ -538,11 +554,6 @@ export class SyncService {
     const specifierMismatch = this._specifierMismatch === true;
     this._specifierMismatch = false;
 
-    // Specifier mismatch ALWAYS forces auth, regardless of cached crypto key.
-    if (specifierMismatch) {
-      return SyncResult.REAUTH_NEEDED;
-    }
-
     // Check local cookie TTL (re-check in case _fastPathPhase was skipped)
     const localCookie = await DeviceCookie.isValidLocally(
       this._storage,
@@ -554,12 +565,15 @@ export class SyncService {
       return SyncResult.REAUTH_NEEDED;
     }
 
-    // No remote cookie — proceed with reconcile if we have a master key
+    // No master key — force auth regardless of cookie state.
     const mk = this._crypto.getMasterKey();
     if (!mk) {
       return SyncResult.REAUTH_NEEDED;
     }
 
+    // Specifier mismatch: always proceed to reconcile for cross-client
+    // merge (Bug 3a fix). Different clients on same ledger must merge
+    // entries. The user has already authenticated (cookie valid + MK cached).
     return this._reconcileAndClaim(mk);
   }
 
@@ -599,10 +613,10 @@ export class SyncService {
 
     const localDeviceUuid = await this._getDeviceId() || '';
 
-    if (remoteDeviceUuid && remoteDeviceUuid === localDeviceUuid) {
-      return this._reconcileSameDevice(masterKeyHex, localDeviceUuid, remoteCookieSpecifier);
-    }
-
+    // Bug 3a fix: Always pull + merge, even for same device UUID.
+    // Same-device doesn't mean local-is-authoritative — the remote
+    // may have entries from a different client. Client-type suffix
+    // ({uuid}-cli vs {uuid}-web) guarantees distinct identities.
     return this._reconcileDifferentDevice(masterKeyHex, localDeviceUuid);
   }
 
@@ -850,25 +864,35 @@ export class SyncService {
       }
     }
 
-    // Push blocks in ascending index order
+    // Push blocks in ascending index order.
+    // Use a position counter for file naming only — day blocks keep
+    // day_index filenames (backward compat), summary blocks fill gaps
+    // with positions above max day_index to avoid collisions.
+    // No new fields added to block data (position is transport-layer only).
     const _blockIdx = (b) => b.day_index ?? b.index ?? 0;
     const sorted = [...blocks].sort((a, b) => _blockIdx(a) - _blockIdx(b));
+
+    // Find max day_index so position-based filenames don't collide
+    let maxDayIdx = 0;
+    for (const b of blocks) {
+      if (b.day_index != null && b.day_index > maxDayIdx) maxDayIdx = b.day_index;
+    }
+    let position = maxDayIdx + 1;
     let pushed = 0;
     for (const block of sorted) {
-      const idx = block.day_index ?? block.index;
-      if (idx == null) continue;
+      const fileIdx = block.day_index ?? position++;
 
-      if (!forceAll && remoteIndices.has(idx)) continue;
+      if (!forceAll && remoteIndices.has(fileIdx)) continue;
 
       try {
         const json = JSON.stringify(block);
         const obfuscatedB64 = this._crypto.obfuscateBlob(json, mk);
         const bytes = base64ToBytes(obfuscatedB64);
-        const path = `${REMOTE_LEDGER_BLOCKS_PREFIX}${String(idx).padStart(6, '0')}.json`;
+        const path = `${REMOTE_LEDGER_BLOCKS_PREFIX}${String(fileIdx).padStart(6, '0')}.json`;
         await this._transport.push(path, bytes);
         pushed++;
       } catch (err) {
-        console.warn('pushLedgerBlocks: push failed for block', idx, ':', err.message);
+        console.warn('pushLedgerBlocks: push failed for block', fileIdx, ':', err.message);
       }
     }
 

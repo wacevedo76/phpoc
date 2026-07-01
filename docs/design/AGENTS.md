@@ -10,6 +10,8 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `DESIGN_MULTI_DEVICE_SESSION.md` — Multi-device session architecture
 - `ARCHITECTURAL_MIGRATION_STRATEGY.md` — Historical 7-phase migration record (complete)
 - `workflows/` — User-facing and system workflow specifications (cli/ and web/)
+- `flaws/ISSUES_TO_ADDRESS.md` — Guiding document: 17 design flaws organized by severity with dependency graph and recommended attack order
+- `flaws/PHPSPEC-Design_Flaws.md` — Brutally honest assessment of PHPSPEC design conflicts and weaknesses
 
 ## Local Contracts
 - ADRs document decisions that have architectural impact — include context, decision, and consequences

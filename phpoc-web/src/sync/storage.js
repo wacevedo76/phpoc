@@ -121,16 +121,6 @@ export class MemoryBackend extends StorageBackend {
   async clear() {
     this._store.clear();
   }
-
-  async list(prefix) {
-    const keys = [];
-    for (const key of this._store.keys()) {
-      if (key.startsWith(prefix)) {
-        keys.push(key);
-      }
-    }
-    return keys.sort();
-  }
 }
 
 

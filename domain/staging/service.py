@@ -664,70 +664,55 @@ class StagingService:
 
         local_device_uuid = self._get_device_id() or ""
 
-        if remote_device_uuid and remote_device_uuid == local_device_uuid:
-            # Case A — Same device that last wrote: push only, touch cookie
-            self.push_blob_only(master_key=master_key)
+        # Bug 3a fix: Always pull + merge, even for same device UUID.
+        # Same-device doesn't mean local-is-authoritative — the remote
+        # may have entries from a different client. Client-type suffix
+        # ({uuid}-cli vs {uuid}-web) guarantees distinct identities.
+        try:
+            remote_blob = self._remote.pull(master_key=master_key)
+        except Exception:
+            return SyncCheckResult.OFFLINE
 
-            # Touch local cookie: update creation_time, keep specifier,
-            # no remote cookie push (remote already has matching specifier).
-            # Unlike the fast path, this is unconditional (no 10% window).
-            if remote_cookie_specifier:
-                now_ms = int(time.time() * 1000)
-                meta_path = self._data_dir / META_FILE
-                try:
-                    meta_path.write_text(json.dumps({
-                        "device_specifier": remote_cookie_specifier,
-                        "creation_time": now_ms,
-                    }))
-                except Exception:
-                    pass
-        else:
-            # Case B — Different device or first-time setup: pull, reconcile, push
+        # If remote blob exists but can't be decrypted (wrong master key),
+        # DON'T overwrite it — abort and signal OFFLINE.
+        if remote_blob is BLOB_KEY_MISMATCH:
+            logger.warning(
+                "Remote staging blob exists but cannot be decrypted "
+                "(wrong master key). Aborting to avoid data loss."
+            )
+            return SyncCheckResult.OFFLINE
+
+        if remote_blob is not None and "entries" in remote_blob:
             try:
-                remote_blob = self._remote.pull(master_key=master_key)
-            except Exception:
-                return SyncCheckResult.OFFLINE
-
-            # If remote blob exists but can't be decrypted (wrong master key),
-            # DON'T overwrite it — abort and signal OFFLINE.
-            if remote_blob is BLOB_KEY_MISMATCH:
-                logger.warning(
-                    "Remote staging blob exists but cannot be decrypted "
-                    "(wrong master key). Aborting to avoid data loss."
+                local_entries = self._local.read_entries()
+                # Convert remote raw entries to DTOs before merge
+                remote_dtos = []
+                for raw_entry in remote_blob.get("entries", []):
+                    dto = self._raw_entry_to_dto(raw_entry)
+                    if dto is not None:
+                        remote_dtos.append(dto)
+                merged = self._merge.merge(
+                    local_entries, remote_dtos
                 )
-                return SyncCheckResult.OFFLINE
-
-            if remote_blob is not None and "entries" in remote_blob:
-                try:
-                    local_entries = self._local.read_entries()
-                    # Convert remote raw entries to DTOs before merge
-                    remote_dtos = []
-                    for raw_entry in remote_blob.get("entries", []):
-                        dto = self._raw_entry_to_dto(raw_entry)
-                        if dto is not None:
-                            remote_dtos.append(dto)
-                    merged = self._merge.merge(
-                        local_entries, remote_dtos
-                    )
-                    self._local.write_entries(merged)
-                except Exception:
-                    # Merge failure — push local as-is
-                    pass
-
-            # Push the (merged or local) blob to remote
-            self.push_blob_only(master_key=master_key)
-
-            # Create new device cookie (fresh specifier, local + remote)
-            try:
-                identity = self._remote._device_id_provider.get_device_identity(master_key)
-                device_id = identity.device_id
-                DeviceCookie.destroy_locally(self._data_dir)
-                remote_cookie = DeviceCookie.create(device_id, self._data_dir)
-                if remote_cookie is not None:
-                    cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
-                    self._remote.push_cookie(cookie_bytes)
+                self._local.write_entries(merged)
             except Exception:
-                pass  # Non-critical: cookie creation failure doesn't block READY
+                # Merge failure — push local as-is
+                pass
+
+        # Push the (merged or local) blob to remote
+        self.push_blob_only(master_key=master_key)
+
+        # Create new device cookie (fresh specifier, local + remote)
+        try:
+            identity = self._remote._device_id_provider.get_device_identity(master_key)
+            device_id = identity.device_id
+            DeviceCookie.destroy_locally(self._data_dir)
+            remote_cookie = DeviceCookie.create(device_id, self._data_dir)
+            if remote_cookie is not None:
+                cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
+                self._remote.push_cookie(cookie_bytes)
+        except Exception:
+            pass  # Non-critical: cookie creation failure doesn't block READY
 
         return SyncCheckResult.READY
 

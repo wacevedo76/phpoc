@@ -94,20 +94,44 @@ export class RemoteSync {
   /**
    * Encrypt entries into blob format, obfuscate, and push via transport.
    *
+   * Converts DTO entries to raw spec format ({hash, data: {..._enc}})
+   * for cross-client compatibility with CLI (Bug 3b fix).
+   *
    * Obfuscation happens when a master key is available. Falls back to
    * plaintext JSON when no key is available (unauthenticated session).
    *
-   * @param {Array} entries - List of staging entry dicts.
+   * @param {Array} entries - List of staging entry DTOs.
    * @param {string} deviceId - This device's UUID.
    * @param {string} [masterKeyHex] - 64-char hex master key for obfuscation.
    *   Falls back to crypto.getMasterKey() if not provided.
    * @returns {Promise<void>}
    */
   async pushBlob(entries, deviceId, masterKeyHex) {
+    // Convert DTOs to raw spec format ({hash, data: {..._enc}})
+    const rawEntries = entries.map((e) => ({
+      hash: e.hash || '',
+      data: {
+        entry_id: e.entry_id || '',
+        title: e.title || '',
+        startTime_enc: `plain:${e.start_epoch ?? 0}`,
+        endTime_enc: e.end_epoch != null ? `plain:${e.end_epoch}` : undefined,
+        duration: e.duration || 0,
+        is_active: e.is_active ?? true,
+        is_paused: e.is_paused ?? false,
+        pauses_enc: `plain:${JSON.stringify(e.pauses || [])}`,
+        metadata_enc: `plain:${JSON.stringify(e.metadata || {})}`,
+        tags: e.tags || [],
+        comment: e.comment || null,
+        media: e.media || [],
+        device_uuid: e.device_uuid || deviceId,
+        end_device_uuid: e.end_device_uuid || '',
+      },
+    }));
+
     const blob = {
       device_id: deviceId,
       device_proof: '',
-      entries,
+      entries: rawEntries,
       updated_at: Date.now(),
     };
 

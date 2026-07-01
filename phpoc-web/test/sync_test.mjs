@@ -342,7 +342,9 @@ const pulled = await remoteSync.pullBlob();
 assert(pulled !== null, 'pulled blob exists');
 assertEq(pulled.device_id, 'dev-123', 'blob has device_id');
 assertEq(pulled.entries.length, 1, 'blob has one entry');
-assertEq(pulled.entries[0].title, 'Test', 'entry preserved');
+// Bug 3b: entries are now in spec format {hash, data: {title, ...}}
+const rawEntry = pulled.entries[0];
+assert(rawEntry.data && rawEntry.data.title === 'Test', 'entry preserved (spec format)');
 
 // 4c. Cookie push/pull
 const cookieBytes = new TextEncoder().encode(

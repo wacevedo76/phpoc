@@ -13,6 +13,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `CLI_READONLY_STAGING_SYNC.md` — Plan: CLI read commands pull remote staging without claiming ownership (fixes `ph view` blocking on specifier mismatch)
 - `E2E_CROSS_CLIENT_BUGS.md` — E2E cross-client test findings: 4 bugs + 1 plumbing issue blocking CLI↔Web staging/ledger sync (2026-06-30)
 - `E2E_CROSS_CLIENT_FIX_PLAN.md` — Fix plan for cross-client bugs: typed errors (Bug 1), summary block indices (Bug 2), staging format (Bug 3), genesis seal (Bug 4)
+- `ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` — Strategy: hash-index based genesis check replacing full block pulls. 4-phase TDD plan. 210× speedup on common case. (2026-06-30)
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)

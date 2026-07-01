@@ -20,7 +20,15 @@
 
 import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
-import { GenesisGate } from '../src/sync/genesis_gate.js';
+import {
+  GenesisGate,
+  GenesisMismatchError,
+  NetworkGenesisError,
+  AuthGenesisError,
+  InvalidChainError,
+  InvalidGenesisError,
+  InvalidFormatError,
+} from '../src/sync/genesis_gate.js';
 import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
@@ -205,12 +213,28 @@ async function simulateGenesisCheck({
       blocks, transport, crypto, masterKey
     );
 
+    // Bug 1 fix: check() now throws on errors, returns normally on success.
+    // Non-error returns (compatible, no_local_ledger) are still return values.
     if (result.compatible) {
       return { status: 'compatible', stats: result.stats };
-    } else {
-      return { status: 'incompatible', reason: result.reason };
     }
+    // Non-error incompatible result (e.g., no_local_ledger)
+    return { status: 'incompatible', reason: result.reason };
   } catch (err) {
+    if (err instanceof GenesisMismatchError) {
+      return { status: 'incompatible', reason: 'genesis_mismatch' };
+    }
+    if (
+      err instanceof NetworkGenesisError ||
+      err instanceof AuthGenesisError ||
+      err instanceof InvalidChainError ||
+      err instanceof InvalidGenesisError ||
+      err instanceof InvalidFormatError
+    ) {
+      // Transient errors treated as network error by UI
+      const cause = err.cause?.message || err.message;
+      return { status: 'incompatible', reason: cause.includes('403') ? 'auth_failure' : 'network_error' };
+    }
     return { status: 'offline', reason: err.message || 'Network error' };
   }
 }

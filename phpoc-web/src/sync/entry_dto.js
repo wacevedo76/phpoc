@@ -99,6 +99,17 @@ export function rawEntryToDTO(rawEntry) {
 
     const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
 
+    // Parse device UUIDs — may be in device_uuid or device_uuid_enc field
+    const deviceUuidRaw = data.device_uuid_enc || data.device_uuid || '';
+    const deviceUuid = deviceUuidRaw.startsWith('plain:')
+      ? deviceUuidRaw.slice(6)
+      : deviceUuidRaw;
+
+    const endDeviceUuidRaw = data.end_device_uuid_enc || data.end_device_uuid || '';
+    const endDeviceUuid = endDeviceUuidRaw.startsWith('plain:')
+      ? endDeviceUuidRaw.slice(6)
+      : endDeviceUuidRaw;
+
     return {
       entry_id: data.entry_id || '',
       title: data.title || '',
@@ -115,8 +126,8 @@ export function rawEntryToDTO(rawEntry) {
       date: dateStr,
       source: 'remote',
       hash: rawEntry.hash || '',
-      device_uuid: data.device_uuid || '',
-      end_device_uuid: data.end_device_uuid || '',
+      device_uuid: deviceUuid,
+      end_device_uuid: endDeviceUuid,
     };
   } catch {
     return null;

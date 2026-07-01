@@ -4,7 +4,7 @@
 > Before making edits, consult the Documentation Impact Contract in root `AGENTS.md` to identify which docs this session's changes affect. Update those docs as part of the work.
 
 ## Current State
-- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done, Step 5 export/import fix ✅ done)
+- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done, Step 5 export/import fix ✅ done, E2E Cross-Client Fix GREEN phase ✅ done)
 - **CLI:** Maintenance mode — onboarding redesign complete (Phase 5d), 1493 tests
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
 - **Storage (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON)
@@ -15,27 +15,17 @@
 
 ## Immediate Next Steps
 
-### 🔴 E2E Cross-Client Fix Plan — TOP OF QUEUE, TDD RED PHASE (2026-07-01)
+### 🔜 Phase 1: Onboarding/Unlock/ReAuth Speedup — Test Identification
 
-Full fix plan at `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md`. All 4 bugs have agreed-upon solutions. **Tests written (RED phase), implementation pending.**
+Full plan at `docs/planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md`. Replace full-ledger block pulls during genesis check with a lightweight hash-index comparison (Tier 1 worker-computed → Tier 2 client-side fork detection). Cuts Phase 3 from ~21s to ~0.1s (210× speedup).
 
-**Test coverage delivered (2026-07-01):**
+**Phase 1 (current):** Identify all unit, integration, and E2E tests needed. Output: `docs/planning/ONBOARDING_SPEEDUP_TESTS.md` catalog. No code written.
 
-| Bug | Tests added | Files touched |
-|-----|-------------|---------------|
-| **Bug 1:** Genesis mismatch indiscriminate | Group D (6) in genesis_gate_test.mjs + Group R (3) in sync_service_test.mjs | genesis_gate_test.mjs (updated 20 tests for throw API), sync_service_test.mjs |
-| **Bug 2:** Month summary blocks dropped | Group P (6) in sync_service_test.mjs | sync_service_test.mjs |
-| **Bug 3a:** Same device UUID overwrite | Groups 9-12 (4) in device_uuid_test.mjs + Group Q (3) in sync_service_test.mjs | device_uuid_test.mjs, sync_service_test.mjs |
-| **Bug 3b:** Entry format mismatch | local_cache_test.mjs (NEW FILE, 9 groups) | local_cache_test.mjs |
-| **Bug 4:** Genesis seal mismatch | TestGenesisSealVerification (3 tests) in test_modular.py | tests/test_modular.py |
+### ✅ E2E Cross-Client Fix Plan — GREEN PHASE COMPLETE (2026-07-01)
 
-**Key architectural decisions recorded in the fix plan:**
-- Bug 2: file index is transport-layer only, never touches ledger data
-- Bug 3a: `{uuid}-cli`/`{uuid}-web` suffix preserves auth workflow, enables per-client identity
-- Bug 3b: `_enc` suffix IS the field-encryption determiner per §3.1.1; `plain:` is the staging placeholder per §8.2
-- Bug 4: no impact on existing ledgers — CLI-created ones already fail verification
+Full fix plan at `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md`. All 4 bugs implemented and verified. **All tests pass (0 failures across 38 JS suites + 1554 Python tests).**
 
-### 🔴 CLI Onboarding: Chain divergence at block 1 (2026-06-30) — Bug 2 will resolve this
+### 🛑 CLI Onboarding: Chain divergence at block 1 (2026-06-30)
 
 **Symptom:** `ph onboarding http cloudflare` pulls 105 remote blocks but `_verify_chain()` reports divergence at block 1. Root cause: stale blocks from a previous ledger on R2 + summary blocks dropped during push. Fixing Bug 2 (position counter for all block types) and clearing stale remote data resolves this. Immediate workaround: "Clear Remote & Overwrite" in web app Sync Settings.
 
@@ -169,8 +159,8 @@ MockTransport/Crypto changes in test file:
 - **Web re-rolls device cookie on every write (2026-06-29):** ✅ FIXED (2026-06-30). `pushToRemote()` now reuses existing device specifier instead of destroying + recreating cookie on every write. Only calls `DeviceCookie.create()` on first push (no local cookie). Remote cookie format: `{device_uuid, device_specifier}` — no `creation_time` leaked. Group O: 14 assertions, 0 failures. Plan: `docs/planning/STABLE_DEVICE_SPECIFIER_ON_WRITES.md`.
 - **CLI read commands block on specifier mismatch (2026-06-29):** 🟡 PLANNED. `ph view`/`ph list`/`ph tags` bail entirely when another device holds the cookie, showing nothing — not even local data. Fix: add `check_and_sync_readonly()` that pulls remote blob without claiming ownership. Plan: `docs/planning/CLI_READONLY_STAGING_SYNC.md`.
 - **Onboarding `ph onboarding http cloudflare` crashes with TypeError (2026-06-30):** ✅ FIXED. `_prompt_http_transport()` returned `(transport, config_update)` but main.py unpacks as `config_update, transport` — tuple order swapped. Fixed in `cli/onboarding.py` line 152.
-- **CLI onboarding fails at block 1 — stale remote blocks from previous ledger (2026-06-30):** 🛑 ACTIVE. `ph onboarding http cloudflare` can only accept genesis (block 0) because blocks at `000001.json`–`000104.json` on R2 are from a different ledger instance. The web app's current recovery seed (`Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`) cannot decrypt the old blocks (tag mismatch), confirming the blocks are from an earlier ledger. "Clear Remote & Overwrite" in web app is the immediate workaround. **Root cause:** old day blocks survived a ledger re-initialization cycle.
-- **E2E cross-client sync blocked by 4 bugs (2026-06-30):** 🔴 ACTIVE — TDD RED phase (2026-07-01). All tests written, implementation pending. Full investigation at `docs/planning/E2E_CROSS_CLIENT_BUGS.md`. Fix plan at `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md`. Bugs: (1) genesis mismatch detection is indiscriminate — treats network errors as permanent genesis incompatibility (Group D + R tests), (2) month_summary blocks silently dropped during push (Group P tests), (3a) same device UUID overwrite (Groups 9-12 + Q tests), (3b) web flat entry format vs CLI nested `{hash,data:{..._enc}}` format (local_cache_test.mjs), (4) genesis seal computed with `signature: ""` in JSON but verified excluding it (TestGenesisSealVerification).
+- **CLI onboarding fails at block 1 — stale remote blocks from previous ledger (2026-06-30):** 🛑 ACTIVE. `ph onboarding http cloudflare` can only accept genesis (block 0) because blocks at `000001.json`–`000104.json` on R2 are from a different ledger instance. The web app's current recovery seed (`Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`) cannot decrypt the old blocks (tag mismatch), confirming the blocks are from an earlier ledger. "Clear Remote & Overwrite" in web app is the immediate workaround. **Root cause:** old day blocks survived a ledger re-initialization cycle. **Update (2026-07-01):** Bug 2 fix ensures summary blocks are no longer dropped on push, but this won't retroactively fix blocks already missing from R2. The stale remote blocks must still be cleared manually.
+- **E2E cross-client sync blocked by 4 bugs (2026-06-30):** ✅ FIXED (2026-07-01). GREEN phase complete. All 4 bugs implemented and verified: (1) genesis mismatch typed errors, (2) month summary position counter, (3a) UUID -web/-cli suffix, (3b) entry format canonicalization, (4) genesis seal signature exclusion. 0 failures across 38 JS suites + 1554 Python tests. See `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md`.
 - **clearRemote() deletes wrong staging keys (2026-06-29):** ✅ FIXED (5244371). Was deleting `staging:blob` and `cookie:json` instead of canonical `staging/blobs/current.json` and `staging/blobs/device_cookie.bin`. This bug existed since the web app was built — staging data was never actually cleaned from R2. Tests updated. Added `scripts/compare_ledgers.py` tool for R2 format comparison.
 
 ## Browser E2E Testing Setup

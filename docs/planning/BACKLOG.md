@@ -36,6 +36,38 @@ but the remaining items (ledger sync via git, async transport) are deferred.
 - [ ] Handle case where `~/.local/share/phpoc/` doesn't exist yet on pull
 - [ ] First-time `phpoc view` on a machine with no local staging
 
+## P5 — CLI Unlock Latency (up to 10s) — Paused (2026-07-01)
+
+**Investigation:** `docs/investigations/UNLOCK_PERFORMANCE_CLI.md` (full diagnostic trace).
+
+**Root causes (3 compounding factors):**
+
+1. **Broken HTTP timeout plumbing** — `check_and_sync(timeout_ms=500)` accepts the parameter but never passes it to transport calls. `_reconcile_and_claim()` calls `pull_cookie()` + `pull()` bare, which use `http.client.HTTPSConnection` with `_DEFAULT_TIMEOUT_S = 60.0`. The `check_remote_available(timeout_ms=500)` method only measures elapsed time after the call — it doesn't enforce the timeout on the socket.
+
+2. **Multiple sequential network calls during unlock** — `_reconcile_and_claim()` makes up to 3 HTTP requests (cookie pull → blob pull → blob push), each with the 60s default timeout, each creating a new TCP+TLS connection (no keep-alive/pooling).
+
+3. **Read commands make unnecessary network calls** — `ph list`/`ph view`/`ph tags` call `check_and_sync()` which reaches out to remote for cookie verification even when just displaying local data.
+
+**Why "sometimes 10s":** Cloudflare Worker cold starts add 1-5s per request. With 2-3 sequential requests + TLS handshake, total = 3-15s. Warm Worker = 1-2s. Unreachable remote = up to 60s.
+
+**What's NOT the bottleneck:** PBKDF2 600K iterations (~0.09s via OpenSSL-backed `hashlib`), JSON parsing (~1ms for 105 blocks), file I/O.
+
+**Proposed solutions (priority order):**
+
+| # | Solution | Effort | Impact |
+|---|----------|--------|--------|
+| B | Pre-check remote reachability via `check_remote_ping()` before cookie/blob pulls | Small | Prevents 60s hangs on unreachable |
+| A | Fix timeout plumbing: pass `timeout_ms` through all layers, reduce default from 60s → 5s | Medium | Caps worst-case at 3-5s |
+| C | Skip network calls for read-only commands (add `check_local_only()`) | Medium | `ph list`/`view` become instant |
+| D | HTTP connection pooling / keep-alive | Large | Eliminates TLS handshake overhead (0.5-2s) per-request after first |
+| E | Worker warmup (paid plan, cron trigger, or warmup endpoint) | Small (infra) | Eliminates cold-start component |
+
+**Files affected:** `core/sync/http_transport.py` (line 56, `_DEFAULT_TIMEOUT_S`), `domain/staging/service.py` (`check_and_sync`, `_reconcile_and_claim`), `domain/staging/remote_sync.py` (`pull_cookie`, `pull`, `check_remote_available`), `main.py` (read-command dispatch).
+
+**Pause rationale:** Web unlock takes priority. CLI is in maintenance mode.
+
+**Unblock criteria:** Web unlock latency investigation complete; user prioritizes CLI work.
+
 ## P4 — CLI Kinks & UX Polish — Paused
 
 **Pause rationale:** CLI is in maintenance mode while browser client is active development target.

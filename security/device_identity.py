@@ -99,6 +99,7 @@ class RandomUUIDDeviceIdentityProvider(AbstractDeviceIdentityProvider):
     """
 
     PROOF_PREFIX = "phpoc:device:"
+    CLIENT_TYPE = "cli"  # Bug 3a fix: client suffix for cross-client identity
 
     def __init__(self, config_manager):
         """Initialize with a ConfigManager for persisting the device_id.
@@ -117,9 +118,19 @@ class RandomUUIDDeviceIdentityProvider(AbstractDeviceIdentityProvider):
 
         config = self._config.read()
 
-        # Generate new device_id if not in config
-        if "device_id" not in config or not config.get("device_id"):
-            config["device_id"] = str(uuid.uuid4())
+        current_id = config.get("device_id", "")
+
+        # Bug 3a fix: Ensure device_id has -cli suffix for cross-client identity.
+        # Migration: bare UUIDs get -cli appended. Already-suffixed UUIDs
+        # stay as-is. New installations get fresh uuid4-cli.
+        if not current_id:
+            current_id = f"{uuid.uuid4()}-{self.CLIENT_TYPE}"
+        elif not current_id.endswith(f"-{self.CLIENT_TYPE}"):
+            # Append suffix to existing bare UUID (migration)
+            current_id = f"{current_id}-{self.CLIENT_TYPE}"
+
+        if current_id != config.get("device_id"):
+            config["device_id"] = current_id
             config["device_label"] = config.get(
                 "device_label", socket.gethostname()
             )

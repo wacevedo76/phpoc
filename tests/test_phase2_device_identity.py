@@ -68,14 +68,14 @@ class TestRandomUUIDDeviceIdentityProvider(unittest.TestCase):
         self.assertTrue(len(identity.device_label) > 0)
 
     def test_device_id_is_uuid4_format(self):
-        """device_id is a UUID4 string (hex with dashes)."""
+        """device_id is a UUID4 string with -cli suffix (Bug 3a fix)."""
         identity = self.provider.get_device_identity(self.master_key)
-        # UUID4 format: 8-4-4-4-12 hex digits
+        # UUID4-cli format: 8-4-4-4-12 hex digits followed by -cli
         import re
         self.assertTrue(
-            re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+            re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-cli$',
                      identity.device_id, re.I),
-            f"device_id '{identity.device_id}' is not valid UUID4"
+            f"device_id '{identity.device_id}' is not valid UUID4-cli"
         )
 
     def test_device_proof_is_hmac_sha256(self):
@@ -110,7 +110,10 @@ class TestRandomUUIDDeviceIdentityProvider(unittest.TestCase):
         self.assertEqual(written["device_id"], identity.device_id)
 
     def test_device_id_read_from_config(self):
-        """device_id is read from config on subsequent sessions (not regenerated)."""
+        """device_id is read from config on subsequent sessions (not regenerated).
+
+        Bug 3a: Bare UUID4 gets -cli suffix appended on migration.
+        """
         # Simulate existing config with a known device_id
         existing_id = "550e8400-e29b-41d4-a716-446655440000"
         self.config_manager.read.return_value = {
@@ -120,12 +123,14 @@ class TestRandomUUIDDeviceIdentityProvider(unittest.TestCase):
 
         identity = self.provider.get_device_identity(self.master_key)
 
-        self.assertEqual(identity.device_id, existing_id)
+        # Bug 3a: bare UUID4 gets -cli suffix on migration
+        expected_id = existing_id + "-cli"
+        self.assertEqual(identity.device_id, expected_id)
         self.assertEqual(identity.device_label, "KnownMachine")
-        # Proof should be computed from the existing ID (not regenerated)
+        # Proof should be computed from the suffixed ID
         expected_proof = hmac.new(
             self.master_key,
-            f"phpoc:device:{existing_id}".encode(),
+            f"phpoc:device:{expected_id}".encode(),
             hashlib.sha256
         ).hexdigest()
         self.assertEqual(identity.device_proof, expected_proof)

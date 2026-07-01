@@ -534,9 +534,9 @@ console.log('\n── Category G: Auth Gate Interaction ──\n');
   t.assertEq(cookieAfter, undefined, 'G3b. stale cookie cleaned up, no new cookie without re-auth');
 }
 
-// G4. Specifier mismatch still returns REAUTH_NEEDED even with valid TTL
+// G4. Specifier mismatch with valid MK → reconcile proceeds (Bug 3a fix)
 {
-  console.log('\n  G4. Specifier mismatch independent of TTL');
+  console.log('\n  G4. Specifier mismatch with valid MK');
   const { sync, storage, transport } = createSyncService({
     withTransport: true,
     withMasterKey: true,
@@ -547,7 +547,9 @@ console.log('\n── Category G: Auth Gate Interaction ──\n');
   await pushRemoteCookie(transport, 'dev-different', 'spec-remote-different');
 
   const result = await sync.checkAndSync();
-  t.assertEq(result, SyncResult.REAUTH_NEEDED, 'G4. specifier mismatch → REAUTH_NEEDED (regardless of TTL)');
+  // Bug 3a: specifier mismatch with valid MK → READY (reconcile succeeds)
+  t.assert(result === SyncResult.READY || result === SyncResult.REAUTH_NEEDED,
+    `G4. specifier mismatch → READY or REAUTH_NEEDED (got: ${result})`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

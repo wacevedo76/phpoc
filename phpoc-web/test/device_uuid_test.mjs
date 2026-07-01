@@ -31,6 +31,8 @@ import { getOrCreateDeviceUuid, isWasmDerivedUuid } from '../src/sync/device_uui
 
 // ── UUID4 regex for validation ───────────────────────────────────────
 const UUID4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// UUID4 with -web client suffix (Bug 3a fix)
+const UUID4_WEB_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-web$/i;
 
 // ══════════════════════════════════════════════════════════════════════
 // Tests
@@ -52,7 +54,7 @@ async function run() {
     // Should not reach here in RED phase (throws NOT YET IMPLEMENTED)
     t.assert(typeof uuid1 === 'string', '1a. getOrCreateDeviceUuid returns a string');
     t.assert(uuid1.length > 0, '1b. returned UUID is non-empty');
-    t.assert(UUID4_REGEX.test(uuid1), `1c. UUID matches UUID4 format (got: ${uuid1?.slice(0, 40)})`);
+    t.assert(UUID4_WEB_REGEX.test(uuid1), `1c. UUID matches UUID4-web format (got: ${uuid1?.slice(0, 50)})`);
 
     // Verify it was persisted
     const stored = await storage1.get('device_uuid');
@@ -66,16 +68,18 @@ async function run() {
 
   const storage2 = new MemoryBackend();
   // Pre-populate storage with a UUID (simulating a previous boot)
+  // Bug 3a: bare UUIDs get -web suffix on migration
   const preExistingUuid = 'a1b2c3d4-e5f6-4abc-8def-0123456789ab';
   await storage2.set('device_uuid', preExistingUuid);
 
   try {
     const uuid2 = await getOrCreateDeviceUuid(storage2);
-    t.assertEq(uuid2, preExistingUuid, '2a. returns the pre-existing UUID (not a new one)');
+    // Migration: bare UUID gets -web appended
+    t.assertEq(uuid2, preExistingUuid + '-web', '2a. bare UUID gets -web suffix appended on read');
 
-    // Verify it didn't overwrite
+    // Verify it persisted the suffixed version
     const stored2 = await storage2.get('device_uuid');
-    t.assertEq(stored2, preExistingUuid, '2b. stored UUID unchanged');
+    t.assertEq(stored2, preExistingUuid + '-web', '2b. stored UUID updated with -web suffix');
   } catch (err) {
     t.assert(false, `2a-2b. EXCEPTION (expected in RED phase): ${err.message}`);
   }
@@ -85,7 +89,8 @@ async function run() {
 
   const storage3 = new MemoryBackend();
   const sessionUuid = 'deadbeef-dead-4eef-8bad-feedfacefeed';
-  await storage3.set('device_uuid', sessionUuid);
+  const sessionUuidWeb = sessionUuid + '-web';
+  await storage3.set('device_uuid', sessionUuidWeb);
 
   // Simulate: create temporary data that would be cleared on logout
   await storage3.set('cookie', { device_specifier: 'abc', creation_time: Date.now() });
@@ -98,13 +103,13 @@ async function run() {
 
     // Now simulate re-login — get device UUID
     const uuid3 = await getOrCreateDeviceUuid(storage3);
-    t.assertEq(uuid3, sessionUuid, '3a. UUID survives session data cleanup (logout)');
+    t.assertEq(uuid3, sessionUuidWeb, '3a. UUID survives session data cleanup (logout)');
 
     // Verify session data is gone but device UUID remains
     const cookie = await storage3.get('cookie');
     t.assertEq(cookie, undefined, '3b. cookie cleared by logout');
     const deviceUuid = await storage3.get('device_uuid');
-    t.assertEq(deviceUuid, sessionUuid, '3c. device_uuid still stored after logout');
+    t.assertEq(deviceUuid, sessionUuidWeb, '3c. device_uuid still stored after logout');
   } catch (err) {
     t.assert(false, `3a-3c. EXCEPTION (expected in RED phase): ${err.message}`);
   }
@@ -114,19 +119,20 @@ async function run() {
 
   const storage4 = new MemoryBackend();
   const independentUuid = '11111111-2222-4333-8444-555555555555';
-  await storage4.set('device_uuid', independentUuid);
+  const independentUuidWeb = independentUuid + '-web';
+  await storage4.set('device_uuid', independentUuidWeb);
 
   try {
     const uuid4 = await getOrCreateDeviceUuid(storage4);
     // The returned UUID should match the pre-existing one, regardless of master key
-    t.assertEq(uuid4, independentUuid, '4a. UUID matches stored value (not derived from any key)');
+    t.assertEq(uuid4, independentUuidWeb, '4a. UUID matches stored value (not derived from any key)');
 
-    // Verify it's a real UUID4, not a hex hash
-    t.assert(UUID4_REGEX.test(uuid4), '4b. UUID is UUID4 format (version 4)');
+    // Verify it's a real UUID4-web, not a hex hash
+    t.assert(UUID4_WEB_REGEX.test(uuid4), '4b. UUID is UUID4-web format (version 4)');
 
     // A WASM-derived UUID from HMAC(MK, "device:id") would be a hex string,
     // not a UUID4. Verify we're not getting a hex string.
-    t.assert(!/^[0-9a-f]{32,}$/i.test(uuid4), '4c. UUID is NOT a raw hex string (not HMAC-derived)');
+    t.assert(!/^-?[0-9a-f]{32,}$/i.test(uuid4.replace(/-web$/, '')), '4c. UUID is NOT a raw hex string (not HMAC-derived)');
   } catch (err) {
     t.assert(false, `4a-4c. EXCEPTION (expected in RED phase): ${err.message}`);
   }
@@ -136,19 +142,19 @@ async function run() {
 
   try {
     const storage5a = new MemoryBackend();
-    await storage5a.set('device_uuid', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    await storage5a.set('device_uuid', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-web');
 
     // Simulate page refresh — new MemoryBackend instance
     const storage5b = new MemoryBackend();
     // In real IndexedDB, the data would be in the same database.
     // For this test, we pre-populate to simulate that.
-    await storage5b.set('device_uuid', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    await storage5b.set('device_uuid', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-web');
 
     const uuid5a = await getOrCreateDeviceUuid(storage5a);
     const uuid5b = await getOrCreateDeviceUuid(storage5b);
 
     t.assertEq(uuid5a, uuid5b, '5a. same UUID returned from different storage instances');
-    t.assertEq(uuid5a, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', '5b. UUID is the pre-existing value');
+    t.assertEq(uuid5a, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee-web', '5b. UUID is the pre-existing value');
   } catch (err) {
     t.assert(false, `5a-5b. EXCEPTION (expected in RED phase): ${err.message}`);
   }
@@ -164,8 +170,8 @@ async function run() {
     t.assert(uuid6.charAt(14) === '4', '6a. UUID version nibble is 4');
     t.assert('89ab'.includes(uuid6.charAt(19)), '6b. UUID variant nibble is 8/9/a/b');
 
-    // Length check
-    t.assertEq(uuid6.length, 36, '6c. UUID is exactly 36 characters');
+    // Length check: 36 chars for UUID4 + 4 for '-web' suffix = 40
+    t.assertEq(uuid6.length, 40, '6c. UUID with -web suffix is 40 characters (36 + 4)');
   } catch (err) {
     t.assert(false, `6a-6c. EXCEPTION (expected in RED phase): ${err.message}`);
   }
@@ -211,7 +217,7 @@ async function run() {
     await storage8.set('device_uuid', wasmDerived);
 
     const uuid8 = await getOrCreateDeviceUuid(storage8);
-    t.assert(UUID4_REGEX.test(uuid8), '8a. migrates to UUID4 format');
+    t.assert(UUID4_WEB_REGEX.test(uuid8), '8a. migrates to UUID4-web format');
     t.assertNeq(uuid8, wasmDerived, '8b. migrated UUID differs from WASM-derived one');
 
     // The stored value should be updated
