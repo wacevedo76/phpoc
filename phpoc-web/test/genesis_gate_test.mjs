@@ -1,15 +1,25 @@
 /**
  * genesis_gate_test.mjs — Genesis Compatibility Gate test suite (TDD RED phase).
  *
- * ~20 tests for GenesisGate.check() covering:
+ * ~26 tests for GenesisGate.check() covering:
  *   A — Genesis hash comparison (8 tests)
  *   B — Merge on genesis match (7 tests)
  *   C — Edge cases (5 tests)
+ *   D — Typed error hierarchy (6 tests, added for Bug 1 fix)
  *
  * Architecture: standalone module `src/sync/genesis_gate.js`.
- * Signature:
- *   GenesisGate.check(localChain, remoteTransport, crypto, masterKey)
- *     → { compatible: true|false, reason?, mergedChain?, stats?, index? }
+ *
+ * API CHANGE (Bug 1 fix): GenesisGate._doCheck() switches from returning
+ * { compatible, reason } to throwing typed errors:
+ *   - GenesisMismatchError  — actual hash divergence (permanent)
+ *   - NetworkGenesisError   — DNS/timeout/transport failure (transient, carries cause)
+ *   - AuthGenesisError      — HTTP 403 (transient)
+ *   - InvalidChainError     — remote seal/hash verification failed (transient)
+ *   - InvalidGenesisError   — remote block[0] is not type 'genesis'
+ *   - InvalidFormatError    — remote data is not a JSON array
+ *
+ * Non-error returns (same genesis, no_remote_ledger, no_local_ledger)
+ * remain as return values — only failures throw.
  *
  * Uses existing test infrastructure: MockCrypto, TestHelpers, chain building
  * helpers, and a configurable MockTransport for remote simulation.
@@ -27,20 +37,46 @@ const t = new TestHelpers();
 
 // ── Import module under test ──
 let GenesisGate;
+let GenesisMismatchError, NetworkGenesisError, AuthGenesisError;
+let InvalidChainError, InvalidGenesisError, InvalidFormatError;
 try {
   const mod = await import('../src/sync/genesis_gate.js');
   GenesisGate = mod.GenesisGate;
+  GenesisMismatchError = mod.GenesisMismatchError;
+  NetworkGenesisError = mod.NetworkGenesisError;
+  AuthGenesisError = mod.AuthGenesisError;
+  InvalidChainError = mod.InvalidChainError;
+  InvalidGenesisError = mod.InvalidGenesisError;
+  InvalidFormatError = mod.InvalidFormatError;
 } catch (err) {
   GenesisGate = undefined;
 }
 
 const hasGate = GenesisGate && typeof GenesisGate.check === 'function';
+const hasThrowApi = !!(GenesisMismatchError && NetworkGenesisError && AuthGenesisError);
 
-// ── Safe check helper — catches "not implemented" errors ───────────────
+// ── Safe check helper — catches throw-based API errors for assertions ──
+// After Bug 1 fix, GenesisGate._doCheck() throws typed errors instead of
+// returning { compatible: false, reason }. This helper catches those throws
+// and returns { thrown: true, error, type: error.constructor.name }.
+// Successful calls still return the result directly.
 async function safeCheck(localChain, transport, crypto, masterKey) {
   try {
-    return await GenesisGate.check(localChain, transport, crypto, masterKey);
+    const result = await GenesisGate.check(localChain, transport, crypto, masterKey);
+    // Non-error return (compatible: true, no_remote_ledger, no_local_ledger)
+    return result;
   } catch (err) {
+    if (hasThrowApi && (
+      err instanceof GenesisMismatchError ||
+      err instanceof NetworkGenesisError ||
+      err instanceof AuthGenesisError ||
+      err instanceof InvalidChainError ||
+      err instanceof InvalidGenesisError ||
+      err instanceof InvalidFormatError
+    )) {
+      // Typed error from GenesisGate — return structured for assertions
+      return { thrown: true, error: err, type: err.constructor.name };
+    }
     if (err.message && err.message.includes('not implemented')) {
       return null; // TDD RED phase — stub throws
     }
@@ -349,9 +385,10 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   }
 }
 
-// ── A2: Different genesis → incompatible ──────────────────────────────
+// ── A2: Different genesis → throws GenesisMismatchError ────────────────
+//      (Bug 1 fix: throw-based API instead of { compatible: false })
 {
-  console.log('\n  --- A2: Different genesis → incompatible ---');
+  console.log('\n  --- A2: Different genesis → GenesisMismatchError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ], { username: 'localuser', email: 'local@example.com' });
@@ -366,18 +403,24 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'different genesis → compatible: false');
-    t.assertEq(result.reason, 'genesis_mismatch', 'reason is genesis_mismatch');
-    t.assert(result.mergedChain === undefined, 'no merged chain on mismatch');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'different genesis → exception thrown');
+      t.assertEq(result.type, 'GenesisMismatchError', 'error type is GenesisMismatchError');
+      t.assert(result.error.message !== undefined, 'error has message');
+    } else {
+      // Fallback for old return-based API during RED phase
+      t.assertEq(result.compatible, false, 'different genesis → compatible: false');
+      t.assertEq(result.reason, 'genesis_mismatch', 'reason is genesis_mismatch');
+    }
   } else {
-    t.assert(false, 'different genesis → incompatible — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'different genesis → GenesisMismatchError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
-// ── A3: Remote unreachable → network_error ────────────────────────────
+// ── A3: Remote unreachable → throws NetworkGenesisError ────────────────
+//      (Bug 1 fix: transient network errors throw, not return compatible:false)
 {
-  console.log('\n  --- A3: Remote unreachable → network_error ---');
+  console.log('\n  --- A3: Remote unreachable → NetworkGenesisError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -388,11 +431,18 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'network error → compatible: false');
-    t.assertEq(result.reason, 'network_error', 'reason is network_error');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'network error → exception thrown');
+      t.assertEq(result.type, 'NetworkGenesisError', 'error type is NetworkGenesisError');
+      t.assert(result.error.cause !== undefined, 'NetworkGenesisError carries cause');
+      t.assert(result.error.cause.message.includes('connection refused'),
+        'cause preserves original error message');
+    } else {
+      t.assertEq(result.compatible, false, 'network error → compatible: false');
+      t.assertEq(result.reason, 'network_error', 'reason is network_error');
+    }
   } else {
-    t.assert(false, 'remote unreachable → network_error — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'remote unreachable → NetworkGenesisError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
@@ -422,9 +472,10 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   }
 }
 
-// ── A5: Remote genesis seal tampered → invalid_chain ──────────────────
+// ── A5: Remote genesis seal tampered → throws InvalidChainError ────────
+//      (Bug 1 fix: chain validation failure throws InvalidChainError)
 {
-  console.log('\n  --- A5: Remote genesis seal tampered → invalid_chain ---');
+  console.log('\n  --- A5: Remote genesis seal tampered → InvalidChainError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -442,17 +493,22 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'tampered genesis seal → compatible: false');
-    t.assertEq(result.reason, 'invalid_chain', 'reason is invalid_chain');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'tampered seal → exception thrown');
+      t.assertEq(result.type, 'InvalidChainError', 'error type is InvalidChainError');
+    } else {
+      t.assertEq(result.compatible, false, 'tampered genesis seal → compatible: false');
+      t.assertEq(result.reason, 'invalid_chain', 'reason is invalid_chain');
+    }
   } else {
-    t.assert(false, 'tampered genesis seal → invalid_chain — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'tampered genesis seal → InvalidChainError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
-// ── A6: Transport auth failure (403) → auth_failure ───────────────────
+// ── A6: Transport auth failure (403) → throws AuthGenesisError ─────────
+//      (Bug 1 fix: auth failures distinct from network errors)
 {
-  console.log('\n  --- A6: Transport auth failure → auth_failure ---');
+  console.log('\n  --- A6: Transport auth failure → AuthGenesisError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -463,18 +519,23 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'auth failure → compatible: false');
-    t.assert(result.reason === 'auth_failure' || result.reason === 'network_error',
-      'reason is auth_failure (or network_error if indistinguishable from network error)');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'auth failure → exception thrown');
+      t.assertEq(result.type, 'AuthGenesisError', 'error type is AuthGenesisError');
+    } else {
+      t.assertEq(result.compatible, false, 'auth failure → compatible: false');
+      t.assert(result.reason === 'auth_failure' || result.reason === 'network_error',
+        'reason is auth_failure (or network_error if indistinguishable from network error)');
+    }
   } else {
-    t.assert(false, 'transport auth failure → auth_failure — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'transport auth failure → AuthGenesisError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
-// ── A7: Remote returns non-array → invalid_format ─────────────────────
+// ── A7: Remote returns non-array → throws InvalidFormatError ───────────
+//      (Bug 1 fix: format errors throw InvalidFormatError)
 {
-  console.log('\n  --- A7: Remote returns non-array → invalid_format ---');
+  console.log('\n  --- A7: Remote returns non-array → InvalidFormatError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -486,17 +547,22 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'non-array remote → compatible: false');
-    t.assertEq(result.reason, 'invalid_format', 'reason is invalid_format');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'non-array remote → exception thrown');
+      t.assertEq(result.type, 'InvalidFormatError', 'error type is InvalidFormatError');
+    } else {
+      t.assertEq(result.compatible, false, 'non-array remote → compatible: false');
+      t.assertEq(result.reason, 'invalid_format', 'reason is invalid_format');
+    }
   } else {
-    t.assert(false, 'remote non-array → invalid_format — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'remote non-array → InvalidFormatError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
-// ── A8: Remote genesis not block type 'genesis' → invalid_genesis ─────
+// ── A8: Remote genesis not block type 'genesis' → throws InvalidGenesisError ──
+//      (Bug 1 fix: type validation failures throw InvalidGenesisError)
 {
-  console.log('\n  --- A8: Remote genesis not type genesis → invalid_genesis ---');
+  console.log('\n  --- A8: Remote genesis not type genesis → InvalidGenesisError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
   ]);
@@ -513,11 +579,15 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
 
   if (result !== null) {
-    t.assert(result !== undefined, 'check() returns a result object');
-    t.assertEq(result.compatible, false, 'non-genesis block[0] → compatible: false');
-    t.assertEq(result.reason, 'invalid_genesis', 'reason is invalid_genesis');
+    if (hasThrowApi) {
+      t.assert(result.thrown === true, 'non-genesis block[0] → exception thrown');
+      t.assertEq(result.type, 'InvalidGenesisError', 'error type is InvalidGenesisError');
+    } else {
+      t.assertEq(result.compatible, false, 'non-genesis block[0] → compatible: false');
+      t.assertEq(result.reason, 'invalid_genesis', 'reason is invalid_genesis');
+    }
   } else {
-    t.assert(false, 'remote genesis not type genesis → invalid_genesis — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'remote genesis not type genesis → InvalidGenesisError — NOT IMPLEMENTED (TDD RED)');
   }
 }
 
@@ -926,6 +996,176 @@ console.log('\n=== Group C — Edge Cases ===');
     t.assert(transport.pullCount >= 1, 'at least one pull for genesis check');
   } else {
     t.assert(false, 'large remote chain → optimized fetch — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Group D: Typed Error Hierarchy (Bug 1 fix — 6 tests)
+// ═══════════════════════════════════════════════════════════════════════
+console.log('\n=== Group D — Typed Error Hierarchy (Bug 1 Fix) ===');
+
+// ── D1: GenesisMismatchError is distinct from NetworkGenesisError ──────
+{
+  console.log('\n  --- D1: Error class instances are distinguishable ---');
+  if (hasThrowApi) {
+    // Create actual genesis mismatch scenario
+    const localChain = buildChain([
+      { date: '2026-06-10', entries: [ENTRY_A] },
+    ], { username: 'localuser', email: 'local@example.com' });
+    const remoteChain = buildChain([
+      { date: '2026-06-11', entries: [ENTRY_C] },
+    ], { username: 'remoteuser', email: 'remote@example.com' });
+
+    const transport = new MockTransport();
+    transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
+    const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
+
+    t.assert(result.thrown === true, 'D1a. genesis mismatch throws');
+    t.assert(result.error instanceof Error, 'D1b. error is instance of Error');
+    t.assert(
+      !(result.error instanceof NetworkGenesisError) || result.type === 'GenesisMismatchError',
+      'D1c. GenesisMismatchError ≠ NetworkGenesisError (distinct classes)'
+    );
+  } else {
+    t.assert(false, 'D1. typed error hierarchy — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ── D2: NetworkGenesisError carries original cause ─────────────────────
+{
+  console.log('\n  --- D2: NetworkGenesisError carries cause ---');
+  if (hasThrowApi) {
+    const localChain = buildChain([
+      { date: '2026-06-10', entries: [ENTRY_A] },
+    ]);
+
+    const originalError = new Error('DNS resolution failed: ENOTFOUND');
+    const transport = new MockTransport();
+    transport.setThrowOnPull(originalError);
+
+    const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
+
+    t.assert(result.thrown === true, 'D2a. network error throws');
+    t.assertEq(result.type, 'NetworkGenesisError', 'D2b. type is NetworkGenesisError');
+    t.assert(result.error.cause !== undefined, 'D2c. cause property exists');
+    t.assert(result.error.cause === originalError, 'D2d. cause is the original error object');
+  } else {
+    t.assert(false, 'D2. NetworkGenesisError carries cause — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ── D3: AuthGenesisError is distinguishable from NetworkGenesisError ────
+{
+  console.log('\n  --- D3: AuthGenesisError ≠ NetworkGenesisError ---');
+  if (hasThrowApi) {
+    // Build an auth error scenario
+    const localChain = buildChain([
+      { date: '2026-06-10', entries: [ENTRY_A] },
+    ]);
+
+    const transport = new MockTransport();
+    transport.setThrowOnPull(new Error('HTTP 403 Forbidden'));
+
+    const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
+
+    t.assert(result.thrown === true, 'D3a. auth failure throws');
+    t.assertEq(result.type, 'AuthGenesisError', 'D3b. type is AuthGenesisError');
+    t.assert(
+      !(result.error instanceof NetworkGenesisError) || result.type === 'AuthGenesisError',
+      'D3c. AuthGenesisError ≠ NetworkGenesisError (distinct classes)'
+    );
+  } else {
+    t.assert(false, 'D3. AuthGenesisError distinct — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ── D4: All error classes extend a common base ─────────────────────────
+{
+  console.log('\n  --- D4: All error classes extend Error ---');
+  if (hasThrowApi) {
+    const errors = [
+      GenesisMismatchError,
+      NetworkGenesisError,
+      AuthGenesisError,
+      InvalidChainError,
+      InvalidGenesisError,
+      InvalidFormatError,
+    ];
+
+    for (const Err of errors) {
+      t.assert(Err !== undefined, `D4a. ${Err?.name || '?'} class exists`);
+      if (Err) {
+        const instance = new Err('test message');
+        t.assert(instance instanceof Error, `D4b. ${Err.name} extends Error`);
+        t.assertEq(instance.message, 'test message', `D4c. ${Err.name} stores message`);
+      }
+    }
+  } else {
+    t.assert(false, 'D4. error class hierarchy — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ── D5: exhaustiveness — every non-compatible reason maps to an error class ─
+{
+  console.log('\n  --- D5: Exhaustiveness (all failure modes throw) ---');
+  // Validate that the old 'reason' strings all have corresponding error classes.
+  // This is a design assertion, not a runtime behavior test.
+  const reasonToError = {
+    'genesis_mismatch': 'GenesisMismatchError',
+    'network_error': 'NetworkGenesisError',
+    'auth_failure': 'AuthGenesisError',
+    'invalid_chain': 'InvalidChainError',
+    'invalid_format': 'InvalidFormatError',
+    'invalid_genesis': 'InvalidGenesisError',
+  };
+
+  if (hasThrowApi) {
+    // All 6 error classes imported
+    t.assert(!!GenesisMismatchError, 'D5a. GenesisMismatchError imported');
+    t.assert(!!NetworkGenesisError, 'D5b. NetworkGenesisError imported');
+    t.assert(!!AuthGenesisError, 'D5c. AuthGenesisError imported');
+    t.assert(!!InvalidChainError, 'D5d. InvalidChainError imported');
+    t.assert(!!InvalidFormatError, 'D5e. InvalidFormatError imported');
+    t.assert(!!InvalidGenesisError, 'D5f. InvalidGenesisError imported');
+
+    // Verify non-error reasons still return normally (not thrown)
+    const nonErrorReasons = ['no_remote_ledger', 'no_local_ledger'];
+    for (const reason of nonErrorReasons) {
+      t.assert(reasonToError[reason] === undefined,
+        `D5g. '${reason}' is NOT an error — should return normally, not throw`);
+    }
+  } else {
+    t.assert(false, 'D5. exhaustiveness check — NOT IMPLEMENTED (TDD RED)');
+  }
+}
+
+// ── D6: Compatible returns normally — no error thrown ──────────────────
+{
+  console.log('\n  --- D6: Compatible genesis returns normally (no throw) ---');
+  const localChain = buildChain([
+    { date: '2026-06-10', entries: [ENTRY_A] },
+  ]);
+  const remoteChain = buildChain([
+    { date: '2026-06-11', entries: [ENTRY_C] },
+  ]);
+
+  const transport = new MockTransport();
+  transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
+
+  const result = await safeCheck(localChain, transport, crypto, MASTER_KEY);
+
+  if (result !== null) {
+    if (hasThrowApi) {
+      // Compatible returns normally — result is the return value, not { thrown: true }
+      t.assert(result.thrown === undefined || result.thrown === false,
+        'D6. compatible genesis returns normally (no error thrown)');
+      t.assert(result.compatible === true, 'D6b. compatible is true');
+      t.assert(result.mergedChain !== undefined, 'D6c. mergedChain returned');
+    } else {
+      t.assertEq(result.compatible, true, 'compatible genesis → compatible: true');
+    }
+  } else {
+    t.assert(false, 'compatible returns normally — NOT IMPLEMENTED (TDD RED)');
   }
 }
 

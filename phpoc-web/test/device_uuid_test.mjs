@@ -221,6 +221,89 @@ async function run() {
     t.assert(false, `8a-8c. EXCEPTION (expected in RED phase): ${err.message}`);
   }
 
+  // ── Group 9: Client-type suffix (Bug 3a fix) ──────────────────────
+  //  RED phase: getOrCreateDeviceUuid must append '-web' suffix.
+  //  A valid device UUID should end with '-web' for the web client.
+  console.log('\n── Group 9: Client-Type Suffix (Bug 3a fix) ──\n');
+
+  try {
+    const storage9 = new MemoryBackend();
+    const uuid9 = await getOrCreateDeviceUuid(storage9);
+
+    // With suffix: UUID4 followed by '-web'
+    const uuidWithSuffixRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-web$/i;
+    t.assert(uuidWithSuffixRegex.test(uuid9),
+      `9a. UUID ends with -web suffix (got: ${uuid9?.slice(0, 50)})`);
+
+    // The core UUID (without suffix) must still be a valid UUID4
+    const coreUuid = uuid9.replace(/-web$/, '');
+    t.assert(UUID4_REGEX.test(coreUuid), '9b. core UUID (without suffix) is valid UUID4');
+
+    // Version nibble check still applies
+    t.assert(uuid9.charAt(14) === '4', '9c. UUID version nibble is 4');
+  } catch (err) {
+    t.assert(false, `9a-9c. EXCEPTION (expected in RED phase): ${err.message}`);
+  }
+
+  // ── Group 10: Suffix migration — bare UUID gets -web appended ────
+  console.log('\n── Group 10: Suffix Migration for Existing UUIDs ──\n');
+
+  try {
+    const storage10 = new MemoryBackend();
+    // Simulate old installation with bare UUID (no suffix)
+    const bareUuid = 'a1b2c3d4-e5f6-4abc-8def-0123456789ab';
+    await storage10.set('device_uuid', bareUuid);
+
+    const uuid10 = await getOrCreateDeviceUuid(storage10);
+    // Should append -web to the existing bare UUID
+    t.assertEq(uuid10, bareUuid + '-web',
+      `10a. bare UUID gets -web suffix appended (got: ${uuid10?.slice(0, 50)})`);
+
+    // Storage should be updated with the suffixed version
+    const stored10 = await storage10.get('device_uuid');
+    t.assertEq(stored10, bareUuid + '-web', '10b. storage updated with suffixed UUID');
+  } catch (err) {
+    t.assert(false, `10a-10b. EXCEPTION (expected in RED phase): ${err.message}`);
+  }
+
+  // ── Group 11: Already-suffixed UUID stays as-is ─────────────────
+  console.log('\n── Group 11: Already-Suffixed UUID Idempotent ──\n');
+
+  try {
+    const storage11 = new MemoryBackend();
+    // UUID already has -web suffix
+    const preSuffixed = 'deadbeef-dead-4eef-8bad-feedfacefeed-web';
+    await storage11.set('device_uuid', preSuffixed);
+
+    const uuid11 = await getOrCreateDeviceUuid(storage11);
+    t.assertEq(uuid11, preSuffixed,
+      '11a. already-suffixed UUID stays as-is (no double-suffix)');
+
+    // Verify no '-web-web' double suffix
+    t.assert(!uuid11.endsWith('-web-web'),
+      `11b. no double suffix (got: ${uuid11?.slice(-12)})`);
+  } catch (err) {
+    t.assert(false, `11a-11b. EXCEPTION (expected in RED phase): ${err.message}`);
+  }
+
+  // ── Group 12: WASM-derived UUID migration also adds suffix ──────
+  console.log('\n── Group 12: WASM-Derived UUID Migration + Suffix ──\n');
+
+  try {
+    const storage12 = new MemoryBackend();
+    // Old WASM-derived hex string (pre-migration)
+    const wasmDerived = 'ab12cd34ef560000111122223333444455556666777788889999aaaabbbbcccc';
+    await storage12.set('device_uuid', wasmDerived);
+
+    const uuid12 = await getOrCreateDeviceUuid(storage12);
+    // Should migrate to UUID4 AND add web suffix
+    const uuidWithSuffixRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-web$/i;
+    t.assert(uuidWithSuffixRegex.test(uuid12),
+      `12a. WASM-derived UUID migrates to UUID4-web (got: ${uuid12?.slice(0, 50)})`);
+  } catch (err) {
+    t.assert(false, `12a. EXCEPTION (expected in RED phase): ${err.message}`);
+  }
+
   // ── Results ───────────────────────────────────────────────────────
   t.summary('Device UUID');
 }

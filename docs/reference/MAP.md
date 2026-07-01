@@ -38,9 +38,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | File | Temp | Key contents |
 |---|---|---|
 | `phpoc-web/src/sync/genesis_gate.js` | HOT | GenesisGate.check() — genesis compatibility gate, uses shared `base64.js` + `keys.js` (2026-06-30 refactor) |
-| `phpoc-web/test/genesis_gate_test.mjs` | HOT | 20-test suite for genesis gate (mock needs `listFiles` — TBD) |
+| `phpoc-web/test/genesis_gate_test.mjs` | HOT | 26-test suite for genesis gate — Groups A-C (20) + Group D typed error hierarchy (6, Bug 1 fix, RED phase) |
+| `phpoc-web/test/local_cache_test.mjs` | 🔴 NEW | 9-group suite for staging entry format canonicalization (Bug 3b fix, RED phase) |
+| `phpoc-web/test/device_uuid_test.mjs` | HOT | 12-group suite — Groups 1-8 (original) + Groups 9-12 client suffix tests (Bug 3a fix, RED phase) |
 | `phpoc-web/test/settings_genesis_test.mjs` | HOT | 13-test Settings UI genesis gate integration |
-| `phpoc-web/test/sync_service_test.mjs` | HOT | 167 tests — SyncService auth gate + Group N clearRemote (7 tests) + Group O stable specifier (14 assertions) (2026-06-30) |
+| `phpoc-web/test/sync_service_test.mjs` | HOT | Groups A-O + new Groups P (month summary push, Bug 2), Q (UUID suffix, Bug 3a), R (typed error handling, Bug 1) — RED phase additions |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
 | `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
 | `phpoc-web/test/onboarding_import_component.test.mjs` | 🟢 GREEN | **NEW** — 21 Vitest+RTL component tests for OnboardingScreen import form state machine (file picker gating, destroy warnings, checkbox gates, error display, back navigation) |

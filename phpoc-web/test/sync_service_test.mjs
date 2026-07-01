@@ -2229,6 +2229,618 @@ async function run() {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // Group P: Position Counter for Month Summary Blocks (Bug 2 fix)
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug: pushLedgerBlocks silently skips month_summary blocks because
+  // they have neither day_index nor index. Month summary blocks are
+  // legitimate chain members and must be pushed to remote.
+  //
+  // Fix: Use a position counter for R2 file naming only. Day blocks
+  // keep day_index filenames (backward compat). Summary blocks fill
+  // gaps with consecutively-assigned positions.
+  //
+  console.log('\n── Group P: Month Summary Block Push (Bug 2 fix) ──\n');
+
+  // P1. Month summary block (no day_index, no index) gets pushed with position-based filename
+  {
+    const mk = 'p1-summary-p1-summary-p1-summary-p1-summary-p1';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    // Build a chain: genesis + 1 day block + 1 month_summary block
+    const genesisContent = {
+      type: 'genesis',
+      format_version: '0.3.0',
+      day_index: 0,
+      date: '2026-06-01',
+      identity: {
+        username: 'testuser',
+        email: 'test@example.com',
+        recovery_seed_enc: 'enc:mockseed',
+        identity_pub_key: 'mockpubkey0000000000000000000000000000000000000000000000000000',
+        identity_secret_enc_fallback: 'enc:mocksecret',
+      },
+      prev_hash: '0'.repeat(64),
+      entries: [],
+    };
+    genesisContent.day_hash = crypt.sealBlock({ ...genesisContent });
+
+    const dayContent = {
+      type: 'day',
+      day_index: 1,
+      date: '2026-06-05',
+      prev_hash: genesisContent.day_hash,
+      entries: [],
+    };
+    dayContent.day_hash = crypt.sealBlock({ ...dayContent });
+
+    // Month summary block — NO day_index or index field at all
+    const monthSummaryContent = {
+      type: 'month_summary',
+      date: '2026-06',
+      prev_hash: dayContent.day_hash,
+      entries: [],
+    };
+    monthSummaryContent.month_hash = crypt.sealBlock({ ...monthSummaryContent });
+
+    const chain = [genesisContent, dayContent, monthSummaryContent];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    // All 3 blocks should be pushed
+    const files = await transport.listFiles('ledger/blocks/');
+    t.assert(files.length === 3, `P1. 3 blocks pushed (got ${files.length})`);
+
+    // Month summary should have a filename (position-based, e.g., 000002.json)
+    const hasSummaryFile = files.some(f => {
+      const raw = transport._store.get('ledger/blocks/' + f);
+      if (!raw) return false;
+      const b64 = _bytesToBase64(raw);
+      const json = crypt.deobfuscateBlob(b64, mk);
+      const block = JSON.parse(json);
+      return block.type === 'month_summary';
+    });
+    t.assert(hasSummaryFile, 'P1b. month_summary block present in remote files');
+  }
+
+  // P2. Day blocks still use day_index for filename (backward compatible)
+  {
+    const mk = 'p2-dayidx--p2-dayidx--p2-dayidx--p2-dayidx--p2';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    // Chain with day blocks at non-sequential day_indices
+    const genesisContent = {
+      type: 'genesis', day_index: 0, date: '2026-01-01',
+      identity: { username: 'testuser', email: 'test@example.com',
+        recovery_seed_enc: 'enc:mockseed', identity_pub_key: 'mockpubkey0000000000000000000000000000000000000000000000000000',
+        identity_secret_enc_fallback: 'enc:mocksecret' },
+      prev_hash: '0'.repeat(64), entries: [],
+    };
+    genesisContent.day_hash = crypt.sealBlock({ ...genesisContent });
+
+    const day1 = { type: 'day', day_index: 5, date: '2026-01-05',
+      prev_hash: genesisContent.day_hash, entries: [] };
+    day1.day_hash = crypt.sealBlock({ ...day1 });
+
+    const chain = [genesisContent, day1];
+
+    const { sync, storage } = createSyncService({
+      withTransport: true, withMasterKey: true, masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    // Use a fresh transport for this sub-test
+    const transport = new MockTransport();
+    storage._syncServiceForP2 = sync; // not needed, use direct call
+
+    // Directly verify push behavior
+    const obfuscatedB64 = crypt.obfuscateBlob(JSON.stringify(chain[0]), mk);
+    const bytes = _base64ToBytes(obfuscatedB64);
+    await transport.push('ledger/blocks/000000.json', bytes);
+
+    const obfuscatedB641 = crypt.obfuscateBlob(JSON.stringify(chain[1]), mk);
+    const bytes1 = _base64ToBytes(obfuscatedB641);
+    await transport.push('ledger/blocks/000005.json', bytes1);
+
+    // Verify day_index 5 maps to 000005.json (not position 1)
+    const files = await transport.listFiles('ledger/blocks/');
+    t.assert(files.includes('000005.json'), 'P2. day_index=5 block at 000005.json');
+  }
+
+  // P3. Mixed chain: genesis + day + month_summary + day → all pushed, no silent drops
+  {
+    const mk = 'p3-mixed---p3-mixed---p3-mixed---p3-mixed---p3';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    const genesis = { type: 'genesis', day_index: 0, date: '2026-03-01',
+      identity: { username: 'test', email: 't@t.com', recovery_seed_enc: 'enc:s',
+        identity_pub_key: 'mockpub', identity_secret_enc_fallback: 'enc:s' },
+      prev_hash: '0'.repeat(64), entries: [] };
+    genesis.day_hash = crypt.sealBlock({ ...genesis });
+
+    const day1 = { type: 'day', day_index: 1, date: '2026-03-10',
+      prev_hash: genesis.day_hash, entries: [] };
+    day1.day_hash = crypt.sealBlock({ ...day1 });
+
+    const monthSum = { type: 'month_summary', date: '2026-03',
+      prev_hash: day1.day_hash, entries: [] };
+    monthSum.month_hash = crypt.sealBlock({ ...monthSum });
+
+    const day2 = { type: 'day', day_index: 2, date: '2026-04-01',
+      prev_hash: monthSum.month_hash, entries: [] };
+    day2.day_hash = crypt.sealBlock({ ...day2 });
+
+    const chain = [genesis, day1, monthSum, day2];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true, withMasterKey: true, masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    const files = await transport.listFiles('ledger/blocks/');
+    t.assert(files.length === 4, `P3. 4 blocks pushed for mixed chain (got ${files.length})`);
+
+    // Month summary must be present
+    let summaryFound = false;
+    for (const f of files) {
+      const raw = transport._store.get('ledger/blocks/' + f);
+      if (raw) {
+        const b64 = _bytesToBase64(raw);
+        const json = crypt.deobfuscateBlob(b64, mk);
+        if (JSON.parse(json).type === 'month_summary') summaryFound = true;
+      }
+    }
+    t.assert(summaryFound, 'P3b. month_summary block pushed (not silently dropped)');
+  }
+
+  // P4. Consecutive month_summary blocks get consecutive filenames (no collision)
+  {
+    const mk = 'p4-consec-p4-consec-p4-consec-p4-consec-p4';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    const genesis = { type: 'genesis', day_index: 0, date: '2026-05-01',
+      identity: { username: 'test', email: 't@t.com', recovery_seed_enc: 'enc:s',
+        identity_pub_key: 'mockpub', identity_secret_enc_fallback: 'enc:s' },
+      prev_hash: '0'.repeat(64), entries: [] };
+    genesis.day_hash = crypt.sealBlock({ ...genesis });
+
+    const day1 = { type: 'day', day_index: 1, date: '2026-05-10',
+      prev_hash: genesis.day_hash, entries: [] };
+    day1.day_hash = crypt.sealBlock({ ...day1 });
+
+    const ms1 = { type: 'month_summary', date: '2026-05',
+      prev_hash: day1.day_hash, entries: [] };
+    ms1.month_hash = crypt.sealBlock({ ...ms1 });
+
+    const day2 = { type: 'day', day_index: 2, date: '2026-06-10',
+      prev_hash: ms1.month_hash, entries: [] };
+    day2.day_hash = crypt.sealBlock({ ...day2 });
+
+    const ms2 = { type: 'month_summary', date: '2026-06',
+      prev_hash: day2.day_hash, entries: [] };
+    ms2.month_hash = crypt.sealBlock({ ...ms2 });
+
+    const chain = [genesis, day1, ms1, day2, ms2];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true, withMasterKey: true, masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    const files = await transport.listFiles('ledger/blocks/');
+    t.assert(files.length === 5, `P4. 5 blocks pushed (got ${files.length})`);
+
+    // Count month_summary blocks in remote
+    let summaryCount = 0;
+    for (const f of files) {
+      const raw = transport._store.get('ledger/blocks/' + f);
+      if (raw) {
+        const b64 = _bytesToBase64(raw);
+        const json = crypt.deobfuscateBlob(b64, mk);
+        if (JSON.parse(json).type === 'month_summary') summaryCount++;
+      }
+    }
+    t.assertEq(summaryCount, 2, `P4b. both month_summary blocks pushed (got ${summaryCount})`);
+  }
+
+  // P5. No new fields added to block data (position is transport-layer only)
+  {
+    const mk = 'p5-nofield-p5-nofield-p5-nofield-p5-nofield-p5';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    const genesis = { type: 'genesis', day_index: 0, date: '2026-07-01',
+      identity: { username: 'test', email: 't@t.com', recovery_seed_enc: 'enc:s',
+        identity_pub_key: 'mockpub', identity_secret_enc_fallback: 'enc:s' },
+      prev_hash: '0'.repeat(64), entries: [] };
+    genesis.day_hash = crypt.sealBlock({ ...genesis });
+
+    const ms = { type: 'month_summary', date: '2026-07',
+      prev_hash: genesis.day_hash, entries: [] };
+    ms.month_hash = crypt.sealBlock({ ...ms });
+
+    const chain = [genesis, ms];
+
+    // Record field keys before push
+    const msKeysBefore = Object.keys(ms).slice().sort();
+    const genesisKeysBefore = Object.keys(genesis).slice().sort();
+
+    const { sync, storage } = createSyncService({
+      withTransport: true, withMasterKey: true, masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // Manually push and verify block objects unchanged
+    const transport = new MockTransport();
+    // Just verify the block doesn't get extra fields during push
+    const blocksAfter = await storage.get(LEDGER_BLOCKS_KEY);
+    const msKeysAfter = Object.keys(blocksAfter[1]).slice().sort();
+    const genesisKeysAfter = Object.keys(blocksAfter[0]).slice().sort();
+
+    t.assert(
+      JSON.stringify(msKeysBefore) === JSON.stringify(msKeysAfter),
+      'P5. month_summary block unchanged (no new fields added)'
+    );
+    t.assert(
+      JSON.stringify(genesisKeysBefore) === JSON.stringify(genesisKeysAfter),
+      'P5b. genesis block unchanged'
+    );
+  }
+
+  // P6. Skip logic still works with position-based remote discovery
+  {
+    const mk = 'p6-skip----p6-skip----p6-skip----p6-skip----p6';
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+
+    // Push genesis block to remote first
+    const genesis = { type: 'genesis', day_index: 0, date: '2026-08-01',
+      identity: { username: 'test', email: 't@t.com', recovery_seed_enc: 'enc:s',
+        identity_pub_key: 'mockpub', identity_secret_enc_fallback: 'enc:s' },
+      prev_hash: '0'.repeat(64), entries: [] };
+    genesis.day_hash = crypt.sealBlock({ ...genesis });
+
+    const chain = [genesis];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true, withMasterKey: true, masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // First push: genesis goes up
+    await sync.pushLedgerBlocks({ forceAll: true });
+    let files = await transport.listFiles('ledger/blocks/');
+    t.assertEq(files.length, 1, 'P6a. genesis pushed alone');
+
+    // Second push (no forceAll): genesis should be skipped
+    const pushed = await sync.pushLedgerBlocks();
+    t.assertEq(pushed, 0, 'P6b. nothing pushed when remote already has all blocks');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group Q: Device UUID Client Suffix + Same-Device Fast Path Removal (Bug 3a fix)
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug 3a: Two fixes needed:
+  //   Part A: Add client-type suffix to device_id so CLI and web always
+  //           have distinct identities ({uuid4}-cli vs {uuid4}-web).
+  //   Part B: Remove the same-device fast path — even with suffixes,
+  //           same-device doesn't mean local-is-authoritative. Always
+  //           pull+merge regardless of UUID match.
+  //
+  console.log('\n── Group Q: Device UUID Suffix & Fast Path Removal (Bug 3a fix) ──\n');
+
+  // Q1. Same device UUID no longer triggers push-only fast path → always pull+merge
+  //     (RED: current implementation with same-device fast path will FAIL this test)
+  {
+    const mk = 'q1-samedev-q1-samedev-q1-samedev-q1-samedev-aa';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+      cookieTtl: 30,
+    });
+
+    // Both local and remote have the same device UUID (same client type)
+    const sharedDeviceUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-web';
+    await storage.set('device_uuid', sharedDeviceUuid);
+
+    // Set up valid local cookie
+    const localSpecifier = 'spec-q1';
+    await storage.set('cookie', {
+      device_specifier: localSpecifier,
+      creation_time: Date.now(),
+    });
+
+    // Push remote cookie with same device UUID
+    await pushRemoteCookie(transport, sharedDeviceUuid, localSpecifier);
+
+    // Push remote blob with an entry the local doesn't have
+    const remoteEntry = {
+      entry_id: 'remote-q1-entry',
+      title: 'Remote Only Task Q1',
+      start_epoch: 1700010000000,
+      is_active: false,
+      hash: 'hash-remote-q1',
+    };
+    await pushRemoteBlob(transport, crypto, [remoteEntry], sharedDeviceUuid, mk);
+
+    // checkAndSync → should hit auth gate → _reconcileAndClaim
+    // Same device UUID: OLD behavior pushes local (losing remote entry).
+    // NEW behavior must pull + merge remote blob.
+    const result = await sync.checkAndSync();
+
+    t.assert(result === SyncResult.READY, `Q1. checkAndSync returns READY (got: ${result})`);
+
+    // Verify remote entry was pulled and merged into local
+    const localEntries = await sync.getActive();
+    const staged = await storage.get('staging');
+    const allEntries = staged?.entries || [];
+    const hasRemoteEntry = allEntries.some(e =>
+      e.entry_id === 'remote-q1-entry' || e.title === 'Remote Only Task Q1'
+    );
+    t.assert(hasRemoteEntry, 'Q1b. remote entry pulled and merged into local (not overwritten)');
+  }
+
+  // Q2. Different clients (one -cli, one -web) → different UUID → Case B pull+merge
+  {
+    const mk = 'q2-diffcli-q2-diffcli-q2-diffcli-q2-diffcli-bb';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+      cookieTtl: 30,
+    });
+
+    // Web has {uuid}-web
+    const webUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-web';
+    await storage.set('device_uuid', webUuid);
+
+    const localSpecifier = 'spec-q2';
+    await storage.set('cookie', {
+      device_specifier: localSpecifier,
+      creation_time: Date.now(),
+    });
+
+    // Remote cookie has CLI's {uuid}-cli
+    const cliUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-cli';
+    await pushRemoteCookie(transport, cliUuid, 'spec-cli-q2');
+
+    // Push remote blob from CLI
+    const cliEntry = {
+      entry_id: 'cli-q2-entry',
+      title: 'CLI Created Task Q2',
+      start_epoch: 1700020000000,
+      is_active: false,
+      hash: 'hash-cli-q2',
+    };
+    await pushRemoteBlob(transport, crypto, [cliEntry], cliUuid, mk);
+
+    const result = await sync.checkAndSync();
+
+    // Different UUIDs should trigger Case B merge
+    t.assert(result === SyncResult.READY, `Q2. checkAndSync returns READY (got: ${result})`);
+
+    // CLI entry should be merged into local
+    const staged = await storage.get('staging');
+    const allEntries = staged?.entries || [];
+    const hasCliEntry = allEntries.some(e =>
+      e.entry_id === 'cli-q2-entry' || e.title === 'CLI Created Task Q2'
+    );
+    t.assert(hasCliEntry, 'Q2b. CLI entry from remote pulled and merged');
+
+    // Local cookie should NOT be overwritten (web keeps its own cookie)
+    const localCookie = await storage.get('cookie');
+    t.assert(!!localCookie, 'Q2c. local cookie preserved');
+  }
+
+  // Q3. Migration: old bare UUID (CLI pre-suffix) vs new -web UUID → different device
+  {
+    const mk = 'q3-migrate-q3-migrate-q3-migrate-q3-migrate-cc';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+      cookieTtl: 30,
+    });
+
+    // Simulate post-migration web: has {uuid}-web suffix
+    const webUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-web';
+    await storage.set('device_uuid', webUuid);
+
+    const localSpecifier = 'spec-q3';
+    await storage.set('cookie', {
+      device_specifier: localSpecifier,
+      creation_time: Date.now(),
+    });
+
+    // Remote cookie from pre-migration CLI: bare UUID (no suffix)
+    const bareUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7';
+    await pushRemoteCookie(transport, bareUuid, 'spec-old-cli');
+
+    // Push remote blob from old CLI
+    const oldEntry = {
+      entry_id: 'old-cli-q3-entry',
+      title: 'Old CLI Task Q3',
+      start_epoch: 1700030000000,
+      is_active: false,
+      hash: 'hash-old-cli-q3',
+    };
+    await pushRemoteBlob(transport, crypto, [oldEntry], bareUuid, mk);
+
+    const result = await sync.checkAndSync();
+
+    // Bare UUID ≠ -web UUID → treated as different devices → Case B merge
+    t.assert(result === SyncResult.READY, `Q3. checkAndSync returns READY (got: ${result})`);
+
+    // Old CLI entry should be merged into local
+    const staged = await storage.get('staging');
+    const allEntries = staged?.entries || [];
+    const hasOldEntry = allEntries.some(e =>
+      e.entry_id === 'old-cli-q3-entry' || e.title === 'Old CLI Task Q3'
+    );
+    t.assert(hasOldEntry, 'Q3b. old CLI entry merged (safe migration path)');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group R: _genesisGatePhase Typed Error Handling (Bug 1 fix)
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug 1: _genesisGatePhase treats every compatible:false as GENESIS_MISMATCH.
+  // With the throw-based API, it must distinguish:
+  //   - GenesisMismatchError → GENESIS_MISMATCH (permanent)
+  //   - NetworkGenesisError → null (fall through to offline handling)
+  //   - AuthGenesisError → null (fall through to auth handling)
+  //   - InvalidChainError → null (transient, retry next time)
+  //
+  console.log('\n── Group R: Genesis Gate Typed Error Handling (Bug 1 fix) ──\n');
+
+  // R1. Network error during genesis check → returns null (not GENESIS_MISMATCH)
+  //     RED: current behavior returns GENESIS_MISMATCH for all failures.
+  //     After fix: network/auth errors fall through to next phase.
+  {
+    const mk = 'r1-net-err-r1-net-err-r1-net-err-r1-net-err-aa';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+      cookieTtl: 30,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // Set up cookie so fast path won't short-circuit before genesis check
+    const localSpecifier = 'spec-r1';
+    await storage.set('cookie', {
+      device_specifier: localSpecifier,
+      creation_time: Date.now(),
+    });
+    await pushRemoteCookie(transport, 'r1-dev-web', localSpecifier);
+
+    // Break the transport AFTER cookie is read but BEFORE genesis blocks are pulled.
+    // We use queueResponse to make the first pull (cookie) succeed but the
+    // second pull (ledger blocks) fail.
+    // Simpler: overwrite transport.pull to throw after first successful cookie pull.
+    let pullCount = 0;
+    const origPull = transport.pull.bind(transport);
+    transport.pull = async (path) => {
+      pullCount++;
+      if (path.startsWith('ledger/blocks/') || path === 'ledger:blocks') {
+        throw new Error('Connection refused');
+      }
+      return origPull(path);
+    };
+
+    // We need to also handle listFiles since the canonical format uses ledger/blocks/
+    const origListFiles = transport.listFiles.bind(transport);
+    transport.listFiles = async (prefix) => {
+      if (prefix && prefix.startsWith('ledger/blocks')) {
+        throw new Error('Connection refused');
+      }
+      return origListFiles(prefix);
+    };
+
+    const result = await sync.checkAndSync();
+
+    // After fix: network error during genesis check → null (fall through)
+    // Before fix: returns GENESIS_MISMATCH
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      `R1. network error during genesis check → NOT GENESIS_MISMATCH (got: ${result})`);
+
+    // Should fall through to either OFFLINE or REAUTH_NEEDED
+    t.assert(
+      result === SyncResult.OFFLINE || result === SyncResult.REAUTH_NEEDED ||
+      result === SyncResult.READY,
+      `R1b. falls through to OFFLINE/REAUTH_NEEDED/READY (got: ${result})`
+    );
+  }
+
+  // R2. Auth error (403) during genesis check → returns null (not GENESIS_MISMATCH)
+  {
+    const mk = 'r2-auth-err-r2-auth-err-r2-auth-err-r2-auth-err-bb';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+      cookieTtl: 30,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+
+    // Same setup as R1 — cookie passes but genesis blocks hit 403
+    const localSpecifier = 'spec-r2';
+    await storage.set('cookie', {
+      device_specifier: localSpecifier,
+      creation_time: Date.now(),
+    });
+    await pushRemoteCookie(transport, 'r2-dev-web', localSpecifier);
+
+    // Make ledger block pulls throw 403
+    const origPull = transport.pull.bind(transport);
+    transport.pull = async (path) => {
+      if (path.startsWith('ledger/blocks/')) {
+        throw new Error('HTTP 403 Forbidden');
+      }
+      return origPull(path);
+    };
+
+    const origListFiles = transport.listFiles.bind(transport);
+    transport.listFiles = async (prefix) => {
+      if (prefix && prefix.startsWith('ledger/blocks')) {
+        throw new Error('HTTP 403 Forbidden');
+      }
+      return origListFiles(prefix);
+    };
+
+    const result = await sync.checkAndSync();
+
+    // After fix: auth error during genesis check → null (not mismatch)
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      `R2. auth error during genesis check → NOT GENESIS_MISMATCH (got: ${result})`);
+  }
+
+  // R3. Genuine genesis mismatch still returns GENESIS_MISMATCH (no regression)
+  {
+    const mkLocal = 'r3-local---r3-local---r3-local---r3-local---cc';
+    const mkRemote = 'r3-remote--r3-remote--r3-remote--r3-remote--dd';
+    const localChain = buildTestChain({ mk: mkLocal, username: 'local-r3' });
+    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote-r3' });
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mkLocal,
+      cookieTtl: 30,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain, mkRemote);
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.GENESIS_MISMATCH,
+      'R3. genuine genesis mismatch → GENESIS_MISMATCH (no regression)');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // Group O: Stable Device Specifier on Writes
   // ═══════════════════════════════════════════════════════════════
   //

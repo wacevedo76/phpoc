@@ -267,5 +267,143 @@ class TestLedger(unittest.TestCase):
         synced_list_to_yesterday = [d for d in ledger_data if d.get('type') == 'day' and d['date'] <= yesterday_str]
         self.assertEqual(len(synced_list_to_yesterday), 2)
 
+class TestGenesisSealVerification(unittest.TestCase):
+    """Bug 4: Genesis seal mismatch between creation and verification.
+
+    The factory includes signature: "" in the JSON before sealing,
+    but verification paths strip signature before recomputing.
+    The fix strips signature from seal_data before calling crypto.seal().
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.ledger_path = Path(self.tmpdir) / "ledger.json"
+        self.pdk = hashlib.pbkdf2_hmac(
+            'sha256', b'test-passphrase-123', b'session-salt', 100, 32
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_genesis_seal_verifiable_without_signature(self):
+        """Factory-produced genesis day_hash can be verified by re-computing
+        the seal WITHOUT the signature field in the JSON.
+
+        Before Bug 4 fix: this test FAILS because factory includes
+        signature: "" in the sealed JSON, producing a different hash
+        than the verification paths that strip signature.
+        """
+        # Create a ledger with the factory
+        identity_secret = os.urandom(32)
+        seed = LedgerFactory.initialize(
+            self.ledger_path, self.pdk,
+            username='testseal', email='seal@test.com',
+            identity_secret=identity_secret
+        )
+
+        # Read the genesis block
+        ledger_data = json.loads(self.ledger_path.read_text())
+        genesis = ledger_data[0]
+        self.assertEqual(genesis['type'], 'genesis')
+
+        # Extract seal values
+        day_hash = genesis['day_hash']
+        signature = genesis.get('signature', '')
+
+        # Recompute the seal WITHOUT the signature field
+        # (matching onboarding_file.py line 260 and auth.py line 147)
+        import copy
+        check_data = copy.deepcopy(genesis)
+        del check_data['day_hash']
+        if 'signature' in check_data:
+            del check_data['signature']
+
+        # Derive master key from seed and create crypto
+        mk = RecoveryManager.seed_to_key(seed)
+        crypto = CryptoManager(mk)
+
+        # Re-compute seal
+        check_json = json.dumps(check_data, sort_keys=True)
+        recomputed_day_hash = crypto.seal(check_json)
+
+        self.assertEqual(
+            recomputed_day_hash, day_hash,
+            'Bug 4 fix: genesis day_hash must match seal computed WITHOUT signature field'
+        )
+
+    def test_genesis_seal_matches_auth_verification_path(self):
+        """Factory-produced genesis day_hash matches what auth.py
+        _verify_cached_key() would compute."""
+        identity_secret = os.urandom(32)
+        seed = LedgerFactory.initialize(
+            self.ledger_path, self.pdk,
+            username='testauth', email='auth@test.com',
+            identity_secret=identity_secret
+        )
+
+        ledger_data = json.loads(self.ledger_path.read_text())
+        genesis = ledger_data[0]
+
+        # Simulate auth.py _verify_cached_key() logic:
+        # Copy block, remove day_hash and signature, recompute seal
+        check_data = {}
+        for k, v in genesis.items():
+            if k not in ('day_hash', 'signature'):
+                check_data[k] = v
+
+        mk = RecoveryManager.seed_to_key(seed)
+        crypto = CryptoManager(mk)
+        check_json = json.dumps(check_data, sort_keys=True)
+        expected_hash = crypto.seal(check_json)
+
+        self.assertEqual(
+            expected_hash, genesis['day_hash'],
+            'Bug 4 fix: genesis day_hash matches auth verification path'
+        )
+
+    def test_old_buggy_genesis_fails_verification(self):
+        """Old CLI-created ledgers (with signature in the sealed JSON)
+        still fail verification — no false-positive regression."""
+        # Construct a buggy genesis manually (simulating old factory behavior)
+        mk = RecoveryManager.seed_to_key(
+            RecoveryManager.generate_recovery_seed()
+        )
+        crypto = CryptoManager(mk)
+
+        date_str = time.strftime("%Y-%m-%d")
+        # Buggy genesis: includes signature before sealing
+        buggy_genesis = {
+            "type": "genesis",
+            "day_index": 0,
+            "date": date_str,
+            "identity": {
+                "username": "olduser",
+                "email": "old@test.com",
+                "recovery_seed_enc": "enc:oldseed",
+                "identity_pub_key": "0" * 64,
+                "identity_secret_enc_fallback": "enc:oldsecret",
+            },
+            "prev_hash": "0" * 64,
+            "entries": [],
+            "signature": "",  # BUG: included in sealed JSON
+        }
+        genesis_json = json.dumps(buggy_genesis, sort_keys=True)
+        buggy_genesis["day_hash"] = crypto.seal(genesis_json)
+
+        # Now verify it WITHOUT signature (as verification paths do)
+        verify_data = {k: v for k, v in buggy_genesis.items()
+                       if k not in ('day_hash', 'signature')}
+        verify_json = json.dumps(verify_data, sort_keys=True)
+        recomputed_hash = crypto.seal(verify_json)
+
+        # The buggy seal should NOT match the signature-stripped recomputation
+        self.assertNotEqual(
+            recomputed_hash, buggy_genesis['day_hash'],
+            'Old buggy genesis (signature in seal) should fail verification — '
+            'this confirms the bug existed and the fix prevents new ledgers '
+            'from being created this way'
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

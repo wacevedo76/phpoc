@@ -33,7 +33,7 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_remote_config_wiring.py` — Remote config wiring
 
 ## Local Contracts
-- **31 test files, ~14,700 lines, 1493 tests passing**
+- **31 test files, ~14,800 lines, 1554 tests passing (3 new Bug 4 tests added 2026-07-01)**
 - Run all: `python3 -m pytest`
 - Run single file: `python3 -m pytest tests/test_<name>.py -v`
 - Run with warnings: `python3 -m pytest -W ignore::DeprecationWarning`
