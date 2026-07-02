@@ -196,6 +196,7 @@ def _import_v2(data: dict, mk: bytes) -> dict:
         )
 
     # Also validate the ledger block chain itself
+    crypto = CryptoManager(mk)
     _validate_raw_chain(ledger_blocks, crypto, mk)
 
     genesis_hash = None

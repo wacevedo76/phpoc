@@ -510,7 +510,7 @@ Random filler bytes pad to class ceiling before encryption. User-configurable. B
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Transport** | ADR-021 (Sync Optimization), ADR-022 (Device Cookie), ADR-023 (Serverless HTTP Transport) |
+| **Sync / Transport** | ADR-021 (Sync Optimization), ADR-022 (Device Cookie), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path) |
 
 ---
 
@@ -824,7 +824,7 @@ Three complementary changes:
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path), ADR-023 (Serverless HTTP Transport)
+| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path) |
 
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
@@ -1255,3 +1255,126 @@ Both offer free tiers that cover this usage indefinitely.
 - `cli/interface.py` — remove `git pull --rebase` fallbacks (no longer needed)
 - `domain/` — unchanged (all domain logic is transport-agnostic)
 - `tests/` — add `test_http_transport.py` (~20 tests against a mock HTTP server)
+
+---
+
+## ADR-024: Hash Index Fast Path — Login/Reauth Sync Speedup
+
+**Date:** 2026-07-01
+**Status:** ✅ Implemented (web client + CLI)
+
+### Context
+
+Every login (web) and unlock (CLI) triggers a full ledger chain pull from the remote —
+up to N sequential HTTP GETs for N blocks. The common case (re-login from same device,
+no new data) wastes dozens of round trips to discover "nothing changed." For a 105-block
+chain, this meant 105+ HTTP requests with TCP+TLS handshake overhead, compounded by
+Cloudflare Worker cold starts. Total latency: 4–30+ seconds.
+
+The `pushLedgerBlocks()` call in the web client ran on every login regardless of
+whether the merge produced new data — pushing 4+ HTTP PUTs (block, index, hash_index,
+hash_index.sha256) redundantly. The `pullCookie()` call was duplicated (once in
+fast-path phase, again in reconcile). And `_genesisCompatible` was never cached to
+`true`, causing repeated genesis re-checks within a session.
+
+### Decision
+
+**A plaintext hash index** is stored on the remote. It contains block seal hashes
+(already public data embedded in each encrypted block) and a SHA-256 checksum. The
+index is NOT encrypted — requires no master key to read.
+
+**Three-tier genesis check:**
+
+| Tier | What | Network cost | When it applies |
+|---|---|---|---|
+| Tier 1 | Pull `hash_index.sha256`, compare to local SHA-256 | 1 GET | Chains identical (re-login) |
+| Tier 2 | Pull `hash_index.json`, find fork point via seal comparison | 1–2 GETs | Remote extends local (other device added blocks) |
+| Fallback | Full chain pull (all block files) | N GETs | First sync, divergent chains, missing/tampered index |
+
+**Hash index format (plaintext, language-agnostic):**
+
+```
+ledger/hash_index.json   → ["abc123…", "def456…", …]
+ledger/hash_index.sha256 → "1a2b3c…"
+```
+
+Each element in the array is `block.day_hash || block.month_hash || block.year_hash`.
+Both the web client (JavaScript `hash_index.js`) and CLI (Python `remote_sync.py`)
+produce identical output.
+
+**Push gate in web client (`merged` flag):**
+
+`GenesisGate.check()` returns a `merged` boolean alongside the merged chain. The
+caller gates `pushLedgerBlocks()` on `merged` (not `mergedChain`, which was always
+truthy). This eliminates redundant pushes on identical-chain logins:
+
+| Return path | `merged` | Push needed? |
+|---|---|---|
+| Tier 1 SHA-256 match | `false` | No |
+| Tier 2 linear_local | `false` | No |
+| Empty remote | `true` | Yes (bootstrap) |
+| Full pull + merge | `newBlockCount > 0 \|\| remote longer` | Only when merge changed data |
+
+**Additional web client optimizations:**
+
+| Optimization | What | Impact |
+|---|---|---|
+| Cookie caching | `_lastRemoteCookie` stores fast-path pull result; `_reconcileAndClaim()` reuses it | Eliminates 1 HTTP GET |
+| Genesis caching | `_genesisCompatible = true` after successful check | Prevents redundant re-check within session |
+| `clearRemote()` cleanup | Also deletes hash_index files | Prevents stale index residue after clear |
+
+### Rationale
+
+- **Plaintext is safe:** The hash index contains only block seals — already public data
+  stored as plaintext within encrypted block files. An attacker who can list R2 objects
+  already has access to `day_hash` fields in the encrypted blocks.
+- **One-time bootstrap cost:** On first sync (or after `clearRemote`), one full chain
+  pull bootstraps the index. Every subsequent login hits Tier 1.
+- **Tamper detection:** If SHA-256 doesn't match the index, or pulled blocks don't match
+  the seals at Tier 2, the system falls through to full pull. A corrupted index is
+  treated as absent.
+- **Self-healing:** Both clients push hash_index files after every successful sync.
+  If deleted, the next sync rebuilds them.
+- **Cross-client mutual benefit:** Web pushes the index; CLI's next sync hits Tier 1.
+  CLI pushes the index; web's next login hits Tier 1. No coordination needed.
+- **No new crypto primitives:** Plain JSON array + SHA-256. Both languages have these
+  in their standard libraries.
+
+### Consequences
+
+- **Positive:**
+  - Login/unlock drops from N network round trips to 1 in the common case
+  - 105-block chain: ~10–30s → ~0.1s for re-login
+  - 4+ unnecessary HTTP PUTs eliminated per web login
+  - 1 unnecessary HTTP GET eliminated per web login
+  - Both clients benefit from each other's index pushes
+
+- **Negative:**
+  - Introduces 2 new files on the remote (~2KB for 105 blocks — negligible)
+  - Bootstrap gap: first-ever sync from any device must do one full pull (unavoidable —
+    you can't know the remote's block seals without pulling at least once)
+  - `clearRemote()` must also delete hash_index files (already implemented)
+
+### Implementation
+
+| Layer | File | What |
+|---|---|---|
+| Web sync | `phpoc-web/src/sync/hash_index.js` | `buildHashIndex()`, `compareHashIndexes()` |
+| Web sync | `phpoc-web/src/sync/genesis_gate.js` | `merged` flag on all six return paths |
+| Web sync | `phpoc-web/src/sync/sync.js` | Gated push on `merged`, cookie cache, genesis cache, clearRemote cleanup, `_debugCheckHashIndex()` |
+| Web UI | `phpoc-web/src/components/screens/SyncSettings.jsx` | Clear Remote button + overlay, hash index debug panel |
+| CLI sync | `domain/ledger/remote_sync.py` | `push_hash_index()`, `pull_hash_index()`, `_get_block_hash()`, `compare_hash_indexes()` |
+| CLI sync | `core/sync/orchestrator.py` | Tier 1 SHA-256 fast path, Tier 2 fork-aware pull, `push_hash_index()` after sync + merge |
+
+### Tests
+
+- Web: 248 sync_service + 218 genesis_gate = 466 pass, 0 fail
+- CLI: 1554 Python tests pass, 0 fail
+
+### Related
+
+- ADR-015 (Multi-Device Shared Encrypted Staging) — cookie/blob reconciliation is the
+  remaining sync latency component not addressed by this decision
+- ADR-022 (Device Cookie Fast-Path) — the cookie check happens before the genesis gate;
+  the hash index fast path is additive, not a replacement
+- `docs/planning/BACKLOG.md` P5 (CLI Unlock Latency) — partially resolved

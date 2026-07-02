@@ -3,6 +3,44 @@
 > Issues parked for future attention. Completed items are tracked in `CHANGELOG.md`
 > and `WEB_ROADMAP.md`. This file only tracks what remains.
 
+## P1 — Canonical Cross-Client Serialization Format
+
+**Status (2026-07-01):** Three incompatible serializations exist across the project,
+blocking seamless CLI ↔ Web interoperability:
+
+| Serialization | Used by | Structure |
+|---|---|---|
+| Raw chain | CLI native (`ledger.json`) | `[{block}, …]` — 105 blocks in array |
+| v2 envelope | phpoc-web export/import | `{format_version: 2, ledger, staging, seal}` |
+| Per-block obfuscated | R2 remote (both clients) | `ledger/blocks/000000.json` — one file per block |
+
+**Problem:**
+- The CLI exports `ledger.json` (raw chain) but the web imports v2.
+  Users must re-export from one client before importing into the other.
+- `PHPSPEC.md` declares raw chain canonical (§1) but doesn't acknowledge
+  the v2 envelope, which is the only format with integrity sealing.
+- No ADR exists deciding which format should be the cross-client standard.
+
+**Discussion needed:** Choose one format as the canonical cross-client
+serialization, update PHPSPEC.md to reflect it, and align all import/export
+paths. Options:
+
+| Option | Pros | Cons |
+|---|---|---|
+| A. v2 envelope as canonical | Sealed, versioned, includes staging | CLI native format changes; migration needed |
+| B. Raw chain as canonical (status quo) | CLI already uses it; simpler | No integrity seal; no staging data in transfers |
+| C. Both — v2 for sealed transfers, raw chain for CLI local | No breaking changes | Perpetual dual-format complexity; PHPSPEC must explain both |
+
+**Unblock criteria:** Decision made + PHPSPEC.md updated + import/export paths
+unified across both clients.
+
+### Remaining
+- [ ] Schedule and hold format decision discussion
+- [ ] Record decision as ADR in `docs/design/ARCHITECTURAL_DECISIONS.md`
+- [ ] Update `PHPSPEC.md` to reflect the canonical format
+- [ ] Align CLI `onboarding_file.py`, `main.py` export, and web `ledger_export.js` / `ledger_import.js`
+- [ ] Remove dual-format shims once migration is complete
+
 ## Entry Hash Format — Eventual indent=2 Consolidation
 
 **Status (2026-06-25):** CLI engine (`engine.py`, `chain.py`) and web app (`utils.js`) now
@@ -36,11 +74,16 @@ but the remaining items (ledger sync via git, async transport) are deferred.
 - [ ] Handle case where `~/.local/share/phpoc/` doesn't exist yet on pull
 - [ ] First-time `phpoc view` on a machine with no local staging
 
-## P5 — CLI Unlock Latency (up to 10s) — Paused (2026-07-01)
+## P5 — CLI Unlock Latency (up to 10s) — Partially resolved (2026-07-01)
 
 **Investigation:** `docs/investigations/UNLOCK_PERFORMANCE_CLI.md` (full diagnostic trace).
 
-**Root causes (3 compounding factors):**
+**2026-07-01 update:** The hash index fast path (Tier 1 SHA-256 match) now skips
+the full ledger block pull on subsequent unlocks — eliminating the largest component
+of the sync latency (up to 105 sequential HTTP GETs). However, three root causes
+remain:
+
+### Remaining root causes
 
 1. **Broken HTTP timeout plumbing** — `check_and_sync(timeout_ms=500)` accepts the parameter but never passes it to transport calls. `_reconcile_and_claim()` calls `pull_cookie()` + `pull()` bare, which use `http.client.HTTPSConnection` with `_DEFAULT_TIMEOUT_S = 60.0`. The `check_remote_available(timeout_ms=500)` method only measures elapsed time after the call — it doesn't enforce the timeout on the socket.
 
@@ -52,7 +95,7 @@ but the remaining items (ledger sync via git, async transport) are deferred.
 
 **What's NOT the bottleneck:** PBKDF2 600K iterations (~0.09s via OpenSSL-backed `hashlib`), JSON parsing (~1ms for 105 blocks), file I/O.
 
-**Proposed solutions (priority order):**
+**Proposed solutions (remaining):**
 
 | # | Solution | Effort | Impact |
 |---|----------|--------|--------|
@@ -62,9 +105,15 @@ but the remaining items (ledger sync via git, async transport) are deferred.
 | D | HTTP connection pooling / keep-alive | Large | Eliminates TLS handshake overhead (0.5-2s) per-request after first |
 | E | Worker warmup (paid plan, cron trigger, or warmup endpoint) | Small (infra) | Eliminates cold-start component |
 
+### Already resolved
+- ✅ **Ledger block pull latency** — hash_index.json fast path (2026-07-01).
+  Tier 1 SHA-256 match skips full chain pull (~0.1s vs N sequential HTTP GETs).
+  Covers `_sync_ledger_blocks()`. Staging reconciliation still hits the network.
+
 **Files affected:** `core/sync/http_transport.py` (line 56, `_DEFAULT_TIMEOUT_S`), `domain/staging/service.py` (`check_and_sync`, `_reconcile_and_claim`), `domain/staging/remote_sync.py` (`pull_cookie`, `pull`, `check_remote_available`), `main.py` (read-command dispatch).
 
-**Pause rationale:** Web unlock takes priority. CLI is in maintenance mode.
+**Pause rationale:** Web unlock takes priority. Ledger block pull latency is resolved
+(hash index fast path). Remaining latency is in staging reconciliation (cookie/blob HTTP).
 
 **Unblock criteria:** Web unlock latency investigation complete; user prioritizes CLI work.
 
