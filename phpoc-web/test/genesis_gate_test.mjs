@@ -467,6 +467,7 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
     t.assertEq(result.stats.remote, 0, 'stats.remote is 0');
     t.assertEq(result.stats.merged, localChain.length, 'stats.merged correct');
     t.assertEq(result.index, null, 'index is null');
+    t.assert(result.merged === true, 'A4h. merged: true — remote empty, push IS needed');
   } else {
     t.assert(false, 'remote empty → compatible — NOT IMPLEMENTED (TDD RED)');
   }
@@ -1242,6 +1243,7 @@ function sha256HashIndex(hashIndex) {
     const pullsAfter = transport.pullCount - pullsBefore;
     t.assert(pullsAfter <= 2 || result.compatible === true,
       `E1d. pullCount: ${pullsAfter} pulls (GREEN target: ≤2 for Tier 1 match) — RED: may pull full chain`);
+    t.assert(result.merged === false, 'E1e. merged: false — chains identical, no push needed');
   } else {
     t.assert(false, 'E1. Tier 1 fast path — NOT IMPLEMENTED (TDD RED)');
   }
@@ -1516,6 +1518,7 @@ console.log('⛔ hash_index Tier 2 NOT IMPLEMENTED — all tests expected to FAI
       'F1f. merged chain returned');
     t.assert(result.mergedChain.length >= remoteChain.length,
       'F1g. merged chain includes all remote blocks');
+    t.assert(result.merged === true, 'F1h. merged: true — remote extends, push IS needed');
   } else {
     t.assert(false, 'F1. Linear fork incremental pull — NOT IMPLEMENTED (TDD RED)');
   }
@@ -1553,6 +1556,7 @@ console.log('⛔ hash_index Tier 2 NOT IMPLEMENTED — all tests expected to FAI
       'F2d. compatible: true — local wins, GREEN: no remote block pulls');
     t.assertEq(result.mergedChain.length, localChain.length,
       'F2e. merged chain = local chain (local is authoritative)');
+    t.assert(result.merged === false, 'F2f. merged: false — local extends remote, no push needed');
   } else {
     t.assert(false, 'F2. Linear fork local extends remote — NOT IMPLEMENTED (TDD RED)');
   }
@@ -1588,6 +1592,7 @@ console.log('⛔ hash_index Tier 2 NOT IMPLEMENTED — all tests expected to FAI
     // Merged chain should contain entries from both local and remote
     t.assert(result.stats !== undefined, 'F3d. stats returned');
     t.assert(result.stats.mergedEntries >= 2, 'F3e. merged entries >= 2 (both devices)');
+    t.assert(result.merged === true, 'F3f. merged: true — actual merge, push IS needed');
   } else {
     t.assert(false, 'F3. Divergent fork merge — NOT IMPLEMENTED (TDD RED)');
   }

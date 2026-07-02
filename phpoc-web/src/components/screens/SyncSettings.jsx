@@ -101,6 +101,13 @@ export default function SyncSettings() {
   const [clearingRemote, setClearingRemote] = useState(false);
   const [overrideError, setOverrideError] = useState(null);
 
+  // ── Clear Remote overlay (always accessible) ────────────────────
+  const [showClearRemoteOverlay, setShowClearRemoteOverlay] = useState(false);
+  const [clearRemoteError, setClearRemoteError] = useState(null);
+
+  // ── [DEBUG] Hash index existence ────────────────────────────────
+  const [hashIndexStatus, setHashIndexStatus] = useState({ hashIndexJson: null, hashIndexSha256: null });
+
   // Display status: SYNCING (manual or auto) > remote status > NOT_SYNCED
   // (entries pending commit). When remote sync succeeded (READY), show the
   // remote status even if entries exist — "Not Synced" only appears when
@@ -161,6 +168,18 @@ export default function SyncSettings() {
   }, [sync]);
 
   useEffect(() => { refreshEntries(); }, [refreshEntries, refreshActive]);
+
+  // [DEBUG] Poll hash index existence
+  useEffect(() => {
+    if (!sync || !sync.isRemoteAvailable) return;
+    let cancelled = false;
+    const check = async () => {
+      const status = await sync._debugCheckHashIndex();
+      if (!cancelled) setHashIndexStatus(status);
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [sync, sync?.isRemoteAvailable, lastSyncResult]);
 
   // ── Selection ───────────────────────────────────────────────────
 
@@ -814,6 +833,77 @@ export default function SyncSettings() {
     }
   }, [sync, overrideConfirmInput, commitEntries, refreshEntries]);
 
+  // ── Clear Remote from overlay (always-accessible button) ─────
+
+  const handleClearRemoteFromOverlay = useCallback(async () => {
+    if (!sync || clearingRemote) return;
+    setClearingRemote(true);
+    setClearRemoteError(null);
+    try {
+      await sync.clearRemote();
+
+      // Close overlay
+      setShowClearRemoteOverlay(false);
+
+      // Re-run sync — remote is now empty, genesis will be compatible
+      setSyncing(true);
+      setRemoteStatus(STATUS_SYNCING);
+      setLastSyncResult(null);
+
+      const result = await sync.checkAndSync();
+      if (result === STATUS_REAUTH) {
+        setRemoteStatus(STATUS_REAUTH);
+        setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        return;
+      }
+      setRemoteStatus(result);
+
+      // Commit completed entries
+      const freshEntries = await sync.readEntries();
+      const stoppedIds = freshEntries
+        .filter((e) => !e.is_active && !e.committed)
+        .map((e) => e.entry_id);
+
+      if (stoppedIds.length > 0) {
+        setCommitting(true);
+        try {
+          const commitResult = await commitEntries(stoppedIds);
+          if (commitResult?.committedEntryIds?.length > 0) {
+            setCommitResult({
+              type: 'success',
+              message: `Committed ${commitResult.committedEntryIds.length} entry${commitResult.committedEntryIds.length !== 1 ? 'ies' : 'y'}`,
+              count: commitResult.committedEntryIds.length,
+              blockIndex: commitResult.blockIndex,
+            });
+            setSelectedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+            setExpandedIds((prev) => {
+              const next = new Set(prev);
+              for (const id of commitResult.committedEntryIds) next.delete(id);
+              return next;
+            });
+          }
+          await refreshEntries();
+        } catch (err) {
+          setCommitError(err.message || 'Commit failed');
+        } finally {
+          setCommitting(false);
+        }
+      }
+
+      setLastSyncResult(result === STATUS_READY ? 'Remote cleared and sync completed' : result);
+    } catch (err) {
+      setClearRemoteError(err.message || 'Failed to clear remote');
+      setRemoteStatus(STATUS_OFFLINE);
+    } finally {
+      setClearingRemote(false);
+      setSyncing(false);
+    }
+  }, [sync, clearingRemote, commitEntries, refreshEntries]);
+
   // ── Auto-clear commit error after 8 seconds ─────────────────────
 
   useEffect(() => {
@@ -1156,6 +1246,26 @@ export default function SyncSettings() {
             </span>
           </div>
 
+          {/* [DEBUG] Hash Index Status */}
+          <div className="sync-detail-row hash-index-debug">
+            <span className="sync-detail-label">Hash Index</span>
+            <span className="sync-detail-value" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+              {hashIndexStatus.hashIndexJson === null
+                ? '⋯ checking'
+                : hashIndexStatus.hashIndexJson
+                  ? '✅ hash_index.json — exists'
+                  : '❌ hash_index.json — MISSING'
+              }
+              <br />
+              {hashIndexStatus.hashIndexSha256 === null
+                ? '⋯ checking'
+                : hashIndexStatus.hashIndexSha256
+                  ? '✅ hash_index.sha256 — exists'
+                  : '❌ hash_index.sha256 — MISSING'
+              }
+            </span>
+          </div>
+
           {/* Sync Now button */}
           <button
             className="btn btn-primary btn-sync-now"
@@ -1164,6 +1274,18 @@ export default function SyncSettings() {
           >
             {syncing ? '↻ Syncing...' : '↻ Sync Now'}
           </button>
+
+          {/* Clear Remote button */}
+          {sync?.isRemoteAvailable && (
+            <button
+              className="btn btn-danger btn-clear-remote"
+              onClick={() => { setShowClearRemoteOverlay(true); setClearRemoteError(null); }}
+              disabled={syncing || clearingRemote}
+              title="Delete all data from remote bucket and re-sync this device's data"
+            >
+              🗑 Clear Remote
+            </button>
+          )}
 
           {/* Last sync result */}
           {lastSyncResult && (
@@ -1242,6 +1364,52 @@ export default function SyncSettings() {
           </p>
         </div>
       </div>
+
+      {/* ── Clear Remote Confirmation Overlay ────────────────────── */}
+      {showClearRemoteOverlay && (
+        <div className="clear-remote-overlay" onClick={() => setShowClearRemoteOverlay(false)}>
+          <div className="clear-remote-overlay-card" onClick={(e) => e.stopPropagation()}>
+            <h3 className="clear-remote-overlay-title">⚠ Clear Remote Storage</h3>
+
+            <p className="clear-remote-overlay-text">
+              This will <strong>permanently delete</strong> all data from the remote
+              bucket, including all ledger entries, staging data, device cookies,
+              and sync metadata.
+            </p>
+
+            <p className="clear-remote-overlay-text">
+              After clearing, this device's local ledger will be re-synced as the
+              new authoritative source. Other devices connected to this remote
+              will detect a genesis mismatch and need to re-onboard.
+            </p>
+
+            <p className="clear-remote-overlay-text clear-remote-overlay-caution">
+              This action cannot be undone.
+            </p>
+
+            {clearRemoteError && (
+              <p className="form-status form-status-error">{clearRemoteError}</p>
+            )}
+
+            <div className="clear-remote-overlay-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => { setShowClearRemoteOverlay(false); setClearRemoteError(null); }}
+                disabled={clearingRemote}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleClearRemoteFromOverlay}
+                disabled={clearingRemote}
+              >
+                {clearingRemote ? '↻ Clearing...' : '⚠ Clear & Re-sync'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

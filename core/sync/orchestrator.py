@@ -18,6 +18,8 @@ Revert lifecycle:
 """
 
 import logging
+import json
+import hashlib
 import asyncio
 from typing import Optional, List, Dict, Any
 
@@ -223,6 +225,141 @@ class SyncOrchestrator:
 
         ledger_sync = RemoteLedgerSync(self._transport, self._master_key)
 
+        # ═══════════════════════════════════════════════════════
+        # Hash Index Fast Path (Tier 1 & 2)
+        # ═══════════════════════════════════════════════════════
+        # When hash index files exist on remote, we can detect
+        # identical chains (Tier 1) or fork points (Tier 2) without
+        # pulling every block. Falls through to full pull if hash
+        # index is missing, tampered, or chains have diverged.
+
+        all_blocks = self._ledger.chain.read_all()
+        local_hashes = None
+        local_sha256 = None
+        try:
+            local_hashes = [
+                RemoteLedgerSync._get_block_hash(b) for b in all_blocks
+            ]
+            local_hi_json = json.dumps(local_hashes).encode("utf-8")
+            local_sha256 = hashlib.sha256(local_hi_json).hexdigest()
+        except Exception:
+            pass  # Blocks lack hash fields — fall through to full pull
+
+        hi = None
+        try:
+            hi = ledger_sync.pull_hash_index()
+        except Exception:
+            pass  # Fall through to full pull
+
+        if hi is not None and local_hashes is not None and local_sha256 is not None:
+            remote_hashes = hi["hashes"]
+            remote_sha256 = hi["sha256"]
+
+            # ── Tier 1: SHA-256 match — chains identical ─────
+            if local_sha256 == remote_sha256:
+                logger.info(
+                    "SyncOrchestrator: hash index SHA-256 match — "
+                    "chains identical, skipping pull"
+                )
+                # Chains match — nothing to pull. Still need to
+                # push if local blocks aren't on remote yet and
+                # push index + hash_index for consistency.
+                try:
+                    existing_indices = (
+                        ledger_sync._list_remote_block_indices()
+                    )
+                except Exception:
+                    existing_indices = set()
+                try:
+                    ledger_sync.push_blocks(
+                        all_blocks, existing_indices=existing_indices,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "SyncOrchestrator: failed to push blocks "
+                        "(Tier 1 fast path): %s", exc,
+                    )
+                try:
+                    index_data = self._ledger.index.get_all()
+                    if index_data:
+                        ledger_sync.push_index(index_data)
+                except Exception as exc:
+                    logger.warning(
+                        "SyncOrchestrator: failed to push index "
+                        "(Tier 1 fast path): %s", exc,
+                    )
+                try:
+                    ledger_sync.push_hash_index(all_blocks)
+                except Exception as exc:
+                    logger.warning(
+                        "SyncOrchestrator: failed to push hash "
+                        "index (Tier 1 fast path): %s", exc,
+                    )
+                return
+
+            # ── Tier 2: Compare hash indexes ──────────────────
+            comparison = RemoteLedgerSync.compare_hash_indexes(
+                local_hashes, remote_hashes
+            )
+            fork_type = comparison["fork_type"]
+
+            if fork_type == "linear_remote":
+                # Remote extends local — pull only new blocks
+                fork_idx = comparison["fork_index"]
+                remote_len = len(remote_hashes)
+                logger.info(
+                    "SyncOrchestrator: hash index linear_remote "
+                    "at block %d — pulling %d new block(s)",
+                    fork_idx,
+                    remote_len - fork_idx,
+                )
+                new_blocks = []
+                for idx in range(fork_idx, remote_len):
+                    try:
+                        block = ledger_sync.pull_block_by_index(idx)
+                        if block:
+                            new_blocks.append(block)
+                    except Exception as exc:
+                        logger.warning(
+                            "SyncOrchestrator: failed to pull block "
+                            "%d: %s", idx, exc,
+                        )
+                if new_blocks:
+                    for block in new_blocks:
+                        self._ledger.chain.append(block)
+                    logger.info(
+                        "SyncOrchestrator: pulled %d block(s) via "
+                        "hash index (Tier 2)",
+                        len(new_blocks),
+                    )
+                # Fall through to push phase
+
+            elif fork_type == "linear_local":
+                # Local extends remote — nothing to pull
+                logger.info(
+                    "SyncOrchestrator: hash index linear_local — "
+                    "nothing to pull"
+                )
+                # Fall through to push phase
+
+            elif fork_type == "genesis_mismatch":
+                logger.warning(
+                    "SyncOrchestrator: hash index genesis_mismatch"
+                )
+                # Fall through to full pull for divergence handling
+
+            elif fork_type == "divergent":
+                logger.warning(
+                    "SyncOrchestrator: hash index divergent at "
+                    "block %d",
+                    comparison.get("fork_index"),
+                )
+                # Fall through to full pull for divergence handling
+
+        # ═══════════════════════════════════════════════════════
+        # Full Pull / Push (original path)
+        # ═══════════════════════════════════════════════════════
+
         # Fetch remote block indices once, share between pull and push.
         try:
             existing_indices = ledger_sync._list_remote_block_indices()
@@ -327,6 +464,17 @@ class SyncOrchestrator:
         except Exception as exc:
             logger.warning(
                 "SyncOrchestrator: failed to push index to remote: %s",
+                exc,
+            )
+
+        # Push hash index
+        try:
+            all_blocks = self._ledger.chain.read_all()
+            if all_blocks:
+                ledger_sync.push_hash_index(all_blocks)
+        except Exception as exc:
+            logger.warning(
+                "SyncOrchestrator: failed to push hash index to remote: %s",
                 exc,
             )
 
@@ -534,6 +682,17 @@ class SyncOrchestrator:
         except Exception as exc:
             logger.warning(
                 "SyncOrchestrator: failed to push merged index: %s",
+                exc,
+            )
+
+        # Push merged hash index
+        try:
+            all_merged = chain.read_all()
+            if all_merged:
+                ledger_sync.push_hash_index(all_merged)
+        except Exception as exc:
+            logger.warning(
+                "SyncOrchestrator: failed to push merged hash index: %s",
                 exc,
             )
 

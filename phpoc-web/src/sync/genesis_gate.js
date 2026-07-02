@@ -167,6 +167,7 @@ export class GenesisGate {
                     // Hash index confirmed valid — genesis matches, chains identical
                     return {
                       compatible: true,
+                      merged: false,
                       mergedChain: localChain,
                       stats: { local: localChain.length, remote: localChain.length, merged: localChain.length },
                       index: null,
@@ -201,6 +202,7 @@ export class GenesisGate {
                   // Local has more blocks than remote — local is authoritative
                   return {
                     compatible: true,
+                    merged: false,
                     mergedChain: localChain,
                     stats: { local: localChain.length, remote: remoteHI.length, merged: localChain.length },
                     index: null,
@@ -246,6 +248,7 @@ export class GenesisGate {
     if (remoteChain === null || remoteChain.length === 0) {
       return {
         compatible: true,
+        merged: true,
         mergedChain: localChain,
         stats: { local: localChain.length, remote: 0, merged: localChain.length },
         index: null,
@@ -314,7 +317,13 @@ export class GenesisGate {
     );
     const { mergedChain, stats, index } = result;
 
-    return { compatible: true, mergedChain, stats, index };
+    // merged: true when the merge created new blocks (remote contributed
+    // entries not already in local), OR when the remote chain is structurally
+    // longer (has blocks local doesn't, even if empty — chain sync needed).
+    // False when chains are identical or local extends remote (no push needed).
+    const merged = stats.newBlockCount > 0 || remoteChain.length > localChain.length;
+
+    return { compatible: true, merged, mergedChain, stats, index };
   }
 
   /**

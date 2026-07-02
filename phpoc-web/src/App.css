@@ -22,6 +22,8 @@
   --accent-yellow-bg: rgba(251, 188, 4, 0.12);
   --accent-red: #ea4335;
   --accent-red-bg: rgba(234, 67, 53, 0.12);
+  --accent-orange: #ff9800;
+  --accent-orange-bg: rgba(255, 152, 0, 0.08);
   --accent-blue: #4285f4;
   --accent-blue-bg: rgba(66, 133, 244, 0.12);
 
@@ -256,6 +258,70 @@ a { color: var(--accent-blue); text-decoration: none; }
     opacity: 1;
     transform: scale(1) translateY(0);
   }
+}
+
+/* ── Clear Remote Overlay ────────────────────────────────────── */
+.clear-remote-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  animation: auth-overlay-fadein 0.25s ease-out;
+}
+
+.clear-remote-overlay-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 1.75rem 2rem;
+  max-width: 440px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: auth-overlay-card-pop 0.25s ease-out;
+}
+
+.clear-remote-overlay-title {
+  margin: 0 0 1rem 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--accent-orange);
+}
+
+.clear-remote-overlay-text {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.clear-remote-overlay-caution {
+  color: var(--accent-red);
+  font-weight: 600;
+}
+
+.clear-remote-overlay-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  justify-content: flex-end;
+}
+
+/* ── Clear Remote button ─────────────────────────────────────── */
+.btn-clear-remote {
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+/* [DEBUG] Hash index status row */
+.hash-index-debug {
+  background: rgba(66, 133, 244, 0.06);
+  border-radius: var(--border-radius-sm);
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px dashed var(--accent-blue-bg);
 }
 
 /* ── TTL warning banner ─────────────────────────────────────── */
@@ -1975,7 +2041,7 @@ a { color: var(--accent-blue); text-decoration: none; }
   padding: 1rem;
   border: 1px solid var(--accent-orange);
   border-radius: var(--border-radius-sm);
-  background: var(--accent-orange-bg, rgba(255, 152, 0, 0.08));
+  background: var(--accent-orange-bg);
 }
 
 .override-warning {
@@ -1983,7 +2049,7 @@ a { color: var(--accent-blue); text-decoration: none; }
   align-items: flex-start;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: var(--accent-orange, #ff9800);
+  color: var(--accent-orange);
   font-weight: 500;
   margin-bottom: 0.5rem;
 }

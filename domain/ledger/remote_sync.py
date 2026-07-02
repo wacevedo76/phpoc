@@ -30,7 +30,12 @@ class RemoteLedgerSync:
 
     Push: only new blocks since last sync. Genesis pushed once.
     Pull: list remote files → find missing → deobfuscate → verify chain → return.
+    Hash Index: lightweight plaintext index of block seals for fast sync detection.
     """
+
+    # Remote paths for hash index files (plaintext — no obfuscation needed)
+    REMOTE_HASH_INDEX = "ledger/hash_index.json"
+    REMOTE_HASH_INDEX_SHA256 = "ledger/hash_index.sha256"
 
     def __init__(
         self,
@@ -284,6 +289,127 @@ class RemoteLedgerSync:
         """
         existing = self._list_remote_block_indices()
         return max(existing) + 1 if existing else 0
+
+    # ═══════════════════════════════════════════════════════════
+    # Hash Index (fast sync detection)
+    # ═══════════════════════════════════════════════════════════
+
+    def push_hash_index(self, chain: List[Dict[str, Any]]) -> None:
+        """Build and push hash index files to remote.
+
+        The hash index is a plaintext array of block seals (day_hash,
+        month_hash, or year_hash) in chain order. A SHA-256 checksum
+        of the JSON is also pushed for Tier-1 fast-path detection.
+
+        These files are NOT obfuscated — they contain only block seals
+        which are already public information (stored as plaintext in the
+        obfuscated block files themselves). No master key needed to read.
+
+        Args:
+            chain: Full ledger chain (list of block dicts).
+        """
+        hashes = [self._get_block_hash(b) for b in chain]
+        hi_json = json.dumps(hashes).encode("utf-8")
+        hi_sha256 = hashlib.sha256(hi_json).hexdigest()
+        self._transport.push(self.REMOTE_HASH_INDEX, hi_json)
+        self._transport.push(
+            self.REMOTE_HASH_INDEX_SHA256, hi_sha256.encode("utf-8")
+        )
+        logger.info("Pushed hash index to remote (%d blocks)", len(hashes))
+
+    def pull_hash_index(self) -> Optional[Dict[str, Any]]:
+        """Pull hash index from remote.
+
+        Returns:
+            Dict with ``hashes`` (list of seal strings) and ``sha256`` (hex
+            digest), or None if either file is missing or the SHA-256 does
+            not match (tampered or corrupted).
+        """
+        hi_raw = self._transport.pull(self.REMOTE_HASH_INDEX)
+        hi_sha_raw = self._transport.pull(self.REMOTE_HASH_INDEX_SHA256)
+        if hi_raw is None or hi_sha_raw is None:
+            return None
+
+        # Verify SHA-256 integrity
+        expected = hashlib.sha256(hi_raw).hexdigest()
+        actual = hi_sha_raw.decode("utf-8").strip()
+        if expected != actual:
+            logger.warning(
+                "Remote hash index SHA-256 mismatch — discarding"
+            )
+            return None
+
+        try:
+            hashes = json.loads(hi_raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Failed to parse remote hash index: %s", exc
+            )
+            return None
+
+        return {"hashes": hashes, "sha256": actual}
+
+    @staticmethod
+    def _get_block_hash(block: Dict[str, Any]) -> str:
+        """Extract the seal hash from a ledger block.
+
+        Returns the first available of day_hash, month_hash, or year_hash.
+        """
+        return (
+            block.get("day_hash")
+            or block.get("month_hash")
+            or block.get("year_hash")
+            or ""
+        )
+
+    @staticmethod
+    def compare_hash_indexes(
+        local: Optional[List[str]],
+        remote: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        """Compare local and remote hash indexes to detect fork type.
+
+        Walks both arrays element-by-element until a mismatch is found.
+        Handles None inputs defensively (treated as empty arrays).
+
+        Fork types::
+
+            'none'             — identical (or both empty)
+            'linear_remote'    — remote extends local
+            'linear_local'     — local extends remote
+            'divergent'        — mismatch at a shared index after genesis
+            'genesis_mismatch' — mismatch at index 0 (different genesis)
+
+        Args:
+            local: Local hash index (list of seal strings), or None.
+            remote: Remote hash index (list of seal strings), or None.
+
+        Returns:
+            Dict with ``fork_type`` (str) and ``fork_index`` (int or None).
+        """
+        l = local or []
+        r = remote or []
+
+        if len(l) == 0 and len(r) == 0:
+            return {"fork_type": "none"}
+        if len(l) == 0:
+            return {"fork_type": "linear_remote", "fork_index": 0}
+        if len(r) == 0:
+            return {"fork_type": "linear_local", "fork_index": 0}
+        if l[0] != r[0]:
+            return {"fork_type": "genesis_mismatch", "fork_index": 0}
+
+        min_len = min(len(l), len(r))
+        for i in range(1, min_len):
+            if l[i] != r[i]:
+                return {"fork_type": "divergent", "fork_index": i}
+
+        if len(r) > len(l):
+            return {"fork_type": "linear_remote", "fork_index": len(l)}
+        if len(l) > len(r):
+            return {"fork_type": "linear_local", "fork_index": len(r)}
+
+        return {"fork_type": "none"}
 
     # ═══════════════════════════════════════════════════════════
     # Internal helpers

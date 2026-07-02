@@ -1697,6 +1697,7 @@ async function run() {
 
     await storage.set(LEDGER_BLOCKS_KEY, chain);
     await pushRemoteChain(transport, chain, mk);
+    transport.resetCallTracking();
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1717,10 +1718,9 @@ async function run() {
       `M2b. local chain unchanged (1 entry, got ${entryCount})`);
 
     // M2c: Identical chains → pushLedgerBlocks should NOT be called.
-    // RED: currently pushLedgerBlocks({forceAll:true}) IS called unconditionally.
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
     t.assertEq(ledgerPushes.length, 0,
-      `M2c. identical chains → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+      `M2c. identical chains → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
   }
 
   // ── M3: Merge stats exposed to caller ──
@@ -1889,7 +1889,9 @@ async function run() {
     }
   }
 
-  // ── M5: Only local has extra blocks → remote gets merged result ──
+  // ── M5: Only local has extra blocks → local unchanged, no push needed ──
+  //      Updated for Phase B2: merged:false gating means local extends remote
+  //      does not trigger a push (nothing changed from remote perspective).
   {
     const mk = 'm5-localx--m5-localx--m5-localx--m5-localx--ee';
     const chain = makeChain(mk, [
@@ -1909,6 +1911,7 @@ async function run() {
     await storage.set(LEDGER_BLOCKS_KEY, localChain);
     // Remote only has the shared entry
     await pushRemoteChain(transport, chain, mk);
+    transport.resetCallTracking();
 
     transport.queueResponse(COOKIE_PATH, null);
     transport.queueResponse(COOKIE_PATH, null);
@@ -1930,10 +1933,16 @@ async function run() {
     t.assertEq(localTitles.length, 2,
       `M5c. local has 2 entries (got ${localTitles.length})`);
 
-    // Verify merged chain was pushed to remote
+    // M5d: With merged:false gating, pushLedgerBlocks is NOT called when
+    // local extends remote and remote contributed nothing new.
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `M5d. local extends remote → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+
+    // M5e: Remote still has only the shared entry (no push happened)
     const remoteChain = await pullRemoteChain(transport, mk);
     t.assert(remoteChain !== null && remoteChain.length > 0,
-      'M5d. merged chain pushed to remote (ledger:blocks not null)');
+      'M5e. remote chain still present');
     if (remoteChain) {
       let remoteTitles = [];
       for (const b of remoteChain) {
@@ -1943,8 +1952,8 @@ async function run() {
           }
         }
       }
-      t.assert(remoteTitles.includes('Local Only'),
-        'M5e. remote now has Local Only entry');
+      t.assert(!remoteTitles.includes('Local Only'),
+        'M5f. remote does not have Local Only (no push when local extends remote)');
     }
   }
 
@@ -2080,7 +2089,7 @@ async function run() {
   // ═══════════════════════════════════════════════════════════════
   console.log('\n── Group N: clearRemote() ──\n');
 
-  // N1. clearRemote deletes all three known keys from R2
+  // N1. clearRemote deletes all known keys from R2
   {
     const mk = 'clear-remote-n1-clear-remote-n1-clear-xx';
     const chain = buildTestChain({ mk });
@@ -2094,11 +2103,15 @@ async function run() {
     await pushRemoteChain(transport, chain, mk);
     await transport.push('staging/blobs/current.json', new TextEncoder().encode(JSON.stringify({ entries: [] })));
     await transport.push('staging/blobs/device_cookie.bin', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode('["hash1"]'));
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode('abc123'));
 
     const preFiles = await transport.listFiles('ledger/blocks/');
     t.assert(preFiles && preFiles.length > 0, 'N1. pre-condition: block files exist');
     t.assert(transport.hasKey('staging/blobs/current.json'), 'N1b. pre-condition: staging blob exists');
     t.assert(transport.hasKey('staging/blobs/device_cookie.bin'), 'N1c. pre-condition: cookie exists');
+    t.assert(transport.hasKey('ledger/hash_index.json'), 'N1c2. pre-condition: hash_index.json exists');
+    t.assert(transport.hasKey('ledger/hash_index.sha256'), 'N1c3. pre-condition: hash_index.sha256 exists');
 
     await sync.clearRemote();
 
@@ -2107,6 +2120,8 @@ async function run() {
     t.assert(!filesAfter || filesAfter.length === 0, 'N1d. block files deleted');
     t.assert(!transport.hasKey('staging/blobs/current.json'), 'N1e. staging blob deleted');
     t.assert(!transport.hasKey('staging/blobs/device_cookie.bin'), 'N1f. cookie deleted');
+    t.assert(!transport.hasKey('ledger/hash_index.json'), 'N1g. hash_index.json deleted');
+    t.assert(!transport.hasKey('ledger/hash_index.sha256'), 'N1h. hash_index.sha256 deleted');
   }
 
   // N2. clearRemote resets _genesisCompatible to null
@@ -3710,6 +3725,154 @@ async function run() {
     );
     t.assertEq(ledgerPulls.length, 0,
       `V2c. second checkAndSync skips genesis gate network calls (got ${ledgerPulls.length}) — RED: fails`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group W: Push Gating by Genesis Gate merged Flag (no hash_index)
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group W: Push Gating — merged Flag (GREEN phase) ──\n');
+
+  // ── W1: Empty remote (no hash_index) → pushLedgerBlocks IS called ──
+  {
+    const mk = 'w1-empty----w1-empty----w1-empty----w1-empty----aa';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    // No remote chain pushed — transport is empty (no blocks, no hash_index)
+    // Genesis gate full-pull path: remote empty → merged: true
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'W1. empty remote → NOT GENESIS_MISMATCH');
+
+    // W1 core: pushLedgerBlocks SHOULD be called for empty remote
+    // (remote has no blocks, local must push its chain)
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assert(ledgerPushes.length > 0,
+      `W1b. empty remote → pushLedgerBlocks IS called (got ${ledgerPushes.length} push calls)`);
+  }
+
+  // ── W2: Full chain pull + identical chains (no hash_index) → push NOT called ──
+  {
+    const mk = 'w2-samec----w2-samec----w2-samec----w2-samec----bb';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    // Push the SAME chain to remote but WITHOUT hash_index files
+    // Genesis gate must fall through to full chain pull → merge → merged: false
+    await pushRemoteChain(transport, chain, mk);
+    // Hash index files are deleted by pushRemoteChain (stale index invalidation)
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'W2. identical chains (no hash_index) → NOT GENESIS_MISMATCH');
+
+    // W2 core: pushLedgerBlocks should NOT be called when chains are identical
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `W2b. identical chains (no hash_index) → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+  }
+
+  // ── W3: Full chain pull + remote has more blocks (no hash_index) → push IS called ──
+  {
+    const mk = 'w3-remote---w3-remote---w3-remote---w3-remote---cc';
+    // Local has 2 blocks (genesis + day)
+    const localChain = buildTestChain({ mk });
+    // Remote has 3 blocks (genesis + day + extra)
+    const remoteChain = JSON.parse(JSON.stringify(localChain));
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+    const extraBlock = {
+      type: 'day',
+      day_index: 2,
+      date: '2026-06-21',
+      prev_hash: localChain[1].day_hash,
+      entries: [],
+    };
+    extraBlock.day_hash = crypt.sealBlock({ ...extraBlock });
+    remoteChain.push(extraBlock);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    // Push the larger remote chain WITHOUT hash_index files
+    await pushRemoteChain(transport, remoteChain, mk);
+    // Hash index files deleted by pushRemoteChain
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'W3. remote has more (no hash_index) → NOT GENESIS_MISMATCH');
+
+    // W3 core: pushLedgerBlocks SHOULD be called (remote extends, merge required)
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assert(ledgerPushes.length > 0,
+      `W3b. remote has more (no hash_index) → pushLedgerBlocks IS called (got ${ledgerPushes.length} push calls)`);
+  }
+
+  // ── W4: Full chain pull + local extends remote (no hash_index) → push NOT called ──
+  {
+    const mk = 'w4-localex--w4-localex--w4-localex--w4-localex--dd';
+    // Local has 3 blocks, remote has 2 blocks (linear_local fork)
+    const localChain = buildTestChain({ mk });
+    const remoteChain = [
+      JSON.parse(JSON.stringify(localChain[0])),
+      JSON.parse(JSON.stringify(localChain[1])),
+    ];
+
+    // Add a third block to local
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+    const extraBlock = {
+      type: 'day',
+      day_index: 2,
+      date: '2026-06-21',
+      prev_hash: localChain[1].day_hash,
+      entries: [],
+    };
+    extraBlock.day_hash = crypt.sealBlock({ ...extraBlock });
+    const largerChain = [...localChain, extraBlock];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, largerChain);
+    // Push the smaller remote chain WITHOUT hash_index files
+    await pushRemoteChain(transport, remoteChain, mk);
+    // Hash index files deleted by pushRemoteChain
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'W4. local extends remote (no hash_index) → NOT GENESIS_MISMATCH');
+
+    // W4 core: pushLedgerBlocks should NOT be called when local is authoritative
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `W4b. local extends remote (no hash_index) → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
   }
 
   // ── Results ───────────────────────────────────────────────────────

@@ -116,6 +116,8 @@ export class SyncService {
     this._genesisCheckPromise = null;
     /** @private — stats from the last genesis-gate merge (null = no merge yet) */
     this._lastMergeStats = null;
+    /** @private — remote cookie from fast-path phase (avoids duplicate pull) */
+    this._lastRemoteCookie = null;
 
     /** @private — cached device UUID to avoid repeated storage/WASM calls */
     this._deviceId = null;
@@ -487,8 +489,8 @@ export class SyncService {
       return SyncResult.GENESIS_MISMATCH;
     }
 
-    // Genesis compatible — persist merged chain to storage
-    if (result.mergedChain) {
+    // Genesis compatible — persist merged chain and push when needed
+    if (result.merged) {
       try {
         await this._storage.set(LOCAL_LEDGER_BLOCKS, result.mergedChain);
         if (result.index) {
@@ -510,6 +512,7 @@ export class SyncService {
       }
     }
 
+    this._genesisCompatible = true;
     return null;
   }
 
@@ -534,6 +537,8 @@ export class SyncService {
     let remoteCookieRaw;
     try {
       remoteCookieRaw = await this._remote.pullCookie();
+      // Cache for reuse in _reconcileAndClaim (avoids duplicate pull)
+      this._lastRemoteCookie = remoteCookieRaw;
     } catch {
       return SyncResult.OFFLINE;
     }
@@ -604,11 +609,16 @@ export class SyncService {
    * @private
    */
   async _reconcileAndClaim(masterKeyHex) {
-    let remoteCookieRaw;
-    try {
-      remoteCookieRaw = await this._remote.pullCookie();
-    } catch {
-      return SyncResult.OFFLINE;
+    // Reuse cookie from _fastPathPhase to avoid duplicate network call
+    let remoteCookieRaw = this._lastRemoteCookie;
+    this._lastRemoteCookie = null;
+
+    if (remoteCookieRaw === undefined || remoteCookieRaw === null) {
+      try {
+        remoteCookieRaw = await this._remote.pullCookie();
+      } catch {
+        return SyncResult.OFFLINE;
+      }
     }
 
     let remoteDeviceUuid = '';
@@ -1075,8 +1085,8 @@ export class SyncService {
       console.warn(`clearRemote: failed to list ledger blocks: ${err.message}`);
     }
 
-    // Delete staging blob and cookie
-    const stagingKeys = [REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE];
+    // Delete staging blob, cookie, and hash index files
+    const stagingKeys = [REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE, REMOTE_HASH_INDEX, REMOTE_HASH_INDEX_SHA256];
     for (const key of stagingKeys) {
       try {
         await this._transport.delete(key);
@@ -1092,5 +1102,19 @@ export class SyncService {
 
     this._genesisCompatible = null;
     this._transport.resetCache();
+  }
+
+  /**
+   * [DEBUG] Check whether hash index files exist on the remote.
+   * Temporary helper for hash_index bootstrap gap debugging.
+   * @returns {Promise<{hashIndexJson: boolean, hashIndexSha256: boolean}>}
+   */
+  async _debugCheckHashIndex() {
+    if (!this._transport) return { hashIndexJson: false, hashIndexSha256: false };
+    const [hiJson, hiSha] = await Promise.all([
+      this._transport.pull(REMOTE_HASH_INDEX).then(b => b !== null).catch(() => false),
+      this._transport.pull(REMOTE_HASH_INDEX_SHA256).then(b => b !== null).catch(() => false),
+    ]);
+    return { hashIndexJson: hiJson, hashIndexSha256: hiSha };
   }
 }
