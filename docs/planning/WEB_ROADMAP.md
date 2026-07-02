@@ -119,6 +119,32 @@ Full investigation: `docs/planning/GENESIS_MISMATCH_BUG_INVESTIGATION.md`.
 
 **Result:** All 167 sync tests pass + 21 Vitest component tests pass. Zero regressions.
 
+## Build 62 — Hash Index Onboarding Speedup (GREEN Phase) — 2026-07-02
+
+**Implements Tier 1 SHA-256 fast path + Tier 2 hash index fork detection for genesis gate.**
+
+Cuts genesis check from ~21s (200 sequential block pulls) to ~0.1s (1–2 pulls) for the common case where ledgers match. Full backward compatibility with legacy remotes (no hash index → falls back to full pull).
+
+**New file:**
+- `src/sync/hash_index.js` (85 lines) — `buildHashIndex(chain)` and `compareHashIndexes(local, remote)` pure functions
+
+**Modified files:**
+- `src/sync/keys.js` — Added `REMOTE_HASH_INDEX`, `REMOTE_HASH_INDEX_SHA256`, `LOCAL_HASH_INDEX` constants
+- `src/sync/genesis_gate.js` — Tier 1: pull `hash_index.sha256` (64 bytes) → compare → return compatible on match. Tier 2: pull `hash_index.json` → `compareHashIndexes()` → detect fork type. Stale index defense: verify genesis hash in `hash_index.json` after SHA-256 match. All errors fall through to full chain pull.
+- `src/sync/sync.js` — `pushLedgerBlocks()` pushes plain-JSON `hash_index.json` and `hash_index.sha256` alongside blocks. `_genesisGatePhase()` caches hash index locally after genesis check for next Tier 1 poll.
+
+**Performance impact:**
+| Scenario | Before | After | Speedup |
+|----------|--------|-------|---------|
+| Chains in sync (background poll) | ~200 pulls | 1–2 pulls | ~200× |
+| Genesis mismatch | ~200 pulls | 2 pulls | ~100× |
+| Local ahead of remote | ~200 pulls | 2 pulls | ~100× |
+| Actual divergence | ~200 pulls | ~200 pulls | 1× (fallback) |
+
+**Result:** 485 tests pass, 0 failures across 3 JS suites (hash_index_test.mjs: 58, genesis_gate_test.mjs: 213, sync_service_test.mjs: 214). Test infra fix: `buildTestChain`→`buildSimpleChain` rename in Group S to avoid shadowing; `pushRemoteChain()` clears stale hash index artifacts.
+
+See `docs/planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` and `docs/planning/ONBOARDING_SPEEDUP_TESTS.md`.
+
 ## Build 59 — Cross-Client Sync Tests (Pause/Unpause Lifecycle) — 2026-06-30
 
 **78 tests in `test/cross_client_web_test.mjs` (all GREEN):**

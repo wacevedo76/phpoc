@@ -60,10 +60,14 @@ import {
   REMOTE_DEVICE_COOKIE,
   REMOTE_LEDGER_BLOCKS_PREFIX,
   REMOTE_LEDGER_INDEX,
+  REMOTE_HASH_INDEX,
+  REMOTE_HASH_INDEX_SHA256,
   LOCAL_COOKIE,
   LOCAL_LEDGER_BLOCKS,
   LOCAL_LEDGER_INDEX,
+  LOCAL_HASH_INDEX,
 } from './keys.js';
+import { buildHashIndex } from './hash_index.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
@@ -493,6 +497,13 @@ export class SyncService {
         if (result.stats) {
           this._lastMergeStats = result.stats;
         }
+        // Build and cache hash index locally for next Tier 1 fast path
+        try {
+          const hashIndex = buildHashIndex(result.mergedChain);
+          await this._storage.set(LOCAL_HASH_INDEX, hashIndex);
+        } catch {
+          // Non-critical — hash index is rebuildable from chain
+        }
         await this.pushLedgerBlocks({ forceAll: true });
       } catch (err) {
         console.warn('Failed to persist merged ledger chain:', err.message);
@@ -911,12 +922,38 @@ export class SyncService {
       }
     }
 
+    // Push hash index artifacts (alongside blocks, best-effort, non-fatal)
+    if (pushed > 0 || forceAll) {
+      try {
+        const hi = buildHashIndex(blocks);
+        const hiJson = JSON.stringify(hi);
+        // Hash index JSON is plain text — NOT obfuscated (no privacy risk, just seals)
+        await this._transport.push(REMOTE_HASH_INDEX, new TextEncoder().encode(hiJson));
+        // SHA-256 companion for Tier 1 fast path
+        const hiSha256 = this._crypto.sha256(hiJson);
+        await this._transport.push(REMOTE_HASH_INDEX_SHA256, new TextEncoder().encode(hiSha256));
+        // Also cache locally for next Tier 1 check
+        await this._storage.set(LOCAL_HASH_INDEX, hi);
+      } catch (err) {
+        console.warn('pushLedgerBlocks: hash index push failed:', err.message);
+      }
+    }
+
     return pushed;
   }
 
   // ------------------------------------------------------------------
   // Diagnostics
   // ------------------------------------------------------------------
+
+  /**
+   * Current genesis compatibility state.
+   * null = unchecked, true = compatible, false = mismatch.
+   * @returns {boolean|null}
+   */
+  get genesisCompatible() {
+    return this._genesisCompatible;
+  }
 
   /**
    * Reset genesis compatibility cache.

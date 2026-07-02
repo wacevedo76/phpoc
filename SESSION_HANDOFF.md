@@ -4,7 +4,7 @@
 > Before making edits, consult the Documentation Impact Contract in root `AGENTS.md` to identify which docs this session's changes affect. Update those docs as part of the work.
 
 ## Current State
-- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done, Step 5 export/import fix ✅ done, E2E Cross-Client Fix GREEN phase ✅ done)
+- **Branch:** `mobile-poc` (Rust crypto core complete, WASM bindings done, Worker CORS added, HttpBackend complete, LedgerMerge TDD GREEN phase ✅ done, Step 5 export/import fix ✅ done, E2E Cross-Client Fix GREEN phase ✅ done, Onboarding Speedup GREEN phase ✅ done)
 - **CLI:** Maintenance mode — onboarding redesign complete (Phase 5d), 1493 tests
 - **Transport:** HTTP → Cloudflare Worker → R2 (staging blob + ledger blocks + index)
 - **Storage (ledger):** Option B — direct `StorageBackend` consumption with key convention `ledger:blocks` (array) / `ledger:index` (JSON)
@@ -15,11 +15,89 @@
 
 ## Immediate Next Steps
 
-### 🔜 Phase 1: Onboarding/Unlock/ReAuth Speedup — Test Identification
+### 🔴 Login Perf: Test Coverage Gap (FIX IN PROGRESS — 2026-07-02)
 
-Full plan at `docs/planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md`. Replace full-ledger block pulls during genesis check with a lightweight hash-index comparison (Tier 1 worker-computed → Tier 2 client-side fork detection). Cuts Phase 3 from ~21s to ~0.1s (210× speedup).
+Investigation found that even after the hash-index Tier 1/2 optimizations (Phases 1–3 GREEN), initial login still makes 7–10+ sequential HTTP calls taking 4–30+ seconds. Four root causes identified:
 
-**Phase 1 (current):** Identify all unit, integration, and E2E tests needed. Output: `docs/planning/ONBOARDING_SPEEDUP_TESTS.md` catalog. No code written.
+1. **Hash index bootstrap gap** — hash index files don't exist on R2 until the FIRST successful genesis check completes. First login must do full chain pull (chicken-and-egg).
+2. **`pushLedgerBlocks({ forceAll: true })` runs on every login** — `_genesisGatePhase()` checks `if (result.mergedChain)` which is always truthy (even Tier 1 match sets `mergedChain: localChain`). This triggers 4 unnecessary HTTP PUTs (block + index + hash_index.json + hash_index.sha256) on every login when nothing changed.
+3. **Duplicate `pullCookie()`** — `_fastPathPhase()` calls `pullCookie()`, then `_reconcileAndClaim()` calls it AGAIN (line 609) without reusing the fast-path result.
+4. **`_genesisCompatible` never cached to `true`** — constructor sets to `null`, only ever set to `false` on mismatch. Since `bootstrapServices()` creates a new SyncService on every login, the genesis gate re-runs fully each time.
+
+#### ✅ Phase A: Test Creation (RED — COMPLETE 2026-07-02)
+
+**Status:** ✅ RED phase complete — 8 new tests + 2 test modifications in `phpoc-web/test/sync_service_test.mjs`. 228/235 pass; 7 RED failures all validate existing bugs (228 pass, 7 fail).
+
+**New tests (8):**
+- **Group T (4 tests):** T1-T4 — Unnecessary push prevention (Tier 1 match, linear_local, divergent merge, same-chain ref). T1/T2/T4 RED (pushLedgerBlocks called unnecessarily), T3 GREEN (merge correctly triggers push).
+- **Group U (2 tests):** U1-U2 — Duplicate pullCookie prevention. U1 RED (2 pulls found), U2 GREEN (fast path match pulls once).
+- **Group V (2 tests):** V1-V2 — _genesisCompatible caching. V1 RED (null, not true), V2 RED (second call re-runs genesis gate — 2 extra pulls).
+
+**Test modifications (2):**
+- **M2:** Added pushCount assertion (M2c) — RED (7 pushes when 0 expected).
+- **I3:** Fixed misleading comment about cache being set to true.
+
+**Source changes (test support):**
+- `phpoc-web/src/sync/sync.js`: Added `genesisCompatible` getter for V1 test assertion.
+- `phpoc-web/test/sync_service_test.mjs`: Added `_pullCalls`/`_pushCalls` tracking + `resetCallTracking()` to MockTransport.
+
+#### 🔜 Phase B: Implementation (GREEN — NEXT)
+
+**Files to modify:**
+- `phpoc-web/src/sync/sync.js`:
+  - `_genesisGatePhase()`: Only call `pushLedgerBlocks({ forceAll: true })` when `result.merged` is true (new flag from GenesisGate.check) or when mergedChain !== localChain
+  - `_reconcileAndClaim()`: Reuse cookie from `_fastPathPhase` instead of re-pulling. Store fast-path cookie result as `this._lastRemoteCookie`.
+  - `_genesisGatePhase()`: Set `_genesisCompatible = true` after successful check
+- `phpoc-web/src/sync/genesis_gate.js`:
+  - Add `merged: true` to return objects where actual merge occurred (divergent fork)
+  - Add `merged: false` to return objects where chains were already identical (Tier 1 match, Tier 2 linear_local)
+
+### ✅ Phase 1: Onboarding/Unlock/ReAuth Speedup — Test Identification (DONE)
+
+Full catalog at `docs/planning/ONBOARDING_SPEEDUP_TESTS.md`. ~62 new tests + ~15 modified across 5 files. Categories:
+- **A (9 tests):** Hash index data structure — `buildHashIndex()`
+- **B (13 tests):** Fork detection — `compareHashIndexes()`
+- **C (10 tests):** Hash index push behavior in `pushLedgerBlocks()`
+- **D (9 tests):** Tier 1 fast-path SHA-256 comparison
+- **E (11 tests):** Tier 2 fork + incremental pull
+- **F (7 tests):** Worker endpoint (optional, if endpoint approach chosen)
+- **G (10 tests):** Full end-to-end genesis gate integration
+- **H (6 groups):** Existing tests requiring modification (genesis_gate, sync_service, cross_client)
+- **I (5 tests):** Browser E2E smoke tests
+- **J (10 tests):** Edge cases, error handling, recovery
+
+### 🔴 Phase 2: Test Creation (RED — COMPLETE 2026-07-02)
+
+**Status:** ✅ RED phase complete — 62 new tests created across 3 files. All hash_index tests fail as expected (implementation in Phase 3).
+
+**New test files created:**
+- `phpoc-web/test/hash_index_test.mjs` — 22 tests (A: 9 buildHashIndex + B: 13 compareHashIndexes). All RED (module doesn't exist).
+- `phpoc-web/test/genesis_gate_test.mjs` — +30 tests (Group E: 9 Tier 1 fast path, Group F: 11 Tier 2 incremental pull, Group G: 10 full integration). Existing behavior passes; hash-index-specific assertions will tighten in GREEN phase.
+- `phpoc-web/test/sync_service_test.mjs` — +10 tests (Group S: Hash Index Push). 6 fail as expected (`pushLedgerBlocks` doesn't push hash_index artifacts yet).
+
+**Total new tests:** 62 (matching test catalog estimate)
+
+### 🟢 Phase 3: Implementation (GREEN — COMPLETE 2026-07-02)
+
+**Status:** ✅ GREEN phase complete — all 485 tests pass, 0 failures across 3 JS suites.
+
+**New source files created:**
+- `phpoc-web/src/sync/hash_index.js` — `buildHashIndex(chain)` and `compareHashIndexes(local, remote)` pure functions (85 lines).
+
+**Source files modified:**
+- `phpoc-web/src/sync/keys.js` — Added `REMOTE_HASH_INDEX`, `REMOTE_HASH_INDEX_SHA256`, `LOCAL_HASH_INDEX` constants.
+- `phpoc-web/src/sync/genesis_gate.js` — Tier 1 SHA-256 fast path (1 pull, no block pulls needed when chains match) + Tier 2 hash index fork detection (early genesis mismatch detection). Stale hash index defense with genesis hash verification.
+- `phpoc-web/src/sync/sync.js` — `pushLedgerBlocks()` pushes plain-JSON `hash_index.json` and `hash_index.sha256` alongside blocks. `_genesisGatePhase()` caches hash index locally for next Tier 1 check.
+
+**Test files modified (Phase 2 RED test fixes):**
+- `phpoc-web/test/hash_index_test.mjs` — Fixed `hasCompare` variable name typo (`compareHashIndex` → `compareHashIndexes`).
+- `phpoc-web/test/sync_service_test.mjs` — Renamed Group S `buildTestChain` → `buildSimpleChain` to avoid shadowing Group I's function. Added stale hash index invalidation in `pushRemoteChain()` test helper.
+
+**Performance impact:**
+- Tier 1 match (common case): 1–2 pulls vs full chain pull (~0.1s vs ~21s for 200 blocks)
+- Tier 2 genesis mismatch: 2 pulls to detect vs full chain pull
+- Tier 2 linear_local: 2 pulls to confirm local is authoritative
+- Full backward compatibility: legacy remotes without hash index fall through to existing full pull
 
 ### ✅ E2E Cross-Client Fix Plan — GREEN PHASE COMPLETE (2026-07-01)
 
@@ -162,6 +240,7 @@ MockTransport/Crypto changes in test file:
 - **CLI onboarding fails at block 1 — stale remote blocks from previous ledger (2026-06-30):** 🛑 ACTIVE. `ph onboarding http cloudflare` can only accept genesis (block 0) because blocks at `000001.json`–`000104.json` on R2 are from a different ledger instance. The web app's current recovery seed (`Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`) cannot decrypt the old blocks (tag mismatch), confirming the blocks are from an earlier ledger. "Clear Remote & Overwrite" in web app is the immediate workaround. **Root cause:** old day blocks survived a ledger re-initialization cycle. **Update (2026-07-01):** Bug 2 fix ensures summary blocks are no longer dropped on push, but this won't retroactively fix blocks already missing from R2. The stale remote blocks must still be cleared manually.
 - **E2E cross-client sync blocked by 4 bugs (2026-06-30):** ✅ FIXED (2026-07-01). GREEN phase complete. All 4 bugs implemented and verified: (1) genesis mismatch typed errors, (2) month summary position counter, (3a) UUID -web/-cli suffix, (3b) entry format canonicalization, (4) genesis seal signature exclusion. 0 failures across 38 JS suites + 1554 Python tests. See `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md`.
 - **clearRemote() deletes wrong staging keys (2026-06-29):** ✅ FIXED (5244371). Was deleting `staging:blob` and `cookie:json` instead of canonical `staging/blobs/current.json` and `staging/blobs/device_cookie.bin`. This bug existed since the web app was built — staging data was never actually cleaned from R2. Tests updated. Added `scripts/compare_ledgers.py` tool for R2 format comparison.
+- **Login takes 4–30+ seconds even after hash-index speedup (2026-07-02):** 🔴 INVESTIGATED. Four root causes: (1) hash index bootstrap gap — files don't exist on R2 until first genesis check completes (chicken-and-egg), (2) `pushLedgerBlocks({ forceAll: true })` runs on every login because `mergedChain` is always truthy, (3) `pullCookie()` is called twice per login (fast path + reconcile), (4) `_genesisCompatible` never cached to `true`. 8 new tests + 2 modified tests identified for coverage gaps. See Immediate Next Steps → Login Perf.
 
 ## Browser E2E Testing Setup
 

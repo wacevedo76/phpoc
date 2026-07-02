@@ -31,7 +31,8 @@
 import { LedgerMerge } from '../ledger/merge.js';
 import { getBlockHash, jsonSort } from '../ledger/utils.js';
 import { bytesToBase64 } from './base64.js';
-import { REMOTE_LEDGER_BLOCKS_PREFIX } from './keys.js';
+import { REMOTE_LEDGER_BLOCKS_PREFIX, REMOTE_HASH_INDEX, REMOTE_HASH_INDEX_SHA256 } from './keys.js';
+import { buildHashIndex, compareHashIndexes } from './hash_index.js';
 
 // ── Error hierarchy ──────────────────────────────────────────────────
 
@@ -139,7 +140,92 @@ export class GenesisGate {
       return { compatible: false, reason: 'no_local_ledger' };
     }
 
-    // ── 2. Fetch remote ledger ──────────────────────────────────
+    // ── 2. Hash Index — Tier 1: SHA-256 fast path ──────────────────
+    //    Pull a tiny 64-byte file to check if chains match.
+    //    On match, return immediately — no block pulls needed.
+    try {
+      const shaRaw = await remoteTransport.pull(REMOTE_HASH_INDEX_SHA256);
+      if (shaRaw !== null && shaRaw !== undefined && shaRaw.length > 0) {
+        const remoteSha = new TextDecoder().decode(shaRaw).trim().toLowerCase();
+        if (remoteSha.length === 64 && /^[0-9a-f]{64}$/.test(remoteSha)) {
+          const localHI = buildHashIndex(localChain);
+          const localHIJson = JSON.stringify(localHI);
+          const localSha = crypto.sha256(localHIJson);
+
+          if (localSha === remoteSha) {
+            // Tier 1 match — SHA-256 matches.
+            // Defensive check: verify remote hash_index.json still exists
+            // and its genesis hash matches local. This guards against stale
+            // hash indexes left behind after block replacement.
+            try {
+              const hiRaw = await remoteTransport.pull(REMOTE_HASH_INDEX);
+              if (hiRaw !== null && hiRaw !== undefined) {
+                const hiText = new TextDecoder().decode(hiRaw);
+                const remoteHI = JSON.parse(hiText);
+                if (Array.isArray(remoteHI) && remoteHI.length > 0) {
+                  if (remoteHI[0] === localHI[0]) {
+                    // Hash index confirmed valid — genesis matches, chains identical
+                    return {
+                      compatible: true,
+                      mergedChain: localChain,
+                      stats: { local: localChain.length, remote: localChain.length, merged: localChain.length },
+                      index: null,
+                    };
+                  }
+                  // Genesis hash mismatch in hash_index → stale index, fall through
+                }
+              }
+            } catch {
+              // hash_index.json corrupt/missing → fall through to full pull
+            }
+          }
+
+          // ── 2b. Hash Index — Tier 2: fork detection ──────────────
+          //    SHA-256 mismatch → pull hash_index.json to detect fork type.
+          try {
+            const hiRaw = await remoteTransport.pull(REMOTE_HASH_INDEX);
+            if (hiRaw !== null && hiRaw !== undefined) {
+              const hiText = new TextDecoder().decode(hiRaw);
+              const remoteHI = JSON.parse(hiText);
+              if (Array.isArray(remoteHI)) {
+                const comparison = compareHashIndexes(localHI, remoteHI);
+
+                if (comparison.forkType === 'genesis_mismatch') {
+                  // Detected early — no need to pull full chain
+                  throw new GenesisMismatchError(
+                    `Genesis mismatch detected via hash index at index ${comparison.forkIndex}`
+                  );
+                }
+
+                if (comparison.forkType === 'linear_local') {
+                  // Local has more blocks than remote — local is authoritative
+                  return {
+                    compatible: true,
+                    mergedChain: localChain,
+                    stats: { local: localChain.length, remote: remoteHI.length, merged: localChain.length },
+                    index: null,
+                  };
+                }
+
+                // linear_remote / divergent / none:
+                // Fall through to full chain pull for accurate merge.
+                // Fork point is known but per-file block access varies by transport.
+              }
+            }
+          } catch (tier2Err) {
+            // Tier 2 failed (corrupted hash_index.json, parse error, etc.)
+            // Fall through to full chain pull — backward compatible.
+            if (tier2Err instanceof GenesisMismatchError) throw tier2Err;
+          }
+        }
+      }
+    } catch (tier1Err) {
+      // Tier 1/2 failed (network error, missing file, etc.)
+      // Fall through to full chain pull — backward compatible.
+      if (tier1Err instanceof GenesisMismatchError) throw tier1Err;
+    }
+
+    // ── 3. Fetch remote ledger (full chain pull) ──────────────────
     let remoteChain;
     try {
       remoteChain = await GenesisGate._pullRemoteChain(
@@ -156,7 +242,7 @@ export class GenesisGate {
       throw new NetworkGenesisError('Remote unreachable during genesis check', { cause: err });
     }
 
-    // ── 3. Check for empty remote ───────────────────────────────
+    // ── 4. Check for empty remote ───────────────────────────────
     if (remoteChain === null || remoteChain.length === 0) {
       return {
         compatible: true,
@@ -166,17 +252,17 @@ export class GenesisGate {
       };
     }
 
-    // ── 4. Validate genesis block type ──────────────────────────
+    // ── 5. Validate genesis block type ──────────────────────────
     const remoteGenesis = remoteChain[0];
     if (remoteGenesis.type !== 'genesis') {
       throw new InvalidGenesisError('Remote block[0] is not type genesis');
     }
 
-    // ── 5. Compare genesis hashes ───────────────────────────────
+    // ── 6. Compare genesis hashes ───────────────────────────────
     const localGenesisHash = getBlockHash(localGenesis);
     const remoteGenesisHash = getBlockHash(remoteGenesis);
 
-    // ── 6. Verify remote chain integrity ────────────────────────
+    // ── 7. Verify remote chain integrity ────────────────────────
     //    If chain verification fails, check whether it's due to
     //    different genesis (permanent) or corrupted seals (transient).
     let chainValid = true;
@@ -214,7 +300,7 @@ export class GenesisGate {
       throw new InvalidChainError('Remote chain verification failed', { cause: verifyErr });
     }
 
-    // ── 7. Genesis hashes still differ after chain passes? ──────
+    // ── 8. Genesis hashes still differ after chain passes? ──────
     //    (Edge case: chain verified but hashes differ = different genesis with same key)
     if (localGenesisHash !== remoteGenesisHash) {
       throw new GenesisMismatchError(
@@ -222,7 +308,7 @@ export class GenesisGate {
       );
     }
 
-    // ── 8. Genesis matches + chain valid — merge chains ─────────
+    // ── 9. Genesis matches + chain valid — merge chains ─────────
     const result = await LedgerMerge.merge(
       localChain, remoteChain, crypto, masterKey
     );

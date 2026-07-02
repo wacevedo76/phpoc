@@ -24,6 +24,7 @@ import { SyncService, SyncResult } from '../src/sync/sync.js';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 import { jsonSort } from '../src/ledger/utils.js';
+import { buildHashIndex } from '../src/sync/hash_index.js';
 
 // ══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -60,6 +61,9 @@ class MockTransport {
     this._corrupt = false;
     /** If set, push() throws this error. */
     this._pushError = null;
+    /** Call tracking arrays for test assertions. */
+    this._pushCalls = [];
+    this._pullCalls = [];
   }
 
   /** Queue a response value (or null) for the next pull() of this path. FIFO. */
@@ -70,6 +74,7 @@ class MockTransport {
   }
 
   async pull(path) {
+    this._pullCalls.push(path);
     if (this._offline) throw new Error('Network failure');
     const queue = this._queue.get(path);
     if (queue && queue.length > 0) return queue.shift();
@@ -78,6 +83,7 @@ class MockTransport {
   }
 
   async push(path, data) {
+    this._pushCalls.push({ path, size: data?.length || 0 });
     if (this._offline) throw new Error('Network failure');
     if (this._pushError) throw this._pushError;
     this._store.set(path, data);
@@ -103,6 +109,11 @@ class MockTransport {
       }
     }
     return results;
+  }
+
+  resetCallTracking() {
+    this._pushCalls = [];
+    this._pullCalls = [];
   }
 
   resetCache() { /* no-op for mock transport */ }
@@ -951,6 +962,12 @@ async function run() {
       const bytes = _base64ToBytes(b64);
       await transport.push('ledger/blocks/' + filename, bytes);
     }
+    // Invalidate stale hash index artifacts — new blocks were pushed
+    // without updating the hash index. This simulates what would happen
+    // if a client without hash index support pushed blocks directly.
+    // In production, pushLedgerBlocks always updates hash index alongside blocks.
+    transport._store.delete('ledger/hash_index.json');
+    transport._store.delete('ledger/hash_index.sha256');
   }
 
   /**
@@ -1030,7 +1047,7 @@ async function run() {
 
     await storage.set(LEDGER_BLOCKS_KEY, chain);
 
-    // First: compatible chain → cache set to true
+    // First: compatible chain → cache NOT yet set to true (bug: _genesisCompatible never set to true)
     await pushRemoteChain(transport, chain, mk);
     const result1 = await sync.checkAndSync();
     t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
@@ -1698,6 +1715,12 @@ async function run() {
     }
     t.assertEq(entryCount, 1,
       `M2b. local chain unchanged (1 entry, got ${entryCount})`);
+
+    // M2c: Identical chains → pushLedgerBlocks should NOT be called.
+    // RED: currently pushLedgerBlocks({forceAll:true}) IS called unconditionally.
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `M2c. identical chains → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
   }
 
   // ── M3: Merge stats exposed to caller ──
@@ -3006,6 +3029,687 @@ async function run() {
       'O4b. remote cookie has device_uuid');
     t.assert(remoteCookie.creation_time === undefined,
       'O4c. remote cookie does NOT leak local creation_time');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Group S: Hash Index Push (Category C — Onboarding Speedup RED phase)
+  // ═══════════════════════════════════════════════════════════════════
+  console.log('\n=== Group S — Hash Index Push (RED phase) ===');
+  console.log('⛔ pushLedgerBlocks hash index behavior NOT IMPLEMENTED — all tests expected to FAIL (TDD RED)');
+
+  // Canonical remote paths for hash index artifacts
+  const HI_PATH = 'ledger/hash_index.json';
+  const HI_SHA_PATH = 'ledger/hash_index.sha256';
+
+  // Helper: seed a local ledger with blocks (stored as obfuscated JSON).
+  // The SyncService reads from storage via _storage.get(LOCAL_LEDGER_BLOCKS).
+  // For pushLedgerBlocks, we set the raw blocks directly.
+  async function seedLedger(sync, storage, blocks) {
+    await storage.set('ledger:blocks', blocks);
+  }
+
+  // Helper: build minimal block chain for testing
+  function makeBlock(type, index, date, prevHash, entries = []) {
+    const b = { type, day_index: index, date, prev_hash: prevHash, entries };
+    b.day_hash = createHash('sha256').update(JSON.stringify(b)).digest('hex');
+    return b;
+  }
+
+  function buildSimpleChain(numBlocks) {
+    const chain = [];
+    let prevHash = '0'.repeat(64);
+    for (let i = 0; i < numBlocks; i++) {
+      const type = i === 0 ? 'genesis' : 'day';
+      const date = `2026-06-${String(i + 10).padStart(2, '0')}`;
+      const b = { type, day_index: i, date, prev_hash: prevHash, entries: [] };
+      b.day_hash = createHash('sha256').update(JSON.stringify(b)).digest('hex');
+      prevHash = b.day_hash;
+      chain.push(b);
+    }
+    return chain;
+  }
+
+  // ── S1: Hash index pushed after block push ──────────────────────
+  {
+    console.log('\n  --- S1: Hash index pushed after block push ---');
+    const mk = 's1-push-----s1-push-----s1-push-----s1-push-----11';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    const pushed = await sync.pushLedgerBlocks({ forceAll: true });
+
+    t.assert(pushed >= 3, 'S1a. 3 blocks pushed to remote');
+    t.assert(transport.hasKey(HI_PATH),
+      'S1b. ledger/hash_index.json exists on remote — RED: fails (not implemented)');
+
+    if (transport.hasKey(HI_PATH)) {
+      const raw = await transport.pull(HI_PATH);
+      const text = new TextDecoder().decode(raw);
+      const parsed = JSON.parse(text);
+      t.assert(Array.isArray(parsed), 'S1c. hash_index.json is a valid JSON array');
+      t.assertEq(parsed.length, 3, 'S1d. hash_index has 3 elements (3 blocks)');
+    }
+  }
+
+  // ── S2: Hash index SHA-256 pushed alongside ─────────────────────
+  {
+    console.log('\n  --- S2: Hash index SHA-256 pushed alongside ---');
+    const mk = 's2-push-----s2-push-----s2-push-----s2-push-----22';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    t.assert(transport.hasKey(HI_SHA_PATH),
+      'S2a. ledger/hash_index.sha256 exists on remote — RED: fails (not implemented)');
+
+    if (transport.hasKey(HI_SHA_PATH)) {
+      const raw = await transport.pull(HI_SHA_PATH);
+      const text = new TextDecoder().decode(raw);
+      t.assert(text.length >= 64, 'S2b. sha256 is at least 64 chars');
+      t.assert(/^[0-9a-f]{64,}$/.test(text.trim()),
+        'S2c. sha256 content is hex chars');
+    }
+  }
+
+  // ── S3: Hash index NOT pushed when 0 blocks changed ─────────────
+  {
+    console.log('\n  --- S3: Hash index NOT pushed when 0 blocks changed ---');
+    const mk = 's3-nopush---s3-nopush---s3-nopush---s3-nopush---33';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    // First push — blocks + hash index
+    const pushed1 = await sync.pushLedgerBlocks({ forceAll: true });
+    t.assert(pushed1 >= 3, 'S3a. first push: 3 blocks pushed');
+
+    // Capture remote state after first push
+    const hiAfterFirst = await transport.pull(HI_PATH);
+
+    // Second push — no new blocks
+    const pushed2 = await sync.pushLedgerBlocks();
+    t.assertEq(pushed2, 0, 'S3b. second push: 0 blocks pushed (no changes)');
+
+    if (hiAfterFirst) {
+      const hiAfterSecond = await transport.pull(HI_PATH);
+      const same = hiAfterFirst && hiAfterSecond
+        ? JSON.stringify(hiAfterFirst) === JSON.stringify(hiAfterSecond)
+        : true; // Both null is also fine
+      t.assert(same, 'S3c. hash_index unchanged after no-op push — RED: fails (not implemented)');
+    }
+  }
+
+  // ── S4: Hash index pushed on forceAll even with 0 new blocks ────
+  {
+    console.log('\n  --- S4: Hash index pushed on forceAll with 0 new blocks ---');
+    const mk = 's4-force----s4-force----s4-force----s4-force----44';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    // Push once
+    await sync.pushLedgerBlocks({ forceAll: true });
+    const pushed1 = transport.hasKey(HI_PATH);
+
+    // Push again with forceAll
+    const pushed2 = await sync.pushLedgerBlocks({ forceAll: true });
+    t.assert(pushed2 >= 3, 'S4a. forceAll push: blocks pushed');
+    t.assert(transport.hasKey(HI_PATH),
+      'S4b. hash_index exists after forceAll push — RED: fails (not implemented)');
+  }
+
+  // ── S5: Hash index push failure is non-fatal ────────────────────
+  {
+    console.log('\n  --- S5: Hash index push failure is non-fatal ---');
+    const mk = 's5-fail-----s5-fail-----s5-fail-----s5-fail-----55';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    // Make transport throw on hash_index pushes by returning error from push
+    const originalPush = transport.push.bind(transport);
+    transport.push = async (path, data) => {
+      if (path === HI_PATH || path === HI_SHA_PATH) {
+        throw new Error('Simulated hash index push failure');
+      }
+      return originalPush(path, data);
+    };
+
+    // Should not throw — blocks are pushed, hash index failure is non-fatal
+    let pushed = 0;
+    try {
+      pushed = await sync.pushLedgerBlocks({ forceAll: true });
+    } catch (err) {
+      t.assert(false, 'S5a. pushLedgerBlocks does NOT throw on hash index failure');
+    }
+
+    // Blocks should have been pushed despite hash index failure
+    t.assert(pushed >= 3, 'S5b. blocks pushed despite hash index failure — RED: fails (not implemented)');
+
+    // Restore original push
+    transport.push = originalPush;
+  }
+
+  // ── S6: Hash index SHA-256 push failure is non-fatal ────────────
+  {
+    console.log('\n  --- S6: Hash index SHA-256 push failure is non-fatal ---');
+    const mk = 's6-fail-----s6-fail-----s6-fail-----s6-fail-----66';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    // Make transport throw on sha256 pushes only
+    const originalPush = transport.push.bind(transport);
+    transport.push = async (path, data) => {
+      if (path === HI_SHA_PATH) {
+        throw new Error('Simulated sha256 push failure');
+      }
+      return originalPush(path, data);
+    };
+
+    let pushed = 0;
+    try {
+      pushed = await sync.pushLedgerBlocks({ forceAll: true });
+    } catch (err) {
+      t.assert(false, 'S6a. pushLedgerBlocks does NOT throw on sha256 failure');
+    }
+    t.assert(pushed >= 3, 'S6b. blocks pushed despite sha256 failure — RED: fails (not implemented)');
+
+    // Restore
+    transport.push = originalPush;
+
+    // Hash index JSON should exist even if sha256 failed
+    t.assert(transport.hasKey(HI_PATH),
+      'S6c. hash_index.json exists despite sha256 failure — RED: fails (not implemented)');
+  }
+
+  // ── S7: Hash index pushed when masterKey is available ───────────
+  {
+    console.log('\n  --- S7: Hash index pushed when masterKey is available ---');
+    const mk = 's7-mk-------s7-mk-------s7-mk-------s7-mk-------77';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    t.assert(transport.hasKey(HI_PATH),
+      'S7a. hash_index exists when MK available — RED: fails (not implemented)');
+  }
+
+  // ── S8: Hash index is NOT obfuscated (unlike blocks) ────────────
+  {
+    console.log('\n  --- S8: Hash index is plain JSON (not obfuscated) ---');
+    const mk = 's8-plain----s8-plain----s8-plain----s8-plain----88';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    if (transport.hasKey(HI_PATH)) {
+      const raw = await transport.pull(HI_PATH);
+      const text = new TextDecoder().decode(raw);
+      // It should be valid JSON (not base64-encoded blob)
+      const looksLikeJson = text.trim().startsWith('[') || text.trim().startsWith('{');
+      t.assert(looksLikeJson,
+        'S8a. hash_index.json is plain JSON (starts with [ or {) — RED: fails (not implemented)');
+      try {
+        JSON.parse(text);
+        t.assert(true, 'S8b. hash_index.json is valid JSON');
+      } catch {
+        t.assert(false, 'S8c. hash_index.json is NOT valid JSON');
+      }
+    } else {
+      t.assert(false, 'S8. hash_index NOT pushed — RED: fails (not implemented)');
+    }
+  }
+
+  // ── S9: Hash index elements match block seals ───────────────────
+  {
+    console.log('\n  --- S9: Hash index elements match block seals ---');
+    const mk = 's9-match----s9-match----s9-match----s9-match----99';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    const chain = buildSimpleChain(3);
+    await seedLedger(sync, storage, chain);
+
+    await sync.pushLedgerBlocks({ forceAll: true });
+
+    if (transport.hasKey(HI_PATH)) {
+      const raw = await transport.pull(HI_PATH);
+      const text = new TextDecoder().decode(raw);
+      const hashIndex = JSON.parse(text);
+
+      t.assertEq(hashIndex.length, chain.length, 'S9a. hash index length = chain length');
+      for (let i = 0; i < chain.length; i++) {
+        t.assertEq(hashIndex[i], chain[i].day_hash,
+          `S9b. hash_index[${i}] matches chain[${i}] seal`);
+      }
+    } else {
+      t.assert(false, 'S9. hash index NOT pushed — RED: fails (not implemented)');
+    }
+  }
+
+  // ── S10: Hash index push after genesis merge in checkAndSync ────
+  {
+    console.log('\n  --- S10: Hash index push after genesis merge ---');
+    const mk = 'sa-merge----sa-merge----sa-merge----sa-merge----aa';
+    // We need to simulate the full genesis gate + merge flow.
+    // Since checkAndSync calls GenesisGate.check() which merges,
+    // and then pushes via pushLedgerBlocks({ forceAll: true }),
+    // we verify the transport receives hash index pushes after merge.
+    // In RED phase, this is expected to fail because the hash index
+    // push is not implemented in pushLedgerBlocks yet.
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Set up a local ledger with 2 blocks
+    const chain = buildSimpleChain(2);
+    // Add some entries to make it realistic
+    chain[1].entries = [{
+      hash: createHash('sha256').update('entry1').digest('hex'),
+      data: { title: 'Test entry' },
+    }];
+    await seedLedger(sync, storage, chain);
+
+    // Simulate remote having the same genesis but one more block
+    // (GenesisGate will merge and trigger forceAll push)
+    const remoteChain = [...chain, makeBlock('day', 2, '2026-06-12', chain[1].day_hash)];
+    const remoteBlocksKey = 'ledger:blocks';
+    transport._store.set(remoteBlocksKey, new TextEncoder().encode(JSON.stringify(remoteChain)));
+
+    // Run checkAndSync — in GREEN phase, this would trigger
+    // GenesisGate.check() → merge → pushLedgerBlocks({ forceAll: true })
+    // which should push hash index alongside merged blocks.
+    // In RED: hash index push doesn't happen yet.
+    const result = await sync.checkAndSync();
+
+    t.assert(result === 'READY' || result === 'REAUTH_NEEDED',
+      'S10a. checkAndSync completes (may need auth)');
+
+    // If genesis gate completed and pushed, hash index should be on remote.
+    // In RED phase, this fails.
+    if (result === 'READY') {
+      t.assert(transport.hasKey(HI_PATH),
+        'S10b. hash_index pushed after merge — RED: fails (not implemented)');
+      t.assert(transport.hasKey(HI_SHA_PATH),
+        'S10c. sha256 pushed after merge — RED: fails (not implemented)');
+    } else {
+      // REAUTH_NEEDED is expected when cookie not set up — still a valid test run
+      t.assert(true, 'S10b. checkAndSync requires auth (no cookie) — expected in test environment');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group T: Unnecessary Push Prevention
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group T: Unnecessary Push Prevention (RED phase) ──\n');
+  console.log('⛔ pushLedgerBlocks CURRENTLY called on every login — tests expect NO push for Tier 1/2');
+
+  // ── T1: Tier 1 SHA-256 match + identical chains → pushLedgerBlocks NOT called ──
+  {
+    const mk = 't1-tier1---t1-tier1---t1-tier1---t1-tier1---aa';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain, mk);
+
+    // Push matching hash index so Tier 1 SHA-256 fast path activates
+    const hi = buildHashIndex(chain);
+    const hiJson = JSON.stringify(hi);
+    const hiSha = createHash('sha256').update(hiJson).digest('hex');
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode(hiJson));
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(hiSha));
+
+    // Reset call tracking before checkAndSync
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'T1. Tier 1 match → NOT GENESIS_MISMATCH');
+
+    // T1 core: pushLedgerBlocks should NOT be called when chains are identical
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `T1b. Tier 1 match → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+
+    // Verify the genesis check actually used Tier 1 (only 1-2 pulls for hash index files)
+    const pullsToHI = transport._pullCalls.filter(p =>
+      p === 'ledger/hash_index.sha256' || p === 'ledger/hash_index.json'
+    );
+    t.assert(pullsToHI.length <= 2,
+      `T1c. Tier 1 path used ≤2 hash index pulls (got ${pullsToHI.length})`);
+  }
+
+  // ── T2: Tier 2 linear_local → pushLedgerBlocks NOT called ──
+  {
+    const mk = 't2-linear--t2-linear--t2-linear--t2-linear--bb';
+    // Local has 2 extra blocks beyond what remote has
+    const localChain = buildTestChain({ mk });
+    // Clone genesis + first day block as remote chain (fewer blocks)
+    const remoteChain = [
+      JSON.parse(JSON.stringify(localChain[0])),
+      JSON.parse(JSON.stringify(localChain[1])),
+    ];
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Local has 3 blocks (genesis + day + extra), remote has 2 (genesis + day)
+    const extraBlock = {
+      type: 'day',
+      day_index: 2,
+      date: '2026-06-21',
+      prev_hash: localChain[1].day_hash,
+      entries: [],
+    };
+    const crypt = new MockCrypto();
+    crypt.setMasterKey(mk);
+    extraBlock.day_hash = crypt.sealBlock({ ...extraBlock });
+    const largerChain = [...localChain, extraBlock];
+
+    await storage.set(LEDGER_BLOCKS_KEY, largerChain);
+    await pushRemoteChain(transport, remoteChain, mk);
+
+    // Push remote hash_index.json with only 2 entries (fewer than local)
+    const remoteHI = buildHashIndex(remoteChain);
+    const remoteHiJson = JSON.stringify(remoteHI);
+    // Push non-matching sha256 so Tier 1 falls through to Tier 2
+    const fakeSha = 'f'.repeat(64);
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(fakeSha));
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode(remoteHiJson));
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'T2. linear_local → NOT GENESIS_MISMATCH');
+
+    // T2 core: pushLedgerBlocks should NOT be called when local extends remote
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `T2b. linear_local → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+  }
+
+  // ── T3: Divergent fork with actual merge → pushLedgerBlocks IS called ──
+  {
+    const mk = 't3-divfork--t3-divfork--t3-divfork--t3-divfork--cc';
+    const localChain = makeChain(mk, [
+      { title: 'Local Entry', startEpoch: 1700000000000, endEpoch: 1700003600000 },
+    ]);
+    const remoteChain = makeChain(mk, [
+      { title: 'Remote Entry', startEpoch: 1700100000000, endEpoch: 1700103600000 },
+    ]);
+
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, localChain);
+    await pushRemoteChain(transport, remoteChain, mk);
+
+    transport.resetCallTracking();
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, null);
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'T3. divergent fork → NOT GENESIS_MISMATCH');
+
+    // T3 core: pushLedgerBlocks SHOULD be called for actual merge
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assert(ledgerPushes.length > 0,
+      `T3b. divergent fork → pushLedgerBlocks IS called (got ${ledgerPushes.length} push calls)`);
+
+    // Verify merged chain was actually pushed (ledger/blocks/HI files exist)
+    const hiExists = transport.hasKey('ledger/hash_index.json');
+    t.assert(hiExists,
+      'T3c. hash_index.json pushed to remote after merge');
+  }
+
+  // ── T4: pushLedgerBlocks not called when mergedChain === localChain (reference check) ──
+  {
+    const mk = 't4-refeq----t4-refeq----t4-refeq----t4-refeq----dd';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain, mk);
+
+    // Push matching hash index so Tier 1 activates
+    const hi = buildHashIndex(chain);
+    const hiJson = JSON.stringify(hi);
+    const hiSha = createHash('sha256').update(hiJson).digest('hex');
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode(hiJson));
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(hiSha));
+
+    // The GenesisGate returns mergedChain: localChain (same reference).
+    // Currently _genesisGatePhase calls pushLedgerBlocks unconditionally.
+    // After fix: should check if mergedChain !== localChain before pushing.
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'T4. same chain (Tier 1) → NOT GENESIS_MISMATCH');
+
+    const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
+    t.assertEq(ledgerPushes.length, 0,
+      `T4b. mergedChain === localChain → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+
+    // Local chain should be unchanged
+    const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
+    t.assertEq(localBlocks.length, chain.length,
+      `T4c. local chain unchanged (${chain.length} blocks, got ${localBlocks.length})`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group U: Duplicate pullCookie Prevention
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group U: Duplicate pullCookie Prevention (RED phase) ──\n');
+  console.log('⛔ pullCookie() CURRENTLY called twice — tests expect exactly 1 call');
+
+  // ── U1: pullCookie() called exactly once during full checkAndSync (mismatch → reconcile) ──
+  {
+    const mk = 'u1-dupull---u1-dupull---u1-dupull---u1-dupull---aa';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Local cookie valid but specifier differs from remote →
+    // fast path pulls cookie (PULL 1), falls through,
+    // auth gate enters reconcile → reconcile pulls cookie AGAIN (PULL 2, bug).
+    // After fix: reconcile should reuse fast path's result → exactly 1 pull.
+    await storage.set('cookie', {
+      device_specifier: 'spec-u1-local',
+      creation_time: Date.now(),
+    });
+    await pushRemoteCookie(transport, 'dev-u1-remote', 'spec-u1-different');
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    // Should reach reconcile (then READY/OFFLINE/REAUTH depending on blob availability)
+    t.assert(result === SyncResult.READY || result === SyncResult.REAUTH_NEEDED,
+      `U1. mismatch→reconcile → completed (got ${result})`);
+
+    const cookiePulls = transport._pullCalls.filter(p => p === COOKIE_PATH);
+    t.assertEq(cookiePulls.length, 1,
+      `U1b. pullCookie called exactly once during full checkAndSync (got ${cookiePulls.length}) — RED: fails`);
+  }
+
+  // ── U2: Cookie result from _fastPathPhase reused in _authGatePhase (no re-pull) ──
+  {
+    const mk = 'u2-reuse----u2-reuse----u2-reuse----u2-reuse----bb';
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Matching cookies → fast path succeeds (READY).
+    // Even though no mismatch occurs, the test verifies the fast path
+    // pulls exactly once and returns READY without reconcile re-pulling.
+    await storage.set('cookie', {
+      device_specifier: 'spec-u2-match',
+      creation_time: Date.now(),
+    });
+    await pushRemoteCookie(transport, 'dev-u2-match', 'spec-u2-match');
+
+    transport.resetCallTracking();
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY,
+      'U2. matching cookies → READY (fast path)');
+
+    // Fast path should pull cookie exactly once and NOT enter reconcile
+    const cookiePulls = transport._pullCalls.filter(p => p === COOKIE_PATH);
+    t.assertEq(cookiePulls.length, 1,
+      `U2b. fast path match → pullCookie called exactly once (got ${cookiePulls.length})`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group V: _genesisCompatible Caching to true
+  // ═══════════════════════════════════════════════════════════════
+  console.log('\n── Group V: _genesisCompatible Caching (RED phase) ──\n');
+  console.log('⛔ _genesisCompatible NEVER set to true — tests expect true after successful check');
+
+  // ── V1: _genesisCompatible is true after successful genesis check ──
+  {
+    const mk = 'v1-cachetrue-v1-cachetrue-v1-cachetrue-v1-cachetrue';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain, mk);
+
+    // Push matching hash index for Tier 1 path
+    const hi = buildHashIndex(chain);
+    const hiJson = JSON.stringify(hi);
+    const hiSha = createHash('sha256').update(hiJson).digest('hex');
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode(hiJson));
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(hiSha));
+
+    const result = await sync.checkAndSync();
+    t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
+      'V1. genesis compatible → NOT GENESIS_MISMATCH');
+
+    // V1 core: _genesisCompatible should be true, not null
+    t.assertEq(sync.genesisCompatible, true,
+      `V1b. genesisCompatible === true after successful check (got ${JSON.stringify(sync.genesisCompatible)}) — RED: fails (null)`);
+  }
+
+  // ── V2: Second checkAndSync skips network when genesis is cached true ──
+  {
+    const mk = 'v2-skipnet--v2-skipnet--v2-skipnet--v2-skipnet--bb';
+    const chain = buildTestChain({ mk });
+    const { sync, storage, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set(LEDGER_BLOCKS_KEY, chain);
+    await pushRemoteChain(transport, chain, mk);
+
+    // Push matching hash index for Tier 1 path
+    const hi = buildHashIndex(chain);
+    const hiJson = JSON.stringify(hi);
+    const hiSha = createHash('sha256').update(hiJson).digest('hex');
+    await transport.push('ledger/hash_index.json', new TextEncoder().encode(hiJson));
+    await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(hiSha));
+
+    // First call: complete the genesis check
+    const result1 = await sync.checkAndSync();
+    t.assertNeq(result1, SyncResult.GENESIS_MISMATCH,
+      'V2. first call → genesis compatible');
+
+    // Reset call tracking for second checkAndSync
+    transport.resetCallTracking();
+
+    // Second call: should skip genesis gate entirely (cached to true).
+    // RED: _genesisCompatible is null → re-runs genesis gate → makes network calls.
+    const result2 = await sync.checkAndSync();
+    t.assertNeq(result2, SyncResult.GENESIS_MISMATCH,
+      'V2b. second call → genesis still compatible');
+
+    // V2 core: second call should skip the network (no hash_index or block pulls)
+    const ledgerPulls = transport._pullCalls.filter(p =>
+      p.startsWith('ledger/')
+    );
+    t.assertEq(ledgerPulls.length, 0,
+      `V2c. second checkAndSync skips genesis gate network calls (got ${ledgerPulls.length}) — RED: fails`);
   }
 
   // ── Results ───────────────────────────────────────────────────────

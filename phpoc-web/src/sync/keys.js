@@ -14,9 +14,12 @@ export const REMOTE_STAGING_BLOB = 'staging/blobs/current.json';
 export const REMOTE_DEVICE_COOKIE = 'staging/blobs/device_cookie.bin';
 export const REMOTE_LEDGER_BLOCKS_PREFIX = 'ledger/blocks/';
 export const REMOTE_LEDGER_INDEX = 'ledger/index.json';
+export const REMOTE_HASH_INDEX = 'ledger/hash_index.json';
+export const REMOTE_HASH_INDEX_SHA256 = 'ledger/hash_index.sha256';
 
 // ── Local storage keys (IndexedDB / in-memory) ─────────────────────
 
 export const LOCAL_COOKIE = 'cookie';
 export const LOCAL_LEDGER_BLOCKS = 'ledger:blocks';
 export const LOCAL_LEDGER_INDEX = 'ledger:index';
+export const LOCAL_HASH_INDEX = 'ledger:hash_index';

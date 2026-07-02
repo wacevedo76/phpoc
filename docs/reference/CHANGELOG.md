@@ -18,6 +18,7 @@ All notable changes to the PH Ledger (phpoc) project.
   - 12 source files + 8 test files changed. 0 failures across 38 JS suites + 1554 Python tests. (2026-07-01)
 
 ### Added
+- **Onboarding/Unlock/ReAuth Speedup — Hash Index Tier 1/2** — Genesis gate now uses SHA-256 hash index fast path to avoid pulling full remote chain when ledgers are already in sync. Tier 1: pull `ledger/hash_index.sha256` (64 bytes) → compare with local `sha256(hash_index)` → return compatible on match (~0.1s vs ~21s for 200 blocks, ~200× speedup). Tier 2: pull `ledger/hash_index.json` → `compareHashIndexes()` → detect fork type (linear_remote, linear_local, divergent, genesis_mismatch) for incremental pull or early mismatch detection. Stale index defense: verify genesis hash in `hash_index.json` after SHA-256 match. Full backward compatibility: legacy remotes without hash index fall through to existing full pull. New file: `phpoc-web/src/sync/hash_index.js` (85 lines). Modified: `genesis_gate.js`, `sync.js`, `keys.js`. 485 tests pass across 3 suites. (2026-07-02)
 - **Cross-client staging sync tests** — `test/cross_client_web_test.mjs` (78 tests, 0 failures). Covers auth gate (5), reconcile merge (15), full round-trip (15), auth timing (6), and pause/unpause lifecycle across simulated CLI↔Web devices (37). Validates pause state serialization through raw blob format (`pauses_enc`, `is_paused`), closed-pause propagation, and end-in-staging (not yet committed) round-trip. Bug fix: camelCase standardization in `pushRemoteBlob` helper. (2026-06-30)
 
 ### Fixed
