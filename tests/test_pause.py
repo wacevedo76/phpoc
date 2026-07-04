@@ -396,7 +396,7 @@ class TestPauseBackwardCompat(unittest.TestCase):
         ).hexdigest()
 
         genesis = json.loads(self.lf.read_text())[0]
-        genesis_hash = genesis["day_hash"]
+        genesis_hash = genesis.get("block_hash") or genesis.get("day_hash")
 
         day_block = {
             "type": "day",

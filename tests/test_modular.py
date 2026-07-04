@@ -286,12 +286,14 @@ class TestGenesisSealVerification(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_genesis_seal_verifiable_without_signature(self):
-        """Factory-produced genesis day_hash can be verified by re-computing
+        """Factory-produced genesis block_hash can be verified by re-computing
         the seal WITHOUT the signature field in the JSON.
 
         Before Bug 4 fix: this test FAILS because factory includes
         signature: "" in the sealed JSON, producing a different hash
         than the verification paths that strip signature.
+
+        I-17: genesis now uses block_hash (not day_hash).
         """
         # Create a ledger with the factory
         identity_secret = os.urandom(32)
@@ -307,14 +309,15 @@ class TestGenesisSealVerification(unittest.TestCase):
         self.assertEqual(genesis['type'], 'genesis')
 
         # Extract seal values
-        day_hash = genesis['day_hash']
+        hash_key = 'block_hash' if 'block_hash' in genesis else 'day_hash'
+        seal_hash = genesis[hash_key]
         signature = genesis.get('signature', '')
 
         # Recompute the seal WITHOUT the signature field
-        # (matching onboarding_file.py line 260 and auth.py line 147)
+        # (matching onboarding_file.py and auth.py)
         import copy
         check_data = copy.deepcopy(genesis)
-        del check_data['day_hash']
+        del check_data[hash_key]
         if 'signature' in check_data:
             del check_data['signature']
 
@@ -324,11 +327,11 @@ class TestGenesisSealVerification(unittest.TestCase):
 
         # Re-compute seal
         check_json = json.dumps(check_data, sort_keys=True)
-        recomputed_day_hash = crypto.seal(check_json)
+        recomputed_hash = crypto.seal(check_json)
 
         self.assertEqual(
-            recomputed_day_hash, day_hash,
-            'Bug 4 fix: genesis day_hash must match seal computed WITHOUT signature field'
+            recomputed_hash, seal_hash,
+            'I-17: genesis seal must match seal computed WITHOUT signature field'
         )
 
     def test_genesis_seal_matches_auth_verification_path(self):
@@ -345,10 +348,12 @@ class TestGenesisSealVerification(unittest.TestCase):
         genesis = ledger_data[0]
 
         # Simulate auth.py _verify_cached_key() logic:
-        # Copy block, remove day_hash and signature, recompute seal
+        # Copy block, remove hash/signature/format_version, recompute seal
+        # I-17: genesis now uses block_hash (not day_hash).
+        hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
         check_data = {}
         for k, v in genesis.items():
-            if k not in ('day_hash', 'signature'):
+            if k not in (hash_key, 'signature', 'format_version'):
                 check_data[k] = v
 
         mk = RecoveryManager.seed_to_key(seed)
@@ -357,8 +362,8 @@ class TestGenesisSealVerification(unittest.TestCase):
         expected_hash = crypto.seal(check_json)
 
         self.assertEqual(
-            expected_hash, genesis['day_hash'],
-            'Bug 4 fix: genesis day_hash matches auth verification path'
+            expected_hash, genesis[hash_key],
+            'I-17: genesis seal matches auth verification path (block_hash/day_hash)'
         )
 
     def test_old_buggy_genesis_fails_verification(self):

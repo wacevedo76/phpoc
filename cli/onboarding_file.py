@@ -21,12 +21,13 @@ from security.recovery import RecoveryManager
 from security.auth import PassphraseAuthenticator
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
+from domain.ledger.helpers import get_block_hash
 
 logger = logging.getLogger(__name__)
 
 # ── Per-block-type seal field names ────────────────────────────────────────
 BLOCK_HASH_FIELD = {
-    "genesis": "day_hash",
+    "genesis": "block_hash",
     "year_summary": "year_hash",
     "month_summary": "month_hash",
     "day": "day_hash",
@@ -201,7 +202,7 @@ def _import_v2(data: dict, mk: bytes) -> dict:
 
     genesis_hash = None
     if ledger_blocks[0].get("type") == "genesis":
-        genesis_hash = ledger_blocks[0].get("day_hash")
+        genesis_hash = get_block_hash(ledger_blocks[0])
 
     return {
         "format": "v2",
@@ -221,7 +222,7 @@ def _import_raw_chain(blocks: list, mk: bytes) -> dict:
 
     genesis_hash = None
     if blocks[0].get("type") == "genesis":
-        genesis_hash = blocks[0].get("day_hash")
+        genesis_hash = get_block_hash(blocks[0])
 
     return {
         "format": "chain",
@@ -255,10 +256,11 @@ def _validate_raw_chain(blocks: list, crypto: CryptoManager, mk: bytes):
             )
 
         # Verify per-block seal
+        # I-07: format_version excluded from seal check data.
         check_data = {
             k: v
             for k, v in sorted(block.items())
-            if k not in (hash_field, "signature")
+            if k not in (hash_field, "signature", "format_version")
         }
         check_json = _json_sort(check_data)
         if not _verify_seal(check_json, block_hash, mk):
@@ -408,17 +410,20 @@ def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
     identity_secret = ledger_domain._get_identity_secret()
 
     # Re-seal and re-sign genesis
+    # I-17: genesis uses block_hash (not day_hash).
+    # I-07: format_version excluded from seal check data.
+    genesis_hash_key = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
     check_data = {
         k: v
         for k, v in ledger_data[0].items()
-        if k not in ("day_hash", "signature")
+        if k not in (genesis_hash_key, "signature", "format_version")
     }
-    ledger_data[0]["day_hash"] = crypto.seal(
+    ledger_data[0][genesis_hash_key] = crypto.seal(
         json.dumps(check_data, sort_keys=True)
     )
     if identity_secret:
         ledger_data[0]["signature"] = crypto.sign(
-            ledger_data[0]["day_hash"], identity_secret
+            ledger_data[0][genesis_hash_key], identity_secret
         )
 
     # Re-chain all subsequent blocks
@@ -426,17 +431,13 @@ def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
         block = ledger_data[i]
         prev = ledger_data[i - 1]
 
-        block["prev_hash"] = (
-            prev.get("day_hash")
-            or prev.get("month_hash")
-            or prev.get("year_hash")
-        )
+        block["prev_hash"] = get_block_hash(prev)
 
         hash_key = BLOCK_HASH_FIELD.get(block.get("type", "day"), "day_hash")
         seal_data = {
             k: v
             for k, v in block.items()
-            if k not in (hash_key, "signature")
+            if k not in (hash_key, "signature", "format_version")
         }
         block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 

@@ -116,7 +116,6 @@ function buildGenesisBlock({ username, email, passphrase, seed, masterKey }) {
   // Build genesis content
   const genesis = {
     type: 'genesis',
-    format_version: '0.3.0',
     day_index: 0,
     date: '2026-06-20',
     identity: {

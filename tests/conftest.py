@@ -295,6 +295,8 @@ def pytest_collection_modifyitems(config, items):
         "test_modular": 30,
         # Ledger merge
         "test_ledger_merge": 30,
+        # Cross-platform integration (hits live Worker — allow more time)
+        "test_cross_platform_integration": 60,
     }
 
     for item in items:

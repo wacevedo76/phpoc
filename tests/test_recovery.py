@@ -62,7 +62,7 @@ class TestSovereignRecovery(unittest.TestCase):
         identity_secret = bytes.fromhex(decrypted_identity_hex)
         
         # Verify signature on genesis seal
-        self.assertTrue(crypto.verify_signature(genesis["day_hash"], genesis["signature"], identity_secret))
+        self.assertTrue(crypto.verify_signature(genesis.get("block_hash") or genesis.get("day_hash"), genesis["signature"], identity_secret))
 
     def test_recovery_and_passphrase_reset(self):
         seed = LedgerFactory.initialize(self.ledger_file, self.pdk, self.username, self.email)

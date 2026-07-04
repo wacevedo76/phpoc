@@ -120,7 +120,6 @@ function buildGenesisBlock(opts = {}) {
   const crypto = new MockCrypto();
   const content = {
     type: 'genesis',
-    format_version: formatVersion,
     day_index: 0,
     date,
     identity: {

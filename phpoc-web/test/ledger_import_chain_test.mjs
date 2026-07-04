@@ -352,5 +352,135 @@ console.log('\n=== 14. Non-Array Input for Chain ===');
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════
+// Canonical Ledger Format — Phase 2 RED Tests: Group F-js
+// ═════════════════════════════════════════════════════════════════
+
+console.log('\n=== 15. Canonical Format: Import Migrated Chain (F2-js) ===');
+
+{
+  // Build a new-format chain: genesis has block_hash, no format_version in seal
+  const genesisContent = {
+    type: 'genesis',
+    day_index: 0,
+    date: '2026-07-03',
+    identity: { username: 'tester', email: 'test@example.com' },
+    prev_hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    entries: [],
+  };
+  // New format: seal with block_hash
+  const sealPayloadNew = (block, hashField) => {
+    const data = {};
+    for (const key of Object.keys(block).sort()) {
+      if (key !== hashField && key !== 'signature') {
+        data[key] = block[key];
+      }
+    }
+    return jsonSort(data);
+  };
+  genesisContent.block_hash = crypto.seal(sealPayloadNew(genesisContent, 'block_hash'), MASTER_KEY);
+
+  const dayContent = {
+    type: 'day',
+    day_index: 1,
+    date: '2026-07-03',
+    prev_hash: genesisContent.block_hash,
+    entries: [
+      {
+        hash: crypto.sha256(jsonSort({ title: 'Task', duration: 600 })),
+        data: { title: 'Task', duration: 600 },
+      },
+    ],
+  };
+  dayContent.day_hash = crypto.seal(sealPayloadNew(dayContent, 'day_hash'), MASTER_KEY);
+
+  const blob = chainBlob([genesisContent, dayContent]);
+
+  // RED: Current import code looks for day_hash on genesis;
+  // new format uses block_hash — import may fail to detect genesis hash properly.
+  // In GREEN phase, importLedger should support block_hash on genesis.
+  let result;
+  try {
+    result = await importLedger(blob, crypto, MASTER_KEY);
+  } catch (err) {
+    // In RED phase, this might throw because genesis uses block_hash not day_hash
+    result = null;
+  }
+
+  if (result) {
+    t.assertEq(result.genesisHash, genesisContent.block_hash,
+      'F2-js: genesisHash must equal genesis.block_hash (I-17)');
+    t.assertEq(result.ledger.length, 2,
+      'F2-js: Migrated chain with 2 blocks imports successfully');
+  } else {
+    // RED phase: import fails because genesis block_hash isn't recognized
+    t.assert(false,
+      'F2-js: importLedger must accept migrated chain with block_hash on genesis (RED)');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+console.log('\n=== 16. Canonical Format: Import Old Chain Rejected (F3-js) ===');
+
+{
+  // Build a chain where blocks have format_version included in their seal data
+  // (old format). After I-07 fix, format_version is excluded from seal check,
+  // so the old seal won't verify → import should fail.
+  const oldGenesisContent = {
+    type: 'genesis',
+    format_version: '0.3.0',
+    day_index: 0,
+    date: '2026-07-03',
+    identity: { username: 'tester', email: 'test@example.com' },
+    prev_hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    entries: [],
+  };
+
+  // OLD FORMAT: seal includes format_version in check data
+  const sealPayloadOld = (block, hashField) => {
+    const data = {};
+    for (const key of Object.keys(block).sort()) {
+      // OLD: only exclude hashField and signature, INCLUDE format_version
+      if (key !== hashField && key !== 'signature') {
+        data[key] = block[key];
+      }
+    }
+    return jsonSort(data);
+  };
+  oldGenesisContent.day_hash = crypto.seal(sealPayloadOld(oldGenesisContent, 'day_hash'), MASTER_KEY);
+
+  const oldDayContent = {
+    type: 'day',
+    format_version: '0.3.0',
+    day_index: 1,
+    date: '2026-07-03',
+    prev_hash: oldGenesisContent.day_hash,
+    entries: [
+      {
+        hash: crypto.sha256(jsonSort({ title: 'Task', duration: 600 })),
+        data: { title: 'Task', duration: 600 },
+      },
+    ],
+  };
+  oldDayContent.day_hash = crypto.seal(sealPayloadOld(oldDayContent, 'day_hash'), MASTER_KEY);
+
+  const blob = chainBlob([oldGenesisContent, oldDayContent]);
+
+  // RED: Current import code also includes format_version in seal check,
+  // so old-format chains with format_version in seal data still pass.
+  // In GREEN phase, import should exclude format_version from seal check,
+  // causing this old chain to fail verification.
+  let threw = false;
+  try {
+    await importLedger(blob, crypto, MASTER_KEY);
+  } catch (err) {
+    threw = true;
+  }
+
+  t.assert(threw,
+    'F3-js: Import must reject pre-migration chain with format_version in seal data (I-07 — RED)');
+}
+
+// ═════════════════════════════════════════════════════════════════
 const failures = t.summary('ledger_import_chain_test');
 process.exit(failures > 0 ? 1 : 0);

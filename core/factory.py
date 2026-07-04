@@ -56,10 +56,11 @@ class LedgerFactory:
         # Bug 4 fix: Strip signature before sealing, matching web behavior
         # and verification paths (onboarding_file.py, auth.py). Including
         # signature: "" in the sealed JSON produces a different hash.
+        # I-07/I-17: format_version excluded from seal, block_hash replaces day_hash.
         seal_data = {k: v for k, v in genesis.items() if k != "signature"}
         genesis_json = json.dumps(seal_data, sort_keys=True)
-        genesis["day_hash"] = crypto.seal(genesis_json)
-        genesis["signature"] = crypto.sign(genesis["day_hash"], identity_secret)
+        genesis["block_hash"] = crypto.seal(genesis_json)
+        genesis["signature"] = crypto.sign(genesis["block_hash"], identity_secret)
         
         # Create directory first
         ledger_path.parent.mkdir(parents=True, exist_ok=True)

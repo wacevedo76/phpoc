@@ -204,7 +204,6 @@ async function addStagingEntries(storage, entries) {
  */
 async function seedGenesisBlock(storage, crypto, mk) {
   const genesisBlock = {
-    format_version: 1,
     type: 'genesis',
     index: 0,
     date: '2026-01-01',
@@ -223,7 +222,6 @@ async function seedGenesisBlock(storage, crypto, mk) {
   };
   await storage.set('ledger:blocks', [genesisBlock]);
   await storage.set('ledger:index', {
-    format_version: 1,
     block_count: 1,
     latest_block: 0,
     summaries: [{
@@ -240,7 +238,6 @@ async function seedGenesisBlock(storage, crypto, mk) {
  */
 function makeIndex(blocks) {
   return {
-    format_version: 1,
     block_count: blocks.length,
     latest_block: blocks.length > 0 ? blocks[blocks.length - 1].index : null,
     summaries: blocks.map(b => ({

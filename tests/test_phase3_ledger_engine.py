@@ -1389,7 +1389,7 @@ class TestChainFormatEquivalence(unittest.TestCase):
             "data": {"title": "Test", "start_epoch": 1700000000000, "duration": 1000},
             "hash": "dummy",
         }
-        block = chain.build_day_block([entry], genesis["day_hash"], date_str="2026-01-15")
+        block = chain.build_day_block([entry], genesis.get("block_hash") or genesis.get("day_hash"), date_str="2026-01-15")
 
         self.assertEqual(block["type"], "day")
         self.assertEqual(block["date"], "2026-01-15")
@@ -1398,7 +1398,100 @@ class TestChainFormatEquivalence(unittest.TestCase):
         self.assertIn("day_hash", block)
         self.assertIn("entries", block)
         self.assertEqual(block["day_index"], 1)
-        self.assertEqual(block["prev_hash"], genesis["day_hash"])
+        self.assertEqual(block["prev_hash"], genesis.get("block_hash") or genesis.get("day_hash"))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# _hash_key_for_block — Group H
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestHashKeyForBlock(unittest.TestCase):
+    """Tests for LedgerChain._hash_key_for_block() — block type → hash field name.
+
+    H1: Genesis with block_hash → returns "block_hash"
+    H2: Genesis with only day_hash → returns "day_hash" (I-17 backward compat)
+    H3: Day block → returns "day_hash"
+    H4: Month summary → returns "month_hash"
+    H5: Year summary → returns "year_hash"
+    H6: Unknown type → returns "day_hash" (safe default)
+    H7: Genesis with both keys → "block_hash" takes priority
+    H8: Block with no type field → returns "day_hash"
+    """
+
+    def setUp(self):
+        skip_unless_phase_3()
+
+    # ── H1: Genesis with block_hash ───────────────────────────────────
+
+    def test_h1_genesis_block_hash(self):
+        """Genesis with block_hash → returns 'block_hash'."""
+        block = {"type": "genesis", "block_hash": "abc123"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "block_hash",
+                         "Genesis with block_hash must resolve to 'block_hash'")
+
+    # ── H2: Genesis with day_hash only (backward compat) ──────────────
+
+    def test_h2_genesis_day_hash_backward_compat(self):
+        """Old-format genesis with only day_hash → returns 'day_hash'."""
+        block = {"type": "genesis", "day_hash": "def456"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "day_hash",
+                         "Old genesis with day_hash must return 'day_hash' (I-17 compat)")
+
+    # ── H3: Day block ─────────────────────────────────────────────────
+
+    def test_h3_day_block(self):
+        """Day block → returns 'day_hash'."""
+        block = {"type": "day", "day_hash": "day789"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "day_hash",
+                         "Day block must resolve to 'day_hash'")
+
+    # ── H4: Month summary ─────────────────────────────────────────────
+
+    def test_h4_month_summary(self):
+        """Month summary → returns 'month_hash'."""
+        block = {"type": "month_summary", "month_hash": "month012"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "month_hash",
+                         "Month summary must resolve to 'month_hash'")
+
+    # ── H5: Year summary ──────────────────────────────────────────────
+
+    def test_h5_year_summary(self):
+        """Year summary → returns 'year_hash'."""
+        block = {"type": "year_summary", "year_hash": "year345"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "year_hash",
+                         "Year summary must resolve to 'year_hash'")
+
+    # ── H6: Unknown type ──────────────────────────────────────────────
+
+    def test_h6_unknown_type_defaults_day_hash(self):
+        """Unknown block type → returns 'day_hash' as safe default."""
+        block = {"type": "bogus_type", "bogus_hash": "xxx"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "day_hash",
+                         "Unknown block type must default to 'day_hash'")
+
+    # ── H7: Genesis with both keys — block_hash wins ──────────────────
+
+    def test_h7_genesis_both_keys_block_hash_wins(self):
+        """Genesis with both block_hash and day_hash → 'block_hash' takes priority."""
+        block = {"type": "genesis", "block_hash": "abc", "day_hash": "def"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "block_hash",
+                         "block_hash must take priority over day_hash on genesis")
+
+    # ── H8: No type field ─────────────────────────────────────────────
+
+    def test_h8_no_type_field_defaults_day_hash(self):
+        """Block without a type field → returns 'day_hash'."""
+        block = {"day_hash": "somehash"}
+        result = LedgerChain._hash_key_for_block(block)
+        self.assertEqual(result, "day_hash",
+                         "Block with no type must default to 'day_hash'")
 
 
 if __name__ == "__main__":

@@ -104,7 +104,7 @@ export async function importLedger(file, crypto, masterKey) {
 
     // Extract genesis hash (first block in the chain)
     if (parsed.ledger.length > 0 && parsed.ledger[0].type === 'genesis') {
-      genesisHash = parsed.ledger[0].day_hash || null;
+      genesisHash = parsed.ledger[0].block_hash || parsed.ledger[0].day_hash || null;
     }
 
     // v2 entries = staging entries (committed blocks stay as ledger)
@@ -148,13 +148,29 @@ export async function importLedger(file, crypto, masterKey) {
         hashData[key] = entry[key];
       }
     }
-    const expectedHash = crypto.sha256(jsonSort(hashData));
 
-    if (entry.hash !== expectedHash) {
-      throw new Error(
-        `importLedger: entry hash mismatch at index ${i} ` +
-        `("${entry.title || 'untitled'}") — file may be corrupted`
-      );
+    // Try current format first: jsonSort (canonical, new exports)
+    const jsonSortHash = crypto.sha256(jsonSort(hashData));
+    if (entry.hash !== jsonSortHash) {
+      // Backward-compat fallback 1: JSON.stringify(all fields) — old stopped entries
+      const jsStringifyAll = crypto.sha256(JSON.stringify(hashData));
+      if (entry.hash !== jsStringifyAll) {
+        // Backward-compat fallback 2: JSON.stringify(core fields only)
+        // — old active entries (stale hashes from LocalCache)
+        const coreData = {};
+        for (const key of Object.keys(entry).sort()) {
+          if (key !== 'hash' && key !== 'committed' && key !== 'block_index') {
+            coreData[key] = entry[key];
+          }
+        }
+        const jsStringifyCore = crypto.sha256(JSON.stringify(coreData));
+        if (entry.hash !== jsStringifyCore) {
+          throw new Error(
+            `importLedger: entry hash mismatch at index ${i} ` +
+            `("${entry.title || 'untitled'}") — file may be corrupted`
+          );
+        }
+      }
     }
   }
 
@@ -169,8 +185,9 @@ export async function importLedger(file, crypto, masterKey) {
 }
 
 // ── Block seal field names per block type ──────────────────────────
+// I-17: genesis uses block_hash (not day_hash).
 const BLOCK_HASH_FIELD = {
-  genesis: 'day_hash',
+  genesis: 'block_hash',
   year_summary: 'year_hash',
   month_summary: 'month_hash',
   day: 'day_hash',
@@ -204,13 +221,18 @@ function _importRawChain(blocks, crypto, masterKey) {
     );
   }
 
-  const genesisHash = genesis.day_hash || null;
+  const genesisHash = genesis.block_hash || genesis.day_hash || null;
 
   // ── Validate each block's structure and seal ────────────────────
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     const blockType = block.type || 'day';
-    const hashField = BLOCK_HASH_FIELD[blockType];
+    let hashField = BLOCK_HASH_FIELD[blockType];
+
+    // I-17 backward compat: genesis may use block_hash (new) or day_hash (old)
+    if (blockType === 'genesis' && !block[hashField] && block['day_hash']) {
+      hashField = 'day_hash';
+    }
 
     if (!hashField) {
       throw new Error(
@@ -225,12 +247,12 @@ function _importRawChain(blocks, crypto, masterKey) {
       );
     }
 
-    // Verify per-block seal: HMAC of block content (excluding hash + signature)
+    // Verify per-block seal: HMAC of block content (excluding hash + signature + format_version)
+    // I-07: format_version excluded from seal computation.
     // Uses the same seal key as the export format (derived from masterKey).
-    // The export format's crypto.verifySeal() expects (data, seal, masterKey).
     const checkData = {};
     for (const key of Object.keys(block).sort()) {
-      if (key !== hashField && key !== 'signature') {
+      if (key !== hashField && key !== 'signature' && key !== 'format_version') {
         checkData[key] = block[key];
       }
     }
@@ -249,7 +271,11 @@ function _importRawChain(blocks, crypto, masterKey) {
     if (i > 0) {
       const prevBlock = blocks[i - 1];
       const prevType = prevBlock.type || 'day';
-      const prevHashField = BLOCK_HASH_FIELD[prevType];
+      let prevHashField = BLOCK_HASH_FIELD[prevType];
+      // I-17 backward compat: genesis may use block_hash (new) or day_hash (old)
+      if (prevType === 'genesis' && !prevBlock[prevHashField] && prevBlock['day_hash']) {
+        prevHashField = 'day_hash';
+      }
       const expectedPrevHash = prevBlock[prevHashField];
 
       if (block.prev_hash !== expectedPrevHash) {

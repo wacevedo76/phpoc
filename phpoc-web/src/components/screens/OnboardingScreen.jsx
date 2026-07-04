@@ -129,7 +129,7 @@ export default function OnboardingScreen({
     if (file) setImportFile(file);
   };
 
-  // ── Cloud import: connect to Worker and list backups ─────────
+  // ── Cloud import: connect to Worker, check for chain or backups ──
   const handleCloudConnect = async (e) => {
     e.preventDefault();
     if (!cloudUrl.trim()) {
@@ -150,10 +150,28 @@ export default function OnboardingScreen({
       });
       const source = new WorkerImportSource(transport);
 
+      // ── 1. Check for remote ledger chain (primary path) ──────
+      const chainBlockCount = await WorkerImportSource.checkForRemoteChain(transport);
+
+      if (chainBlockCount > 0) {
+        setCloudStatus({
+          type: 'ok',
+          message: `Remote ledger found (${chainBlockCount} block${chainBlockCount !== 1 ? 's' : ''}).`,
+        });
+        // Store that we're using chain-based import (no backup file)
+        setCloudSelectedBackup('__chain__');
+        // Chain import requires seed (blocks are encrypted with master key)
+        setCloudAuthMode('passphrase_seed');
+        setCloudStep('auth');
+        setConnecting(false);
+        return;
+      }
+
+      // ── 2. Fallback: check for backup files ──────────────────
       const backups = await source.listBackups();
 
       if (backups.length === 0) {
-        setCloudStatus({ type: 'no_backups', message: 'No backup files found on this server.' });
+        setCloudStatus({ type: 'no_data', message: 'No ledger data found on this server. Try importing from a file instead.' });
         setCloudStep('connect');
         setConnecting(false);
         return;
@@ -263,10 +281,12 @@ export default function OnboardingScreen({
     setCloudStep('importing');
 
     try {
+      const isChainImport = cloudSelectedBackup === '__chain__';
       await onImportFromCloud({
         baseUrl: cloudUrl.trim(),
         apiKey: cloudApiKey.trim() || null,
-        filename: cloudSelectedBackup,
+        filename: isChainImport ? null : cloudSelectedBackup,
+        source: isChainImport ? 'chain' : 'backup',
         passphrase: cloudPassphrase.trim(),
         seed: cloudAuthMode === 'passphrase_seed' ? cloudSeed.trim() : null,
         genesisBlock: cloudGenesisBlock,
@@ -775,6 +795,7 @@ export default function OnboardingScreen({
                   <p style={{ margin: 0, color: '#c62828', fontWeight: 600 }}>
                     {cloudStatus.type === 'offline' && '🔌 Cannot reach remote'}
                     {cloudStatus.type === '403' && '🔒 Access denied'}
+                    {cloudStatus.type === 'no_data' && '📭 No ledger data found'}
                     {cloudStatus.type === 'no_backups' && '📭 No backups found'}
                     {cloudStatus.type === 'error' && '❌ Error'}
                   </p>
@@ -911,9 +932,11 @@ export default function OnboardingScreen({
             <>
               <h2 className="auth-title" style={{ fontSize: '1.2rem' }}>🔐 Authenticate</h2>
               <p className="auth-subtitle">
-                {cloudAuthMode === 'passphrase_only'
-                  ? 'Enter your passphrase to decrypt the recovery seed and import this backup.'
-                  : 'Enter your passphrase and recovery seed to import this backup.'}
+                {cloudSelectedBackup === '__chain__'
+                  ? 'Enter your passphrase and recovery seed to import the remote ledger.'
+                  : cloudAuthMode === 'passphrase_only'
+                    ? 'Enter your passphrase to decrypt the recovery seed and import this backup.'
+                    : 'Enter your passphrase and recovery seed to import this backup.'}
               </p>
 
               <form className="auth-form" onSubmit={handleCloudImportSubmit}>
@@ -964,7 +987,14 @@ export default function OnboardingScreen({
               <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
                 <button
                   className="btn btn-secondary btn-sm"
-                  onClick={() => setCloudStep('select')}
+                  onClick={() => {
+                    if (cloudSelectedBackup === '__chain__') {
+                      setCloudStep('connect');
+                      setCloudStatus(null);
+                    } else {
+                      setCloudStep('select');
+                    }
+                  }}
                   disabled={importing}
                 >
                   ← Back

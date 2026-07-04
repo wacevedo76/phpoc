@@ -23,6 +23,7 @@ import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, creat
 import { createAutoSync } from '../hooks/useAutoSync.js';
 import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
 import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
+import { exportWithAuth } from '../services/export_auth.js';
 import { importLedger } from '../services/ledger_import.js';
 
 // ── Context ──────────────────────────────────────────────────────────
@@ -234,10 +235,35 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setTtlWarning(false);
   }, []);
 
+  // ── Re-auth overlay state ─────────────────────────────────────
+  // { active: boolean, reason: 'ttl_expired' | 'sync_settings' | null }
+  // active=true triggers the ReauthOverlay in App.jsx.
+  // reason tracks what triggered it for UI messaging.
+  const [reauthState, setReauthState] = useState({ active: false, reason: null });
+
+  const triggerReauth = useCallback((reason) => {
+    if (typeof reason !== 'string' || !reason) {
+      throw new Error('triggerReauth requires a non-empty reason string');
+    }
+    setReauthState({ active: true, reason });
+  }, []);
+
+  const dismissReauth = useCallback(() => {
+    setReauthState({ active: false, reason: null });
+  }, []);
+
+  // After successful re-auth, restart cookie monitor (it was disposed
+  // in handleTtlExpiry). Incrementing the version forces the useEffect
+  // to recreate the monitor with the fresh cookie.
+  const restartCookieMonitor = useCallback(() => {
+    setCookieMonitorVersion((v) => v + 1);
+  }, []);
+
   // ── TTL expiry handler ─────────────────────────────────────────
-  // Called by the cookie monitor when TTL expires. Sends the user back
-  // to the landing screen (same as manual logout). Must be defined
-  // BEFORE the cookie monitor useEffect below.
+  // Called by the cookie monitor when TTL expires. Instead of forcing
+  // a full logout to the landing screen, clears the MK and triggers
+  // the re-auth overlay so the user can re-authenticate inline.
+  // Must be defined BEFORE the cookie monitor useEffect below.
   const handleTtlExpiry = useCallback(() => {
     // Dispose cookie TTL monitor (stops polling)
     if (cookieMonitorRef.current) {
@@ -248,22 +274,25 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       services.crypto.clearMasterKey();
     }
     setTtlWarning(false);
-    setHasExistingData(true);
-    setPhase('landing');
-    setServices({ crypto: null, sync: null, storage: services.storage });
-    setIdentityInfo({ username: null, email: null });
-    setLoading(false);
-  }, [services.crypto, services.storage]);
+    // Trigger re-auth overlay instead of full logout
+    // Services (storage, sync reference) stay alive so re-auth can
+    // call _reconcileAndClaim to pull/merge/push/create cookie.
+    setReauthState({ active: true, reason: 'ttl_expired' });
+  }, [services.crypto]);
 
   // ── Cookie TTL monitor ─────────────────────────────────────────
   // Monitors the local device cookie TTL. When the cookie expires,
   // clears the master key and triggers the re-auth overlay.
+  //
+  // cookieMonitorVersion forces recreation after re-auth success.
+  // The monitor is disposed in handleTtlExpiry; when re-auth creates
+  // a fresh cookie, we increment the version to restart monitoring.
   const cookieMonitorRef = useRef(null);
+  const [cookieMonitorVersion, setCookieMonitorVersion] = useState(0);
 
   useEffect(() => {
     // Only run the monitor when services are fully bootstrapped
     if (phase !== 'ready') {
-      // Dispose monitor when leaving the ready phase (logout, re-bootstrap, etc.)
       if (cookieMonitorRef.current) {
         cookieMonitorRef.current.dispose();
         cookieMonitorRef.current = null;
@@ -282,7 +311,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     const monitor = createCookieMonitor(storage, crypto, {
       cookieTtlMinutes: 30,
-      pollIntervalMs: 60_000, // check every 60 seconds
+      pollIntervalMs: 60_000,
       warningThresholdMinutes: 5,
       onWarning: () => setTtlWarning(true),
       onExpired: handleTtlExpiry,
@@ -291,12 +320,11 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     cookieMonitorRef.current = monitor;
     monitor.start();
 
-    // Cleanup: dispose when leaving ready phase or on unmount
     return () => {
       monitor.dispose();
       cookieMonitorRef.current = null;
     };
-  }, [phase, effectiveServices?.crypto, effectiveServices?.storage, handleTtlExpiry]);
+  }, [phase, effectiveServices?.crypto, effectiveServices?.storage, handleTtlExpiry, cookieMonitorVersion]);
 
   // Clean up auto-sync on unmount (cancels pending debounce)
   useEffect(() => {
@@ -407,25 +435,6 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       // Non-critical
     }
 
-    // Ensure a local device cookie exists BEFORE the cookie TTL monitor starts.
-    // When there's no remote transport, checkAndSync() returns READY without
-    // creating a cookie. The monitor then sees no cookie → treats as expired →
-    // calls crypto.clearMasterKey() → subsequent renders crash in
-    // getDeviceIdWithCachedKey() with "No master key cached".
-    try {
-      const existingCookie = await storage.get('cookie');
-      if (!existingCookie) {
-        // Create a minimal cookie so the monitor sees a valid session.
-        // 'local' deviceUuid is harmless — the real deviceUuid will be
-        // set when SyncService._getDeviceId() fires on the next sync.
-        const { DeviceCookie } = await import('@sync/index.js');
-        await DeviceCookie.create('local', storage, crypto);
-      }
-    } catch {
-      // Non-critical — cookie monitor will just skip the first check
-      // if checkCookieTtl's storage read fails.
-    }
-
     setServices({ crypto, sync, storage, mockRemote: null });
     setPhase('ready');
     setLoading(false);
@@ -490,6 +499,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Bootstrap all services
     await bootstrapServices({ crypto, masterKey, storage });
+
+    // Store/refresh passphrase validation hash (Phase 6 P1 Step 1)
+    try {
+      const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      const passphraseHash = crypto.sha256(pdk + ':' + seed);
+      await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+    } catch (_) { /* non-critical */ }
   }, []);
 
   /**
@@ -545,6 +561,13 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Store seed for future logins
     await storage.set(STORED_SEED_KEY, seed);
+
+    // Store passphrase validation hash (Phase 6 P1 Step 1)
+    try {
+      const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      const passphraseHash = crypto.sha256(pdk + ':' + seed);
+      await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+    } catch (_) { /* non-critical */ }
 
     // Store identity info for genesis block and profile display
     await storage.set(USERNAME_KEY, username);
@@ -931,7 +954,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
    * @param {object|null} opts.genesisBlock - Genesis block (for seal verification)
    * @param {string} opts.authMode - 'passphrase_only' | 'passphrase_seed'
    */
-  const importFromCloud = useCallback(async ({ baseUrl, apiKey, filename, passphrase, seed, genesisBlock, authMode }) => {
+  const importFromCloud = useCallback(async ({ baseUrl, apiKey, filename, source: importSource, passphrase, seed, genesisBlock, authMode }) => {
     setLoading(true);
 
     // ── 1. Initialize crypto — real WASM only, no fallback ───────
@@ -946,7 +969,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     });
     const source = new WorkerImportSource(transport, crypto);
 
-    // ── 3. Fetch and parse the backup ────────────────────────────
+    // ── 3. Fetch and parse the backup (or chain) ──────────────────
     let importResult;
     try {
       // Determine master key based on auth mode
@@ -994,9 +1017,17 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
         }
       }
 
-      // Fetch and validate the backup using the derived master key
       crypto.setMasterKey(masterKey);
-      importResult = await source.fetchAndValidate(filename, masterKey);
+
+      // ── Fetch: chain or backup ──────────────────────────────
+      if (importSource === 'chain') {
+        // Pull the full chain from ledger/blocks/ (ph sync format)
+        const chain = await WorkerImportSource.fetchChain(transport, crypto, masterKey);
+        importResult = WorkerImportSource._validateRawChain(chain, crypto, masterKey);
+      } else {
+        // Traditional backup file import
+        importResult = await source.fetchAndValidate(filename, masterKey);
+      }
     } catch (err) {
       setLoading(false);
       throw err;
@@ -1083,55 +1114,42 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     if (existingCrypto && existingSync) {
       // ── Fast path: services already loaded (called from Settings) ──
-      // Use cached master key if available (dev mode), else authenticate
-      let masterKey = existingCrypto.getMasterKey();
-      if (!masterKey) {
-        const seed = await existingStorage.get(STORED_SEED_KEY);
-        if (!seed) {
-          throw new Error('No recovery seed found — cannot authenticate.');
-        }
-        masterKey = existingCrypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
-      }
-      const entries = await existingSync.readEntries();
-      const blocks = await existingStorage.get('ledger:blocks') || [];
-      if (blocks.length === 0 && entries.length === 0) {
-        throw new Error('No data to export.');
-      }
-      const blob = await exportLedgerFull(blocks, entries, existingCrypto, masterKey);
-      const timestamp = new Date().toISOString().slice(0, 10);
-      triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
+      const [entries, blocks] = await Promise.all([
+        existingSync.readEntries(),
+        existingStorage.get('ledger:blocks'),
+      ]);
+      const result = await exportWithAuth({
+        crypto: existingCrypto,
+        storage: existingStorage,
+        passphrase,
+        entries,
+        blocks: blocks || [],
+      });
+      triggerDownload(result.blob, result.filename);
       return;
     }
 
     // ── Slow path: services not loaded (called from Onboarding) ──
-    // Load on demand: create storage, init crypto, read entries, export.
+    // Load on demand: create storage, init crypto, export with auth.
     const storage = await createStorage();
 
     const { CryptoService } = await import('../crypto/index.js');
     const crypto = await CryptoService.create();
     setCryptoStatus('wasm');
 
-    // Use cached master key if available, else authenticate via seed
-    let masterKey = crypto.getMasterKey();
-    if (!masterKey) {
-      const seed = await storage.get(STORED_SEED_KEY);
-      if (!seed) {
-        throw new Error('No recovery seed found — cannot authenticate.');
-      }
-      masterKey = crypto.authenticate(passphrase, seed, PBKDF2_ITERATIONS);
-      crypto.setMasterKey(masterKey);
-    }
+    const [entries, blocks] = await Promise.all([
+      storage.get(ENTRIES_KEY),
+      storage.get('ledger:blocks'),
+    ]);
 
-    // Read entries directly from storage
-    const entries = await storage.get(ENTRIES_KEY) || [];
-    const blocks = await storage.get('ledger:blocks') || [];
-    if (blocks.length === 0 && entries.length === 0) {
-      throw new Error('No data to export.');
-    }
-
-    const blob = await exportLedgerFull(blocks, entries, crypto, masterKey);
-    const timestamp = new Date().toISOString().slice(0, 10);
-    triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
+    const result = await exportWithAuth({
+      crypto,
+      storage,
+      passphrase,
+      entries: entries || [],
+      blocks: blocks || [],
+    });
+    triggerDownload(result.blob, result.filename);
   }, [services]);
 
   /**
@@ -1241,8 +1259,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const result = await engine.commit(toCommit);
     if (result && result.committedEntryIds.length > 0) {
       await sync.markCommitted(result.committedEntryIds, result.blockIndex);
-      // Push committed blocks to remote (best-effort; handles all errors internally)
+      // Push committed blocks and updated staging blob to remote
       await sync.pushLedgerBlocks();
+      const mk = crypto.getMasterKey();
+      if (mk) {
+        await sync.pushBlobOnly(mk).catch(() => {});
+      }
     }
     return result;
   }, [services]);
@@ -1310,6 +1332,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Commit entries to ledger
     commitEntries,
 
+    // Re-auth overlay
+    reauthState,
+    triggerReauth,
+    dismissReauth,
+    restartCookieMonitor,
+
     // TTL warning banner
     ttlWarning,
     dismissTtlWarning,
@@ -1351,7 +1379,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   login: (passphrase: string) => Promise<void>,
  *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
  *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, userSeed: string|null, genesisBlock: object|null, chain: object[]|null, format: string}) => Promise<void>,
- *   importFromCloud: (opts: {baseUrl: string, apiKey: string, filename: string, passphrase: string, seed: string|null, genesisBlock: object|null, authMode: string}) => Promise<void>,
+ *   importFromCloud: (opts: {baseUrl: string, apiKey: string, filename: string|null, source?: 'backup'|'chain', passphrase: string, seed: string|null, genesisBlock: object|null, authMode: string}) => Promise<void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
  *   validateImport: (file: File, passphrase: string, seed: string) => Promise<{needsConfirmation: boolean, genesisCheck: string, stagingCount: number, blocksCount: number, importEntryCount: number, formatVersion: string}>,
  *   confirmImport: (opts: {keepStaging?: boolean}) => Promise<void>,

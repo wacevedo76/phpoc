@@ -306,8 +306,13 @@ export class LedgerMerge {
   /**
    * Verify a single block's data: seal, optional signature, and entry hashes.
    *
-   * Matches the same checks performed by LedgerChain._verifyBlockData():
-   *   1. Seal = HMAC of sorted keys (minus seal key + signature)
+   * NOTE: This logic is intentionally duplicated from chain.js as
+   * LedgerChain._verifyBlockData() because LedgerMerge is a standalone
+   * module with no LedgerChain dependency. Keep both implementations
+   * in sync — any bug fix in chain.js must be mirrored here.
+   *
+   * Checks performed:
+   *   1. Seal = HMAC of sorted keys (minus seal key + signature + format_version)
    *   2. Signature over seal (if identitySecret is provided)
    *   3. Entry hash = SHA-256 of pretty-printed entry data
    *
@@ -320,7 +325,9 @@ export class LedgerMerge {
   static _verifyBlockData(block, crypto, masterKey, identitySecret = null) {
     const type = block.type || 'day';
     let hashKey;
-    if (type === 'day') {
+    if (type === 'genesis') {
+      hashKey = block.block_hash ? 'block_hash' : 'day_hash';  // I-17: backward compat
+    } else if (type === 'day') {
       hashKey = 'day_hash';
     } else if (type === 'month_summary') {
       hashKey = 'month_hash';
@@ -330,10 +337,11 @@ export class LedgerMerge {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key and signature
+    // Build check data: everything except the hash key, signature, and format_version
+    // I-07: format_version excluded from seal computation.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature') {
+      if (k !== hashKey && k !== 'signature' && k !== 'format_version') {
         checkData[k] = v;
       }
     }

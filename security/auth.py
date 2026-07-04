@@ -143,11 +143,14 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             ledger_data = json.loads(self.ledger_path.read_text())
             genesis = ledger_data[0]
             crypto = CryptoManager(key)
+            # I-17: genesis uses block_hash (not day_hash).
+            # I-07: format_version excluded from seal check data.
+            hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
             check_data = {k: v for k, v in genesis.items()
-                          if k not in ("day_hash", "signature")}
+                          if k not in (hash_key, "signature", "format_version")}
             return crypto.verify_seal(
                 json.dumps(check_data, sort_keys=True),
-                genesis["day_hash"]
+                genesis[hash_key]
             )
         except Exception:
             return False

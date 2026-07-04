@@ -36,6 +36,7 @@ from core.sync.transport import AbstractStagingTransport, create_transport_from_
 from core.sync.git_transport import GitStagingTransport
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
+from domain.ledger.helpers import get_block_hash
 
 logger = logging.getLogger(__name__)
 
@@ -551,11 +552,7 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
         block = ledger_data[i]
         prev = ledger_data[i - 1]
         
-        block["prev_hash"] = (
-            prev.get("day_hash")
-            or prev.get("month_hash")
-            or prev.get("year_hash")
-        )
+        block["prev_hash"] = get_block_hash(prev)
         
         hash_key = (
             "day_hash" if block.get("type", "day") == "day" else

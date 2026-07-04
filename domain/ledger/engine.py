@@ -20,6 +20,7 @@ from domain.ledger.summary_policy import (
     SummaryPolicy,
     YearMonthSummaryPolicy,
 )
+from domain.ledger.helpers import get_block_hash
 
 
 class LedgerEngine:
@@ -136,11 +137,7 @@ class LedgerEngine:
             return None
 
         # Handle possibly absent hash keys (e.g., genesis)
-        last_hash = (
-            last.get("day_hash")
-            or last.get("month_hash")
-            or last.get("year_hash")
-        )
+        last_hash = get_block_hash(last)
         if last_hash:
             return last_hash[:10]
         return None
@@ -241,11 +238,7 @@ class LedgerEngine:
 
         # Build day block
         prev_block = self.chain.get_last_block()
-        prev_hash = (
-            prev_block.get("day_hash")
-            or prev_block.get("month_hash")
-            or prev_block.get("year_hash")
-        )
+        prev_hash = get_block_hash(prev_block)
         day_block = self.chain.build_day_block(
             day_entries, prev_hash, date_str
         )

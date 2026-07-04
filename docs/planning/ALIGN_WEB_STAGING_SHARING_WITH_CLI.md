@@ -1,7 +1,8 @@
 # Plan: Align phpoc-web Staging Sharing with CLI Behavior
 
-> **Status:** 🔜 Planning — no code changes yet.
+> **Status:** ✅ Complete — Phase 1a (Stages 1.1–1.5) implemented.
 > **Created:** 2026-06-29
+> **Updated:** 2026-07-04 — Stage 1.5: test coverage consolidation (47 tests, 8 error-path additions, audit complete)
 > **Goal:** Make the web client's staging sharing behavior identical to the CLI's
 > multi-machine sharing pattern: auth → update cookie → update TTL → pull remote
 > staging → compare with local → reconcile if necessary.
@@ -135,7 +136,10 @@ re-authenticate.
 
 ## Plan
 
-### Phase 1: Align `checkAndSync()` Auth Gate (sync.js)
+### Phase 1: Align `checkAndSync()` Auth Gate (sync.js) ✅
+
+**Status:** ✅ Implemented in `d351c05` (2026-06-30). Test requirements documented at
+`docs/planning/tmp/STAGE_1_1_TEST_REQUIREMENTS.md`.
 
 **Change:** Remove the MK-cached bypass. When no local cookie exists, always return
 `REAUTH_NEEDED` regardless of whether a master key is cached.

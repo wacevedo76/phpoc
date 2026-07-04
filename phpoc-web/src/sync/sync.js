@@ -609,6 +609,18 @@ export class SyncService {
    * @private
    */
   async _reconcileAndClaim(masterKeyHex) {
+    // ── Genesis Gate ────────────────────────────────────────────
+    // When called directly (e.g. from performReauth), genesis may
+    // not have been checked yet. Use the _genesisCompatible cache
+    // (false = mismatch, true = compatible, null = unchecked).
+    if (this._genesisCompatible === false) {
+      return SyncResult.GENESIS_MISMATCH;
+    }
+    if (this._remote && this._genesisCompatible === null) {
+      const genesisResult = await this._genesisGatePhase();
+      if (genesisResult !== null) return genesisResult;
+    }
+
     // Reuse cookie from _fastPathPhase to avoid duplicate network call
     let remoteCookieRaw = this._lastRemoteCookie;
     this._lastRemoteCookie = null;

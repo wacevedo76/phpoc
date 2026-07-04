@@ -178,12 +178,10 @@ function buildGenesisBlock(opts = {}) {
     username = 'testuser',
     email = 'test@example.com',
     date = '2026-01-01',
-    format_version = '0.3.0',
   } = opts;
 
   const content = {
     type: 'genesis',
-    format_version,
     day_index: 0,
     date,
     identity: {
@@ -859,16 +857,17 @@ console.log('\n=== Group C — Edge Cases ===');
   }
 }
 
-// ── C2: Remote genesis format_version mismatch → genesis_mismatch ──
+// ── C2: Different genesis identity → genesis_mismatch ──
 {
-  console.log('\n  --- C2: format_version mismatch → genesis_mismatch ---');
+  console.log('\n  --- C2: different genesis identity → genesis_mismatch ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
-  ], { format_version: '0.3.0' });
+  ], { });
 
+  // Build remote with different identity → different genesis seal
   const remoteChain = buildChain([
     { date: '2026-06-11', entries: [ENTRY_C] },
-  ], { format_version: '0.4.0' });
+  ], { username: 'otheruser', email: 'other@test.com' });
 
   const transport = new MockTransport();
   transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
@@ -877,20 +876,19 @@ console.log('\n=== Group C — Edge Cases ===');
 
   if (result !== null) {
     t.assert(result !== undefined, 'check() returns a result object');
-    // Bug 1 fix: genesis mismatch throws GenesisMismatchError instead of
-    // returning { compatible: false }. format_version is part of the sealed
-    // genesis content, so different versions produce different day_hash values.
+    // I-07: format_version excluded from seal — different identity fields
+    // cause legitimate genesis mismatch.
     if (hasThrowApi) {
-      t.assert(result.thrown === true, 'C2. format_version mismatch → exception thrown');
+      t.assert(result.thrown === true, 'C2. different genesis identity → exception thrown');
       t.assertEq(result.type, 'GenesisMismatchError', 'C2b. error type is GenesisMismatchError');
     } else {
       t.assertEq(result.compatible, false,
-        'format_version mismatch → incompatible (different genesis hash)');
+        'different genesis identity → incompatible (different genesis hash)');
       t.assertEq(result.reason, 'genesis_mismatch',
         'reason is genesis_mismatch');
     }
   } else {
-    t.assert(false, 'format_version mismatch → genesis_mismatch — NOT IMPLEMENTED (TDD RED)');
+    t.assert(false, 'different genesis identity → genesis_mismatch — NOT IMPLEMENTED (TDD RED)');
   }
 }
 

@@ -151,7 +151,6 @@ function createSyncService({
  */
 function makeBlock(index, entries = [], overrides = {}) {
   return {
-    format_version: 1,
     index,
     day_hash: `dayhash_${String(index).padStart(3, '0')}`,
     month_hash: `monthhash_0`,
@@ -172,7 +171,6 @@ function makeBlock(index, entries = [], overrides = {}) {
  */
 function makeIndex(blocks) {
   return {
-    format_version: 1,
     block_count: blocks.length,
     latest_block: blocks.length > 0 ? blocks[blocks.length - 1].index : null,
     summaries: blocks.map(b => ({
@@ -716,7 +714,6 @@ async function run() {
     const { sync, storage, crypto, transport } = createSyncService();
     const mk = DEFAULT_MK;
     const corruptBlock = {
-      format_version: 1,
       index: 0,
       // day_hash intentionally missing
       entries: [],

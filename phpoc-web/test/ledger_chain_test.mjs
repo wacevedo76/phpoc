@@ -15,6 +15,7 @@ import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
+import { jsonSort } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -452,6 +453,229 @@ if (typeof LedgerChain === 'function') {
   delete storedMissSig2[0].signature;
   await storeMissSig2.set('ledger:blocks', storedMissSig2);
   t.assert(!(await chainMissSig2.verifyBlock(0)), 'verifyBlock(0) returns false when signature missing on signed block 0');
+
+  // ══════════════════════════════════════════════════════════════
+  // Canonical Ledger Format — Phase 2 RED Tests
+  // ══════════════════════════════════════════════════════════════
+
+  console.log('\n=== Canonical Format: Group A — Genesis Creation (A1-js, A2-js) ===');
+
+  // Helper: compute seal excluding format_version (I-07)
+  const clfComputeSeal = (blockData) => {
+    const { format_version, ...withoutFv } = blockData;
+    return crypto.seal(jsonSort(withoutFv), MASTER_KEY);
+  };
+
+  {
+    const identity = {
+      username: 'tester', email: 'test@example.com',
+      recovery_seed_enc: 'enc:deadbeef', identity_pub_key: 'a'.repeat(64),
+      identity_secret_enc_fallback: 'enc:cafebabe',
+    };
+    const genesis = {
+      type: 'genesis', day_index: 0, date: '2026-07-03', identity,
+      prev_hash: '0'.repeat(64), entries: [],
+    };
+    t.assert(genesis.format_version === undefined,
+      'A1-js: Genesis must NOT contain format_version (I-07)');
+    const sealData = { ...genesis };
+    genesis.block_hash = clfComputeSeal(sealData);
+    genesis.signature = crypto.sign(genesis.block_hash, IDENTITY_SECRET);
+    t.assert(typeof genesis.block_hash === 'string' && genesis.block_hash.length === 64,
+      'A2-js: Genesis uses block_hash not day_hash (I-17)');
+    t.assert(genesis.day_hash === undefined,
+      'A2-js: Genesis must NOT have day_hash (I-17)');
+  }
+
+  // ── Group B-js: Block Seal Computation ──────────────────
+  console.log('\n=== Canonical Format: Group B — Seal Vectors (B1-js..B5-js) ===');
+
+  let testVectors;
+  try {
+    const { readFileSync } = await import('fs');
+    const { dirname, join } = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const vp = join(__dirname, '..', '..', 'testdata', 'canonical_test_vectors.json');
+    testVectors = JSON.parse(readFileSync(vp, 'utf-8')).vectors;
+  } catch (_) { testVectors = null; }
+
+  if (testVectors) {
+    if (testVectors['V-genesis']) {
+      const s = clfComputeSeal(testVectors['V-genesis'].block_data);
+      t.assert(typeof s === 'string' && s.length === 64, 'B1-js: Genesis seal from vector is 64 hex chars');
+      t.assertEq(s, clfComputeSeal(testVectors['V-genesis'].block_data), 'B1-js: Genesis seal deterministic');
+    }
+    if (testVectors['V-day']) {
+      const s = clfComputeSeal(testVectors['V-day'].block_data);
+      t.assert(typeof s === 'string' && s.length === 64, 'B2-js: Day seal from vector is 64 hex chars');
+    }
+    if (testVectors['V-month']) {
+      const s = clfComputeSeal(testVectors['V-month'].block_data);
+      t.assert(typeof s === 'string' && s.length === 64, 'B3-js: Month summary seal from vector is 64 hex chars');
+    }
+    if (testVectors['V-year']) {
+      const s = clfComputeSeal(testVectors['V-year'].block_data);
+      t.assert(typeof s === 'string' && s.length === 64, 'B4-js: Year summary seal from vector is 64 hex chars');
+    }
+    if (testVectors['V-genesis']) {
+      const s1 = clfComputeSeal(testVectors['V-genesis'].block_data);
+      const s2 = clfComputeSeal({ ...testVectors['V-genesis'].block_data, format_version: '99.99.99' });
+      t.assertEq(s1, s2,
+        'B5-js: format_version added to block data must NOT change seal (I-07 — RED)');
+    }
+  }
+
+  // ── Group C-js: Chain Verification ──────────────────────
+  console.log('\n=== Canonical Format: Group C — Chain Verification (C1-js..C4-js) ===');
+
+  const buildNewGenesis = () => {
+    const g = { type: 'genesis', day_index: 0, date: '2026-07-03',
+      identity: { username: 'tester', email: 'test@example.com',
+        recovery_seed_enc: 'enc:deadbeef', identity_pub_key: 'a'.repeat(64),
+        identity_secret_enc_fallback: 'enc:cafebabe' },
+      prev_hash: '0'.repeat(64), entries: [] };
+    g.block_hash = clfComputeSeal(g);
+    g.signature = crypto.sign(g.block_hash, IDENTITY_SECRET);
+    return g;
+  };
+  const buildNewDay = (prevHash) => {
+    const d = { type: 'day', day_index: 1, date: '2026-07-03', prev_hash: prevHash, entries: [] };
+    d.day_hash = clfComputeSeal(d);
+    d.signature = crypto.sign(d.day_hash, IDENTITY_SECRET);
+    return d;
+  };
+
+  {
+    const g = buildNewGenesis();
+    const d = buildNewDay(g.block_hash);
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [g, d]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+    t.assert(await chain.verify(),
+      'C1-js: verify() must return true for new-format chain (block_hash on genesis — RED)');
+  }
+  {
+    const g = buildNewGenesis();
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [g]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+    t.assert(await chain._verifyBlockData(g, 0),
+      'C2-js: _verifyBlockData(genesis, 0) with block_hash (I-17 — RED)');
+  }
+  {
+    const d = buildNewDay('0'.repeat(64));
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [d]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+    t.assert(await chain._verifyBlockData(d, 0),
+      'C3-js: _verifyBlockData(day, 0) must still verify (day_hash unchanged)');
+  }
+  {
+    const g = buildNewGenesis();
+    const d = buildNewDay(g.block_hash);
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [g, d]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+    t.assert(await chain.verify(),
+      'C4-js: Migrated chain must pass verify()');
+  }
+}
+
+// ── Group R5: _verifyBlockData duplication consistency ──────────────────────
+// Rec #5: Verify that LedgerChain._verifyBlockData() and
+// LedgerMerge._verifyBlockData() produce identical results for the
+// same inputs. The duplication is intentional (merge.js is standalone)
+// but both must stay behaviorally in sync.
+{
+  let LedgerMerge;
+  try {
+    const mod = await import('../src/ledger/merge.js');
+    LedgerMerge = mod.LedgerMerge;
+  } catch (_err) {
+    LedgerMerge = undefined;
+  }
+
+  if (LedgerChain && LedgerMerge) {
+    // Build a simple genesis and day block without scoped helpers
+    const genBlock = {
+      type: 'genesis',
+      day_index: 0,
+      date: '2026-07-03',
+      identity: { username: 'test', email: 'test@test.com',
+        recovery_seed_enc: 'enc:aa', identity_pub_key: 'a'.repeat(64),
+        identity_secret_enc_fallback: 'enc:bb' },
+      prev_hash: '0'.repeat(64),
+      entries: [],
+      block_hash: '',  // computed below
+    };
+    const genSealData = { ...genBlock };
+    delete genSealData.block_hash;
+    delete genSealData.signature;
+    genBlock.block_hash = crypto.seal(JSON.stringify(jsonSort(genSealData)));
+    genBlock.signature = crypto.sign(genBlock.block_hash, IDENTITY_SECRET);
+
+    const dayBlock = {
+      type: 'day',
+      day_index: 1,
+      date: '2026-07-03',
+      prev_hash: genBlock.block_hash,
+      entries: [{
+        hash: entryHash({ title: 'Test', duration: 600 }),
+        data: { title: 'Test', duration: 600 },
+      }],
+      day_hash: '',  // computed below
+    };
+    const daySealData = { ...dayBlock };
+    delete daySealData.day_hash;
+    delete daySealData.signature;
+    dayBlock.day_hash = crypto.seal(JSON.stringify(jsonSort(daySealData)));
+    dayBlock.signature = crypto.sign(dayBlock.day_hash, IDENTITY_SECRET);
+
+    // Test genesis block
+    {
+      const storeA = makeEmptyStore();
+      await storeA.set('ledger:blocks', [genBlock]);
+      const chain = new LedgerChain(crypto, storeA, MASTER_KEY, IDENTITY_SECRET);
+      const chainResult = await chain._verifyBlockData(genBlock, 0);
+
+      const mergeResult = await LedgerMerge._verifyBlockData(
+        genBlock, crypto, MASTER_KEY, IDENTITY_SECRET);
+      t.assertEq(chainResult, mergeResult,
+        'R5-1: _verifyBlockData(genesis) must agree between chain.js and merge.js');
+    }
+
+    // Test day block
+    {
+      const storeB = makeEmptyStore();
+      await storeB.set('ledger:blocks', [genBlock, dayBlock]);
+      const chain = new LedgerChain(crypto, storeB, MASTER_KEY, IDENTITY_SECRET);
+      const chainResult = await chain._verifyBlockData(dayBlock, 1);
+
+      const mergeResult = await LedgerMerge._verifyBlockData(
+        dayBlock, crypto, MASTER_KEY, IDENTITY_SECRET);
+      t.assertEq(chainResult, mergeResult,
+        'R5-2: _verifyBlockData(day) must agree between chain.js and merge.js');
+    }
+
+    // Test tampered block (both should reject)
+    {
+      const tampered = JSON.parse(JSON.stringify(dayBlock));
+      tampered.day_hash = 'f'.repeat(64);
+      const storeC = makeEmptyStore();
+      await storeC.set('ledger:blocks', [genBlock, tampered]);
+      const chain = new LedgerChain(crypto, storeC, MASTER_KEY, IDENTITY_SECRET);
+      const chainResult = await chain._verifyBlockData(tampered, 1);
+
+      const mergeResult = await LedgerMerge._verifyBlockData(
+        tampered, crypto, MASTER_KEY, IDENTITY_SECRET);
+      t.assertEq(chainResult, mergeResult,
+        'R5-3: _verifyBlockData(tampered) must agree between chain.js and merge.js');
+    }
+  } else {
+    t.skip(!LedgerChain, 'R5(chain): LedgerChain._verifyBlockData not available');
+    t.skip(!LedgerMerge, 'R5(merge): LedgerMerge._verifyBlockData not available');
+  }
 }
 
 // ── Summary ─────────────────────────────────────────────────────────

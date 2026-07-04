@@ -194,13 +194,13 @@ console.log('── Category A: checkCookieTtl() Unit Tests ──\n');
   }
 }
 
-// A3. Returns false when no cookie exists in storage
+// A3. Returns true when no cookie exists in storage (graceful skip — Stage 1.3)
 {
-  console.log('\n  A3. No cookie → false');
+  console.log('\n  A3. No cookie → true (graceful)');
   if (hasCheckCookieTtl) {
     const storage = new MemoryBackend();
     const result = await checkCookieTtl(storage, 30);
-    t.assertEq(result, false, 'A3. no cookie → false');
+    t.assertEq(result, true, 'A3. no cookie → true (skip check, don\'t expire)');
   } else {
     t.assert(false, 'A3. checkCookieTtl not implemented (TDD RED)');
   }

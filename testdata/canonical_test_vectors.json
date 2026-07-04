@@ -1,0 +1,86 @@
+{
+  "_description": "Shared test vectors for canonical ledger format migration. Each vector provides block data (without the hash/signature fields that are excluded from sealing) and the expected HMAC-SHA256 seal computed over json.dumps(data, sort_keys=True) using the integrity key derived from MASTER_KEY deadbeef... with salt b'integrity-key-salt'. Vectors are used by both Python (tests/test_migration.py) and JavaScript (phpoc-web/test/ledger_chain_test.mjs) test suites.",
+  "_master_key_hex": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "vectors": {
+    "V-genesis": {
+      "description": "Minimal genesis block — type=genesis, no entries. Uses block_hash (not day_hash) after I-17 fix.",
+      "block_data": {
+        "type": "genesis",
+        "day_index": 0,
+        "date": "2026-07-03",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "entries": []
+      },
+      "expected_seal": "2f6cf82c777a93b636fa069dcd71e46b0ee87517b40497bb19c1444ff90e8161"
+    },
+    "V-day": {
+      "description": "Day block with 1 entry — type=day, has entries array with encrypted fields.",
+      "block_data": {
+        "type": "day",
+        "day_index": 1,
+        "date": "2026-07-03",
+        "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "entries": [
+          {
+            "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "data": {
+              "title": "Morning Run",
+              "startTime_enc": "enc:0",
+              "endTime_enc": "enc:3600",
+              "duration": 3600000,
+              "tags": ["fitness"],
+              "pauses_enc": "enc:[]",
+              "metadata_enc": "enc:{}",
+              "comment": "",
+              "media": [],
+              "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ]
+      },
+      "expected_seal": "bb9870de3da6794c5631b5e56992edf6d5c3c4be9950d8c1cf6e6b7dd28d3587"
+    },
+    "V-month": {
+      "description": "Month summary block — type=month_summary, no entries.",
+      "block_data": {
+        "type": "month_summary",
+        "month_index": 0,
+        "date": "2026-07",
+        "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "total_entries": 10,
+        "total_duration_ms": 36000000
+      },
+      "expected_seal": "88b0d2a9a192997d45b3e73be2ce2442d47788488f6de6f7e3051f0079b34990"
+    },
+    "V-year": {
+      "description": "Year summary block — type=year_summary, no entries.",
+      "block_data": {
+        "type": "year_summary",
+        "year_index": 0,
+        "date": "2026",
+        "prev_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "total_entries": 120,
+        "total_duration_ms": 432000000
+      },
+      "expected_seal": "75427cf460eb38bcb0087b540844a2eccc84cba3367bc5a5cce9cb585691eb7e"
+    },
+    "V-empty-day": {
+      "description": "Day block with no entries — edge case for seal computation.",
+      "block_data": {
+        "type": "day",
+        "day_index": 2,
+        "date": "2026-07-04",
+        "prev_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "entries": []
+      },
+      "expected_seal": "f68a106b88b30176f3d1ee329f59b5d99a7bb5d7ff102cc8cb9cb68de47b1a38"
+    }
+  }
+}

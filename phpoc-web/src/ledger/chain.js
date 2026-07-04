@@ -261,9 +261,10 @@ export class LedgerChain {
     const today = new Date().toISOString().slice(0, 10);
 
     // 7. Build genesis content (without seal / signature)
+    // I-07: format_version removed from blocks (metadata only).
+    // I-17: genesis uses block_hash instead of day_hash.
     const genesisContent = {
       type: 'genesis',
-      format_version: '0.3.0',
       day_index: 0,
       date: today,
       identity: {
@@ -277,12 +278,12 @@ export class LedgerChain {
       entries: [],
     };
 
-    // 8. Compute block seal (day_hash per PHPSPEC §4.1 convention)
+    // 8. Compute block seal (block_hash per I-17)
     const genesisJson = jsonSort(genesisContent);
-    genesisContent.day_hash = this.crypto.seal(genesisJson, this.masterKey);
+    genesisContent.block_hash = this.crypto.seal(genesisJson, this.masterKey);
 
     // 9. Sign with identity secret
-    genesisContent.signature = this.crypto.sign(genesisContent.day_hash, identitySecret);
+    genesisContent.signature = this.crypto.sign(genesisContent.block_hash, identitySecret);
 
     return genesisContent;
   }
@@ -435,6 +436,12 @@ export class LedgerChain {
 
   /**
    * Verify a single block's data: seal, signature, and entry hashes.
+   *
+   * NOTE: This logic is intentionally duplicated in merge.js as
+   * LedgerMerge._verifyBlockData() because LedgerMerge is a standalone
+   * module with no LedgerChain dependency. Keep both implementations
+   * in sync — any bug fix here must be mirrored there.
+   *
    * @param {object} block - The block to verify.
    * @param {number} index - Block index (for context).
    * @returns {boolean} True if block data is valid.
@@ -442,7 +449,9 @@ export class LedgerChain {
   _verifyBlockData(block, index) {
     const type = block.type || 'day';
     let hashKey;
-    if (type === 'day') {
+    if (type === 'genesis') {
+      hashKey = block.block_hash ? 'block_hash' : 'day_hash';  // I-17: backward compat
+    } else if (type === 'day') {
       hashKey = 'day_hash';
     } else if (type === 'month_summary') {
       hashKey = 'month_hash';
@@ -452,10 +461,11 @@ export class LedgerChain {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key and signature
+    // Build check data: everything except the hash key, signature, and format_version
+    // I-07: format_version excluded from seal computation.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature') {
+      if (k !== hashKey && k !== 'signature' && k !== 'format_version') {
         checkData[k] = v;
       }
     }

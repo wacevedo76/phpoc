@@ -50,6 +50,8 @@ async function probeExistingData() {
 export default function Settings() {
   const { mode, isDev, toggleMode, services, exportLedger: exportLedgerAction, importLedger: importLedgerAction, validateImport, confirmImport, exportLedgerFull: exportLedgerFullAction } = useApp();
 
+  // Seed from localStorage — onboarding populates these before the user
+  // ever reaches Settings, so the useState initializer always has fresh values.
   const [workerUrl, setWorkerUrl] = React.useState(
     () => localStorage.getItem('phpoc_worker_url') || ''
   );

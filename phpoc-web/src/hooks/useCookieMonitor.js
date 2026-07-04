@@ -41,7 +41,12 @@ export async function checkCookieTtl(storage, ttlMinutes = DEFAULT_TTL_MINUTES) 
 
   try {
     const cookie = await storage.get('cookie');
-    if (!cookie) return false;
+    // No cookie → skip check gracefully.  This covers the local-only case
+    // (no transport configured) and the fresh-login case where the cookie
+    // hasn't been created yet (it will be created by _reconcileAndClaim on
+    // the next checkAndSync).  Returning true prevents the cookie monitor
+    // from immediately firing onExpired after bootstrapServices completes.
+    if (!cookie) return true;
 
     const specifier = cookie.device_specifier;
     const createdAt = cookie.creation_time;

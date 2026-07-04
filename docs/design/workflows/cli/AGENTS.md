@@ -24,3 +24,4 @@ None — verified indirectly through test suites.
 
 ## Child DOX Index
 - `CLI_Staging_Interaction-Workflow.md` — CLI staging interaction: command flow, multi-machine sharing, WAL, daemon, onboarding
+- `CLI_Web_Cross_Staging_Workflow.md` — Operational step-by-step: CLI → Web → CLI cross-device staging cycle

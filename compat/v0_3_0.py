@@ -544,7 +544,7 @@ class LedgerDomain:
             if curr_date.tm_year > prev_date.tm_year and prev_record.get("type") != "year_summary":
                 year_summary = {
                     "type": "year_summary", "year": prev_date.tm_year,
-                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                     "date": date_str
                 }
                 year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
@@ -557,7 +557,7 @@ class LedgerDomain:
                 month_summary = {
                     "type": "month_summary",
                     "month": f"{prev_date.tm_year}-{prev_date.tm_mon:02d}",
-                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                     "date": date_str
                 }
                 month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
@@ -577,7 +577,7 @@ class LedgerDomain:
                 "type": "day",
                 "day_index": prev_record.get("day_index", 0) + 1 if prev_record.get("type") == "day" else 1,
                 "date": date_str,
-                "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                 "entries": [{"hash": e["hash"], "data": e["data"]} for e in days_to_sync[date_str]]
             }
             day_json = json.dumps(day_content, sort_keys=True)
@@ -600,7 +600,7 @@ class LedgerDomain:
             if keep:
                 new_staging.append(entry)
         self.store.write_staging(new_staging)
-        return ledger[-1].get("day_hash")[:10]
+        return (ledger[-1].get("block_hash") or ledger[-1].get("day_hash"))[:10]
 
     def sync_with_strategy(self, strategy, till_date=None):
         from core.sync.decision import SyncDecision
@@ -691,7 +691,7 @@ class LedgerDomain:
             if curr_date.tm_year > prev_date.tm_year and prev_record.get("type") != "year_summary":
                 year_summary = {
                     "type": "year_summary", "year": prev_date.tm_year,
-                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                     "date": date_str
                 }
                 year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
@@ -704,7 +704,7 @@ class LedgerDomain:
                 month_summary = {
                     "type": "month_summary",
                     "month": f"{prev_date.tm_year}-{prev_date.tm_mon:02d}",
-                    "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                    "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                     "date": date_str
                 }
                 month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
@@ -724,7 +724,7 @@ class LedgerDomain:
                 "type": "day",
                 "day_index": prev_record.get("day_index", 0) + 1 if prev_record.get("type") == "day" else 1,
                 "date": date_str,
-                "prev_hash": prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
+                "prev_hash": prev_record.get("block_hash") or prev_record.get("day_hash") or prev_record.get("month_hash") or prev_record.get("year_hash"),
                 "entries": [{"hash": e["hash"], "data": e["data"]} for e in days_to_sync[date_str]]
             }
             day_json = json.dumps(day_content, sort_keys=True)
@@ -736,7 +736,7 @@ class LedgerDomain:
         self.store.write_ledger(ledger)
         self.store.write_index(index)
         self.store.write_staging([e for e in staging if e["data"].get("is_active", False)])
-        return ledger[-1].get("day_hash")[:10]
+        return (ledger[-1].get("block_hash") or ledger[-1].get("day_hash"))[:10]
 
     def _sync_engine_index(self):
         """Reload engine index from store (handles legacy code writing directly to store)."""

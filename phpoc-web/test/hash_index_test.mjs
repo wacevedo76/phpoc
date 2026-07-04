@@ -46,7 +46,6 @@ function makeSeal(jsonStr) {
 function genBlock() {
   const b = {
     type: 'genesis',
-    format_version: '0.3.0',
     day_index: 0,
     date: '2026-01-01',
     identity: { username: 'test', email: 't@e.com' },

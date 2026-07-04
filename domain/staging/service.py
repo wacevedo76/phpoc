@@ -395,11 +395,12 @@ class StagingService:
             pass  # Non-critical
 
     def _push_on_fast_path(self, local_cookie: dict):
-        """Push local blob and touch cookie on fast path.
+        """Pull remote blob, merge, push back, and touch cookie.
 
         Called when local and remote cookie specifiers match (same device
-        session). Pushes the local staging blob to remote, then unconditionally
-        touches the local cookie to extend the session TTL.
+        session). Even when specifiers match, another client (e.g. web)
+        may have updated staging while this CLI was idle — so we always
+        pull the remote blob, merge, and push the reconciled result.
 
         The device_specifier is never regenerated — same device, same
         specifier. The remote cookie is never pushed (it already has the
@@ -408,9 +409,33 @@ class StagingService:
         Args:
             local_cookie: The local cookie dict (device_specifier, creation_time).
         """
-        # Push local staging blob to remote (full replace) if we have a key
+        # Pull remote blob, merge with local, then push reconciled result
         mk = getattr(self._crypto, "master_key", None)
         if isinstance(mk, bytes) and len(mk) == 32:
+            try:
+                remote_blob = self._remote.pull(master_key=mk)
+            except Exception:
+                remote_blob = None
+
+            if remote_blob is not None and remote_blob is not BLOB_KEY_MISMATCH and "entries" in remote_blob:
+                try:
+                    local_entries = self._local.read_entries()
+                    remote_dtos = []
+                    for raw_entry in remote_blob.get("entries", []):
+                        dto = self._raw_entry_to_dto(raw_entry)
+                        if dto is not None:
+                            remote_dtos.append(dto)
+                    merged = self._merge.merge(
+                        local_entries, remote_dtos
+                    )
+                    # Filter out entries already committed by another client
+                    # (e.g. web committed + pushed, CLI hasn't synced yet)
+                    merged = [e for e in merged if not e.get("committed")]
+                    self._local.write_entries(merged)
+                except Exception:
+                    pass  # Merge failure — push local as-is
+
+            # Push the (merged or local) blob to remote
             self.push_blob_only(master_key=mk)
 
         # Touch local cookie to extend session TTL
@@ -615,6 +640,7 @@ class StagingService:
                 "metadata": metadata,
                 "date": date_str,
                 "source": "remote",
+                "committed": raw_entry.get("committed", False),
                 "hash": raw_entry.get("hash", ""),
             }
         except Exception:
@@ -694,6 +720,8 @@ class StagingService:
                 merged = self._merge.merge(
                     local_entries, remote_dtos
                 )
+                # Filter out entries already committed by another client
+                merged = [e for e in merged if not e.get("committed")]
                 self._local.write_entries(merged)
             except Exception:
                 # Merge failure — push local as-is

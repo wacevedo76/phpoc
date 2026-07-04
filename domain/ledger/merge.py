@@ -27,6 +27,8 @@ TDD: GREEN phase — implementation complete.
 
 import hashlib
 import inspect
+from domain.ledger.helpers import get_block_hash
+
 import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -63,8 +65,8 @@ class LedgerMerge:
         fork_index = -1
         min_len = min(len(local_chain), len(remote_chain))
         for i in range(min_len):
-            local_block_hash = LedgerMerge._get_block_hash(local_chain[i])
-            remote_block_hash = LedgerMerge._get_block_hash(remote_chain[i])
+            local_block_hash = get_block_hash(local_chain[i])
+            remote_block_hash = get_block_hash(remote_chain[i])
             if local_block_hash == remote_block_hash:
                 fork_index = i
             else:
@@ -196,7 +198,7 @@ class LedgerMerge:
                     merged_chain.append(summary)
 
                 # Build day block
-                prev_hash = LedgerMerge._get_block_hash(
+                prev_hash = get_block_hash(
                     merged_chain[-1]
                 )
 
@@ -300,7 +302,7 @@ class LedgerMerge:
             prev = chain[i - 1]
 
             # Check prev_hash linkage
-            if current.get("prev_hash") != LedgerMerge._get_block_hash(prev):
+            if current.get("prev_hash") != get_block_hash(prev):
                 raise ValueError(
                     f"{label} chain validation failed: prev_hash mismatch "
                     f"at block {i}"
@@ -327,7 +329,9 @@ class LedgerMerge:
         dicts (no store dependency).
         """
         btype = block.get("type") or "day"
-        if btype in ("day", "genesis"):
+        if btype == "genesis":
+            hash_key = "block_hash" if "block_hash" in block else "day_hash"
+        elif btype == "day":
             hash_key = "day_hash"
         elif btype == "month_summary":
             hash_key = "month_hash"
@@ -376,12 +380,3 @@ class LedgerMerge:
                     return False
 
         return True
-
-    @staticmethod
-    def _get_block_hash(block: dict) -> str:
-        """Get the canonical hash for a block irrespective of type."""
-        return (
-            block.get("day_hash")
-            or block.get("month_hash")
-            or block.get("year_hash")
-        )

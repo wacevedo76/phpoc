@@ -23,7 +23,8 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_http_transport.py` — HTTP transport tests (68 tests)
 - `test_git_transport.py` — Git transport tests
 - `test_sync_confirmation*.py` — Sync confirmation tests (3 files)
-- `test_staging_sync_optimization.py` — Staging sync optimization (85 tests)
+- `test_staging_sync_optimization.py` — Staging sync optimization (85 tests + cross-device handoff)
+- `test_cross_platform_integration.py` — Live Worker integration: blob/cookie/ledger round-trips, full staging cycle, format markers
 - `test_tags.py` — Tags tests
 - `test_daemon.py` / `test_daemon_sync.py` — Daemon tests
 - `test_background_sync.py` — Background sync tests
@@ -31,9 +32,10 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_pause.py` — Pause tests
 - `test_date_filters.py` — Date filter tests
 - `test_remote_config_wiring.py` — Remote config wiring
+- `test_cross_platform_integration.py` — Cross-platform live integration tests (CLI ↔ Worker)
 
 ## Local Contracts
-- **31 test files, ~14,800 lines, 1554 tests passing (3 new Bug 4 tests added 2026-07-01)**
+- **32 test files, ~14,800 lines, 1554 tests passing (3 new Bug 4 tests added 2026-07-01)**
 - Run all: `python3 -m pytest`
 - Run single file: `python3 -m pytest tests/test_<name>.py -v`
 - Run with warnings: `python3 -m pytest -W ignore::DeprecationWarning`

@@ -21,6 +21,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from domain.staging.remote_sync import RemoteStagingSync
 from core.sync.transport import AbstractStagingTransport
+from domain.ledger.helpers import get_block_hash
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,7 @@ class RemoteLedgerSync:
         Args:
             chain: Full ledger chain (list of block dicts).
         """
-        hashes = [self._get_block_hash(b) for b in chain]
+        hashes = [get_block_hash(b) for b in chain]
         hi_json = json.dumps(hashes).encode("utf-8")
         hi_sha256 = hashlib.sha256(hi_json).hexdigest()
         self._transport.push(self.REMOTE_HASH_INDEX, hi_json)
@@ -348,19 +349,6 @@ class RemoteLedgerSync:
             return None
 
         return {"hashes": hashes, "sha256": actual}
-
-    @staticmethod
-    def _get_block_hash(block: Dict[str, Any]) -> str:
-        """Extract the seal hash from a ledger block.
-
-        Returns the first available of day_hash, month_hash, or year_hash.
-        """
-        return (
-            block.get("day_hash")
-            or block.get("month_hash")
-            or block.get("year_hash")
-            or ""
-        )
 
     @staticmethod
     def compare_hash_indexes(
@@ -501,7 +489,8 @@ class RemoteLedgerSync:
 
             # Get the previous block's hash
             prev_hash = (
-                prev.get("day_hash")
+                prev.get("block_hash")
+                or prev.get("day_hash")
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
@@ -524,7 +513,8 @@ class RemoteLedgerSync:
 
             # Verify the current block has a hash
             current_hash = (
-                current.get("day_hash")
+                current.get("block_hash")
+                or current.get("day_hash")
                 or current.get("month_hash")
                 or current.get("year_hash")
             )

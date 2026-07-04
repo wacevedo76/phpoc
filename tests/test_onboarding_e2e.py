@@ -495,7 +495,7 @@ class TestE2E_01_HappyPath(unittest.TestCase):
         blocks = json.loads((self.data_dir / "ledger.json").read_text())
         genesis = blocks[0]
         # day_hash should be a non-empty hex string
-        self.assertIsNotNone(genesis.get("day_hash"))
+        self.assertIsNotNone(genesis.get("block_hash") or genesis.get("day_hash"))
         self.assertGreater(len(genesis["day_hash"]), 10)
         # recovery_seed_enc should be present (was re-encrypted)
         self.assertIn("recovery_seed_enc", genesis.get("identity", {}))

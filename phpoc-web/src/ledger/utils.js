@@ -21,7 +21,7 @@ export function jsonSort(data) {
 }
 
 function _jsonDumps(obj) {
-  if (obj === null) return 'null';
+  if (obj === null || obj === undefined) return 'null';
   if (typeof obj === 'boolean') return obj ? 'true' : 'false';
   if (typeof obj === 'number') return String(obj);
   if (typeof obj === 'string') return JSON.stringify(obj);
@@ -29,9 +29,15 @@ function _jsonDumps(obj) {
     const items = obj.map(v => _jsonDumps(v));
     return '[' + items.join(', ') + ']';
   }
-  // Object: sort keys recursively
+  // Object: sort keys recursively, skip undefined values
   const keys = Object.keys(obj).sort();
-  const pairs = keys.map(k => JSON.stringify(k) + ': ' + _jsonDumps(obj[k]));
+  const pairs = [];
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined) {
+      pairs.push(JSON.stringify(k) + ': ' + _jsonDumps(v));
+    }
+  }
   return '{' + pairs.join(', ') + '}';
 }
 
@@ -57,5 +63,5 @@ export function computeEntryHash(data, crypto) {
  * @returns {string|undefined}
  */
 export function getBlockHash(block) {
-  return block.day_hash || block.month_hash || block.year_hash;
+  return block.block_hash || block.day_hash || block.month_hash || block.year_hash;
 }

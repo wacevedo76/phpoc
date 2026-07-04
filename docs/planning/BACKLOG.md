@@ -1,124 +1,264 @@
-# PHPOC Backlog — Paused Issues
+# PHPOC Backlog — Active Issue Queue
 
-> Issues parked for future attention. Completed items are tracked in `CHANGELOG.md`
-> and `WEB_ROADMAP.md`. This file only tracks what remains.
+> **Last updated:** 2026-07-04
+> **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues),
+> `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
+> Those files are retired — this document is the single queue.
+>
+> **Rule:** Every item here has a concrete next action. No "someday" items.
+> Phases are ordered — each phase unblocks the next.
 
-## P1 — Canonical Cross-Client Serialization Format
+---
 
-**Status (2026-07-01):** Three incompatible serializations exist across the project,
-blocking seamless CLI ↔ Web interoperability:
+## 🟢 Phase 0 — Doc Fixes (do anytime, zero code impact)
 
-| Serialization | Used by | Structure |
-|---|---|---|
-| Raw chain | CLI native (`ledger.json`) | `[{block}, …]` — 105 blocks in array |
-| v2 envelope | phpoc-web export/import | `{format_version: 2, ledger, staging, seal}` |
-| Per-block obfuscated | R2 remote (both clients) | `ledger/blocks/000000.json` — one file per block |
+*No code, no tests, no migrations. Fix spec credibility now.*
 
-**Problem:**
-- The CLI exports `ledger.json` (raw chain) but the web imports v2.
-  Users must re-export from one client before importing into the other.
-- `PHPSPEC.md` declares raw chain canonical (§1) but doesn't acknowledge
-  the v2 envelope, which is the only format with integrity sealing.
-- No ADR exists deciding which format should be the cross-client standard.
+| # | Action | File | What to change |
+|---|--------|------|----------------|
+| I-16 | Delete duplicate paragraph | `docs/spec/PHPSPEC.md` §9.3 | Remove the repeated paragraph before migration pseudocode |
+| I-15 | Fix AES-128 justification | `docs/spec/PHPSPEC.md` §2.6 | Replace "effective security level is 256 bits" with "AES-128 provides adequate security; the per-operation HMAC derivation ensures uniformly distributed key material from the 256-bit MK" |
+| I-08 | Add Known Limitations section | `docs/spec/PHPSPEC.md` | New section at top: honest disclosure of HMAC≠signature, plaintext index, plaintext staging, key-derived device IDs, no key rotation. Cross-link to this backlog. |
+| I-10 | Fix zero-dependency claim | `docs/spec/PHPSPEC.md` §1.1 | Change to "The CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core (`phpoc-crypto-core` / `ring`)." |
+| I-13 | Fix Invariant #1 | `docs/reference/MAP.md` Architecture Invariants §1 | Scope to "CLI reference implementation: zero external dependencies. Web/mobile: single shared Rust crypto core." |
+| I-14 | Remove forward-looking content | `docs/spec/PHPSPEC.md` §5.5, §6.1, §9.3 | Delete all v0.4.0+ present-tense descriptions. Add header: "Current version: 0.4.0. See CHANGELOG.md for changes." |
+| I-11 | Add blob obfuscation portability warning | `docs/spec/PHPSPEC.md` §8.5 | Add: "⚠️ Portability hazard — this is the highest-risk primitive for cross-platform interop. Implementers must validate against the crypto test vector suite." |
 
-**Discussion needed:** Choose one format as the canonical cross-client
-serialization, update PHPSPEC.md to reflect it, and align all import/export
-paths. Options:
+**Next action:** Pick any item, edit the file, commit. ~30 min each.
 
-| Option | Pros | Cons |
-|---|---|---|
-| A. v2 envelope as canonical | Sealed, versioned, includes staging | CLI native format changes; migration needed |
-| B. Raw chain as canonical (status quo) | CLI already uses it; simpler | No integrity seal; no staging data in transfers |
-| C. Both — v2 for sealed transfers, raw chain for CLI local | No breaking changes | Perpetual dual-format complexity; PHPSPEC must explain both |
+---
 
-**Unblock criteria:** Decision made + PHPSPEC.md updated + import/export paths
-unified across both clients.
+## 🔜 Phase 1 — Active: Staging Alignment + E2E
 
-### Remaining
-- [ ] Schedule and hold format decision discussion
-- [ ] Record decision as ADR in `docs/design/ARCHITECTURAL_DECISIONS.md`
-- [ ] Update `PHPSPEC.md` to reflect the canonical format
-- [ ] Align CLI `onboarding_file.py`, `main.py` export, and web `ledger_export.js` / `ledger_import.js`
-- [ ] Remove dual-format shims once migration is complete
+### 1a. Align web staging sharing with CLI
 
-## Entry Hash Format — Eventual indent=2 Consolidation
+**Plan:** `docs/planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md`
 
-**Status (2026-06-25):** CLI engine (`engine.py`, `chain.py`) and web app (`utils.js`) now
-both use `indent=2` for entry hashes. `onboarding_file.py` verifies entries in both formats.
-`chain.py`'s `_verify_entry_hash_flex()` handles both. New entries are all indent=2.
+| Stage | What | Files |
+|-------|------|-------|
+| 1.1 | Remove MK bypass: no cookie → always `REAUTH_NEEDED` | `phpoc-web/src/sync/sync.js` ~line 527 |
+| 1.2 | New `ReauthOverlay.jsx` component | New file + `DevModeContext.jsx`, `SyncSettings.jsx`, `App.jsx` |
+| 1.3 | Remove fallback `DeviceCookie.create('local', ...)` | `phpoc-web/src/context/DevModeContext.jsx` ~line 405 |
+| 1.4 | Handle `GENESIS_MISMATCH` in re-auth flow | Integration |
+| 1.5 | Tests — update existing + new overlay tests | 4 test files |
 
-**Pause rationale:** Sole user, no immediate need. No production mixed-format chains exist.
-When the last pre-alignment chain is retired (all entries using old no-indent hashes),
-the dual-format verification shims can be removed and `indent=2` becomes the canonical
-single format.
+**Next action:** Phase 1 Stage 1.1 — edit `sync.js` line 527, remove the 4-line MK bypass.
 
-**Unblock criteria:** All existing ledger chains have been migrated or retired.
+### 1b. Browser E2E tests
 
-### Remaining (pre-removal cleanup)
-- [ ] Update `scripts/migrate_format_version.py` `verify_chain()` to try both
-      entry hash formats (no-indent + indent=2), matching `_verify_entry_hash_flex()`
-- [ ] Once all chains are indent=2 only, remove `_verify_entry_hash_flex()` from `chain.py`
-      and `onboarding_file.py`, simplify to single-format verification
+**Plan:** `docs/planning/BROWSER_E2E_TEST_PLAN.md`
 
-## P3 — Remote Sync (git-based) — Paused
+| Test | What |
+|------|------|
+| E2E-03 | Import file upload + same-genesis rejection, auth errors |
+| E2E-04 | Import with wrong passphrase/seed → error display |
+| E2E-05 | Full roundtrip: export → clear → import → verify |
+| E2E-06 | Export with wrong passphrase → error display |
+| E2E-07 | Onboarding import flow |
 
-**Pause rationale:** Browser client takes priority. Git transport is functional for CLI
-but the remaining items (ledger sync via git, async transport) are deferred.
+**Next action:** After Phase 1a completes.
 
-**Unblock criteria:** Browser client reaches parity with CLI sync features.
+---
 
-### Remaining
-- [ ] **Ledger sync** — sync the ledger chain (blocks, identity) via git, not just staging
-- [ ] **Async git transport** — make `GitStagingTransport._git()` non-blocking via `asyncio.create_subprocess_exec()`; enforce `timeout_ms` properly; keep `StagingService` and above synchronous (blocking absorbed by transport layer with `asyncio.run()`)
-- [ ] Cross-device sync test (laptop ↔ debagent04)
-- [ ] Handle case where `~/.local/share/phpoc/` doesn't exist yet on pull
-- [ ] First-time `phpoc view` on a machine with no local staging
+## 🟡 Phase 2 — Low-Effort Code Fixes
 
-## P5 — CLI Unlock Latency (up to 10s) — Partially resolved (2026-07-01)
+*After Phase 1. Small, low-risk changes that improve correctness.*
 
-**Investigation:** `docs/investigations/UNLOCK_PERFORMANCE_CLI.md` (full diagnostic trace).
+### I-04: Rename HMAC "signature" → "seal"/"tag"
 
-**2026-07-01 update:** The hash index fast path (Tier 1 SHA-256 match) now skips
-the full ledger block pull on subsequent unlocks — eliminating the largest component
-of the sync latency (up to 105 sequential HTTP GETs). However, three root causes
-remain:
+**Why:** Misleads implementers about security properties. Must happen before real Ed25519 is added.
 
-### Remaining root causes
+| File | Change |
+|------|--------|
+| `docs/spec/PHPSPEC.md` §2.7, §4, §5.3 | Rename `signature` field → `identity_seal`; rename `sign()` → `mac()`, `verify_signature()` → `verify_mac()` |
+| `security/crypto.py` | Rename `sign()` → `mac()`; rename `verifySignature()` → `verifyMac()` |
+| `domain/ledger/chain.py` | Update field references |
+| `phpoc-web/src/ledger/chain.js` | Update field references |
+| All test files | Update field names |
 
-1. **Broken HTTP timeout plumbing** — `check_and_sync(timeout_ms=500)` accepts the parameter but never passes it to transport calls. `_reconcile_and_claim()` calls `pull_cookie()` + `pull()` bare, which use `http.client.HTTPSConnection` with `_DEFAULT_TIMEOUT_S = 60.0`. The `check_remote_available(timeout_ms=500)` method only measures elapsed time after the call — it doesn't enforce the timeout on the socket.
+**Effort:** ~2 hours. **Blocked by:** nothing. **Blocks:** I-01 (key rotation).
 
-2. **Multiple sequential network calls during unlock** — `_reconcile_and_claim()` makes up to 3 HTTP requests (cookie pull → blob pull → blob push), each with the 60s default timeout, each creating a new TCP+TLS connection (no keep-alive/pooling).
+**Next action:** Pick up after Phase 1. Start with spec rename, then code.
 
-3. **Read commands make unnecessary network calls** — `ph list`/`ph view`/`ph tags` call `check_and_sync()` which reaches out to remote for cookie verification even when just displaying local data.
+### I-05: Per-user PBKDF2 salt
 
-**Why "sometimes 10s":** Cloudflare Worker cold starts add 1-5s per request. With 2-3 sequential requests + TLS handshake, total = 3-15s. Warm Worker = 1-2s. Unreachable remote = up to 60s.
+**Why:** Fixed `b"session-salt"` enables cross-user rainbow tables when passphrases are reused.
 
-**What's NOT the bottleneck:** PBKDF2 600K iterations (~0.09s via OpenSSL-backed `hashlib`), JSON parsing (~1ms for 105 blocks), file I/O.
+| File | Change |
+|------|--------|
+| `docs/spec/PHPSPEC.md` §2.4 | Document salt derivation from `identity_pub_key` |
+| `security/auth.py` | Derive salt: `SHA-256(identity_pub_key)[:16]` instead of `b"session-salt"` |
+| `cli/onboarding.py` | Use new salt for seed encryption during init |
+| `tests/test_auth.py` | Update salt expectations |
+| All decryption paths | Must try both old salt and new salt (backward compat) |
 
-**Proposed solutions (remaining):**
+**Effort:** ~1 hour code + migration for existing ledgers. **Blocked by:** nothing. **Blocks:** nothing.
 
-| # | Solution | Effort | Impact |
-|---|----------|--------|--------|
-| B | Pre-check remote reachability via `check_remote_ping()` before cookie/blob pulls | Small | Prevents 60s hangs on unreachable |
-| A | Fix timeout plumbing: pass `timeout_ms` through all layers, reduce default from 60s → 5s | Medium | Caps worst-case at 3-5s |
-| C | Skip network calls for read-only commands (add `check_local_only()`) | Medium | `ph list`/`view` become instant |
-| D | HTTP connection pooling / keep-alive | Large | Eliminates TLS handshake overhead (0.5-2s) per-request after first |
-| E | Worker warmup (paid plan, cron trigger, or warmup endpoint) | Small (infra) | Eliminates cold-start component |
+**Next action:** Add backward-compat salt detection (try new salt first, fall back to old).
 
-### Already resolved
-- ✅ **Ledger block pull latency** — hash_index.json fast path (2026-07-01).
-  Tier 1 SHA-256 match skips full chain pull (~0.1s vs N sequential HTTP GETs).
-  Covers `_sync_ledger_blocks()`. Staging reconciliation still hits the network.
+### I-06: Make `content_hash` required at v0.4.0+
 
-**Files affected:** `core/sync/http_transport.py` (line 56, `_DEFAULT_TIMEOUT_S`), `domain/staging/service.py` (`check_and_sync`, `_reconcile_and_claim`), `domain/staging/remote_sync.py` (`pull_cookie`, `pull`, `check_remote_available`), `main.py` (read-command dispatch).
+**Why:** Optional means entries without it have zero re-encryption-survivable integrity.
 
-**Pause rationale:** Web unlock takes priority. Ledger block pull latency is resolved
-(hash index fast path). Remaining latency is in staging reconciliation (cookie/blob HTTP).
+| File | Change |
+|------|--------|
+| `docs/spec/PHPSPEC.md` §5.5 | Remove "optional" language; require at format_version ≥ 0.4.0 |
+| `domain/ledger/engine.py` | `_verify_content_hash()` — fail instead of skip when absent and format ≥ 0.4.0 |
+| `phpoc-web/src/ledger/chain.js` | Same change in `_verifyBlockData()` |
+| `phpoc-web/src/ledger/merge.js` | Same change in duplicate `_verifyBlockData()` |
 
-**Unblock criteria:** Web unlock latency investigation complete; user prioritizes CLI work.
+**Effort:** ~1 hour. **Blocked by:** nothing. **Blocks:** I-01 (content_hash must be universal before rotation).
 
-## P4 — CLI Kinks & UX Polish — Paused
+**Next action:** Add format_version gating to verification functions.
 
-**Pause rationale:** CLI is in maintenance mode while browser client is active development target.
+---
 
-**Unblock criteria:** Browser client reaches feature parity.
+## 🟠 Phase 3 — Encryption Gaps
+
+*After Phase 1. Real security holes that need closing.*
+
+### I-03: Encrypt staging at rest
+
+**Why:** `staging.json` uses `plain:` prefix — on-disk staging is unencrypted, contradicting the protocol's first design principle.
+
+| File | Change |
+|------|--------|
+| `domain/staging/service.py` | Encrypt entries with MK before writing; decrypt on read |
+| `domain/staging/remote_sync.py` | Handle encrypted local entries for blob push/pull |
+| `phpoc-web/src/sync/sync.js` | Encrypt staging entries in IndexedDB |
+| `docs/spec/PHPSPEC.md` §8.2, §8.4 | Document encryption requirement |
+
+**Effort:** ~1 week. **Depends on:** Phase 1a (staging alignment must finish first). **ADR:** ADR-015 (D2 design direction).
+
+**Next action:** After Phase 1a, implement encrypted staging write/read in `service.py` first.
+
+### I-02: Encrypt blind index
+
+**Why:** `index.json` stores `{date: {activity_title: total_duration_ms}}` in plain JSON next to the encrypted ledger.
+
+| File | Change |
+|------|--------|
+| `domain/ledger/index.py` | Encrypt/decrypt index with MK |
+| `cli/commands.py` | Decrypt before display in `ph rep` |
+| `phpoc-web/src/sync/sync.js` | Encrypt/decrypt hash index |
+| `docs/spec/PHPSPEC.md` §7 | Document encryption |
+
+**Effort:** ~1 week. **Depends on:** nothing (independent of staging).
+
+**Next action:** Encrypt `build_index()` output with MK; decrypt on read.
+
+---
+
+## 🔴 Phase 4 — Architectural Rework
+
+*After Phases 2–3. Major features that need design work before implementation.*
+
+### I-01: Key rotation
+
+**Why:** One MK protects everything forever. Compromise = permanent, catastrophic, no remediation path.
+
+**Required:** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
+
+| Deliverable | What |
+|-------------|------|
+| ADR | Design the rotation protocol |
+| `domain/ledger/engine.py` | Key version field + multi-version verification |
+| `security/crypto.py` | Re-encrypt entry with new MK |
+| Migration | Re-encrypt existing chain under new key |
+
+**Effort:** High (weeks). **Depends on:** I-04 (naming), I-06 (content_hash required).
+
+**Next action:** Write ADR. No code until design is reviewed.
+
+### I-09: Hardware-bound device attribution
+
+**Why:** Device IDs are derived from MK. Any device with the MK can impersonate any other device.
+
+| File | Change |
+|------|--------|
+| `domain/cookie/device_cookie.py` | Derive device ID from MK + device-local secret (UUID4, not from MK) |
+| `security/auth.py` | Generate and store per-device secret on first run |
+| `phpoc-web/src/sync/sync.js` | Use IndexedDB-stored device secret |
+
+**Effort:** Medium. **Depends on:** nothing. **Next action:** Generate device-local UUID4 secret, use in HMAC derivation.
+
+### I-12: System architecture document
+
+**Why:** The spec is narrow (format only). DESIGN_GOALS is broad (aspirations). No single document describes the full system.
+
+**Deliverable:** New `docs/design/SYSTEM_ARCHITECTURE.md` covering: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core.
+
+**Effort:** ~2 days. **Next action:** Create outline from existing ADRs + CROSS_PLATFORM + DESIGN_GOALS.
+
+---
+
+## 🔵 Phase 5 — CLI Polish
+
+*Existing backlog items. After architectural work stabilizes.*
+
+### P5: CLI unlock latency
+
+**3 remaining root causes:**
+
+| # | Action | File |
+|---|--------|------|
+| B | Pre-check remote reachability before cookie/blob pulls | `domain/staging/service.py` |
+| A | Fix timeout plumbing (60s → 5s default) | `core/sync/http_transport.py` + `service.py` + `remote_sync.py` |
+| C | Skip network calls for read-only commands | `main.py` read-command dispatch |
+
+**Next action:** Fix timeout plumbing first (largest impact per line of code).
+
+### P4: CLI kinks & UX polish
+
+**Next action:** Audit `ph view`/`ph list`/`ph tags` for specifier-mismatch blocking.
+
+---
+
+## 🔵 Phase 6 — Cross-Client Format Unification
+
+### P1: Canonical cross-client serialization
+
+**Problem:** 3 incompatible serializations exist (raw chain, v2 envelope, per-block R2).
+
+**Next action:** Hold format decision discussion. Record as ADR.
+
+### Entry hash indent=2 consolidation
+
+**Next action:** When all chains are indent=2 only, remove `_verify_entry_hash_flex()` dual-format shims from `chain.py` and `onboarding_file.py`.
+
+---
+
+## 🔵 Phase 7 — Remote Sync
+
+### P3: Remote sync (git-based)
+
+**Next action:** After browser client reaches parity with CLI sync features.
+
+---
+
+## Summary by Phase
+
+| Phase | Items | Status |
+|-------|-------|--------|
+| **0** — Doc fixes | I-16, I-15, I-08, I-10, I-13, I-14, I-11 (7) | 🟢 Do anytime |
+| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | 🔜 In progress |
+| **2** — Low-effort code | I-04, I-05, I-06 (3) | After Phase 1 |
+| **3** — Encryption gaps | I-02, I-03 (2) | After Phase 1 |
+| **4** — Architectural | I-01, I-09, I-12 (3) | After Phases 2-3 |
+| **5** — CLI polish | P5, P4 (2) | After Phase 4 |
+| **6** — Cross-client | P1, indent=2 (2) | After Phase 5 |
+| **7** — Remote sync | P3 (1) | After Phase 6 |
+
+**Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅ — Canonical Ledger Format, 2026-07-03.
+
+---
+
+## 🟢 Nice-to-Have — Tooling
+
+### SESSION_HANDOFF.md auto-archiver
+
+**Why:** The agent enforces the 100-line limit manually (AGENTS.md preference, 2026-07-04). A script would make this faster and more reliable.
+
+**What:** `scripts/archive_handoff.py` — parses `SESSION_HANDOFF.md`, finds sections with `✅` / `🟢` status markers, moves them to a dated archive file (`docs/planning/archive/SESSION_HISTORY_YYYY-MM-DD.md`), and writes back the trimmed handoff. Invoked by the agent at session closeout.
+
+**Effort:** ~30 min. **Trigger:** When manual archiving friction becomes real. **Next action:** N/A — pick up when needed.

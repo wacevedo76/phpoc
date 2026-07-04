@@ -1576,7 +1576,6 @@ async function run() {
     // Genesis block
     const genesisContent = {
       type: 'genesis',
-      format_version: '0.3.0',
       day_index: 0,
       date: '2026-01-01',
       identity: {
@@ -2304,7 +2303,6 @@ async function run() {
     // Build a chain: genesis + 1 day block + 1 month_summary block
     const genesisContent = {
       type: 'genesis',
-      format_version: '0.3.0',
       day_index: 0,
       date: '2026-06-01',
       identity: {

@@ -7,6 +7,8 @@ Every method is a thin wrapper over crypto + store operations, producing
 output that is byte-identical to the original core/ledger.py.
 """
 
+from domain.ledger.helpers import get_block_hash
+
 import json
 import hashlib
 from typing import Optional, List, Dict, Any
@@ -240,11 +242,7 @@ class LedgerChain:
         # Verify linkage across the bridge (last existing → first new)
         last_existing = self.get_last_block()
         if last_existing is not None:
-            existing_hash = (
-                last_existing.get("day_hash")
-                or last_existing.get("month_hash")
-                or last_existing.get("year_hash")
-            )
+            existing_hash = get_block_hash(last_existing)
             if blocks[0].get("prev_hash") != existing_hash:
                 raise ValueError(
                     f"Block 0 prev_hash {blocks[0].get('prev_hash')} "
@@ -254,11 +252,7 @@ class LedgerChain:
         # Verify linkage among the new blocks
         for i in range(1, len(blocks)):
             prev_block = blocks[i - 1]
-            prev_block_hash = (
-                prev_block.get("day_hash")
-                or prev_block.get("month_hash")
-                or prev_block.get("year_hash")
-            )
+            prev_block_hash = get_block_hash(prev_block)
             if blocks[i].get("prev_hash") != prev_block_hash:
                 raise ValueError(
                     f"Block {i} prev_hash {blocks[i].get('prev_hash')} "
@@ -329,25 +323,13 @@ class LedgerChain:
             prev = ledger[i - 1]
 
             # 1. prev_hash linkage
-            prev_hash = (
-                prev.get("day_hash")
-                or prev.get("month_hash")
-                or prev.get("year_hash")
-            )
+            prev_hash = get_block_hash(prev)
             if current["prev_hash"] != prev_hash:
                 return False
 
             # 2. Block seal
-            hash_key = (
-                "day_hash"
-                if current.get("type", "day") == "day"
-                else "month_hash"
-                if current.get("type") == "month_summary"
-                else "year_hash"
-                if current.get("type") == "year_summary"
-                else "day_hash"  # genesis or unknown — use day_hash
-            )
-            check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature")}
+            hash_key = LedgerChain._hash_key_for_block(current)
+            check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature", "format_version")}
             if not self.crypto.verify_seal(
                 json.dumps(check_data, sort_keys=True), current[hash_key]
             ):
@@ -396,22 +378,12 @@ class LedgerChain:
             return False
 
         current = block
-        prev_hash = (
-            prev.get("day_hash") or prev.get("month_hash") or prev.get("year_hash")
-        )
+        prev_hash = get_block_hash(prev)
         if current["prev_hash"] != prev_hash:
             return False
 
-        hash_key = (
-            "day_hash"
-            if current.get("type", "day") == "day"
-            else "month_hash"
-            if current.get("type") == "month_summary"
-            else "year_hash"
-            if current.get("type") == "year_summary"
-            else "day_hash"  # genesis or unknown — use day_hash
-        )
-        check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature")}
+        hash_key = LedgerChain._hash_key_for_block(current)
+        check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature", "format_version")}
         if not self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), current[hash_key]):
             return False
 
@@ -430,6 +402,25 @@ class LedgerChain:
         return True
 
     # ── Internal helpers ─────────────────────────────────
+
+    @staticmethod
+    def _hash_key_for_block(block: dict) -> str:
+        """Return the hash field name for a block based on its type.
+
+        Genesis blocks use ``block_hash`` (I-17). Old-format genesis
+        blocks with only ``day_hash`` are still supported for backward
+        compatibility. Non-genesis blocks use type-specific keys.
+        """
+        btype = block.get("type", "day")
+        if btype == "genesis" and "block_hash" in block:
+            return "block_hash"
+        if btype == "genesis" and "day_hash" in block:
+            return "day_hash"  # I-17 backward compat
+        return {
+            "day": "day_hash",
+            "month_summary": "month_hash",
+            "year_summary": "year_hash",
+        }.get(btype, "day_hash")
 
     @staticmethod
     def _verify_content_hash(data: dict, decrypt_fn=None) -> bool:

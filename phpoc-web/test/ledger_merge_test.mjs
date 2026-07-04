@@ -180,7 +180,6 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
 function buildGenesisBlock() {
   const content = {
     type: 'genesis',
-    format_version: '0.3.0',
     day_index: 0,
     date: '2026-01-01',
     identity: {
@@ -1099,7 +1098,6 @@ console.log('\n=== Group I — Edge Cases ===');
 
   const genesis2Content = {
     type: 'genesis',
-    format_version: '0.3.0',
     day_index: 0,
     date: '2026-06-01',
     identity: {
@@ -1368,7 +1366,6 @@ console.log('\n=== Group J — Input Chain Validation ===');
   // Build a chain with a DIFFERENT genesis (matching I2 pattern)
   const genesis2 = {
     type: 'genesis',
-    format_version: '0.3.0',
     day_index: 0,
     date: '2026-06-01',
     identity: {

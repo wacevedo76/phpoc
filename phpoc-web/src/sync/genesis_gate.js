@@ -192,10 +192,10 @@ export class GenesisGate {
                 const comparison = compareHashIndexes(localHI, remoteHI);
 
                 if (comparison.forkType === 'genesis_mismatch') {
-                  // Detected early — no need to pull full chain
-                  throw new GenesisMismatchError(
-                    `Genesis mismatch detected via hash index at index ${comparison.forkIndex}`
-                  );
+                  // Hash index suggests genesis mismatch, but the index
+                  // may be stale (left over from a previous chain on the
+                  // same bucket). Fall through to the full chain pull
+                  // for definitive comparison.
                 }
 
                 if (comparison.forkType === 'linear_local') {
@@ -217,14 +217,14 @@ export class GenesisGate {
           } catch (tier2Err) {
             // Tier 2 failed (corrupted hash_index.json, parse error, etc.)
             // Fall through to full chain pull — backward compatible.
-            if (tier2Err instanceof GenesisMismatchError) throw tier2Err;
+            // GenesisMismatchError is no longer thrown from Tier 2 (stale
+            // hash indexes are not authoritative).
           }
         }
       }
     } catch (tier1Err) {
       // Tier 1/2 failed (network error, missing file, etc.)
       // Fall through to full chain pull — backward compatible.
-      if (tier1Err instanceof GenesisMismatchError) throw tier1Err;
     }
 
     // ── 3. Fetch remote ledger (full chain pull) ──────────────────
@@ -280,9 +280,10 @@ export class GenesisGate {
         // If the recomputed seal matches the LOCAL genesis hash,
         // the remote has the same content but a wrong seal → InvalidChainError.
         try {
+          const remoteHashKey = remoteGenesis.block_hash ? 'block_hash' : 'day_hash';
           const checkData = {};
           for (const [k, v] of Object.entries(remoteGenesis)) {
-            if (k !== 'day_hash' && k !== 'signature') checkData[k] = v;
+            if (k !== remoteHashKey && k !== 'signature' && k !== 'format_version') checkData[k] = v;
           }
           const recomputedHash = crypto.seal(jsonSort(checkData), masterKey);
           if (recomputedHash === localGenesisHash) {

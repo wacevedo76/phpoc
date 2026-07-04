@@ -61,7 +61,7 @@ function formatTime(ts) {
 // ── Sync Screen Component ────────────────────────────────────────────
 
 export default function SyncSettings() {
-  const { services, commitEntries, isAutoSyncing } = useApp();
+  const { services, commitEntries, isAutoSyncing, triggerReauth } = useApp();
   const sync = services.sync;
 
   // ── Active tasks (for live elapsed timer on running entries) ─────
@@ -702,7 +702,13 @@ export default function SyncSettings() {
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
         setRemoteStatus(STATUS_REAUTH);
-        setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        // Trigger re-auth overlay instead of static message.
+        // After successful re-auth, user retries Sync Now.
+        if (typeof triggerReauth === 'function') {
+          triggerReauth('sync_settings');
+        } else {
+          setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        }
         return;
       }
       if (result === STATUS_GENESIS_MISMATCH) {
@@ -782,7 +788,11 @@ export default function SyncSettings() {
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
         setRemoteStatus(STATUS_REAUTH);
-        setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        if (typeof triggerReauth === 'function') {
+          triggerReauth('sync_settings');
+        } else {
+          setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        }
         return;
       }
       setRemoteStatus(result);
@@ -831,7 +841,7 @@ export default function SyncSettings() {
       setClearingRemote(false);
       setSyncing(false);
     }
-  }, [sync, overrideConfirmInput, commitEntries, refreshEntries]);
+  }, [sync, overrideConfirmInput, commitEntries, refreshEntries, triggerReauth]);
 
   // ── Clear Remote from overlay (always-accessible button) ─────
 
@@ -853,7 +863,11 @@ export default function SyncSettings() {
       const result = await sync.checkAndSync();
       if (result === STATUS_REAUTH) {
         setRemoteStatus(STATUS_REAUTH);
-        setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        if (typeof triggerReauth === 'function') {
+          triggerReauth('sync_settings');
+        } else {
+          setLastSyncResult('Authentication required. Log out and log back in to continue.');
+        }
         return;
       }
       setRemoteStatus(result);

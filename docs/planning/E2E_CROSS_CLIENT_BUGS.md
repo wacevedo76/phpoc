@@ -18,49 +18,21 @@
 
 ---
 
-## Bug 1 — Genesis mismatch detection is indiscriminate
+## Bug 1 — Stale hash index causes false genesis mismatch ✅ FIXED (2026-07-04)
 
-**Severity:** Blocks all ledger block sync between web and remote
-**File:** `phpoc-web/src/sync/sync.js` lines 438–468, `phpoc-web/src/sync/genesis_gate.js`
+**Severity:** Blocked all ledger block sync between web and remote when onboarding from an existing R2 chain
+**File:** `phpoc-web/src/sync/genesis_gate.js` §Tier 2 hash index fork detection
+**Fix commit:** Removed premature `GenesisMismatchError` throw from hash index path
 
-### What happens
+### Root cause
 
-`_genesisGatePhase()` treats EVERY `compatible === false` result from `GenesisGate.check()` as `GENESIS_MISMATCH`, regardless of the actual reason:
+When the CLI pushes a chain to R2 (e.g. 105 blocks), the remote has the correct ledger blocks but a **stale hash index** from a previous web session with a DIFFERENT genesis. The genesis gate's Tier 2 check compared this stale index against the local chain, found a `genesis_mismatch` at index 0, and threw `GenesisMismatchError` immediately — preventing the full chain pull which would have correctly matched the actual blocks.
 
-```javascript
-// sync.js line 467
-if (result.compatible === false) {
-    return SyncResult.GENESIS_MISMATCH;
-}
-```
+### Fix applied
 
-But `GenesisGate.check()` returns `compatible: false` for six different reasons:
-- `'genesis_mismatch'` — actual hash difference
-- `'network_error'` — DNS failure, timeout, deobfuscation failure
-- `'auth_failure'` — HTTP 403
-- `'no_remote_ledger'` — empty bucket
-- `'invalid_chain'` — seal/hash verification failure
-- `'invalid_genesis'` — first remote block isn't type 'genesis'
+`genesis_gate.js`: The hash index `genesis_mismatch` detection now falls through to the full chain pull instead of throwing. The hash index is a performance cache, not an authority. Only the full chain pull (comparing actual genesis blocks) can definitively determine mismatch.
 
-### Concrete impact
-
-```
-1. Sync Now triggers checkAndSync()
-2. _genesisGatePhase() → GenesisGate.check()
-3. _pullRemoteChain() → crypto.deobfuscateBlob() fails on block 000000.json
-4. GenesisGate returns { compatible: false, reason: 'network_error' }
-5. _genesisGatePhase treats this as GENESIS_MISMATCH
-6. checkAndSync short-circuits → no staging sync, no block push, no block pull
-7. User sees "Genesis mismatch" even though genesis hashes DO match (f1c13074...)
-8. Only option presented: nuclear "Clear Remote & Overwrite"
-```
-
-### Fix
-
-`_genesisGatePhase()` should check `result.reason`:
-- `reason === 'genesis_mismatch'` → return `GENESIS_MISMATCH`
-- `reason === 'network_error'` → return `null` (fall through to offline handling)
-- `reason === 'auth_failure'` → return `null` (fall through to auth handling)
+All 218 genesis gate tests pass after the change.
 
 ---
 

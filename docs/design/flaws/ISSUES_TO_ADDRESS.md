@@ -581,7 +581,7 @@ graduates from discovery to planning, update this table:
 | I-04 | 🟠 Open | — | — |
 | I-05 | 🟠 Open | — | — |
 | I-06 | 🟠 Open | — | — |
-| I-07 | 🟠 Open | — | — |
+| I-07 | ✅ Fixed | ROADMAP (Canonical Ledger Format) | v0.4.0 (2026-07-03) |
 | I-08 | 🟠 Open | — | — |
 | I-09 | 🟡 Open | — | — |
 | I-10 | 🟡 Open | — | — |
@@ -591,4 +591,4 @@ graduates from discovery to planning, update this table:
 | I-14 | 🟡 Open | — | — |
 | I-15 | 🟢 Open | — | — |
 | I-16 | 🟢 Open | — | — |
-| I-17 | 🟢 Open | — | — |
+| I-17 | ✅ Fixed | ROADMAP (Canonical Ledger Format) | v0.4.0 (2026-07-03) |

@@ -20,6 +20,7 @@ Revert lifecycle:
 import logging
 import json
 import hashlib
+import time
 import asyncio
 from typing import Optional, List, Dict, Any
 
@@ -28,6 +29,7 @@ from domain.staging.remote_sync import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from domain.interfaces.view import ViewInterface
 from core.sync.transport import AbstractStagingTransport
+from domain.ledger.helpers import get_block_hash
 from core.sync.decision import SyncDecision
 
 
@@ -110,6 +112,14 @@ class SyncOrchestrator:
                 "staging will sync after re-auth"
             )
 
+        # Step 1.5: Deduplicate — remove local staging entries already
+        # committed in the remote ledger (cross-platform scenario).
+        # Without this, the web client commits an entry → pushes ledger
+        # blocks + removes from staging blob → CLI sees the entry still
+        # in local staging (remote blob has it removed, merge can't tell
+        # it was committed) → CLI re-commits it as a duplicate.
+        self._deduplicate_from_remote_ledger()
+
         # Step 2: get pending entries
         pending = self._staging.get_pending_sync()
         if not pending:
@@ -144,7 +154,14 @@ class SyncOrchestrator:
                 if p["entry_index"] in sync_decision.selected_indices
             ]
             if not pending:
-                logger.info("SyncOrchestrator: no entries selected after confirmation")
+                # No entries selected, but removals may exist.
+                # Process removals first, then push + ledger sync.
+                if sync_decision.has_removals:
+                    self._staging.remove_synced(
+                        list(sync_decision.removal_indices)
+                    )
+                    if self._master_key is not None:
+                        self._staging.push_to_remote(self._master_key)
                 self._sync_ledger_blocks()
                 return True
 
@@ -238,7 +255,7 @@ class SyncOrchestrator:
         local_sha256 = None
         try:
             local_hashes = [
-                RemoteLedgerSync._get_block_hash(b) for b in all_blocks
+                get_block_hash(b) for b in all_blocks
             ]
             local_hi_json = json.dumps(local_hashes).encode("utf-8")
             local_sha256 = hashlib.sha256(local_hi_json).hexdigest()
@@ -480,6 +497,104 @@ class SyncOrchestrator:
 
     # ── Merge helpers ────────────────────────────────────────────
 
+    def _deduplicate_from_remote_ledger(self):
+        """Remove local staging entries already committed in the remote ledger.
+
+        Pulls remote ledger blocks and checks if any local staging entries
+        (by title + date match) exist as committed entries in the remote
+        ledger. If so, removes them from local staging to prevent duplicate
+        commits in cross-platform workflows.
+
+        This is a non-fatal best-effort operation. If the remote is
+        unreachable or ledger blocks can't be parsed, staging is left
+        unchanged.
+        """
+        if self._transport is None or self._master_key is None:
+            return
+
+        try:
+            from domain.ledger.remote_sync import RemoteLedgerSync
+            ledger_sync = RemoteLedgerSync(self._transport, self._master_key)
+
+            # Pull remote blocks (use hash index fast path if available)
+            hi = ledger_sync.pull_hash_index()
+            existing_indices = set()
+
+            # Determine which block indices to pull
+            if hi and isinstance(hi, list) and len(hi) > 0:
+                # Pull all blocks listed in hash index
+                max_idx = len(hi) - 1
+                for i in range(max_idx + 1):
+                    existing_indices.add(i)
+            else:
+                # Fall back to listing
+                try:
+                    existing_indices = ledger_sync._list_remote_block_indices()
+                except Exception:
+                    pass
+
+            if not existing_indices:
+                return
+
+            # Collect all committed entry titles + dates from remote ledger
+            remote_titles = set()  # {(date, title), ...}
+            for idx in sorted(existing_indices):
+                try:
+                    block = ledger_sync.pull_block_by_index(idx)
+                    if not block:
+                        continue
+                    block_type = block.get("type", "day")
+                    if block_type != "day":
+                        continue
+                    date_str = block.get("date", "")
+                    for entry in block.get("entries", []):
+                        data = entry.get("data", {})
+                        title = data.get("title", "")
+                        if title and date_str:
+                            remote_titles.add((date_str, title))
+                except Exception:
+                    continue  # Skip unparseable blocks
+
+            if not remote_titles:
+                return
+
+            # Find local staging entries matching remote committed entries
+            staging = self._staging._local._store.read_entries()
+            indices_to_remove = []
+            for entry in staging:
+                data = entry.get("data", {})
+                title = data.get("title", "")
+                if not title:
+                    continue
+                # Decode start_epoch to get date
+                start_val = data.get("startTime_enc", "")
+                entry_date = ""
+                if isinstance(start_val, str) and start_val.startswith("plain:"):
+                    try:
+                        start_epoch = int(start_val[6:])
+                        entry_date = time.strftime(
+                            "%Y-%m-%d", time.gmtime(start_epoch // 1000)
+                        )
+                    except Exception:
+                        continue
+
+                if (entry_date, title) in remote_titles:
+                    indices_to_remove.append(entry.get("entry_index"))
+
+            if indices_to_remove:
+                logger.info(
+                    "SyncOrchestrator: removing %d staging entries already "
+                    "committed remotely: %s",
+                    len(indices_to_remove),
+                    indices_to_remove,
+                )
+                self._staging.remove_synced(indices_to_remove)
+        except Exception as exc:
+            logger.warning(
+                "SyncOrchestrator: remote ledger deduplication failed: %s",
+                exc,
+            )
+
     def _is_same_genesis(
         self,
         ledger_sync: "RemoteLedgerSync",
@@ -501,16 +616,8 @@ class SyncOrchestrator:
         if remote_genesis is None:
             return False
 
-        local_hash = (
-            local_blocks[0].get("day_hash")
-            or local_blocks[0].get("month_hash")
-            or local_blocks[0].get("year_hash")
-        )
-        remote_hash = (
-            remote_genesis.get("day_hash")
-            or remote_genesis.get("month_hash")
-            or remote_genesis.get("year_hash")
-        )
+        local_hash = get_block_hash(local_blocks[0])
+        remote_hash = get_block_hash(remote_genesis)
         return local_hash == remote_hash
 
     def _try_ledger_merge(

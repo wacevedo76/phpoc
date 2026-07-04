@@ -107,15 +107,16 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         # Re-seal genesis (excluding signature, matching verify())
         check_data = {
             k: v for k, v in ledger_data[0].items()
-            if k not in ("day_hash", "signature")
+            if k not in ("day_hash", "signature", "format_version")
         }
-        ledger_data[0]["day_hash"] = self.crypto.seal(
+        genesis_hk = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
+        ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
 
         # Re-sign genesis
         ledger_data[0]["signature"] = self.crypto.sign(
-            ledger_data[0]["day_hash"], self.identity_secret
+            ledger_data[0][genesis_hk], self.identity_secret
         )
 
         # --- RE-CHAIN all subsequent blocks ---
@@ -123,7 +124,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             block = ledger_data[i]
             prev = ledger_data[i - 1]
             block["prev_hash"] = (
-                prev.get("day_hash")
+                prev.get("block_hash") or prev.get("day_hash")
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
@@ -136,7 +137,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature")
+                if k not in (hash_key, "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
@@ -186,13 +187,14 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         # Re-seal genesis
         check_data = {
             k: v for k, v in ledger_data[0].items()
-            if k not in ("day_hash", "signature")
+            if k not in ("day_hash", "signature", "format_version")
         }
-        ledger_data[0]["day_hash"] = self.crypto.seal(
+        genesis_hk = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
+        ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
         ledger_data[0]["signature"] = self.crypto.sign(
-            ledger_data[0]["day_hash"], self.identity_secret
+            ledger_data[0][genesis_hk], self.identity_secret
         )
 
         # Re-chain ALL subsequent blocks
@@ -200,7 +202,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             block = ledger_data[i]
             prev = ledger_data[i - 1]
             block["prev_hash"] = (
-                prev.get("day_hash")
+                prev.get("block_hash") or prev.get("day_hash")
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
@@ -213,7 +215,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature")
+                if k not in (hash_key, "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
@@ -254,8 +256,9 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             identity_data["identity_secret_enc"]
 
         # Old buggy seal: includes 'signature' in check_data
-        check_data = {k: v for k, v in ledger_data[0].items() if k != "day_hash"}
-        ledger_data[0]["day_hash"] = self.crypto.seal(
+        check_data = {k: v for k, v in ledger_data[0].items() if k not in ("day_hash", "block_hash")}
+        genesis_hk = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
+        ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
         # Note: NO re-chaining of subsequent blocks
@@ -301,13 +304,14 @@ class TestRecoveryVerifySequence(unittest.TestCase):
 
         check_data = {
             k: v for k, v in ledger_data[0].items()
-            if k not in ("day_hash", "signature")
+            if k not in ("day_hash", "signature", "format_version")
         }
-        ledger_data[0]["day_hash"] = self.crypto.seal(
+        genesis_hk = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
+        ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
         ledger_data[0]["signature"] = self.crypto.sign(
-            ledger_data[0]["day_hash"], self.identity_secret
+            ledger_data[0][genesis_hk], self.identity_secret
         )
 
         # Re-chain all blocks (including month_summary)
@@ -315,7 +319,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             block = ledger_data[i]
             prev = ledger_data[i - 1]
             block["prev_hash"] = (
-                prev.get("day_hash")
+                prev.get("block_hash") or prev.get("day_hash")
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
@@ -328,7 +332,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature")
+                if k not in (hash_key, "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
@@ -364,27 +368,32 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         ledger_data[0]["identity"]["identity_secret_enc_fallback"] = \
             identity_data["identity_secret_enc"]
 
+        # I-17: genesis uses block_hash (not day_hash).
+        # I-07: format_version excluded from seal data.
+        genesis_hash_key = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
         check_data = {
             k: v for k, v in ledger_data[0].items()
-            if k not in ("day_hash", "signature")
+            if k not in (genesis_hash_key, "signature", "format_version")
         }
-        ledger_data[0]["day_hash"] = self.crypto.seal(
+        ledger_data[0][genesis_hash_key] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
         ledger_data[0]["signature"] = self.crypto.sign(
-            ledger_data[0]["day_hash"], self.identity_secret
+            ledger_data[0][genesis_hash_key], self.identity_secret
         )
 
         for i in range(1, len(ledger_data)):
             block = ledger_data[i]
             prev = ledger_data[i - 1]
             block["prev_hash"] = (
-                prev.get("day_hash")
+                prev.get("block_hash") or prev.get("day_hash")
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
             hash_key = (
-                "day_hash"
+                "block_hash"
+                if block.get("type") == "genesis" and "block_hash" in block
+                else "day_hash"
                 if block.get("type", "day") == "day"
                 else "month_hash"
                 if block.get("type") == "month_summary"
@@ -392,7 +401,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature")
+                if k not in (hash_key, "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)

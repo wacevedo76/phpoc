@@ -13,6 +13,8 @@ import NewTask from './components/screens/NewTask.jsx';
 import UserProfile from './components/screens/UserProfile.jsx';
 import Configuration from './components/screens/Configuration.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
+import ReauthOverlay from './components/overlays/ReauthOverlay.jsx';
+import { performReauth } from './sync/reauth.js';
 
 import './App.css';
 
@@ -114,6 +116,12 @@ function AppInner() {
     storageStatus,
     ttlWarning,
     dismissTtlWarning,
+    reauthState,
+    triggerReauth,
+    dismissReauth,
+    restartCookieMonitor,
+    genesisMismatch,
+    setGenesisMismatch,
   } = useApp();
 
   const [currentScreen, setCurrentScreen] = useState('dashboard');
@@ -288,6 +296,45 @@ function AppInner() {
             Dismiss
           </button>
         </div>
+      )}
+
+      {/* Re-auth overlay: shown when cookie TTL expires or sync returns REAUTH_NEEDED */}
+      {reauthState.active && (
+        <ReauthOverlay
+          onAuthenticated={async (passphrase) => {
+            // performReauth derives MK, calls _reconcileAndClaim to pull/merge/push,
+            // and creates a fresh device cookie with updated TTL.
+            const result = await performReauth(
+              passphrase,
+              services.storage,
+              services.crypto,
+              services.sync,
+            );
+
+            // Check for genesis mismatch (re-auth succeeded but remote
+            // ledger has a different genesis block). Surface the
+            // "Clear Remote & Overwrite" flow via context state.
+            if (result.genesisMismatch) {
+              setGenesisMismatch(true);
+            }
+
+            // On success: dismiss overlay, restart cookie monitor
+            dismissReauth();
+            // Cookie monitor was disposed in handleTtlExpiry.
+            // Increment version to force recreation with fresh cookie.
+            restartCookieMonitor();
+          }}
+          onCancel={() => {
+            // User dismissed re-auth — if TTL expired, they go to landing
+            if (reauthState.reason === 'ttl_expired') {
+              // Services were preserved, but MK is cleared.
+              // If user cancels, they need to re-login fully.
+              logout();
+            } else {
+              dismissReauth();
+            }
+          }}
+        />
       )}
 
       {/* Recovery seed overlay: one-time display after new ledger creation */}

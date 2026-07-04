@@ -1187,19 +1187,27 @@ class TestFastPath:
         assert result == SyncCheckResult.READY
         # Should not return REAUTH_NEEDED
 
-    def test_fast_path_no_blob_pull(self, svc_with_spy):
-        """Fast path: does NOT pull the full staging blob."""
+    def test_fast_path_pulls_and_merges_blob(self, svc_with_spy):
+        """Fast path: pulls remote blob, merges with local, pushes reconciled result.
+
+        Cross-platform scenario: web client may have updated staging while
+        CLI was idle. Even on fast path (matching cookie specifiers), we
+        must pull the remote blob to avoid stale local staging.
+        """
         svc, spy, cookie_dir, store = svc_with_spy
 
-        specifier = "no-blob-pull"
+        specifier = "pull-merge-blob"
         now = int(time.time() * 1000)
         make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=now - 120_000)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
+        # Add a local entry — remote has different entries (simulating web wrote)
+        svc.capture("LocalTask", 1000, stop_epoch=2000)
+
         svc.check_and_sync()
 
-        # Only pull_cookie should have been called, not pull() for the blob
-        assert spy.pull_blob_calls == 0, "Fast path must not pull the full staging blob"
+        # Fast path now pulls the blob to merge cross-platform changes
+        assert spy.pull_blob_calls >= 1, "Fast path must pull remote blob to merge cross-platform changes"
         assert spy.pull_cookie_calls == 1, "Fast path must pull the remote cookie once"
 
     def test_fast_path_blob_push(self, svc_with_spy):

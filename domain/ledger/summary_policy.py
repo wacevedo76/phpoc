@@ -5,6 +5,8 @@ a pluggable policy hierarchy. The default YearMonthSummaryPolicy matches
 the original behavior exactly.
 """
 
+from domain.ledger.helpers import get_block_hash
+
 import json
 import time
 from abc import ABC, abstractmethod
@@ -88,15 +90,6 @@ class SummaryPolicy(ABC):
         return time.strptime(date_str, "%Y-%m-%d")
 
     @staticmethod
-    def _get_prev_hash(block: dict) -> str:
-        """Get the canonical hash from any block type."""
-        return (
-            block.get("day_hash")
-            or block.get("month_hash")
-            or block.get("year_hash")
-        )
-
-    @staticmethod
     def _format_month(year: int, month: int) -> str:
         """Format a (year, month) pair as 'YYYY-MM'."""
         return f"{year}-{month:02d}"
@@ -116,7 +109,7 @@ class YearMonthSummaryPolicy(SummaryPolicy):
         summaries: List[Dict[str, Any]] = []
         curr_date = self._parse_date(curr_date_str)
 
-        prev_hash = self._get_prev_hash(prev_block)
+        prev_hash = get_block_hash(prev_block)
 
         # Resolve the effective previous year and month.
         # For a month_summary block, the 'month' field carries the actual
@@ -207,7 +200,7 @@ class YearOnlySummaryPolicy(SummaryPolicy):
             curr_date.tm_year > prev_date.tm_year
             and prev_block.get("type") != "year_summary"
         ):
-            prev_hash = self._get_prev_hash(prev_block)
+            prev_hash = get_block_hash(prev_block)
             year_summary = self._make_year_summary(
                 prev_date.tm_year, prev_hash, curr_date_str
             )

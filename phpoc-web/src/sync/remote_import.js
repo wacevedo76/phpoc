@@ -5,12 +5,19 @@
  * cloud storage (Cloudflare R2 via Worker, or any HTTP server with
  * prefix-listing support).
  *
+ * Also supports pulling a raw chain directly from ledger/blocks/
+ * (the format written by `ph sync`) for multi-device onboarding.
+ *
  * Designed with an abstract interface so future storage providers
  * (S3 direct, Google Drive, etc.) can implement the same contract:
  *
  *   listBackups()          → Promise<string[]>  — sorted .json filenames
  *   fetchBackup(filename)  → Promise<Uint8Array|null> — file bytes or null
  *   validateConnection()   → Promise<{ok: bool, error?: string}>
+ *
+ * Static utilities (for chain-based import):
+ *   checkForRemoteChain(transport)          → Promise<number> — block count or 0
+ *   fetchChain(transport, crypto, masterKey) → Promise<object[]> — assembled chain
  *
  * Usage:
  *   import { HttpTransport } from './transport.js';
@@ -22,6 +29,9 @@
  *
  * Architecture: SESSION_HANDOFF.md §Phase 5
  */
+
+import { bytesToBase64 } from './base64.js';
+import { REMOTE_LEDGER_BLOCKS_PREFIX } from './keys.js';
 
 const _textDecoder = new TextDecoder();
 
@@ -128,6 +138,147 @@ export class WorkerImportSource {
     // Delegate to import validation
     return WorkerImportSource._validateImportData(parsed, this._crypto, masterKey);
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  Static: Remote chain import (ledger/blocks/ format)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Check if a remote ledger chain exists on the Worker.
+   *
+   * Lists the ledger/blocks/ prefix. If the transport does not
+   * support listFiles, tries to pull ledger:blocks as fallback.
+   *
+   * @param {object} transport - Transport with pull(path) and listFiles(prefix).
+   * @returns {Promise<number>} Block count, or 0 if none found.
+   */
+  static async checkForRemoteChain(transport) {
+    try {
+      const files = await transport.listFiles(REMOTE_LEDGER_BLOCKS_PREFIX);
+      if (files && files.length > 0) return files.length;
+    } catch {
+      // listFiles not supported — try leder:blocks fallback
+    }
+
+    // Fallback: try single blob format
+    try {
+      const raw = await transport.pull('ledger:blocks');
+      if (raw !== null && raw !== undefined) {
+        const text = _textDecoder.decode(raw);
+        try {
+          const parsed = JSON.parse(text);
+          return Array.isArray(parsed) ? parsed.length : 0;
+        } catch {
+          return 0;
+        }
+      }
+    } catch {
+      return 0;
+    }
+
+    return 0;
+  }
+
+  /**
+   * Pull the full remote ledger chain from ledger/blocks/.
+   *
+   * Tries canonical per-file format first (ledger/blocks/000000.json, …),
+   * falls back to legacy single-file format (ledger:blocks).
+   *
+   * Each block file is deobfuscated with the master key.
+   *
+   * @param {object} transport - Transport with pull(path) and listFiles(prefix).
+   * @param {object} crypto - CryptoService with deobfuscateBlob().
+   * @param {string} masterKey - Hex master key for deobfuscation.
+   * @returns {Promise<object[]>} Assembled chain array.
+   * @throws {Error} If no blocks found or deobfuscation fails.
+   */
+  static async fetchChain(transport, crypto, masterKey) {
+    // ── Try per-file format ──────────────────────────────────
+    let files;
+    try {
+      files = await transport.listFiles(REMOTE_LEDGER_BLOCKS_PREFIX);
+    } catch {
+      files = null;
+    }
+
+    if (files && files.length > 0) {
+      const sorted = [...files].sort();
+      const chain = [];
+      for (const filename of sorted) {
+        const path = REMOTE_LEDGER_BLOCKS_PREFIX + filename;
+        const raw = await transport.pull(path);
+        if (raw === null || raw === undefined) continue;
+
+        const b64 = bytesToBase64(raw);
+        const plaintext = crypto.deobfuscateBlob(b64, masterKey);
+        chain.push(JSON.parse(plaintext));
+      }
+      if (chain.length === 0) {
+        throw new Error('No deobfuscated blocks found — check your recovery seed.');
+      }
+      return chain;
+    }
+
+    // ── Fallback: single ledger:blocks blob ──────────────────
+    const raw = await transport.pull('ledger:blocks');
+    if (raw === null || raw === undefined) {
+      throw new Error('No ledger blocks found on remote server.');
+    }
+
+    const text = _textDecoder.decode(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('Remote ledger data is not valid JSON');
+    }
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('Remote ledger data is not a JSON array');
+    }
+
+    return parsed;
+  }
+
+  /**
+   * Fetch only the genesis block from a remote chain.
+   *
+   * Used to determine auth mode before the full import.
+   *
+   * @param {object} transport - Transport instance.
+   * @param {object} crypto - CryptoService with deobfuscateBlob().
+   * @param {string} masterKey - Hex master key for deobfuscation.
+   * @returns {Promise<object|null>} Genesis block, or null if not found.
+   */
+  static async fetchGenesis(transport, crypto, masterKey) {
+    try {
+      // Try per-file genesis block first
+      const raw = await transport.pull(REMOTE_LEDGER_BLOCKS_PREFIX + '000000.json');
+      if (raw !== null && raw !== undefined) {
+        const b64 = bytesToBase64(raw);
+        const plaintext = crypto.deobfuscateBlob(b64, masterKey);
+        const block = JSON.parse(plaintext);
+        if (block.type === 'genesis') return block;
+      }
+    } catch {
+      // Not found or deobfuscation failed — try full chain
+    }
+
+    // Fallback: pull full chain and extract genesis
+    try {
+      const chain = await WorkerImportSource.fetchChain(transport, crypto, masterKey);
+      if (chain.length > 0 && chain[0].type === 'genesis') return chain[0];
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  Import validation
+  // ═══════════════════════════════════════════════════════════════
 
   /**
    * Validate parsed import data (v1, v2, or raw chain).

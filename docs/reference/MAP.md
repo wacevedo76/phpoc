@@ -16,6 +16,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/wal.py` | COLD | Write-ahead log, background push |
 | `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import |
 | `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
+| `cli/migrate.py` | NEW | `migrate_chain()` — canonical format migration (I-07/I-17) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | HOT | `SyncOrchestrator` — sync lifecycle coordinator + same-genesis merge via `LedgerMerge.merge()` |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
@@ -53,6 +54,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/remote_import_test.mjs` | HOT | 57 assertions — 6 groups (connection, list, fetch, validate happy/error, edge cases) |
 | `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | 5 onboarding paths including "From Cloud" import sub-option (2026-06-20) |
 | `phpoc-web/src/crypto/index.js` | HOT | `CryptoService` — singleton WASM wrapper (20 exports), master key cache, ready guards. Imports from `./wasm/` (bundled by Vite, not external). |
+| `phpoc-web/src/services/export_auth.js` | 🟢 GREEN | **NEW** — `exportWithAuth()` — always-fresh passphrase auth + genesis seal verification via `_verifyGenesisSeal()`. 40 tests pass. E2E-06 Phase 4 complete. (2026-07-04) |
+| `phpoc-web/test/export_passphrase_validation_test.mjs` | 🟢 GREEN | **NEW** — 40 assertions (A-E groups): cached MK bypass, seal verification, cache safety, error messaging, integration. (2026-07-04) |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
 | `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Reauth overlay removed (2026-06-28). |
@@ -65,13 +68,15 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/cross_client_web_test.mjs` | 🟢 GREEN | 78 tests: auth gate (5), reconcile merge (15), full round-trip (15), auth timing (6), pause/unpause lifecycle across devices (37). Updated for Bug 3a/3b format changes (2026-07-01) |
 | `phpoc-web/test/sync_indicator_test.mjs` | 🟢 GREEN | 32-test SyncIndicator unit test — status config, 6 status mappings, compact mode, fallback |
 | `phpoc-web/test/display_status_test.mjs` | 🟢 GREEN | 20-test `computeDisplayStatus()` unit test — SYNCING priority, NOT_SYNCED, READY passthrough, edge cases |
-| `phpoc-web/test/reauth_ttl_test.mjs` | 🟢 GREEN | 50-test (was 35) suite for `checkCookieTtl()` + `createCookieMonitor()` — all 50 pass (GREEN phase complete) |
-| `phpoc-web/test/reauth_integration_test.mjs` | 🟢 GREEN | 40-test suite for full re-auth flow integration — 39 pass / 1 test-only MK mismatch (mock sha256≠PBKDF2) |
+| `phpoc-web/test/reauth_ttl_test.mjs` | 🟢 GREEN | 50-test suite for `checkCookieTtl()` + `createCookieMonitor()` — all 50 pass (GREEN phase complete) |
+| `phpoc-web/test/reauth_integration_test.mjs` | 🟢 GREEN | 40-test suite for full re-auth flow integration |
+| `phpoc-web/test/no_fallback_cookie_test.mjs` | 🟢 GREEN | **NEW** — 29 tests for Stage 1.3: no-cookie→true, monitor grace, fallback removal (Jul 4) |
+| `phpoc-web/test/reauth_genesis_mismatch_test.mjs` | 🟢 GREEN | **NEW** — 47 tests for Stage 1.4-1.5: `_reconcileAndClaim` genesis gate, `performReauth` mismatch propagation, error-path coverage (Jul 4) |
 | `phpoc-web/test/ledger_import_chain_test.mjs` | 🟢 GREEN | **NEW** — 31 tests for raw chain import path (genesis detection, block seals, prev_hash linkage, entry hash validation, mixed block types) |
 | `phpoc-web/test/ledger_import_v2_test.mjs` | 🟢 GREEN | **NEW** — 42 tests for v2 format import path (genesis hash extraction, ledger+staging preservation, empty edge cases) |
 | `phpoc-web/test/import_orchestration_test.mjs` | 🟢 GREEN | **NEW** — 51 tests for two-phase validate→confirm orchestration (in-memory storage, genesis gating, staging merge dedup, identity persistence) |
 | `phpoc-web/test/ledger_roundtrip_test.mjs` | 🟢 GREEN | **NEW** — 46 tests for full export→import fidelity (v1, v2, active/paused entries, deterministic seal, wrong key rejection) |
-| `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback (pre-expiry), wired into DevModeContext (2026-06-28) |
+| `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback. Stage 1.3: no cookie → returns `true` (graceful skip) instead of `false` (Jul 4) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
 | `phpoc-web/src/sync/base64.js` | HOT | **NEW** — shared `base64ToBytes`/`bytesToBase64` utilities, used by sync.js, remote_sync.js, genesis_gate.js (2026-06-30) |
 | `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (10 keys: remote staging/cookie/ledger + hash index, local cookie/blocks/index + hash_index), single source of truth (2026-06-30, updated 2026-07-02) |
@@ -95,10 +100,15 @@ Key test files:
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
+- `tests/test_migration.py` — 🔴 27 tests for canonical ledger format migration (Groups A–F), Phase 2 RED (12P/6F/9S, 2026-07-03)
 - `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
+- `testdata/canonical_test_vectors.json` — 🔴 Shared seal test vectors for cross-platform (PY + JS) canonical format tests (2026-07-03)
 - `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
 - `tests/test_transport_registry.py` — 50 tests (all GREEN), TransportProvider + TransportRegistry unit tests
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
+- `tests/test_cross_platform_integration.py` — 🔜 Cross-platform live integration tests (CLI ↔ Worker), blob/cookie/ledger round-trips, full 8-step workflow
+- `tests/test_cross_platform_crypto.py` — 🔜 Python ↔ WASM obfuscation compatibility verification
+- `worker/test/index.test.ts` — 🔜 Worker HTTP endpoint tests (auth, CORS, GET/PUT/DELETE, list, error handling)
 
 ### Active docs
 

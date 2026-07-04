@@ -9,6 +9,7 @@ All notable changes to the PH Ledger (phpoc) project.
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
 ### Fixed
+- **E2E-06: Export Passphrase Bypass** — Export no longer reuses cached master key to skip passphrase validation. New `export_auth.js` module with `exportWithAuth()` always calls `crypto.authenticate()`. Phase 4 adds genesis seal verification: wrong passphrase now throws "Incorrect passphrase" before any export file is generated. 40 assertions pass, 0 regressions across 8 test suites. (2026-07-04)
 - **E2E Cross-Client Sync Fix (Green phase)** — 4 bugs blocking CLI↔Web roundtrip via R2 all fixed:
   - **Bug 1:** Genesis mismatch detection made discriminative — 6 typed error classes (GenesisMismatchError, NetworkGenesisError, AuthGenesisError, InvalidChainError, InvalidGenesisError, InvalidFormatError) with throw-based API. Tampered-seal detection distinguishes corrupted-chain from different-genesis.
   - **Bug 2:** Month summary blocks no longer dropped during push — `pushLedgerBlocks()` uses position counter starting above max `day_index` to avoid filename collisions.
