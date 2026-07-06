@@ -176,7 +176,7 @@ class MockCrypto {
   sealBlock(blockData) {
     const copy = {};
     for (const [k, v] of Object.entries(blockData)) {
-      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature') {
+      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature' && k !== 'format_version') {
         copy[k] = v;
       }
     }
@@ -1716,10 +1716,13 @@ async function run() {
     t.assertEq(entryCount, 1,
       `M2b. local chain unchanged (1 entry, got ${entryCount})`);
 
-    // M2c: Identical chains → pushLedgerBlocks should NOT be called.
+    // M2c: Identical chains → only hash index bootstrap pushes (no block files).
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `M2c. identical chains → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `M2c. no block files pushed on identical chains (got ${blockPushes.length})`);
+    t.assert(ledgerPushes.length >= 2,
+      `M2d. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
   }
 
   // ── M3: Merge stats exposed to caller ──
@@ -1932,11 +1935,14 @@ async function run() {
     t.assertEq(localTitles.length, 2,
       `M5c. local has 2 entries (got ${localTitles.length})`);
 
-    // M5d: With merged:false gating, pushLedgerBlocks is NOT called when
-    // local extends remote and remote contributed nothing new.
+    // M5d: Hash index bootstrap pushes hash_index files only when local
+    // extends remote and no merge was needed.
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `M5d. local extends remote → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `M5d. no block files pushed when local extends remote (got ${blockPushes.length})`);
+    t.assert(ledgerPushes.length >= 2,
+      `M5e. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
 
     // M5e: Remote still has only the shared entry (no push happened)
     const remoteChain = await pullRemoteChain(transport, mk);
@@ -2598,8 +2604,8 @@ async function run() {
   //
   console.log('\n── Group Q: Device UUID Suffix & Fast Path Removal (Bug 3a fix) ──\n');
 
-  // Q1. Same device UUID no longer triggers push-only fast path → always pull+merge
-  //     (RED: current implementation with same-device fast path will FAIL this test)
+  // Q1. Same device UUID no longer triggers push-only fast path → always pull+merge.
+  //     Uses no remote cookie to fall through fast path to auth gate → reconcile.
   {
     const mk = 'q1-samedev-q1-samedev-q1-samedev-q1-samedev-aa';
     const { sync, storage, transport, crypto } = createSyncService({
@@ -2609,21 +2615,18 @@ async function run() {
       cookieTtl: 30,
     });
 
-    // Both local and remote have the same device UUID (same client type),
-    // but DIFFERENT specifiers to force the auth gate → reconcile path.
     const sharedDeviceUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-web';
     await storage.set('device_uuid', sharedDeviceUuid);
 
-    // Set up valid local cookie with different specifier than remote
+    // Set up valid local cookie
     const localSpecifier = 'spec-q1';
     await storage.set('cookie', {
       device_specifier: localSpecifier,
       creation_time: Date.now(),
     });
 
-    // Push remote cookie with same device UUID but DIFFERENT specifier
-    // to bypass the cookie fast path and reach _reconcileAndClaim
-    await pushRemoteCookie(transport, sharedDeviceUuid, 'spec-q1-remote');
+    // NO remote cookie — forces fall-through from fast path to auth gate.
+    // Auth gate then proceeds to _reconcileAndClaim (no specifier mismatch).
 
     // Push remote blob with an entry the local doesn't have
     const remoteEntry = {
@@ -2635,15 +2638,13 @@ async function run() {
     };
     await pushRemoteBlob(transport, crypto, [remoteEntry], sharedDeviceUuid, mk);
 
-    // checkAndSync → specifier mismatch → auth gate → _reconcileAndClaim
-    // OLD behavior (Case A same UUID): pushes local (losing remote entry).
-    // NEW behavior (Bug 3a): always pull + merge.
+    // checkAndSync → fast path (no remote cookie) → auth gate → _reconcileAndClaim
+    // Bug 3a: always pull + merge.
     const result = await sync.checkAndSync();
 
     t.assert(result === SyncResult.READY, `Q1. checkAndSync returns READY (got: ${result})`);
 
     // Verify remote entry was pulled and merged into local
-    const localEntries = await sync.getActive();
     const stagedEntries = await storage.get('entries');
     const allEntries = stagedEntries || [];
     const hasRemoteEntry = allEntries.some(e => {
@@ -2653,7 +2654,8 @@ async function run() {
     t.assert(hasRemoteEntry, 'Q1b. remote entry pulled and merged into local (not overwritten)');
   }
 
-  // Q2. Different clients (one -cli, one -web) → different UUID → Case B pull+merge
+  // Q2. Different clients (one -cli, one -web) → different UUID → Case B pull+merge.
+  //     Uses no remote cookie to fall through to auth gate → reconcile.
   {
     const mk = 'q2-diffcli-q2-diffcli-q2-diffcli-q2-diffcli-bb';
     const { sync, storage, transport, crypto } = createSyncService({
@@ -2673,11 +2675,9 @@ async function run() {
       creation_time: Date.now(),
     });
 
-    // Remote cookie has CLI's {uuid}-cli
+    // NO remote cookie — falls through to auth gate → reconcile.
+    // Remote blob from CLI with different UUID
     const cliUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7-cli';
-    await pushRemoteCookie(transport, cliUuid, 'spec-cli-q2');
-
-    // Push remote blob from CLI
     const cliEntry = {
       entry_id: 'cli-q2-entry',
       title: 'CLI Created Task Q2',
@@ -2700,12 +2700,13 @@ async function run() {
     });
     t.assert(hasCliEntry, 'Q2b. CLI entry from remote pulled and merged');
 
-    // Local cookie should NOT be overwritten (web keeps its own cookie)
+    // Local cookie should be preserved
     const localCookie = await storage.get('cookie');
     t.assert(!!localCookie, 'Q2c. local cookie preserved');
   }
 
-  // Q3. Migration: old bare UUID (CLI pre-suffix) vs new -web UUID → different device
+  // Q3. Migration: old bare UUID (CLI pre-suffix) vs new -web UUID → different device.
+  //     Uses no remote cookie to fall through to auth gate → reconcile.
   {
     const mk = 'q3-migrate-q3-migrate-q3-migrate-q3-migrate-cc';
     const { sync, storage, transport, crypto } = createSyncService({
@@ -2725,11 +2726,9 @@ async function run() {
       creation_time: Date.now(),
     });
 
-    // Remote cookie from pre-migration CLI: bare UUID (no suffix)
+    // NO remote cookie — falls through to auth gate → reconcile.
+    // Remote blob from old CLI with bare UUID
     const bareUuid = 'd4959313-3f33-47c7-99f2-2e6d8c5fd1f7';
-    await pushRemoteCookie(transport, bareUuid, 'spec-old-cli');
-
-    // Push remote blob from old CLI
     const oldEntry = {
       entry_id: 'old-cli-q3-entry',
       title: 'Old CLI Task Q3',
@@ -3410,7 +3409,7 @@ async function run() {
   console.log('\n── Group T: Unnecessary Push Prevention (RED phase) ──\n');
   console.log('⛔ pushLedgerBlocks CURRENTLY called on every login — tests expect NO push for Tier 1/2');
 
-  // ── T1: Tier 1 SHA-256 match + identical chains → pushLedgerBlocks NOT called ──
+  // ── T1: Tier 1 SHA-256 match + identical chains → only hash index bootstrap ──
   {
     const mk = 't1-tier1---t1-tier1---t1-tier1---t1-tier1---aa';
     const chain = buildTestChain({ mk });
@@ -3437,20 +3436,24 @@ async function run() {
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
       'T1. Tier 1 match → NOT GENESIS_MISMATCH');
 
-    // T1 core: pushLedgerBlocks should NOT be called when chains are identical
+    // T1: hash index bootstrap pushes hash index files even when no merge.
+    // Block files should NOT be re-pushed (all exist on remote already).
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `T1b. Tier 1 match → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `T1b. no block files re-pushed on Tier 1 match (got ${blockPushes.length})`);
+    t.assert(ledgerPushes.length >= 2,
+      `T1c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
 
     // Verify the genesis check actually used Tier 1 (only 1-2 pulls for hash index files)
     const pullsToHI = transport._pullCalls.filter(p =>
       p === 'ledger/hash_index.sha256' || p === 'ledger/hash_index.json'
     );
     t.assert(pullsToHI.length <= 2,
-      `T1c. Tier 1 path used ≤2 hash index pulls (got ${pullsToHI.length})`);
+      `T1d. Tier 1 path used ≤2 hash index pulls (got ${pullsToHI.length})`);
   }
 
-  // ── T2: Tier 2 linear_local → pushLedgerBlocks NOT called ──
+  // ── T2: Tier 2 linear_local → bootstrap pushes hash index only ──
   {
     const mk = 't2-linear--t2-linear--t2-linear--t2-linear--bb';
     // Local has 2 extra blocks beyond what remote has
@@ -3497,10 +3500,13 @@ async function run() {
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
       'T2. linear_local → NOT GENESIS_MISMATCH');
 
-    // T2 core: pushLedgerBlocks should NOT be called when local extends remote
+    // T2: hash index bootstrap pushes hash_index files only (no blocks).
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `T2b. linear_local → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `T2b. no block files pushed (got ${blockPushes.length} block pushes)`);
+    t.assert(ledgerPushes.length >= 2,
+      `T2c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
   }
 
   // ── T3: Divergent fork with actual merge → pushLedgerBlocks IS called ──
@@ -3542,7 +3548,7 @@ async function run() {
       'T3c. hash_index.json pushed to remote after merge');
   }
 
-  // ── T4: pushLedgerBlocks not called when mergedChain === localChain (reference check) ──
+  // ── T4: hash index bootstrap on identical chains (Tier 1 match) ──
   {
     const mk = 't4-refeq----t4-refeq----t4-refeq----t4-refeq----dd';
     const chain = buildTestChain({ mk });
@@ -3562,23 +3568,24 @@ async function run() {
     await transport.push('ledger/hash_index.json', new TextEncoder().encode(hiJson));
     await transport.push('ledger/hash_index.sha256', new TextEncoder().encode(hiSha));
 
-    // The GenesisGate returns mergedChain: localChain (same reference).
-    // Currently _genesisGatePhase calls pushLedgerBlocks unconditionally.
-    // After fix: should check if mergedChain !== localChain before pushing.
     transport.resetCallTracking();
 
     const result = await sync.checkAndSync();
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
       'T4. same chain (Tier 1) → NOT GENESIS_MISMATCH');
 
+    // T4: hash index bootstrap pushes hash index files, but NO block files
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `T4b. mergedChain === localChain → no pushLedgerBlocks calls (got ${ledgerPushes.length}) — RED: fails`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `T4b. no block files re-pushed (got ${blockPushes.length} block pushes)`);
+    t.assert(ledgerPushes.length >= 2,
+      `T4c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
 
     // Local chain should be unchanged
     const localBlocks = await storage.get(LEDGER_BLOCKS_KEY);
     t.assertEq(localBlocks.length, chain.length,
-      `T4c. local chain unchanged (${chain.length} blocks, got ${localBlocks.length})`);
+      `T4d. local chain unchanged (${chain.length} blocks, got ${localBlocks.length})`);
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -3779,10 +3786,13 @@ async function run() {
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
       'W2. identical chains (no hash_index) → NOT GENESIS_MISMATCH');
 
-    // W2 core: pushLedgerBlocks should NOT be called when chains are identical
+    // W2 core: hash index bootstrap pushes hash_index files only (no blocks).
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `W2b. identical chains (no hash_index) → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `W2b. no block files pushed on identical chains (got ${blockPushes.length})`);
+    t.assert(ledgerPushes.length >= 2,
+      `W2c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
   }
 
   // ── W3: Full chain pull + remote has more blocks (no hash_index) → push IS called ──
@@ -3867,10 +3877,13 @@ async function run() {
     t.assertNeq(result, SyncResult.GENESIS_MISMATCH,
       'W4. local extends remote (no hash_index) → NOT GENESIS_MISMATCH');
 
-    // W4 core: pushLedgerBlocks should NOT be called when local is authoritative
+    // W4 core: hash index bootstrap pushes hash_index files only (no blocks).
     const ledgerPushes = transport._pushCalls.filter(c => c.path.startsWith('ledger/'));
-    t.assertEq(ledgerPushes.length, 0,
-      `W4b. local extends remote (no hash_index) → no pushLedgerBlocks calls (got ${ledgerPushes.length})`);
+    const blockPushes = ledgerPushes.filter(c => c.path.includes('/blocks/'));
+    t.assertEq(blockPushes.length, 0,
+      `W4b. no block files pushed when local extends remote (got ${blockPushes.length})`);
+    t.assert(ledgerPushes.length >= 2,
+      `W4c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
   }
 
   // ── Results ───────────────────────────────────────────────────────

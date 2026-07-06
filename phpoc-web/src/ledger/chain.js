@@ -296,6 +296,18 @@ export class LedgerChain {
    */
   async append(block) {
     const blocks = await this._getBlocks();
+    // Verify prev_hash linkage to the last existing block
+    if (blocks.length > 0) {
+      const lastBlock = blocks[blocks.length - 1];
+      const lastHash = getBlockHash(lastBlock);
+      const newPrevHash = block.prev_hash;
+      if (newPrevHash !== lastHash) {
+        throw new Error(
+          `Chain linkage broken: new block prev_hash ${newPrevHash.slice(0, 12)}…` +
+          ` does not match last block hash ${lastHash.slice(0, 12)}…`
+        );
+      }
+    }
     blocks.push(block);
     await this._saveBlocks(blocks);
   }

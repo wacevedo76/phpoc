@@ -26,7 +26,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `security/auth.py` | COLD | Passphrase + Recovery authenticators |
 | `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix, migration for bare UUIDs. |
 | `domain/ledger/chain.py` | HOT | Chain building, sealing, verification |
-| `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()` |
+| `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
 | `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
 | `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
 | `domain/staging/remote_sync.py` | COLD | Blob obfuscation, pull/push, device cookie |
@@ -46,6 +46,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/device_uuid_test.mjs` | 🟢 GREEN | 36-test suite — Groups 1-8 (original) + Groups 9-12 client suffix tests (Bug 3a fix) |
 | `phpoc-web/test/settings_genesis_test.mjs` | 🟢 GREEN | 13-test Settings UI genesis gate integration (updated for Bug 1 throw API) |
 | `phpoc-web/test/sync_service_test.mjs` | 🟢 GREEN | 246 tests — Groups A-W all GREEN. Phase B2: push gating (W1-W4), genesisCompatible caching (V1-V2), duplicate pullCookie prevention (U1-U2), unnecessary push prevention (T1-T4), M2/M5 updated expectations. (2026-07-02) |
+| `phpoc-web/test/unlock_performance_regression_test.mjs` | 🔴 RED | **NEW** — 34 tests (Groups A-D) for unlock performance regression fixes: hash index bootstrap gap (A1-A6), cookie catch-22 (B1-B6), specifier mismatch short-circuit (C1-C6), combined scenarios (D1-D3). Current: 15 pass / 19 fail (RED phase, fix not implemented). (2026-07-05) |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
 | `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
 | `phpoc-web/test/onboarding_import_component.test.mjs` | 🟢 GREEN | **NEW** — 21 Vitest+RTL component tests for OnboardingScreen import form state machine (file picker gating, destroy warnings, checkbox gates, error display, back navigation) |
@@ -58,8 +59,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/export_passphrase_validation_test.mjs` | 🟢 GREEN | **NEW** — 40 assertions (A-E groups): cached MK bypass, seal verification, cache safety, error messaging, integration. (2026-07-04) |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
-| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Reauth overlay removed (2026-06-28). |
+| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Chain integrity: `onboardFromRemote` verifies full prev_hash linkage (2026-07-05).
 | `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()` — Python-compatible JSON serialization (2026-06-20) |
+| `phpoc-web/src/ledger/chain.js` | HOT | `LedgerChain` — block storage, append/appendBlocks (prev_hash verification in `append()` added 2026-07-05) |
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
@@ -79,11 +81,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback. Stage 1.3: no cookie → returns `true` (graceful skip) instead of `false` (Jul 4) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
 | `phpoc-web/src/sync/base64.js` | HOT | **NEW** — shared `base64ToBytes`/`bytesToBase64` utilities, used by sync.js, remote_sync.js, genesis_gate.js (2026-06-30) |
-| `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (10 keys: remote staging/cookie/ledger + hash index, local cookie/blocks/index + hash_index), single source of truth (2026-06-30, updated 2026-07-02) |
+| `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (10 keys: remote staging/cookie/ledger + hash index, local cookie/blocks/index + hash_index), single source of truth (2026-06-30, updated 2026-07-02, 2026-07-05) |
 | `phpoc-web/src/sync/entry_dto.js` | 🟢 GREEN | DTO conversion: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON`. Bug 3b: handles `device_uuid_enc` field. (2026-07-01) |
 | `phpoc-web/src/sync/remote_sync.js` | 🟢 GREEN | `RemoteSync` — blob pull/push, cookie pull/push via transport. Bug 3b: pushBlob converts DTOs to raw spec format. Uses shared `base64.js` + `keys.js`. |
 | `phpoc-web/src/sync/cookie.js` | COLD | `DeviceCookie` — TTL fallback bug fixed (nullish coalescing), stale header updated, uses `COOKIE_KEY` constant. |
-| `phpoc-web/src/sync/sync.js` | 🟢 GREEN | Core sync orchestrator. Bug 1: _genesisGatePhase catches typed errors. Bug 2: pushLedgerBlocks position counter. Bug 3a: _fastPathPhase relaxed. Bug 3b: reconcile via writeEntries DTO→raw. Hash index: pushLedgerBlocks pushes hash_index artifacts, _genesisGatePhase caches locally. Phase B2: `merged` flag gating, `_genesisCompatible` caching, `_lastRemoteCookie` reuse. (2026-07-02) |
+| `phpoc-web/src/sync/sync.js` | 🔴 RED | Core sync orchestrator. Bug 1: _genesisGatePhase catches typed errors. Bug 2: pushLedgerBlocks position counter. Bug 3a: _fastPathPhase relaxed. Bug 3b: reconcile via writeEntries DTO→raw. Hash index: pushLedgerBlocks pushes hash_index artifacts, _genesisGatePhase caches locally. Phase B2: `merged` flag gating, `_genesisCompatible` caching, `_lastRemoteCookie` reuse. Chain integrity (Jul 5): enumerate-order push, genesis collision guard. (2026-07-05)
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |

@@ -8,6 +8,7 @@
 import { SyncResult } from './sync.js';
 
 const PBKDF2_ITERATIONS = 600000;
+const PASSPHRASE_HASH_KEY = 'phpoc_passphrase_hash';
 
 /**
  * Execute the re-authentication flow: derive MK → reconcile.
@@ -54,7 +55,39 @@ export async function performReauth(passphrase, storage, crypto, sync, iteration
     throw new Error('No recovery seed found. The ledger may be corrupted.');
   }
 
-  // 3. Derive master key
+  // 3. Verify passphrase — two-tier: fast hash, then PDK token.
+  //    WASM authenticate() ignores passphrase (seed = MK).
+  //    PDK depends on passphrase, so we encrypt a known token with it.
+  const PDK_TOKEN_KEY = 'phpoc_pdk_token';
+  try {
+    const storedHash = await storage.get(PASSPHRASE_HASH_KEY);
+    if (storedHash) {
+      const pdk = crypto.derivePdk(trimmed, iterations);
+      const computedHash = crypto.sha256(pdk + ':' + seed);
+      if (computedHash !== storedHash) {
+        throw new Error('Incorrect passphrase.');
+      }
+    } else {
+      // Fallback: PDK-encrypted verification token
+      const pdkToken = await storage.get(PDK_TOKEN_KEY);
+      if (pdkToken) {
+        const pdk = crypto.derivePdk(trimmed, iterations);
+        try {
+          const decrypted = crypto.decrypt(pdkToken, pdk);
+          if (decrypted !== 'phpoc_pdk_verify') {
+            throw new Error('Incorrect passphrase.');
+          }
+        } catch {
+          throw new Error('Incorrect passphrase.');
+        }
+      }
+      // No hash AND no token → first login after fix, can't verify
+    }
+  } catch (err) {
+    if (err.message === 'Incorrect passphrase.') throw err;
+  }
+
+  // 4. Derive master key
   let masterKey;
   try {
     masterKey = crypto.authenticate(trimmed, seed, iterations);
@@ -62,7 +95,7 @@ export async function performReauth(passphrase, storage, crypto, sync, iteration
     throw new Error(`Authentication failed: ${err.message}`);
   }
 
-  // 4. Set master key (clear any stale MK first)
+  // 5. Set master key (clear any stale MK first)
   try {
     if (typeof crypto.clearMasterKey === 'function') {
       crypto.clearMasterKey();
@@ -72,7 +105,7 @@ export async function performReauth(passphrase, storage, crypto, sync, iteration
     throw new Error(`Failed to initialize crypto session: ${err.message}`);
   }
 
-  // 5. Reconcile and claim staging ownership
+  // 7. Reconcile and claim staging ownership
   // This pulls remote blob, merges with local, pushes merged result,
   // and creates a fresh device cookie with updated TTL.
   // The genesis gate runs inside _reconcileAndClaim before any blob ops.
@@ -97,6 +130,15 @@ export async function performReauth(passphrase, storage, crypto, sync, iteration
   if (reconcileResult === SyncResult.GENESIS_MISMATCH) {
     return { success: true, genesisMismatch: true };
   }
+
+  // 7. Store/refresh passphrase verification tokens on success
+  try {
+    const pdk = crypto.derivePdk(trimmed, iterations);
+    const passphraseHash = crypto.sha256(pdk + ':' + seed);
+    await storage.set(PASSPHRASE_HASH_KEY, passphraseHash);
+    const pdkToken = crypto.encrypt('phpoc_pdk_verify', pdk);
+    await storage.set(PDK_TOKEN_KEY, pdkToken);
+  } catch { /* non-critical */ }
 
   return { success: true, genesisMismatch: false };
 }

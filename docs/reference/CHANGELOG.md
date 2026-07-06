@@ -9,6 +9,13 @@ All notable changes to the PH Ledger (phpoc) project.
 ## [0.6.2] — TBD (P3-Remote_Sync — remote ledger sync)
 
 ### Fixed
+- **Chain integrity enforcement (4 gaps closed)** — Web client now detects the same chain linkage breaks the CLI catches:
+  - **pushLedgerBlocks** enumerates in natural chain order (matching CLI), not by `day_index` — prevents summary block reordering.
+  - **onboardFromRemote** now verifies full prev_hash chain linkage, not just genesis seal.
+  - **chain.js append()** now checks prev_hash linkage before adding any block.
+  - **Genesis collision guard** — `pushLedgerBlocks` aborts when local genesis ≠ remote genesis at index 0 (prevents mixed-chain corruption on R2).
+  Root cause: user created new local ledger in phpoc-web while R2 held a CLI-created genesis. Push skipped genesis (fileIdx=0 existed) but pushed day blocks from a different chain, breaking linkage at block 1. Script at `scripts/fix_chain_genesis_link.py` for repair.
+  Files: `sync.js`, `chain.js`, `DevModeContext.jsx`, `remote_sync.py`. (2026-07-05)
 - **E2E-06: Export Passphrase Bypass** — Export no longer reuses cached master key to skip passphrase validation. New `export_auth.js` module with `exportWithAuth()` always calls `crypto.authenticate()`. Phase 4 adds genesis seal verification: wrong passphrase now throws "Incorrect passphrase" before any export file is generated. 40 assertions pass, 0 regressions across 8 test suites. (2026-07-04)
 - **E2E Cross-Client Sync Fix (Green phase)** — 4 bugs blocking CLI↔Web roundtrip via R2 all fixed:
   - **Bug 1:** Genesis mismatch detection made discriminative — 6 typed error classes (GenesisMismatchError, NetworkGenesisError, AuthGenesisError, InvalidChainError, InvalidGenesisError, InvalidFormatError) with throw-based API. Tampered-seal detection distinguishes corrupted-chain from different-genesis.

@@ -34,6 +34,7 @@ const AppContext = createContext(null);
 
 const PBKDF2_ITERATIONS = 600000;
 const STORED_SEED_KEY = 'phpoc_seed';
+const STORED_PASSPHRASE_HASH_KEY = 'phpoc_passphrase_hash';
 const USERNAME_KEY = 'phpoc_username';
 const EMAIL_KEY = 'phpoc_email';
 const COOKIE_KEY = 'cookie';
@@ -478,6 +479,41 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const crypto = await CryptoService.create();
     setCryptoStatus('wasm');
 
+    // ── Passphrase verification (Phase 6 P1 Step 1) ──
+    // The WASM authenticate() ignores the passphrase (derives MK
+    // directly from seed), so the master key is always correct.
+    // We verify the passphrase independently using PBKDF2-derived
+    // tokens. Two-tier: fast hash check, then PDK-encrypted token.
+    const storedHash = await storage.get(STORED_PASSPHRASE_HASH_KEY);
+    if (storedHash) {
+      const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      const computedHash = crypto.sha256(pdk + ':' + seed);
+      if (computedHash !== storedHash) {
+        throw new Error('Incorrect passphrase.');
+      }
+    } else {
+      // No stored hash — legacy ledger or first login after fix.
+      // Use PDK-encrypted verification token as fallback. The PDK
+      // depends on the passphrase, unlike the master key.
+      const PDK_TOKEN_KEY = 'phpoc_pdk_token';
+      const pdkToken = await storage.get(PDK_TOKEN_KEY);
+      if (pdkToken) {
+        // Verification token exists — verify passphrase via PDK
+        const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+        try {
+          const decrypted = crypto.decrypt(pdkToken, pdk);
+          if (decrypted !== 'phpoc_pdk_verify') {
+            throw new Error('Incorrect passphrase.');
+          }
+        } catch {
+          throw new Error('Incorrect passphrase.');
+        }
+      }
+      // No hash AND no PDK token → first-ever login after this fix.
+      // We cannot verify the passphrase (seed = MK, always valid).
+      // Accept the passphrase and bootstrap verification for next time.
+    }
+
     // Derive master key
     let masterKey;
     try {
@@ -486,25 +522,21 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error(`Authentication failed: ${err.message}`);
     }
 
-    // Verify by trying to decrypt/reach entries
-    try {
-      crypto.setMasterKey(masterKey);
-      const entries = await storage.get(ENTRIES_KEY);
-      // If entries exist and we can read them, authentication succeeded
-      // (we can't easily verify the key without encrypted data, but if
-      // authenticate() didn't throw, the PBKDF2 derivation was correct)
-    } catch {
-      throw new Error('Could not verify ledger data.');
-    }
+    crypto.setMasterKey(masterKey);
 
     // Bootstrap all services
     await bootstrapServices({ crypto, masterKey, storage });
 
-    // Store/refresh passphrase validation hash (Phase 6 P1 Step 1)
+    // Store/refresh passphrase verification tokens (Phase 6 P1 Step 1)
     try {
       const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      // Fast hash check: sha256(PDK + seed)
       const passphraseHash = crypto.sha256(pdk + ':' + seed);
       await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+      // PDK-encrypted token: fallback verification that depends on the
+      // passphrase (unlike master key which = seed regardless).
+      const pdkToken = crypto.encrypt('phpoc_pdk_verify', pdk);
+      await storage.set('phpoc_pdk_token', pdkToken);
     } catch (_) { /* non-critical */ }
   }, []);
 
@@ -562,11 +594,14 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Store seed for future logins
     await storage.set(STORED_SEED_KEY, seed);
 
-    // Store passphrase validation hash (Phase 6 P1 Step 1)
+    // Store passphrase validation tokens (Phase 6 P1 Step 1)
     try {
       const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
       const passphraseHash = crypto.sha256(pdk + ':' + seed);
       await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+      // PDK-encrypted token for fallback verification
+      const pdkToken = crypto.encrypt('phpoc_pdk_verify', pdk);
+      await storage.set('phpoc_pdk_token', pdkToken);
     } catch (_) { /* non-critical */ }
 
     // Store identity info for genesis block and profile display
@@ -775,6 +810,15 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // Bootstrap all services
     await bootstrapServices({ crypto, masterKey, storage });
+
+    // Store passphrase verification tokens for future logins
+    try {
+      const pdk = crypto.derivePdk(pending.passphrase, PBKDF2_ITERATIONS);
+      const passphraseHash = crypto.sha256(pdk + ':' + seed);
+      await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+      const pdkToken = crypto.encrypt('phpoc_pdk_verify', pdk);
+      await storage.set('phpoc_pdk_token', pdkToken);
+    } catch (_) { /* non-critical */ }
   }, []);
 
   /**
@@ -883,23 +927,42 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Remote ledger does not have a valid genesis block.');
     }
 
-    // Verify genesis seal
+    // Verify genesis seal (I-17: genesis uses block_hash, pre-I-17 uses day_hash)
     try {
       const { jsonSort } = await import('../ledger/utils.js');
+      const hashKey = genesisBlock.block_hash ? 'block_hash' : 'day_hash';
       const checkData = {};
       for (const [k, v] of Object.entries(genesisBlock)) {
-        if (k !== 'day_hash' && k !== 'signature') {
+        if (k !== hashKey && k !== 'signature') {
           checkData[k] = v;
         }
       }
       const sealData = jsonSort(checkData);
-      const valid = crypto.verifySeal(sealData, genesisBlock.day_hash, masterKey);
+      const valid = crypto.verifySeal(sealData, genesisBlock[hashKey], masterKey);
       if (!valid) {
         throw new Error('Seal verification failed');
       }
     } catch (err) {
       setLoading(false);
       throw new Error('Wrong passphrase for this ledger.');
+    }
+
+    // Verify chain integrity (prev_hash linkage across all blocks)
+    try {
+      for (let i = 1; i < assembledChain.length; i++) {
+        const prev = assembledChain[i - 1];
+        const curr = assembledChain[i];
+        const prevHash = prev.block_hash || prev.day_hash || prev.month_hash || prev.year_hash || '';
+        if (curr.prev_hash !== prevHash) {
+          throw new Error(
+            `Chain linkage broken at block ${i}: ` +
+            `prev_hash ${curr.prev_hash?.slice(0, 8)}… ≠ expected ${prevHash.slice(0, 8)}…`
+          );
+        }
+      }
+    } catch (err) {
+      setLoading(false);
+      throw err;
     }
 
     // ── Write everything to storage ────────────────────────────
@@ -930,6 +993,15 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
 
     // ── Bootstrap services ─────────────────────────────────────
     await bootstrapServices({ crypto, masterKey, storage });
+
+    // Store passphrase verification tokens for future logins
+    try {
+      const pdk = crypto.derivePdk(passphrase, PBKDF2_ITERATIONS);
+      const passphraseHash = crypto.sha256(pdk + ':' + userSeed);
+      await storage.set(STORED_PASSPHRASE_HASH_KEY, passphraseHash);
+      const pdkToken = crypto.encrypt('phpoc_pdk_verify', pdk);
+      await storage.set('phpoc_pdk_token', pdkToken);
+    } catch (_) { /* non-critical */ }
   }, []);
 
   /**

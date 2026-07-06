@@ -324,8 +324,12 @@ export class SyncService {
     const entries = await this._local.readEntries();
     const stagingCompleted = entries.filter((e) => !e.is_active && !e.committed);
 
-    // Also read committed entries from the ledger chain
+    // Read committed entries from the ledger chain, deduplicating by entry_id
+    // (primary) with title+date fallback for entries committed on different
+    // devices with different UUIDs but representing the same activity.
     const committedDTOs = [];
+    const committedIds = new Set();
+    const committedTitleDateKeys = new Set();
     try {
       const blocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
       for (let bi = 0; bi < blocks.length; bi++) {
@@ -334,19 +338,32 @@ export class SyncService {
         for (const raw of block.entries) {
           const dto = rawCommittedEntryToDTO(raw, this._crypto);
           if (dto) {
+            const eid = dto.entry_id;
+            // Primary dedup: skip if same entry_id already seen
+            if (eid && committedIds.has(eid)) continue;
+            // Fallback dedup: skip if same title+date already seen
+            // (catches cross-device duplicates with different entry UUIDs)
+            const tdKey = `${dto.title || ''}::${dto.date || ''}`;
+            if (committedTitleDateKeys.has(tdKey)) continue;
             dto.committed = true;
             dto.block_index = bi;
             committedDTOs.push(dto);
+            if (eid) committedIds.add(eid);
+            committedTitleDateKeys.add(tdKey);
           }
         }
       }
     } catch (err) {
-      // Decryption may fail if master key isn't cached yet;
-      // staging entries will still show.
       console.warn('getCompleted: could not read committed entries:', err.message);
     }
 
-    return [...committedDTOs, ...stagingCompleted];
+    // Deduplicate: exclude staging entries whose entry_id already appears
+    // in the committed ledger chain (same entry committed + still in staging).
+    const dedupedStaging = stagingCompleted.filter(
+      (e) => !e.entry_id || !committedIds.has(e.entry_id)
+    );
+
+    return [...committedDTOs, ...dedupedStaging];
   }
 
   /**
@@ -466,7 +483,7 @@ export class SyncService {
     try {
       result = await this._genesisCheckPromise;
     } catch (err) {
-      this._genesisCheckPromise = null;
+        this._genesisCheckPromise = null;
       if (err instanceof GenesisMismatchError) {
         this._genesisCompatible = false; // Cache negative result
         return SyncResult.GENESIS_MISMATCH;
@@ -509,6 +526,26 @@ export class SyncService {
         await this.pushLedgerBlocks({ forceAll: true });
       } catch (err) {
         console.warn('Failed to persist merged ledger chain:', err.message);
+      }
+    } else {
+      // No merge needed (genesis compatible, chains identical or local
+      // extends remote), but push hash index to remote so Tier 1 fast
+      // path works on the next unlock. This fixes the hash index
+      // bootstrap gap: after import/onboarding, the hash index files
+      // were never pushed to remote. Only hash index files are pushed —
+      // block files are NOT pushed (no merge needed).
+      try {
+        const currentBlocks = await this._storage.get(LOCAL_LEDGER_BLOCKS);
+        if (currentBlocks && currentBlocks.length > 0) {
+          const hi = buildHashIndex(currentBlocks);
+          const hiJson = JSON.stringify(hi);
+          await this._transport.push(REMOTE_HASH_INDEX, new TextEncoder().encode(hiJson));
+          const hiSha256 = this._crypto.sha256(hiJson);
+          await this._transport.push(REMOTE_HASH_INDEX_SHA256, new TextEncoder().encode(hiSha256));
+          await this._storage.set(LOCAL_HASH_INDEX, hi);
+        }
+      } catch (err) {
+        console.warn('Failed to push hash index (bootstrap):', err.message);
       }
     }
 
@@ -577,7 +614,19 @@ export class SyncService {
     );
 
     // TTL expired or no local cookie — always force auth.
+    // But if we have a valid master key, create a cookie so the next
+    // checkAndSync can use the fast path (avoids cookie catch-22 where
+    // REAUTH_NEEDED prevents cookie creation, which prevents fast path).
     if (!localCookie) {
+      const mk = this._crypto.getMasterKey();
+      if (mk) {
+        try {
+          const deviceId = await this._getDeviceId() || 'unknown';
+          await DeviceCookie.create(deviceId, this._storage, this._crypto);
+        } catch {
+          // Non-critical — cookie creation failure doesn't block REAUTH_NEEDED
+        }
+      }
       return SyncResult.REAUTH_NEEDED;
     }
 
@@ -587,9 +636,17 @@ export class SyncService {
       return SyncResult.REAUTH_NEEDED;
     }
 
-    // Specifier mismatch: always proceed to reconcile for cross-client
-    // merge (Bug 3a fix). Different clients on same ledger must merge
-    // entries. The user has already authenticated (cookie valid + MK cached).
+    // Specifier mismatch: different device wrote last — require explicit
+    // re-authentication (matches Python behavior). The previous approach
+    // of implicit reconcile caused unbounded unlock latency because it
+    // always pulled the full staging blob.
+    if (specifierMismatch) {
+      return SyncResult.REAUTH_NEEDED;
+    }
+
+    // No mismatch — same-device scenario: proceed to reconcile for
+    // cross-client merge (Bug 3a fix). Different clients on same device
+    // must merge entries.
     return this._reconcileAndClaim(mk);
   }
 
@@ -897,23 +954,51 @@ export class SyncService {
       }
     }
 
-    // Push blocks in ascending index order.
-    // Use a position counter for file naming only — day blocks keep
-    // day_index filenames (backward compat), summary blocks fill gaps
-    // with positions above max day_index to avoid collisions.
-    // No new fields added to block data (position is transport-layer only).
-    const _blockIdx = (b) => b.day_index ?? b.index ?? 0;
-    const sorted = [...blocks].sort((a, b) => _blockIdx(a) - _blockIdx(b));
+    // Push blocks in natural chain order (enumerate-style, matching
+    // the Python CLI's push_blocks). Using day_index-based sorting
+    // would scramble summary blocks (month_summary / year_summary)
+    // which have no day_index and would default to _blockIdx = 0
+    // — the same as genesis — corrupting the remote chain.
+    console.log('[pushLedgerBlocks FIXED] using enumerate order, total blocks:', blocks.length);
 
-    // Find max day_index so position-based filenames don't collide
-    let maxDayIdx = 0;
-    for (const b of blocks) {
-      if (b.day_index != null && b.day_index > maxDayIdx) maxDayIdx = b.day_index;
+    // Genesis collision guard: if the remote already has a genesis at index 0
+    // and it differs from the local genesis, abort the push. Pushing day blocks
+    // that chain from a different genesis than what's on remote would corrupt
+    // the remote chain, making it unimportable by other clients.
+    if (!forceAll && remoteIndices.has(0) && blocks.length > 0) {
+      try {
+        const raw = await this._transport.pull(`${REMOTE_LEDGER_BLOCKS_PREFIX}000000.json`);
+        if (raw) {
+          const b64 = btoa(String.fromCharCode(...raw));
+          const plaintext = this._crypto.deobfuscateBlob(b64, mk);
+          const remoteGenesis = JSON.parse(plaintext);
+          const remoteHash = remoteGenesis.block_hash || remoteGenesis.day_hash || '';
+          const localHash = blocks[0].block_hash || blocks[0].day_hash || '';
+          if (remoteHash && localHash && remoteHash !== localHash) {
+            console.error(
+              '[pushLedgerBlocks] GENESIS COLLISION: local genesis does not match remote. ' +
+              'Aborting push to prevent chain corruption. ' +
+              'Clear the remote bucket first, or import the existing remote ledger.'
+            );
+            throw new Error(
+              'Genesis collision: remote has a different genesis. ' +
+              'Clear the remote or import the existing ledger before pushing.'
+            );
+          }
+        }
+      } catch (err) {
+        if (err.message && err.message.includes('Genesis collision')) throw err;
+        // Pull/deobfuscation failed — may be using a different key, which is
+        // itself a sign of incompatible chains. Warn but don't block (the chain
+        // verification on the other side will catch it).
+        console.warn('[pushLedgerBlocks] Could not verify remote genesis:', err.message);
+      }
     }
-    let position = maxDayIdx + 1;
+
     let pushed = 0;
-    for (const block of sorted) {
-      const fileIdx = block.day_index ?? position++;
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const fileIdx = i;
 
       if (!forceAll && remoteIndices.has(fileIdx)) continue;
 
@@ -944,8 +1029,11 @@ export class SyncService {
       }
     }
 
-    // Push hash index artifacts (alongside blocks, best-effort, non-fatal)
-    if (pushed > 0 || forceAll) {
+    // Push hash index artifacts whenever blocks exist (best-effort, non-fatal).
+    // Always pushed regardless of whether new blocks were transferred — the
+    // hash index enables Tier 1 fast path on next unlock. Only skipped when
+    // there are no blocks at all (handled by early return above).
+    if (blocks.length > 0) {
       try {
         const hi = buildHashIndex(blocks);
         const hiJson = JSON.stringify(hi);

@@ -8,81 +8,41 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **Canonical Ledger Format:** ✅ Complete — I-07 (format_version excluded from seal), I-17 (genesis day_hash → block_hash). Live ledger at `~/.local/share/phpoc/ledger.json` migrated.
-- **CLI:** 1609/1609 PY tests pass (+29 cross-platform integration)
-- **Web:** 726 JS tests pass (3 pre-existing failures). Total: 766 pass.
-- **Worker:** 49 vitest integration tests pass (HTTP endpoints, auth, CORS, CRUD)
-- **WASM crypto:** Bundled via Vite's native pipeline, no DummyCryptoService fallbacks.
-- **phpoc-web IndexedDB:** Username `William Acevedo`, email `william.acevedo@gmail.com`. 1 genesis block, 2 staging entries (1 stopped, 1 active), 0 committed. Recovery seed: `Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`. Dev server on port 5174.
+- **CLI:** 1609/1609 PY tests pass  |  **Web:** 807 JS tests pass  |  **Worker:** 49 vitest tests pass
+- **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed — web now verifies chain linkage during onboarding, on every append, detects genesis collision on push, and uses enumerate order for push
+- **Root cause identified:** Broken R2 chain (genesis from CLI Apr 23 + day blocks from web Jun 1) — mixed two ledger initializations. Fix script ready at `scripts/fix_chain_genesis_link.py`
 
-## Immediate Next Steps
+## Immediate Next Steps (Jul 6)
+1. **Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py https://phpoc-staging.wacevedo.workers.dev "Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw="`
+2. **Verify CLI onboarding:** `ph onboarding http cloudflare` — should pull all 105 blocks, prompt passphrase
+3. **Verify web onboarding:** Hard-refresh phpoc-web → clear IndexedDB → onboard from R2 → confirm no errors
+4. **Clean up diagnostics:** Remove `[DIAG]` logging from `domain/ledger/remote_sync.py`
+5. **Run test suites:** `pytest tests/ -x -q` and `cd phpoc-web && npm test`
 
-### 🟢 Phase 6 P1 Step 1: JS-layer passphrase validation ✅ Complete (Jul 4)
+## Chain Integrity Investigation (Jul 5) — Summary
 
-Passphrase validated via stored PBKDF2 hash. E2E-06 now works.
+**Problem:** CLI `_verify_chain` rejected R2 chain at block 1 (`genesis.day_hash ≠ day1.prev_hash`). phpoc-web silently accepted same chain.
 
-| File | Change |
-|------|--------|
-| `DevModeContext.jsx` | `createNewLedger()` and `unlockLedger()` store `sha256(derivePdk(passphrase, 600K) + seed)` as `phpoc_passphrase_hash` in IndexedDB |
-| `export_auth.js` | `exportWithAuth()` reads stored hash, recomputes, compares. Wrong passphrase → "Incorrect passphrase". Falls through to genesis seal for old ledgers without hash. |
-| `test/export_passphrase_validation_test.mjs` | 4 new tests (E8-E11): correct passphrase passes, wrong passphrase rejected, hash check before export, missing hash fallback. 44/44 pass. |
+**Root cause:** Chain on R2 composed of blocks from two separate ledger initializations:
+- Genesis (Apr 23, CLI-created): `day_hash=3c4a…`
+- Day blocks 1–104 (Jun 1–19, web-created): chain from a *different* genesis (`prev_hash=9563aa…`)
+- Trigger: creating new local ledger in phpoc-web when R2 already had CLI genesis. Push skipped genesis (fileIdx=0 existed) but pushed day blocks (indices 1+).
 
-- **Cloud onboarding:** ✅ Chain import works — 105 blocks detected, auth prompt shown. Fixed genesis gate stale hash index false mismatch (Jul 4).
-- **Genesis gate fix (Jul 4):** `genesis_gate.js` — removed premature `GenesisMismatchError` throw from Tier 2 hash index path. Hash index is a cache, not an authority. Full chain pull always runs for definitive comparison. All 218 tests pass.
-- **Docs updated (Jul 4):** All integration test docs reference testing Worker credentials (`phpoc-staging-testing.wacevedo.workers.dev`, API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`). Production URL not referenced in any doc.
-- **Workflows:** `docs/design/workflows/cli/CLI_Web_Cross_Staging_Workflow.md` — 8-step operational guide for CLI→Web→CLI staging cycle.
+**4 fixes applied:**
 
-### 🔜 Cloud onboarding chain import ✅ Complete (Jul 4)
+| # | File | Change |
+|---|------|--------|
+| 1 | `sync.js` `pushLedgerBlocks` | Enumeration order (no day_index sort) |
+| 2 | `DevModeContext.jsx` `onboardFromRemote` | Full prev_hash chain verification |
+| 3 | `chain.js` `append()` | prev_hash linkage check on every block append |
+| 4 | `sync.js` `pushLedgerBlocks` | Genesis collision guard — abort push if local ≠ remote genesis |
 
-Web app can now import a remote ledger directly from `ledger/blocks/` (the `ph sync` format) without requiring a separate backup file. Multi-device onboarding now works with 4 inputs: Worker URL, API key, passphrase, recovery seed.
+**Files modified:** `sync.js`, `chain.js`, `DevModeContext.jsx`, `remote_sync.py` (diag temp)
 
-| File | Change |
-|------|--------|
-| `src/sync/remote_import.js` | Added static `checkForRemoteChain()`, `fetchChain()`, `fetchGenesis()` methods. Uses `ledger/blocks/` prefix (or `ledger:blocks` fallback). Deobfuscates per-block with master key. |
-| `src/components/screens/OnboardingScreen.jsx` | `handleCloudConnect()` checks remote chain first, then backups. Skips backup picker when chain found → direct to auth. `handleCloudImportSubmit()` passes `source='chain'`. |
-| `src/context/DevModeContext.jsx` | `importFromCloud()` accepts `source` param. Chain path: `fetchChain()` → `_validateRawChain()`. |
-
-**Smoke test:** Chain detection found 105 blocks on R2 Worker, navigated directly to auth. Deobfuscation failed with wrong key (test creds ≠ remote ledger) — expected.
-
-### ✅ Cross-Platform Integration Tests (Jul 4)
-
-29 new Python tests hitting the live test Worker, plus 49 Worker vitest tests.
-
-| File | What it covers |
-|------|---------------|
-| `tests/test_cross_platform_integration.py` | Blob/cookie/ledger round-trips, full staging cycle, format markers, error handling — 29 tests |
-| `worker/test/index.test.ts` | Worker HTTP endpoints: auth, CORS, GET/PUT/DELETE, list, errors — 49 tests |
-| `worker/vitest.config.ts` | Vitest configuration for worker tests |
-
-**Worker credentials recorded in** `docs/design/workflows/cli/CLI_Web_Cross_Staging_Workflow.md` §Test Worker Credentials.
-
-### 🔜 Phase 6 P1 Step 2: WASM architectural alignment (future)
-
-Full alignment with Python architecture: encrypt seed with PDK, WASM `authenticate()` decrypts. Requires migration path for existing ledgers.
-
----
-
-### Past work (reference)
-
-#### Phase 1a: Web staging alignment with CLI ✅ Complete (182 tests)
-
-#### Phase 1b: Browser E2E Tests 🟡 Complete (Jul 4)
-E2E-01–02 ✅, E2E-04 ✅, E2E-05 ✅ FIXED, E2E-03/07 ⚠️ C5 limitation. E2E-06 🟡 blocked by WASM (Phase 6 P1 above).
-**Key discovery:** WASM `authenticate()` ignores passphrase (seed == MK). Root cause: `wasm.rs:276` `_passphrase` underscore = unused.
-**I-17 fix:** `export_auth.js` handles `block_hash` || `day_hash`.
-
-## Known Issues (Active)
-
-- **🟡 WASM authenticate passphrase bypass** — `wasm.rs:276` ignores passphrase, seed == MK. Fix in progress (Phase 6 P1 Step 1).
-- **Login takes 4–30+ seconds** — hash index bootstrap gap. Future: pre-seed hash index during onboarding.
-- **CLI read commands block on specifier mismatch** — `ph view`/`ph list`/`ph tags` bail when another device holds cookie.
-- **Pre-existing test failures** — `ledger_sync_test.mjs` (A3c), `commit_push_integration_test.mjs`, `sync_service_test.mjs` (W3b). Not canon-format related.
-
-## Browser E2E Testing Setup
-
-- **Browser:** Vivaldi with `--remote-debugging-port=9222`. Connect via `agent_browser: connect 9222` with `sessionMode: "fresh"`.
-- **Tab rule:** After connecting, run `tab list` → find tab with `localhost:5173` (or 4173/5174) → `tab t<N>` to switch. Do NOT open new tabs.
-- **Dev server:** `cd phpoc-web && npx vite --host 0.0.0.0 --port 5173`
+## Known Issues
+- **CLI read commands block on specifier mismatch** (Python-side, not web)
+- **Pre-existing test failures** — `ledger_sync_test.mjs` (A3c), `commit_push_integration_test.mjs`
+- **Diagnostic logging** in `remote_sync.py` `_verify_chain` — remove after chain is fixed
 
 ## Test Ledger Credentials
 
@@ -90,11 +50,11 @@ E2E-01–02 ✅, E2E-04 ✅, E2E-05 ✅ FIXED, E2E-03/07 ⚠️ C5 limitation. E
   - Passphrase: `VZQKp6TrIBK/GUtsjoof75HRyzd7w8S0`
   - Recovery Seed: `Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=`
   - Username: `William Acevedo` | Email: `william.acevedo@gmail.com`
-  - Export file: `testdata/e2e_export.phpledger` (v2, 2.7KB)
 
-## Testing Quick Reference
+## Browser E2E Setup
 
-- **Worker:** `https://phpoc-staging-testing.wacevedo.workers.dev` | **phpoc-web:** `http://localhost:5173/`
+- **Browser:** Vivaldi `--remote-debugging-port=9222`. Connect: `agent_browser connect 9222` with `sessionMode: "fresh"`
+- **Tab rule:** `tab list` → find `localhost:5173` → `tab t<N>`. Do NOT open new tabs.
+- **Dev server:** `cd phpoc-web && npx vite --host 0.0.0.0 --port 5173`
+- **Worker:** `https://phpoc-staging-testing.wacevedo.workers.dev`
 - **E2E test creds:** passphrase `NewPass456!`, seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`
-
-> Credentials (API key, passphrase, seed, wrangler token) stored outside repo. Ask user if needed.
