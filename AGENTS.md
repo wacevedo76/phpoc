@@ -24,6 +24,8 @@ Do not rely on memory. Re-read the applicable DOX chain in the current session b
 
 Every meaningful change requires a DOX pass before the task is done.
 
+For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — it contains the 10 binding directives (D1–D10) that all design and code changes must satisfy.
+
 Update the closest owning AGENTS.md when a change affects:
 
 - purpose, scope, ownership, or responsibilities
@@ -42,6 +44,7 @@ Every code or design change that falls into the categories below must update the
 |---|---|---|
 | Feature implemented or milestone reached | `docs/planning/ROADMAP.md` | Change status (🔜 → ✅), update notes |
 | Feature deprioritized or paused | `docs/planning/BACKLOG.md` | Add entry with pause rationale and unblock criteria |
+| Architectural discussion or decision | `docs/design/TOP_LEVEL_DIRECTIVES.md` | Read D1–D10 first. Use the Decision Checklist before committing to a direction. |
 | New architectural decision made | `docs/design/ARCHITECTURAL_DECISIONS.md` | Add ADR with context, decision, consequences |
 | Architecture invariant changed | `docs/reference/MAP.md` §Architecture Invariants | Update or add invariant |
 | File created, moved, deleted, or renamed | `docs/reference/MAP.md` | Update file inventory, HOT/COLD annotations |

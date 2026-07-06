@@ -42,7 +42,6 @@ const PASSPHRASE_HASH_KEY = 'phpoc_passphrase_hash';
  * @param {object} opts.crypto    - CryptoService with authenticate(), seal()
  * @param {object} opts.storage   - Storage backend with get(key)
  * @param {string} opts.passphrase - User-provided passphrase (non-empty)
- * @param {object[]} opts.entries  - Staging entries to export (may be [])
  * @param {object[]} opts.blocks   - Committed ledger blocks to export (may be [])
  * @returns {Promise<{blob: Blob, filename: string}>}
  * @throws {Error} If seed missing, passphrase empty, or no data to export
@@ -51,7 +50,6 @@ export async function exportWithAuth({
   crypto,
   storage,
   passphrase,
-  entries,
   blocks,
 }) {
   // ── Validate inputs ─────────────────────────────────────────
@@ -59,10 +57,9 @@ export async function exportWithAuth({
     throw new Error('Passphrase is required for export.');
   }
 
-  entries = entries || [];
   blocks = blocks || [];
-  if (!Array.isArray(entries) || !Array.isArray(blocks)) {
-    throw new Error('Entries and blocks must be arrays.');
+  if (!Array.isArray(blocks)) {
+    throw new Error('Blocks must be an array.');
   }
 
   // ── 1. Read recovery seed from storage ──────────────────────
@@ -120,12 +117,12 @@ export async function exportWithAuth({
   }
 
   // ── 4. Validate data ────────────────────────────────────────
-  if (blocks.length === 0 && entries.length === 0) {
+  if (blocks.length === 0) {
     throw new Error('No data to export.');
   }
 
   // ── 5. Build, seal, and return ──────────────────────────────
-  const blob = await exportLedgerFull(blocks, entries, crypto, authMasterKey);
+  const blob = await exportLedgerFull(blocks, crypto, authMasterKey);
 
   const filename = `ph-ledger-full-export-${new Date().toISOString().slice(0, 10)}.json`;
 

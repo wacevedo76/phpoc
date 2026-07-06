@@ -1,9 +1,9 @@
 /**
  * ledger_import_v2_test.mjs — Test suite for v2 format import path.
  *
- * Tests importLedger() with v2 format: { format_version: '2', ledger, staging, seal }.
- * Covers: genesis hash extraction, both arrays preserved, seal over {ledger, staging},
- * edge cases with empty ledger/staging.
+ * Tests importLedger() with v2 format: { format_version: '2', ledger, seal }.
+ * Covers: genesis hash extraction, ledger preservation, seal over ledger,
+ * backward compat with old v2 exports that included staging, edge cases.
  *
  * Usage:
  *   node test/ledger_import_v2_test.mjs
@@ -86,7 +86,7 @@ function makeStagingEntry(overrides = {}) {
 }
 
 function makeV2Blob(ledger, staging, mk, overrides = {}) {
-  const sealPayload = jsonSort({ ledger, staging });
+  const sealPayload = JSON.stringify(ledger);
   return new Blob([JSON.stringify({
     format_version: '2',
     exported_at: '2026-06-24T14:30:00.000Z',
@@ -287,20 +287,13 @@ console.log('\n=== 12. v2 Tampered Ledger → Seal Mismatch → Reject ===');
   const staging = [makeStagingEntry()];
   const tamperedLedger = JSON.parse(JSON.stringify(SAMPLE_BLOCKS));
   tamperedLedger[0].day_hash = 'f'.repeat(64);
-  const sealPayload = jsonSort({ ledger: tamperedLedger, staging });
-  const validSeal = crypto.seal(sealPayload, MASTER_KEY);
-  const blob = makeV2Blob(tamperedLedger, staging, MASTER_KEY, { seal: validSeal });
 
-  // Seal is valid for tampered data, but now let's check what happens:
-  // Actually, this should pass the seal check since seal covers tampered data.
-  // The real test is: unchanged ledger but wrong seal.
-  // Let me just use the unchanged ledger with a manually computed seal over wrong data.
-  const badSealPayload = jsonSort({ ledger: tamperedLedger, staging });
-  const wrongSeal = crypto.seal(badSealPayload, MASTER_KEY);
-  const blob2 = makeV2Blob(SAMPLE_BLOCKS, staging, MASTER_KEY, { seal: wrongSeal });
+  // Compute seal over tampered ledger, then apply to unchanged ledger blob
+  const wrongSeal = crypto.seal(JSON.stringify(tamperedLedger), MASTER_KEY);
+  const blob = makeV2Blob(SAMPLE_BLOCKS, staging, MASTER_KEY, { seal: wrongSeal });
 
   await t.assertAsyncThrows(
-    importLedger(blob2, crypto, MASTER_KEY),
+    importLedger(blob, crypto, MASTER_KEY),
     'rejects on seal mismatch (tampered ledger data)'
   );
 }
@@ -350,20 +343,21 @@ console.log('\n=== 15. v2 Missing ledger Array → Reject ===');
 }
 
 // ═════════════════════════════════════════════════════════════════════
-console.log('\n=== 16. v2 Missing staging Array → Reject ===');
+console.log('\n=== 16. v2 Missing staging → Accepted (staging is optional in v2) ===');
 
 {
   const blob = new Blob([JSON.stringify({
     format_version: '2',
     exported_at: '2026-06-24T14:30:00.000Z',
-    ledger: [],
-    seal: 'f'.repeat(64),
+    ledger: SAMPLE_BLOCKS,
+    seal: crypto.seal(JSON.stringify(SAMPLE_BLOCKS), MASTER_KEY),
   })], { type: 'application/json' });
 
-  await t.assertAsyncThrows(
-    importLedger(blob, crypto, MASTER_KEY),
-    'rejects on missing staging array in v2'
-  );
+  const result = await importLedger(blob, crypto, MASTER_KEY);
+  t.assertDeepEq(result.ledger, SAMPLE_BLOCKS, 'accepts v2 without staging field');
+  t.assertDeepEq(result.entries, [], 'entries = [] when staging missing');
+  t.assertEq(result.count, 0, 'count = 0 when staging missing');
+  t.assertEq(result.genesisHash, SAMPLE_BLOCKS[0].day_hash, 'genesisHash extracted correctly');
 }
 
 // ═════════════════════════════════════════════════════════════════════

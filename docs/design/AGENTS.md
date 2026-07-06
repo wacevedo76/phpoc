@@ -1,7 +1,7 @@
 # Architectural Design
 
 ## Purpose
-Architectural Decision Records (ADRs), design goals, cross-platform architecture, multi-device session design, and auth gate workflow specifications.
+Architectural Decision Records (ADRs), design goals, cross-platform architecture, multi-device session design, auth gate workflow specifications, and top-level directives that govern all design and code changes.
 
 ## Ownership
 - `ARCHITECTURAL_DECISIONS.md` — ADR log (ADR-001 through ADR-020)
@@ -12,8 +12,10 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `workflows/` — User-facing and system workflow specifications (cli/ and web/)
 - `flaws/ISSUES_TO_ADDRESS.md` — Guiding document: 17 design flaws organized by severity with dependency graph and recommended attack order
 - `flaws/PHPSPEC-Design_Flaws.md` — Brutally honest assessment of PHPSPEC design conflicts and weaknesses
+- `TOP_LEVEL_DIRECTIVES.md` — Binding principles (D1–D10) read first for every architectural discussion. Referenced by `SESSION_HANDOFF.md`.
 
 ## Local Contracts
+- **TOP_LEVEL_DIRECTIVES.md is the first read-in for every architectural discussion.** All ADRs, design goals, and workflow specs must be consistent with D1–D10.
 - ADRs document decisions that have architectural impact — include context, decision, and consequences
 - Design goals cross-reference `ROADMAP.md` for planned features
 - Workflow docs describe expected behavior — test suites validate against these

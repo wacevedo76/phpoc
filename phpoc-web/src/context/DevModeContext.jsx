@@ -1182,19 +1182,15 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
    * Authenticates with passphrase, then triggers a file download.
    */
   const exportLedgerAction = useCallback(async (passphrase) => {
-    const { crypto: existingCrypto, sync: existingSync, storage: existingStorage } = services;
+    const { crypto: existingCrypto, storage: existingStorage } = services;
 
-    if (existingCrypto && existingSync) {
+    if (existingCrypto) {
       // ── Fast path: services already loaded (called from Settings) ──
-      const [entries, blocks] = await Promise.all([
-        existingSync.readEntries(),
-        existingStorage.get('ledger:blocks'),
-      ]);
+      const blocks = await existingStorage.get('ledger:blocks');
       const result = await exportWithAuth({
         crypto: existingCrypto,
         storage: existingStorage,
         passphrase,
-        entries,
         blocks: blocks || [],
       });
       triggerDownload(result.blob, result.filename);
@@ -1209,47 +1205,42 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     const crypto = await CryptoService.create();
     setCryptoStatus('wasm');
 
-    const [entries, blocks] = await Promise.all([
-      storage.get(ENTRIES_KEY),
-      storage.get('ledger:blocks'),
-    ]);
+    const blocks = await storage.get('ledger:blocks');
 
     const result = await exportWithAuth({
       crypto,
       storage,
       passphrase,
-      entries: entries || [],
       blocks: blocks || [],
     });
     triggerDownload(result.blob, result.filename);
   }, [services]);
 
   /**
-   * Export the full ledger (committed chain + staging) for backup before import.
+   * Export the full ledger (committed chain only) for backup before import.
    *
    * Works in two modes:
-   *   1. Services loaded (called from Settings) — uses services.crypto/sync/sync.readEntries()
+   *   1. Services loaded (called from Settings) — uses services.crypto/storage
    *   2. Pending import (called from confirmation dialog) — uses pendingImportRef data
    */
   const exportLedgerFullAction = useCallback(async () => {
     // ── Mode 1: Pending import data (confirmation dialog) ──
     const pending = pendingImportRef.current;
     if (pending) {
-      const { crypto, masterKey, existingBlocks, stagingEntries } = pending;
+      const { crypto, masterKey, existingBlocks } = pending;
       const blocks = existingBlocks || [];
-      const staging = stagingEntries || [];
-      if (blocks.length === 0 && staging.length === 0) {
+      if (blocks.length === 0) {
         throw new Error('No data to export.');
       }
-      const blob = await exportLedgerFull(blocks, staging, crypto, masterKey);
+      const blob = await exportLedgerFull(blocks, crypto, masterKey);
       const timestamp = new Date().toISOString().slice(0, 10);
       triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
       return;
     }
 
     // ── Mode 2: Services loaded (Settings) ──
-    const { crypto: existingCrypto, sync: existingSync, storage: existingStorage } = services;
-    if (!existingCrypto || !existingSync || !existingStorage) {
+    const { crypto: existingCrypto, storage: existingStorage } = services;
+    if (!existingCrypto || !existingStorage) {
       throw new Error('Services not loaded — cannot export.');
     }
     const masterKey = existingCrypto.getMasterKey();
@@ -1257,11 +1248,10 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Not authenticated — cannot export.');
     }
     const blocks = await existingStorage.get('ledger:blocks') || [];
-    const staging = await existingSync.readEntries();
-    if (blocks.length === 0 && staging.length === 0) {
+    if (blocks.length === 0) {
       throw new Error('No data to export.');
     }
-    const blob = await exportLedgerFull(blocks, staging, existingCrypto, masterKey);
+    const blob = await exportLedgerFull(blocks, existingCrypto, masterKey);
     const timestamp = new Date().toISOString().slice(0, 10);
     triggerDownload(blob, `ph-ledger-full-export-${timestamp}.json`);
   }, [services]);

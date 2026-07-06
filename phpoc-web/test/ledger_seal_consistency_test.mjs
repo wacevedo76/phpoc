@@ -187,7 +187,7 @@ console.log('\n=== G2. Direct Bug Reproduction — exportLedgerFull → importLe
   const fixture = adjustFixtureForExport(g1);
 
   // Export with G1 fixture
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
   t.assert(blob instanceof Blob, 'G2: export returns Blob');
 
   // Import the exported blob
@@ -197,7 +197,7 @@ console.log('\n=== G2. Direct Bug Reproduction — exportLedgerFull → importLe
     const result = await importLedger(blob, crypto, MASTER_KEY);
     t.assert(true, 'G2: importLedger succeeded (FIX VERIFIED)');
     t.assertEq(result.formatVersion, '2', 'G2: formatVersion = "2"');
-    t.assertEq(result.count, 2, 'G2: count = 2 staging entries');
+    t.assertEq(result.count, 0, 'G2: count = 0 (no staging in v2, D11)');
     t.assertEq(result.genesisHash, g1.blocks[0].day_hash, 'G2: genesisHash extracted');
     t.assertDeepEq(result.ledger, g1.blocks, 'G2: ledger blocks match');
   } catch (err) {
@@ -309,7 +309,7 @@ console.log('\n=== G4. G1 Fixture Full Fidelity Roundtrip ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   let result;
   try {
@@ -336,22 +336,9 @@ console.log('\n=== G4. G1 Fixture Full Fidelity Roundtrip ===');
     fixture.blocks[0].identity.identity_secret_enc_fallback,
     'G4: identity identity_secret_enc_fallback preserved');
 
-  // G4.2: Stopped staging entry fields preserved
-  t.assertEq(result.entries[0].entry_id, g1.staging[0].entry_id, 'G4: stopped entry_id preserved');
-  t.assertEq(result.entries[0].end_device_uuid, g1.staging[0].end_device_uuid,
-    'G4: stopped end_device_uuid preserved');
-  t.assertEq(result.entries[0].committed, false, 'G4: stopped committed preserved');
-  t.assertEq(result.entries[0].block_index, null, 'G4: stopped block_index preserved');
-  t.assertEq(result.entries[0].comment, g1.staging[0].comment, 'G4: stopped comment preserved');
-
-  // G4.3: Active staging entry fields preserved (no end_device_uuid)
-  t.assertEq(result.entries[1].entry_id, g1.staging[1].entry_id, 'G4: active entry_id preserved');
-  t.assertEq(result.entries[1].is_active, true, 'G4: active is_active preserved');
-  t.assertEq(result.entries[1].end_epoch, null, 'G4: active end_epoch is null');
-  t.assertEq('end_device_uuid' in result.entries[1], false,
-    'G4: active entry still has NO end_device_uuid');
-  t.assertEq(result.entries[1].committed, false, 'G4: active committed preserved');
-  t.assertEq(result.entries[1].block_index, null, 'G4: active block_index preserved');
+  // G4.2: Staging entries no longer in v2 export (D11).
+  t.assertEq(result.entries.length, 0, 'G4: no staging entries in v2 export (D11)');
+  t.assertEq(result.count, 0, 'G4: count = 0 (D11)');
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -362,7 +349,7 @@ console.log('\n=== A1. Core Roundtrip — Same MK, Same Data, Seal Must Match ==
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
   try {
     await importLedger(blob, crypto, MASTER_KEY);
     t.assert(true, 'A1: roundtrip succeeded (FIX VERIFIED)');
@@ -377,34 +364,33 @@ console.log('\n=== A2. Deterministic Export — Same Data → Same Seal ===');
   const f1 = adjustFixtureForExport(g1);
   const f2 = adjustFixtureForExport(g1);
 
-  const blob1 = await exportLedgerFull(f1.blocks, f1.staging, crypto, MASTER_KEY);
-  const blob2 = await exportLedgerFull(f2.blocks, f2.staging, crypto, MASTER_KEY);
+  const blob1 = await exportLedgerFull(f1.blocks, crypto, MASTER_KEY);
+  const blob2 = await exportLedgerFull(f2.blocks, crypto, MASTER_KEY);
 
   const p1 = JSON.parse(await blob1.text());
   const p2 = JSON.parse(await blob2.text());
 
   t.assertEq(p1.seal, p2.seal, 'A2: same data → same seal (deterministic)');
   t.assertDeepEq(p1.ledger, p2.ledger, 'A2: ledger identical');
-  t.assertDeepEq(p1.staging, p2.staging, 'A2: staging identical');
 }
 
 console.log('\n=== A3. Seal Tautology — Seal Computed from Parsed Blob Matches ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
   const parsed = JSON.parse(await blob.text());
 
   // The seal MUST be verifiable from the file's own parsed content
   // THIS IS THE CORE BUG: jsonSort of parsed.ledger ≠ jsonSort of raw blocks
-  const sealPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+  const sealPayload = JSON.stringify(parsed.ledger);
   const expectedSeal = crypto.seal(sealPayload, MASTER_KEY);
 
   t.assertEq(parsed.seal, expectedSeal,
     'A3: seal from parsed blob matches stored seal (tautology test)');
   if (parsed.seal !== expectedSeal) {
     // Diagnostic: compute seal both ways and report difference
-    const rawPayload = jsonSort({ ledger: fixture.blocks, staging: parsed.staging });
+    const rawPayload = JSON.stringify(fixture.blocks);
     const rawSeal = crypto.seal(rawPayload, MASTER_KEY);
     console.log(`      parsed seal payload length: ${sealPayload.length}`);
     console.log(`      raw seal payload length:    ${rawPayload.length}`);
@@ -415,28 +401,19 @@ console.log('\n=== A3. Seal Tautology — Seal Computed from Parsed Blob Matches
   }
 }
 
-console.log('\n=== A4. Seal Pairs with Data — Changing Any Field → Different Seal ===');
+console.log('\n=== A4. Seal Pairs with Data — Changing Ledger Field → Different Seal ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
 
-  // Change staging title
-  const modStaging = JSON.parse(JSON.stringify(fixture.staging));
-  modStaging[0].title = 'Different title';
-
-  const blob1 = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-  const blob2 = await exportLedgerFull(fixture.blocks, modStaging, crypto, MASTER_KEY);
-
+  const blob1 = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
   const p1 = JSON.parse(await blob1.text());
-  const p2 = JSON.parse(await blob2.text());
-
-  t.assertNeq(p1.seal, p2.seal, 'A4: changed staging title → different seal');
 
   // Change ledger identity email
   const modBlocks = JSON.parse(JSON.stringify(fixture.blocks));
   modBlocks[0].identity.email = 'changed@example.com';
 
-  const blob3 = await exportLedgerFull(modBlocks, fixture.staging, crypto, MASTER_KEY);
+  const blob3 = await exportLedgerFull(modBlocks, crypto, MASTER_KEY);
   const p3 = JSON.parse(await blob3.text());
 
   t.assertNeq(p1.seal, p3.seal, 'A4: changed identity email → different seal');
@@ -448,8 +425,8 @@ console.log('\n=== A5. Master-Key-Specific Seal ===');
   const fixture = adjustFixtureForExport(g1);
   const otherKey = 'b'.repeat(64);
 
-  const blob1 = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-  const blob2 = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, otherKey);
+  const blob1 = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
+  const blob2 = await exportLedgerFull(fixture.blocks, crypto, otherKey);
 
   const p1 = JSON.parse(await blob1.text());
   const p2 = JSON.parse(await blob2.text());
@@ -457,14 +434,13 @@ console.log('\n=== A5. Master-Key-Specific Seal ===');
   t.assertNeq(p1.seal, p2.seal, 'A5: different master key → different seal');
   // Data should be identical (only seal differs)
   t.assertDeepEq(p1.ledger, p2.ledger, 'A5: ledger unchanged by different key');
-  t.assertDeepEq(p1.staging, p2.staging, 'A5: staging unchanged by different key');
 }
 
 console.log('\n=== A6. Wrong Master Key → Import Rejects ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
   const wrongKey = 'b'.repeat(64);
 
   await t.assertAsyncThrows(
@@ -480,7 +456,7 @@ console.log('\n=== A7. Roundtrip with format_version Field ===');
   const fixture = adjustFixtureForExport(g1);
   t.assertEq(fixture.blocks[0].format_version, '0.3.0', 'A7: fixture has format_version');
 
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
@@ -498,7 +474,7 @@ console.log('\n=== A8. Roundtrip with signature Field ===');
   const fixture = adjustFixtureForExport(g1);
   t.assert(typeof fixture.blocks[0].signature === 'string', 'A8: fixture has signature');
 
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
@@ -520,7 +496,7 @@ console.log('\n=== A9. Roundtrip with Nested Crypto Identity ===');
       `A9: fixture has identity.${f}`);
   }
 
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
@@ -537,292 +513,6 @@ console.log('\n=== A9. Roundtrip with Nested Crypto Identity ===');
 // ═════════════════════════════════════════════════════════════════════
 // Group B: Staging Entry Shape Variants
 // ═════════════════════════════════════════════════════════════════════
-
-console.log('\n=== B1. Active Entry (no end_device_uuid, end_epoch: null) Roundtrip ===');
-
-{
-  const active = {
-    entry_id: 'b1-active-0000-4000-a000-000000000001',
-    title: 'B1 Active',
-    start_epoch: 1717920000000,
-    end_epoch: null,
-    duration: 0,
-    is_active: true,
-    is_paused: false,
-    pauses: [],
-    tags: ['test'],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-  };
-  const activeCore = {};
-  for (const k of Object.keys(active).sort()) {
-    if (k !== 'hash' && k !== 'committed' && k !== 'block_index') {
-      activeCore[k] = active[k];
-    }
-  }
-  active.hash = crypto.sha256(jsonSort(activeCore));
-
-  const fixture = adjustFixtureForExport(g1);
-  const staging = [active];
-  const blob = await exportLedgerFull(fixture.blocks, staging, crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'B1: active-only staging roundtrip succeeded');
-    t.assertEq(result.entries[0].is_active, true, 'B1: is_active preserved');
-    t.assertEq(result.entries[0].end_epoch, null, 'B1: end_epoch is null');
-    t.assertEq('end_device_uuid' in result.entries[0], false,
-      'B1: no end_device_uuid key');
-  } catch (err) {
-    t.assert(false, 'B1: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== B2. Stopped Entry (has end_device_uuid, end_epoch set) Roundtrip ===');
-
-{
-  const stopped = {
-    entry_id: 'b2-stopped-0000-4000-a000-000000000001',
-    title: 'B2 Stopped',
-    start_epoch: 1717920000000,
-    end_epoch: 1717921800000,
-    duration: 1800000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: ['done'],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-  };
-  const stoppedCore = {};
-  for (const k of Object.keys(stopped).sort()) {
-    if (k !== 'hash' && k !== 'committed' && k !== 'block_index') {
-      stoppedCore[k] = stopped[k];
-    }
-  }
-  stopped.hash = crypto.sha256(jsonSort(stoppedCore));
-
-  const fixture = adjustFixtureForExport(g1);
-  const staging = [stopped];
-  const blob = await exportLedgerFull(fixture.blocks, staging, crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'B2: stopped-only staging roundtrip succeeded');
-    t.assertEq(result.entries[0].is_active, false, 'B2: is_active preserved');
-    t.assertEq(result.entries[0].end_device_uuid, 'dev-dummy-001',
-      'B2: end_device_uuid preserved');
-    t.assert(typeof result.entries[0].end_epoch === 'number',
-      'B2: end_epoch is a number');
-  } catch (err) {
-    t.assert(false, 'B2: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== B3. Mixed Active + Stopped Staging Roundtrip ===');
-
-{
-  // Already tested in G2 — this verifies both entry types coexist
-  // without affecting each other
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'B3: mixed staging roundtrip succeeded');
-    t.assertEq(result.count, 2, 'B3: count = 2');
-
-    // Stopped entry has end_device_uuid
-    t.assertEq(typeof result.entries[0].end_device_uuid, 'string',
-      'B3: stopped has end_device_uuid');
-    // Active entry does NOT have end_device_uuid
-    t.assertEq('end_device_uuid' in result.entries[1], false,
-      'B3: active has no end_device_uuid');
-  } catch (err) {
-    t.assert(false, 'B3: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== B4. Entries with committed, block_index, entry_index Roundtrip ===');
-
-{
-  const entry = {
-    entry_id: 'b4-test-0000-4000-a000-000000000001',
-    title: 'B4 With Extras',
-    start_epoch: 1717920000000,
-    end_epoch: 1717921800000,
-    duration: 1800000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: ['extra'],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-    entry_index: 0,
-  };
-  const core = {};
-  for (const k of Object.keys(entry).sort()) {
-    if (k !== 'hash' && k !== 'committed' && k !== 'block_index' && k !== 'entry_index') {
-      core[k] = entry[k];
-    }
-  }
-  entry.hash = crypto.sha256(jsonSort(core));
-
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, [entry], crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'B4: entry with extra fields roundtrip succeeded');
-    t.assertEq(result.entries[0].committed, false, 'B4: committed preserved');
-    t.assertEq(result.entries[0].block_index, null, 'B4: block_index preserved');
-    t.assertEq(result.entries[0].entry_index, 0, 'B4: entry_index preserved');
-  } catch (err) {
-    t.assert(false, 'B4: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== B5. Empty metadata {} vs Absent metadata — Both Roundtrip ===');
-
-{
-  const withEmpty = {
-    entry_id: 'b5-empty-meta-0000-4000-a000-000000000001',
-    title: 'B5 Empty Meta',
-    start_epoch: 1717920000000,
-    end_epoch: 1717921800000,
-    duration: 1800000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: [],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-  };
-  withEmpty.hash = crypto.sha256(jsonSort((({ hash: _, committed: __, block_index: ___, ...d }) => d)(withEmpty)));
-
-  const withAbsent = {
-    entry_id: 'b5-no-meta-0000-4000-a000-000000000002',
-    title: 'B5 No Meta',
-    start_epoch: 1717930000000,
-    end_epoch: 1717933600000,
-    duration: 3600000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: [],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    committed: false,
-    block_index: null,
-  };
-  withAbsent.hash = crypto.sha256(jsonSort((({ hash: _, committed: __, block_index: ___, ...d }) => d)(withAbsent)));
-
-  // Test with empty metadata
-  const f1 = adjustFixtureForExport(g1);
-  const blob1 = await exportLedgerFull(f1.blocks, [withEmpty], crypto, MASTER_KEY);
-  try {
-    const r1 = await importLedger(blob1, crypto, MASTER_KEY);
-    t.assert(true, 'B5: empty metadata roundtrip succeeded');
-    t.assertDeepEq(r1.entries[0].metadata, {}, 'B5: metadata is {}');
-  } catch (err) {
-    t.assert(false, 'B5a: import failed: ' + err.message.slice(0, 120));
-  }
-
-  // Test with absent metadata
-  const f2 = adjustFixtureForExport(g1);
-  const blob2 = await exportLedgerFull(f2.blocks, [withAbsent], crypto, MASTER_KEY);
-  try {
-    const r2 = await importLedger(blob2, crypto, MASTER_KEY);
-    t.assert(true, 'B5: absent metadata roundtrip succeeded');
-  } catch (err) {
-    t.assert(false, 'B5b: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== B6. Null comment vs Absent comment — Both Roundtrip ===');
-
-{
-  const withNull = {
-    entry_id: 'b6-null-0000-4000-a000-000000000001',
-    title: 'B6 Null Comment',
-    start_epoch: 1717920000000,
-    end_epoch: 1717921800000,
-    duration: 1800000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: [],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-  };
-  withNull.hash = crypto.sha256(jsonSort((({ hash: _, committed: __, block_index: ___, ...d }) => d)(withNull)));
-
-  const withAbsent = {
-    entry_id: 'b6-no-comment-0000-4000-a000-000000000002',
-    title: 'B6 No Comment',
-    start_epoch: 1717930000000,
-    end_epoch: 1717933600000,
-    duration: 3600000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: [],
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-    committed: false,
-    block_index: null,
-  };
-  withAbsent.hash = crypto.sha256(jsonSort((({ hash: _, committed: __, block_index: ___, ...d }) => d)(withAbsent)));
-
-  const f1 = adjustFixtureForExport(g1);
-  const blob1 = await exportLedgerFull(f1.blocks, [withNull], crypto, MASTER_KEY);
-  try {
-    const r1 = await importLedger(blob1, crypto, MASTER_KEY);
-    t.assert(true, 'B6: null comment roundtrip succeeded');
-    t.assertEq(r1.entries[0].comment, null, 'B6: comment is null');
-  } catch (err) {
-    t.assert(false, 'B6a: import failed: ' + err.message.slice(0, 120));
-  }
-
-  const f2 = adjustFixtureForExport(g1);
-  const blob2 = await exportLedgerFull(f2.blocks, [withAbsent], crypto, MASTER_KEY);
-  try {
-    const r2 = await importLedger(blob2, crypto, MASTER_KEY);
-    t.assert(true, 'B6: absent comment roundtrip succeeded');
-  } catch (err) {
-    t.assert(false, 'B6b: import failed: ' + err.message.slice(0, 120));
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════
 // Group C: JSON Serialization Roundtrip Boundary
 // ═════════════════════════════════════════════════════════════════════
 
@@ -831,8 +521,8 @@ console.log('\n=== C1. jsonSort Invariant — Raw vs JSON-Roundtripped ===');
 {
   // Fundamental invariant: jsonSort(obj) === jsonSort(JSON.parse(JSON.stringify(obj)))
   const fixture = adjustFixtureForExport(g1);
-  const rawPayload = jsonSort({ ledger: fixture.blocks, staging: fixture.staging });
-  const roundtripped = JSON.parse(JSON.stringify({ ledger: fixture.blocks, staging: fixture.staging }));
+  const rawPayload = jsonSort(fixture.blocks);
+  const roundtripped = JSON.parse(JSON.stringify(fixture.blocks));
   const rtPayload = jsonSort(roundtripped);
 
   t.assertEq(rtPayload, rawPayload,
@@ -929,127 +619,6 @@ console.log('\n=== C5. Empty Arrays and Objects in Seal ===');
 
 // ═════════════════════════════════════════════════════════════════════
 // Group D: Entry Hash Consistency
-// ═════════════════════════════════════════════════════════════════════
-
-console.log('\n=== D1. Import Re-validates Every Entry Hash ===');
-
-{
-  // Import should verify ALL entry hashes; no entry accepted without validation
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'D1: all entry hashes validated on import');
-    t.assertEq(result.count, 2, 'D1: both entries validated');
-  } catch (err) {
-    t.assert(false, 'D1: hash validation failed: ' + err.message.slice(0, 120));
-  }
-}
-
-console.log('\n=== D2. Entry Hash Covers All Fields Except hash ===');
-
-{
-  // Export recomputes hash covering ALL fields except hash (sorted keys).
-  // Import must agree on the same field set.
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-  const parsed = JSON.parse(await blob.text());
-
-  // Each staging entry in parsed should have a hash that covers all its fields
-  for (let i = 0; i < parsed.staging.length; i++) {
-    const entry = parsed.staging[i];
-    const hashData = {};
-    for (const k of Object.keys(entry).sort()) {
-      if (k !== 'hash') hashData[k] = entry[k];
-    }
-    const recomputed = crypto.sha256(jsonSort(hashData));
-    t.assertEq(entry.hash, recomputed,
-      `D2: staging[${i}] hash covers all fields except hash`);
-  }
-}
-
-console.log('\n=== D3. Entry Hash Mismatch → Reject Entire Import ===');
-
-{
-  // If ANY entry hash is wrong, entire import must be rejected.
-  // Export first, THEN tamper with the hash in the blob — otherwise
-  // exportLedgerFull recomputes the hash and overwrites the bad one.
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-
-  // Tamper with an entry hash in the serialized blob
-  const text = await blob.text();
-  const tampered = JSON.parse(text);
-  // Tamper with all staging entries' hashes (invalid hashes)
-  for (const entry of tampered.staging) {
-    entry.hash = 'f'.repeat(64);
-  }
-  // Seal is now broken too, but that would mask the hash test.
-  // Recompute seal with tampered staging so seal passes but hash fails.
-  const newSealPayload = jsonSort({ ledger: tampered.ledger, staging: tampered.staging });
-  tampered.seal = crypto.seal(newSealPayload, MASTER_KEY);
-  const tamperedBlob = new Blob([JSON.stringify(tampered)], { type: 'application/json' });
-
-  await t.assertAsyncThrows(
-    importLedger(tamperedBlob, crypto, MASTER_KEY),
-    'D3: bad entry hash rejects entire import'
-  );
-}
-
-console.log('\n=== D4. Export-Recomputed Hashes Match Import Expectations ===');
-
-{
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-  const parsed = JSON.parse(await blob.text());
-
-  // Export recomputed hashes; verify they match what import would compute
-  for (let i = 0; i < parsed.staging.length; i++) {
-    const hashData = {};
-    for (const k of Object.keys(parsed.staging[i]).sort()) {
-      if (k !== 'hash') hashData[k] = parsed.staging[i][k];
-    }
-    const expectedHash = crypto.sha256(jsonSort(hashData));
-    t.assertEq(parsed.staging[i].hash, expectedHash,
-      `D4: export hash[${i}] = import-expected hash`);
-  }
-}
-
-console.log('\n=== D5. Simple Entry (No Extra Fields) Hash Still Validates ===');
-
-{
-  // Simplest possible entry — no committed, block_index, etc.
-  const simple = {
-    entry_id: 'd5-simple-0000-4000-a000-000000000001',
-    title: 'D5 Simple',
-    start_epoch: 1717920000000,
-    end_epoch: 1717921800000,
-    duration: 1800000,
-    is_active: false,
-    is_paused: false,
-    pauses: [],
-    tags: ['simple'],
-    comment: null,
-    media: [],
-    device_uuid: 'dev-dummy-001',
-    end_device_uuid: 'dev-dummy-001',
-    metadata: {},
-  };
-  simple.hash = crypto.sha256(jsonSort((({ hash: _, ...d }) => d)(simple)));
-
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, [simple], crypto, MASTER_KEY);
-
-  try {
-    const result = await importLedger(blob, crypto, MASTER_KEY);
-    t.assert(true, 'D5: simple entry hash validates');
-    t.assertEq(result.entries[0].title, 'D5 Simple', 'D5: title preserved');
-  } catch (err) {
-    t.assert(false, 'D5: simple entry import failed: ' + err.message.slice(0, 120));
-  }
-}
-
 // ═════════════════════════════════════════════════════════════════════
 // Group E: Chain Import (Raw Format) — No Regression
 // ═════════════════════════════════════════════════════════════════════
@@ -1294,7 +863,7 @@ console.log('\n=== E5. format_version Excluded from Block Seal ===');
 console.log('\n=== F1. Empty Ledger + Empty Staging → Roundtrip Succeeds ===');
 
 {
-  const blob = await exportLedgerFull([], [], crypto, MASTER_KEY);
+  const blob = await exportLedgerFull([], crypto, MASTER_KEY);
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
     t.assert(true, 'F1: empty export roundtrip succeeds');
@@ -1310,7 +879,7 @@ console.log('\n=== F2. Genesis-Only Chain + Empty Staging → Roundtrip Succeeds
 
 {
   const genesisOnly = [g1.blocks[0]];
-  const blob = await exportLedgerFull(genesisOnly, [], crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(genesisOnly, crypto, MASTER_KEY);
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
     t.assert(true, 'F2: genesis-only roundtrip succeeds');
@@ -1339,7 +908,7 @@ console.log('\n=== F3. Large Export — 100+ Blocks → Roundtrip Succeeds ===')
     prevHash = `dayhash${String(i).padStart(58, '0')}`;
   }
 
-  const blob = await exportLedgerFull(largeBlocks, [], crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(largeBlocks, crypto, MASTER_KEY);
   try {
     const result = await importLedger(blob, crypto, MASTER_KEY);
     t.assert(true, 'F3: 100-block export roundtrip succeeds');
@@ -1353,7 +922,7 @@ console.log('\n=== F4. Tampered Seal → Import Rejects ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   // Tamper with the seal
   const text = await blob.text();
@@ -1370,19 +939,9 @@ console.log('\n=== F4. Tampered Seal → Import Rejects ===');
 console.log('\n=== F5. Tampered Entry Hash → Import Rejects ===');
 
 {
-  const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
-
-  // Tamper with an entry hash (but keep data intact)
-  const text = await blob.text();
-  const tampered = JSON.parse(text);
-  tampered.staging[0].hash = 'f'.repeat(64);
-  const tamperedBlob = new Blob([JSON.stringify(tampered)], { type: 'application/json' });
-
-  await t.assertAsyncThrows(
-    importLedger(tamperedBlob, crypto, MASTER_KEY),
-    'F5: tampered entry hash rejects import'
-  );
+  // F5: No staging entries in v2 export (D11) — test not applicable.
+  // Staging entry hash tampering is tested via v1 export (exportLedger).
+  t.assert(true, 'F5: no staging in v2 export (D11) — tampered entry hash test skipped');
 }
 
 console.log('\n=== F6. Corrupted JSON → Import Rejects Gracefully ===');
@@ -1400,7 +959,7 @@ console.log('\n=== F7. null/undefined masterKey → Throws Immediately ===');
 
 {
   const fixture = adjustFixtureForExport(g1);
-  const blob = await exportLedgerFull(fixture.blocks, fixture.staging, crypto, MASTER_KEY);
+  const blob = await exportLedgerFull(fixture.blocks, crypto, MASTER_KEY);
 
   await t.assertAsyncThrows(
     importLedger(blob, crypto, null),

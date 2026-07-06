@@ -816,7 +816,7 @@ console.log('\n  — E3: Export result is valid v2 format JSON —');
       t.assertEq(parsed.format_version, '2', 'E3.1: format_version is "2"');
       t.assert(typeof parsed.exported_at === 'string', 'E3.2: exported_at present');
       t.assert(Array.isArray(parsed.ledger), 'E3.3: ledger is array');
-      t.assert(Array.isArray(parsed.staging), 'E3.4: staging is array');
+      t.assert(!parsed.staging || Array.isArray(parsed.staging), 'E3.4: staging not present in v2 export (D11)');
       t.assert(typeof parsed.seal === 'string' && parsed.seal.length === 64,
         'E3.5: seal is 64-char hex');
     } catch (err) {
@@ -826,7 +826,7 @@ console.log('\n  — E3: Export result is valid v2 format JSON —');
     t.assert(false, 'E3.1: format_version is "2"');
     t.assert(false, 'E3.2: exported_at present');
     t.assert(false, 'E3.3: ledger is array');
-    t.assert(false, 'E3.4: staging is array');
+    t.assert(false, 'E3.4: staging not present in v2 export (D11)');
     t.assert(false, 'E3.5: seal is 64-char hex');
   }
 }
@@ -841,13 +841,13 @@ console.log('\n  — E4: exportLedgerFull is called (integration with real expor
 
       const result = await exportWithAuth({
         crypto, storage, passphrase: CORRECT_PASSPHRASE,
-        entries: SAMPLE_STAGING, blocks: SAMPLE_BLOCKS,
+        blocks: SAMPLE_BLOCKS,
       });
 
       // The blob from exportWithAuth should match what exportLedgerFull produces
-      // with the same (correctly derived) key
+      // with the same (correctly derived) key (D11: v2 export is ledger-only)
       const expectedBlob = await exportLedgerFull(
-        SAMPLE_BLOCKS, SAMPLE_STAGING, crypto, correctKey
+        SAMPLE_BLOCKS, crypto, correctKey
       );
       const expectedText = await expectedBlob.text();
       const actualText = await result.blob.text();

@@ -2,6 +2,7 @@
 
 > **Agent:** On first read, run `git log --oneline -5 && echo "---changed-files---" && git diff --stat HEAD~2` to load recent context.
 > Before making edits, consult the Documentation Impact Contract in root `AGENTS.md`.
+> For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — D1–D10 are the binding principles.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
 > **Completed history:** `docs/planning/archive/SESSION_HISTORY_2026-07-04.md`
@@ -12,12 +13,13 @@
 - **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed — web now verifies chain linkage during onboarding, on every append, detects genesis collision on push, and uses enumerate order for push
 - **Root cause identified:** Broken R2 chain (genesis from CLI Apr 23 + day blocks from web Jun 1) — mixed two ledger initializations. Fix script ready at `scripts/fix_chain_genesis_link.py`
 
-## Immediate Next Steps (Jul 6)
-1. **Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py https://phpoc-staging.wacevedo.workers.dev "Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw="`
-2. **Verify CLI onboarding:** `ph onboarding http cloudflare` — should pull all 105 blocks, prompt passphrase
-3. **Verify web onboarding:** Hard-refresh phpoc-web → clear IndexedDB → onboard from R2 → confirm no errors
-4. **Clean up diagnostics:** Remove `[DIAG]` logging from `domain/ledger/remote_sync.py`
-5. **Run test suites:** `pytest tests/ -x -q` and `cd phpoc-web && npm test`
+## Immediate Next Steps (Jul 7)
+1. **🔜 Staging Activity ID — Phase 1 (test identification):** Read `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md`, then create exhaustive test catalog at `docs/planning/STAGING_ACTIVITY_ID_TESTS.md`. Categories A–J covering activity_id generation, lifecycle, staging hash index data structure, comparison, Tier 1/2 fast paths, worker endpoint, cross-client sync, backward compat, and edge cases.
+2. **Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py https://phpoc-staging.wacevedo.workers.dev "Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw="`
+3. **Verify CLI onboarding:** `ph onboarding http cloudflare` — should pull all 105 blocks, prompt passphrase
+4. **Verify web onboarding:** Hard-refresh phpoc-web → clear IndexedDB → onboard from R2 → confirm no errors
+5. **Clean up diagnostics:** Remove `[DIAG]` logging from `domain/ledger/remote_sync.py`
+6. **Run test suites:** `pytest tests/ -x -q` and `cd phpoc-web && npm test`
 
 ## Chain Integrity Investigation (Jul 5) — Summary
 

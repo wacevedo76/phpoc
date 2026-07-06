@@ -3,14 +3,14 @@
  *
  * Supports three formats:
  *   - v1 export: { format_version: '1', entries, seal }
- *   - v2 export: { format_version: '2', ledger, staging, seal }
+ *   - v2 export: { format_version: '2', ledger, seal } (staging optional for backward compat)
  *   - Raw chain: [block, ...] — the CLI's ledger.json format
  * The caller (UI layer) is responsible for writing entries to storage
  * and deciding replace vs. merge based on genesis identity.
  *
  * Validation flow (export formats):
  *   1. Parse JSON → detect format version
- *   2. Verify seal (v1: over entries, v2: over {ledger, staging})
+ *   2. Verify seal (v1: over entries, v2: over ledger only)
  *   3. Recompute each entry's SHA-256 hash → compare
  *   4. Extract genesis hash from v2 ledger when available
  *   5. Any failure → throw (reject entirely, no partial import)
@@ -87,15 +87,11 @@ export async function importLedger(file, crypto, masterKey) {
   let ledger = null;
 
   if (formatVersion === '2') {
-    // v2: full ledger export — { ledger, staging, seal }
+    // v2: committed ledger export — { ledger, seal }
+    //     staging is optional (backward compat: old v2 exports had it)
     if (!Array.isArray(parsed.ledger)) {
       throw new Error(
         'importLedger: format v2 requires a "ledger" array'
-      );
-    }
-    if (!Array.isArray(parsed.staging)) {
-      throw new Error(
-        'importLedger: format v2 requires a "staging" array'
       );
     }
     if (typeof parsed.seal !== 'string' || !parsed.seal) {
@@ -107,10 +103,11 @@ export async function importLedger(file, crypto, masterKey) {
       genesisHash = parsed.ledger[0].block_hash || parsed.ledger[0].day_hash || null;
     }
 
-    // v2 entries = staging entries (committed blocks stay as ledger)
-    entries = parsed.staging;
+    // v2 entries = staging entries from old exports, or empty for new exports
+    entries = Array.isArray(parsed.staging) ? parsed.staging : [];
     ledger = parsed.ledger;
-    sealPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+    // Seal: new v2 covers ledger only; old v2 covered {ledger, staging}
+    sealPayload = JSON.stringify(parsed.ledger);
   } else {
     // v1 (and any future unrecognized version): staging-only
     if (!Array.isArray(parsed.entries)) {
@@ -128,7 +125,12 @@ export async function importLedger(file, crypto, masterKey) {
   }
 
   // ── Seal verification ───────────────────────────────────────────
-  const sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
+  // Try new seal first; if it fails and file has staging, try old seal (backward compat)
+  let sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
+  if (!sealValid && formatVersion === '2' && Array.isArray(parsed.staging)) {
+    const oldSealPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+    sealValid = crypto.verifySeal(oldSealPayload, parsed.seal, masterKey);
+  }
 
   if (!sealValid) {
     throw new Error(

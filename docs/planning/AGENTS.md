@@ -15,6 +15,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `E2E_CROSS_CLIENT_FIX_PLAN.md` — Fix plan for cross-client bugs: typed errors (Bug 1), summary block indices (Bug 2), staging format (Bug 3), genesis seal (Bug 4)
 - `ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` — Strategy: hash-index based genesis check replacing full block pulls. 4-phase TDD plan. 210× speedup on common case. (2026-06-30)
 - `ONBOARDING_SPEEDUP_TESTS.md` — Phase 1 output: exhaustive test catalog (~62 new tests, ~15 modified). Categories A–J covering hash index data structure, fork detection, push behavior, Tier 1/2 integration, Worker endpoint, E2E, and edge cases. (2026-07-02)
+- `STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` — Plan: introduce stable `activity_id` for lifecycle tracking (Staging → Commit) + staging hash index for fast cross-client staging reconciliation. Mirrors ledger hash index architecture. Design decisions, spec conformance, phases, and privacy analysis. (2026-07-07)
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)

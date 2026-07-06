@@ -3,7 +3,7 @@
  *
  * Two export modes:
  *   - exportLedger()     — exports staging entries only (v1 format)
- *   - exportLedgerFull() — exports committed chain + staging (v2 format)
+ *   - exportLedgerFull() — exports committed chain only (v2 format)
  *
  * Auth-gated: caller must provide a masterKey (obtained from passphrase
  * prompt → crypto.authenticate()). In dev mode (DummyCryptoService), any
@@ -12,16 +12,19 @@
  * File format (v1 — staging only):
  *   { format_version, exported_at, entries, seal }
  *
- * File format (v2 — full ledger):
- *   { format_version, exported_at, ledger, staging, seal }
+ * File format (v2 — committed chain only):
+ *   { format_version, exported_at, ledger, seal }
  *
  * Integrity:
  *   - v1: Seal = HMAC of jsonSort(entries) using master key
- *   - v2: Seal = HMAC of jsonSort({ledger, staging}) using master key
+ *   - v2: Seal = HMAC of JSON.stringify(ledger) using master key
  *   - Seal covers the data only — wrapper metadata (exported_at,
  *     format_version) sits outside the sealed region
- *   - Entry/block hashes are preserved as-is
+ *   - Block hashes are preserved as-is
  *   - PURE READ: no staging entries are committed during export
+ *
+ * D11 (Staging-Ledger Separation): v2 exports ONLY committed ledger blocks.
+ * Staging entries are never included in ledger exports.
  *
  * @module ledger_export
  */
@@ -82,31 +85,24 @@ export async function exportLedger(entries, crypto, masterKey) {
 }
 
 /**
- * Export the full ledger — committed blocks + staging entries — to a
- * signed JSON Blob suitable for browser download.
+ * Export the committed ledger chain to a sealed JSON Blob.
  *
  * PURE READ OPERATION: does NOT commit staging entries. Exports
- * everything as-is: the committed block chain and any uncommitted
- * staging entries, each in separate arrays.
+ * ONLY the committed block chain. Staging entries are never included
+ * (D11: Staging-Ledger Separation).
  *
  * @param {object[]} blocks — Committed ledger blocks (genesis, day, month_summary).
  *        Each block has: type, day_index, date, prev_hash, entries[], day_hash, etc.
- * @param {object[]} staging — Uncommitted staging entries (from LocalCache.readEntries()).
- *        May be empty array if all entries are committed.
  * @param {object} crypto - CryptoService instance with seal().
  * @param {string} masterKey - 64-char hex master key.
  * @returns {Blob} application/json Blob ready for file download.
- * @throws {Error} If blocks or staging is not an array, crypto lacks seal(),
+ * @throws {Error} If blocks is not an array, crypto lacks seal(),
  *         or masterKey is missing/empty.
  */
-export async function exportLedgerFull(blocks, staging, crypto, masterKey) {
+export async function exportLedgerFull(blocks, crypto, masterKey) {
   // ── Validation ──────────────────────────────────────────────────
   if (!Array.isArray(blocks)) {
     throw new Error('exportLedgerFull: blocks must be an array');
-  }
-
-  if (!Array.isArray(staging)) {
-    throw new Error('exportLedgerFull: staging must be an array');
   }
 
   if (typeof crypto.seal !== 'function') {
@@ -117,29 +113,16 @@ export async function exportLedgerFull(blocks, staging, crypto, masterKey) {
     throw new Error('exportLedgerFull: masterKey is required');
   }
 
-  // ── Recompute staging entry hashes (NOT ledger blocks) ────────
-  // Real staging entries from LocalCache.append() may have fields
-  // (committed, block_index, entry_index, end_device_uuid) added AFTER
-  // the original hash was computed. Recompute each staging hash to cover
-  // ALL fields except `hash` so import hash validation passes.
-  // Ledger blocks are NOT recomputed — their day_hash seals are stable.
-  const recomputedStaging = staging.map(entry => {
-    const { hash: _, ...hashData } = entry;
-    return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
-  });
-
   // ── Build the export payload ────────────────────────────────────
   const payload = {
     format_version: '2',
     exported_at: new Date().toISOString(),
     ledger: blocks,
-    staging: recomputedStaging,
     seal: '', // placeholder, computed below
   };
 
-  // Seal covers BOTH ledger and recomputed staging — the combined state
-  const sealData = { ledger: blocks, staging: recomputedStaging };
-  payload.seal = crypto.seal(jsonSort(sealData), masterKey);
+  // Seal covers the committed ledger chain only (D11)
+  payload.seal = crypto.seal(JSON.stringify(blocks), masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────
   const json = JSON.stringify(payload, null, 2);

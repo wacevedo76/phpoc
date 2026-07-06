@@ -330,12 +330,10 @@ export class WorkerImportSource {
     let genesisBlock = null;
 
     if (formatVersion === '2') {
-      // v2: full ledger export — { ledger, staging, seal }
+      // v2: committed ledger export — { ledger, seal }
+      //     staging is optional (backward compat: old v2 exports had it)
       if (!Array.isArray(parsed.ledger)) {
         throw new Error('Format v2 requires a "ledger" array');
-      }
-      if (!Array.isArray(parsed.staging)) {
-        throw new Error('Format v2 requires a "staging" array');
       }
       if (typeof parsed.seal !== 'string' || !parsed.seal) {
         throw new Error('Missing or invalid seal in import data');
@@ -346,9 +344,10 @@ export class WorkerImportSource {
         genesisHash = genesisBlock.day_hash || null;
       }
 
-      entries = parsed.staging;
+      entries = Array.isArray(parsed.staging) ? parsed.staging : [];
       ledger = parsed.ledger;
-      sealPayload = WorkerImportSource._jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+      // Seal: new v2 covers ledger only; old v2 covered {ledger, staging}
+      sealPayload = JSON.stringify(parsed.ledger);
     } else {
       // v1 (and any future unrecognized version): staging-only
       if (!Array.isArray(parsed.entries)) {
@@ -363,7 +362,12 @@ export class WorkerImportSource {
     }
 
     // ── Seal verification ─────────────────────────────────────────
-    const sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
+    // Try new seal first; if it fails and file has staging, try old seal (backward compat)
+    let sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
+    if (!sealValid && formatVersion === '2' && Array.isArray(parsed.staging)) {
+      const oldSealPayload = WorkerImportSource._jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+      sealValid = crypto.verifySeal(oldSealPayload, parsed.seal, masterKey);
+    }
     if (!sealValid) {
       throw new Error(
         'Seal verification failed — data may be tampered or opened with the wrong passphrase'
