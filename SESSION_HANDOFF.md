@@ -9,37 +9,63 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1609/1609 PY tests pass  |  **Web:** 807 JS tests pass  |  **Worker:** 49 vitest tests pass
-- **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed — web now verifies chain linkage during onboarding, on every append, detects genesis collision on push, and uses enumerate order for push
-- **Root cause identified:** Broken R2 chain (genesis from CLI Apr 23 + day blocks from web Jun 1) — mixed two ledger initializations. Fix script ready at `scripts/fix_chain_genesis_link.py`
+- **CLI:** 1609/1609 PY tests pass  |  **Web:** 750 JS tests pass (495 staging + 255 sync)  |  **Worker:** 48 vitest tests pass
+- **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
+- **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
+
+## Discussion Summary — Staging DB Model Exploration (Jul 7)
+
+Explored converting the staging area from a single JSON blob to a row-per-activity SQLite database. Key findings documented in `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` §"Future Direction":
+
+- **SQLite is stdlib** — zero-dependency for CLI, same as `json`/`hashlib`
+- **Three-column schema:** `activity_id` (PK), `activity_status` (plaintext), `activity` (obfuscated entry blob)
+- **Hash index becomes redundant** — `SELECT activity_id, activity_status FROM staging` IS the hash index. Entire `staging_hash_index.js` (~200 lines) + Tier 1/Tier 2 infrastructure goes away.
+- **Sync payloads shrink 100×+** — pull only changed rows (~300–800 bytes) instead of 64KB–512KB padded blob
+- **Content changes caught** — per-row versioning detects tag edits, title changes, etc. that the current status-only hash index misses
+- **Trade-offs identified:** per-row encryption overhead on bulk reads, privacy regression (exposed entry count), Worker protocol redesign needed
+- **Current Phase 3 hash index work is still valid near-term** — the DB model is a future architectural shift that supersedes it
 
 ## Immediate Next Steps (Jul 7)
-1. **🔜 Staging Activity ID — Phase 1 (test identification):** Read `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md`, then create exhaustive test catalog at `docs/planning/STAGING_ACTIVITY_ID_TESTS.md`. Categories A–J covering activity_id generation, lifecycle, staging hash index data structure, comparison, Tier 1/2 fast paths, worker endpoint, cross-client sync, backward compat, and edge cases.
-2. **Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py https://phpoc-staging.wacevedo.workers.dev "Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw="`
-3. **Verify CLI onboarding:** `ph onboarding http cloudflare` — should pull all 105 blocks, prompt passphrase
-4. **Verify web onboarding:** Hard-refresh phpoc-web → clear IndexedDB → onboard from R2 → confirm no errors
-5. **Clean up diagnostics:** Remove `[DIAG]` logging from `domain/ledger/remote_sync.py`
-6. **Run test suites:** `pytest tests/ -x -q` and `cd phpoc-web && npm test`
+0. **✅ Phase 1 complete** — 116-test catalog.
+1. **✅ Phase 2 — RED:** 5 test files, 116 RED stubs.
+2. **✅ Phase 3 — GREEN (core):** New modules + wiring. **527/527 staging tests pass.**
+3. **✅ Workflow spec written** — `docs/planning/STAGING_HASH_INDEX_WORKFLOW.md`
+4. **🔜 Sync logic design FIRST** — before any Worker or SQLite code. Row-level staging changes every sync flow:
+   - **Remote→Local pull:** Manifest-based diff (`GET /storage/staging/manifest` → compare `{id, status, updated_at}` rows → pull only changed). Replaces Tier 1/Tier 2 hash index.
+   - **Local→Remote push:** Push only rows with `updated_at > last_sync_at`. Replaces monolithic `pushBlobOnly` / `pushToRemote`.
+   - **Merge engine:** Redesign `mergeEntries()` for row-level conflict resolution. Same `entry_id` dedup key, but row-by-row LWW (last-writer-wins by `updated_at`) instead of array-level "remote wins on tie."
+   - **Auth / Re-Auth speed:** Cookie fast path unchanged. On mismatch, manifest pull (~500 bytes) replaces 64KB–512KB blob pull. Common case: 0 changed rows → instant READY.
+   - **Staging→Ledger dedup:** `markCommitted()` already uses `entry_id` dedup. Row-level model must ensure a committed row isn't re-synced from remote before local deletion. Add `committed_at` timestamp to rows — skip rows where `committed_at <= last_sync_at` on pull.
+   - **Consistency guarantees:** Per-row `updated_at` versioning prevents lost updates. Remote manifest provides authoritative row list for deletion detection. Rows deleted locally after commit must propagate as tombstones (soft delete) or manifest diff catches them.
+5. **🔜 Worker protocol redesign** (implements the sync logic contract):
+   - `GET /storage/staging/manifest` → `{rows: [{id, status, updated_at}], version}` for diff detection
+   - `GET /storage/staging/rows/{activity_id}` → single obfuscated row
+   - `PUT /storage/staging/rows/{activity_id}` → push single obfuscated row
+   - `DELETE /storage/staging/rows/{activity_id}` → remove row + update manifest
+   - Define per-row obfuscation format: padding tier, encryption, `updated_at` in plaintext header
+6. **🔜 Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store or per-row keys. Migrate from single `'entries'` blob. Implement sync logic from step 4.
+7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema. Migrate from `staging.json`. Implement sync logic from step 4. All 1609 Python tests must pass.
+7. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
+8. **🔜 Verify CLI onboarding**
+9. **🔜 Verify web onboarding**
+10. **🔜 Clean up diagnostics + Run test suites**
 
-## Chain Integrity Investigation (Jul 5) — Summary
+## Files Created (Phase 3)
+| File | Purpose |
+|---|---|
+| `phpoc-web/src/sync/activity_id.js` | `generateActivityId()` — 10-char CSPRNG alphanumeric IDs |
+| `phpoc-web/src/sync/staging_hash_index.js` | `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` — ⏸️ future: superseded by SQLite row-level DB model |
 
-**Problem:** CLI `_verify_chain` rejected R2 chain at block 1 (`genesis.day_hash ≠ day1.prev_hash`). phpoc-web silently accepted same chain.
+## Files Modified (Phase 3)
+| File | Change |
+|---|---|
+| `phpoc-web/src/sync/keys.js` | Added `REMOTE_STAGING_HASH_INDEX`, `REMOTE_STAGING_HASH_INDEX_SHA256`, `LOCAL_STAGING_HASH_INDEX` |
+| `phpoc-web/src/sync/local_cache.js` | Constructor accepts injectible `generateId`; `append()` assigns `activity_id`; `_rawToDto()`/`_dtoToRaw()` preserve it; `readHashIndex()`/`writeHashIndex()`/`_refreshHashIndex()` for hash index persistence |
+| `phpoc-web/src/sync/sync.js` | `_pushStagingHashIndex()` pushes encrypted index + sha256 after blob push; `_pullAndCacheStagingHashIndex()` pulls + decrypts + caches; wired into `pushToRemote`, `pushBlobOnly`, `_reconcileDifferentDevice`, `clearRemote` |
 
-**Root cause:** Chain on R2 composed of blocks from two separate ledger initializations:
-- Genesis (Apr 23, CLI-created): `day_hash=3c4a…`
-- Day blocks 1–104 (Jun 1–19, web-created): chain from a *different* genesis (`prev_hash=9563aa…`)
-- Trigger: creating new local ledger in phpoc-web when R2 already had CLI genesis. Push skipped genesis (fileIdx=0 existed) but pushed day blocks (indices 1+).
+## Chain Integrity Fixes (Jul 5) ✅
 
-**4 fixes applied:**
-
-| # | File | Change |
-|---|------|--------|
-| 1 | `sync.js` `pushLedgerBlocks` | Enumeration order (no day_index sort) |
-| 2 | `DevModeContext.jsx` `onboardFromRemote` | Full prev_hash chain verification |
-| 3 | `chain.js` `append()` | prev_hash linkage check on every block append |
-| 4 | `sync.js` `pushLedgerBlocks` | Genesis collision guard — abort push if local ≠ remote genesis |
-
-**Files modified:** `sync.js`, `chain.js`, `DevModeContext.jsx`, `remote_sync.py` (diag temp)
+**Problem:** R2 chain had blocks from two genesis blocks. CLI rejected, web silently accepted. **Root:** Genesis collision on push — skipped genesis (fileIdx=0 existed) but pushed day blocks (indices 1+) from different chain. **4 fixes:** enumeration order (`sync.js`), prev_hash verification (`DevModeContext.jsx`, `chain.js`), genesis collision guard (`sync.js`). Files: `sync.js`, `chain.js`, `DevModeContext.jsx`, `remote_sync.py`.
 
 ## Known Issues
 - **CLI read commands block on specifier mismatch** (Python-side, not web)

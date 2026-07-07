@@ -62,12 +62,16 @@ import {
   REMOTE_LEDGER_INDEX,
   REMOTE_HASH_INDEX,
   REMOTE_HASH_INDEX_SHA256,
+  REMOTE_STAGING_HASH_INDEX,
+  REMOTE_STAGING_HASH_INDEX_SHA256,
   LOCAL_COOKIE,
   LOCAL_LEDGER_BLOCKS,
   LOCAL_LEDGER_INDEX,
   LOCAL_HASH_INDEX,
+  LOCAL_STAGING_HASH_INDEX,
 } from './keys.js';
 import { buildHashIndex } from './hash_index.js';
+import { buildStagingHashIndex, compareStagingHashIndexes, computeHashForIndex } from './staging_hash_index.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
@@ -773,6 +777,14 @@ export class SyncService {
     // Push the (merged or local) blob to remote
     await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
 
+    // After pushBlobOnly already published the hash index, also pull
+    // and cache it locally so future Tier 1 checks are instantaneous
+    try {
+      await this._pullAndCacheStagingHashIndex(mk);
+    } catch {
+      // Non-critical — rebuildable from entries
+    }
+
     // Create new device cookie (fresh specifier, local + remote)
     try {
       await DeviceCookie.destroyLocally(this._storage);
@@ -864,6 +876,9 @@ export class SyncService {
     }
 
     this._lastPushAt = Date.now();
+
+    // Push staging hash index (best-effort, non-fatal)
+    await this._pushStagingHashIndex(entries);
   }
 
   /**
@@ -905,6 +920,83 @@ export class SyncService {
     const effectiveDeviceId = deviceId || (await this._getDeviceId()) || 'unknown';
     await this._remote.pushBlob(entries, effectiveDeviceId, masterKeyHex);
     this._lastPushAt = Date.now();
+
+    // Push staging hash index (best-effort, non-fatal)
+    await this._pushStagingHashIndex(entries);
+  }
+
+  // ------------------------------------------------------------------
+  // Staging hash index push
+  // ------------------------------------------------------------------
+
+  /**
+   * Push staging hash index + sha256 to remote.
+   *
+   * Builds the hash index from current entries, pushes both the encrypted
+   * hash_index.json and its sha256 to remote for Tier 1/Tier 2 fast path.
+   * Best-effort — failures are logged but never thrown.
+   *
+   * @param {Array} entries - Current staging entry DTOs.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _pushStagingHashIndex(entries) {
+    if (!this._remote) return;
+
+    const mk = this._crypto.getMasterKey();
+    if (!mk) return;
+
+    try {
+      // Build index from entries
+      const hashIndex = buildStagingHashIndex(entries);
+      const indexJson = JSON.stringify(hashIndex);
+
+      // Encrypt the hash index JSON before pushing (D3)
+      const obfuscatedB64 = this._crypto.obfuscateBlob(indexJson, mk);
+      const indexBytes = base64ToBytes(obfuscatedB64);
+      await this._transport.push(REMOTE_STAGING_HASH_INDEX, indexBytes);
+
+      // Push SHA-256 of the ENCRYPTED blob for Tier 1 comparison
+      // The worker computes over the encrypted blob — it never sees the plaintext
+      const sha256 = this._crypto.sha256(new TextDecoder().decode(indexBytes));
+      await this._transport.push(REMOTE_STAGING_HASH_INDEX_SHA256, new TextEncoder().encode(sha256));
+
+      // Cache locally for next Tier 1 comparison
+      await this._local.writeHashIndex(hashIndex);
+    } catch (err) {
+      console.warn('pushStagingHashIndex: failed:', err.message);
+    }
+  }
+
+  /**
+   * Pull remote staging hash index, decrypt, and cache locally.
+   *
+   * Best-effort — if the remote doesn't have a hash index (legacy),
+   * builds one from local entries and pushes it (bootstrap).
+   *
+   * @param {string} mk - Master key hex.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _pullAndCacheStagingHashIndex(mk) {
+    if (!this._remote) return;
+
+    try {
+      const rawBytes = await this._transport.pull(REMOTE_STAGING_HASH_INDEX);
+      if (rawBytes !== null) {
+        // Decrypt: deobfuscateBlob(base64, mk) → JSON string
+        const b64 = bytesToBase64(rawBytes);
+        const plaintext = this._crypto.deobfuscateBlob(b64, mk);
+        const remoteIndex = JSON.parse(plaintext);
+        await this._local.writeHashIndex(remoteIndex);
+      } else {
+        // No remote hash index — bootstrap from local entries
+        const entries = await this._local.readEntries();
+        await this._pushStagingHashIndex(entries);
+      }
+    } catch {
+      // Non-critical — hash index is rebuildable
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1186,7 +1278,14 @@ export class SyncService {
     }
 
     // Delete staging blob, cookie, and hash index files
-    const stagingKeys = [REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE, REMOTE_HASH_INDEX, REMOTE_HASH_INDEX_SHA256];
+    const stagingKeys = [
+      REMOTE_STAGING_BLOB,
+      REMOTE_DEVICE_COOKIE,
+      REMOTE_HASH_INDEX,
+      REMOTE_HASH_INDEX_SHA256,
+      REMOTE_STAGING_HASH_INDEX,
+      REMOTE_STAGING_HASH_INDEX_SHA256,
+    ];
     for (const key of stagingKeys) {
       try {
         await this._transport.delete(key);

@@ -16,6 +16,8 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` — Strategy: hash-index based genesis check replacing full block pulls. 4-phase TDD plan. 210× speedup on common case. (2026-06-30)
 - `ONBOARDING_SPEEDUP_TESTS.md` — Phase 1 output: exhaustive test catalog (~62 new tests, ~15 modified). Categories A–J covering hash index data structure, fork detection, push behavior, Tier 1/2 integration, Worker endpoint, E2E, and edge cases. (2026-07-02)
 - `STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` — Plan: introduce stable `activity_id` for lifecycle tracking (Staging → Commit) + staging hash index for fast cross-client staging reconciliation. Mirrors ledger hash index architecture. Design decisions, spec conformance, phases, and privacy analysis. (2026-07-07)
+- `STAGING_ACTIVITY_ID_TESTS.md` — Phase 1 output: exhaustive test catalog (116 tests across 10 categories A–J) covering activity_id generation, lifecycle, staging hash index data structure, comparison, Tier 1/2 fast paths, Worker endpoint, cross-client sync, backward compat, and edge cases. (2026-07-07)
+- `STAGING_HASH_INDEX_WORKFLOW.md` — Workflow specification: full data flow contract for staging activity_id + hash index across push, pull, merge, and transport. Defines checkAndSync() integration, Tier 1/2/3 cascade, worker endpoint contract, backward compat, and LocalCache API surface needed. Single source of truth for mock transport + remaining test categories E–J. (2026-07-07)
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)

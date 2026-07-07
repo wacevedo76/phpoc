@@ -45,7 +45,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/local_cache_test.mjs` | 🟢 GREEN | 58-test suite for staging entry format canonicalization (Bug 3b fix, GREEN phase) |
 | `phpoc-web/test/device_uuid_test.mjs` | 🟢 GREEN | 36-test suite — Groups 1-8 (original) + Groups 9-12 client suffix tests (Bug 3a fix) |
 | `phpoc-web/test/settings_genesis_test.mjs` | 🟢 GREEN | 13-test Settings UI genesis gate integration (updated for Bug 1 throw API) |
-| `phpoc-web/test/sync_service_test.mjs` | 🟢 GREEN | 246 tests — Groups A-W all GREEN. Phase B2: push gating (W1-W4), genesisCompatible caching (V1-V2), duplicate pullCookie prevention (U1-U2), unnecessary push prevention (T1-T4), M2/M5 updated expectations. (2026-07-02) |
+| `phpoc-web/test/sync_service_test.mjs` | 🟢 GREEN | 287 tests — Groups A-W all GREEN + Groups X/Y/Z (32 staging tests, RED phase). Phase B2: push gating (W1-W4), genesisCompatible caching (V1-V2), duplicate pullCookie prevention (U1-U2), unnecessary push prevention (T1-T4), M2/M5 updated expectations. (2026-07-02, updated 2026-07-07) |
+| `phpoc-web/test/activity_id_test.mjs` | 🔴 RED | **NEW** — 7 tests (Category A): `generateActivityId()` format, entropy, uniqueness. Phase 2 RED. (2026-07-07) |
+| `phpoc-web/test/staging_hash_index_test.mjs` | 🔴 RED | **NEW** — 43 tests (Categories B/C/D): activity_id lifecycle (B1-B16), `buildStagingHashIndex()` (C1-C13), `compareStagingHashIndexes()` (D1-D14). Phase 2 RED. (2026-07-07) |
+| `phpoc-web/test/staging_backward_compat_test.mjs` | 🔴 RED | **NEW** — 24 tests (Categories I/J): legacy entries/remote backward compat (I1-I10), edge cases & stress (J1-J14). Phase 2 RED. (2026-07-07) |
 | `phpoc-web/test/unlock_performance_regression_test.mjs` | 🔴 RED | **NEW** — 34 tests (Groups A-D) for unlock performance regression fixes: hash index bootstrap gap (A1-A6), cookie catch-22 (B1-B6), specifier mismatch short-circuit (C1-C6), combined scenarios (D1-D3). Current: 15 pass / 19 fail (RED phase, fix not implemented). (2026-07-05) |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
 | `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
@@ -86,13 +89,16 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/remote_sync.js` | 🟢 GREEN | `RemoteSync` — blob pull/push, cookie pull/push via transport. Bug 3b: pushBlob converts DTOs to raw spec format. Uses shared `base64.js` + `keys.js`. |
 | `phpoc-web/src/sync/cookie.js` | COLD | `DeviceCookie` — TTL fallback bug fixed (nullish coalescing), stale header updated, uses `COOKIE_KEY` constant. |
 | `phpoc-web/src/sync/sync.js` | 🔴 RED | Core sync orchestrator. Bug 1: _genesisGatePhase catches typed errors. Bug 2: pushLedgerBlocks position counter. Bug 3a: _fastPathPhase relaxed. Bug 3b: reconcile via writeEntries DTO→raw. Hash index: pushLedgerBlocks pushes hash_index artifacts, _genesisGatePhase caches locally. Phase B2: `merged` flag gating, `_genesisCompatible` caching, `_lastRemoteCookie` reuse. Chain integrity (Jul 5): enumerate-order push, genesis collision guard. (2026-07-05)
+| `phpoc-web/src/sync/activity_id.js` | 🟢 GREEN | **NEW (Phase 3)** — `generateActivityId()` 10-char CSPRNG alphanumeric IDs (~59 bits entropy) |
+| `phpoc-web/src/sync/staging_hash_index.js` | 🟢 GREEN | **NEW (Phase 3)** — `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` |
+| `phpoc-web/src/sync/local_cache.js` | 🟢 GREEN | **MODIFIED (Phase 3)** — activity_id field, hash index persistence, injectible `generateId` test seam |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 
-**Test files:** phpoc-web has 39 test files (~2,260 total tests). Most GREEN; ~62 new RED tests for hash-index speedup (Phase 2 complete — implementation in Phase 3).
+**Test files:** phpoc-web has 42 test files (~2,400+ total tests). Most GREEN; ~116 new RED tests for staging hash index (Phase 2 complete — implementation in Phase 3).
 
 ### Tests (39 files, ~22,000 lines, ~1929 tests)
 
@@ -111,6 +117,7 @@ Key test files:
 - `tests/test_cross_platform_integration.py` — 🔜 Cross-platform live integration tests (CLI ↔ Worker), blob/cookie/ledger round-trips, full 8-step workflow
 - `tests/test_cross_platform_crypto.py` — 🔜 Python ↔ WASM obfuscation compatibility verification
 - `worker/test/index.test.ts` — 🔜 Worker HTTP endpoint tests (auth, CORS, GET/PUT/DELETE, list, error handling)
+- `worker/test/staging_hash_endpoint_test.ts` — 🔴 RED **NEW** — 10 tests (Category G): `GET /storage/staging/hash_index.sha256` endpoint. Phase 2 RED. (2026-07-07)
 
 ### Active docs
 
@@ -129,6 +136,8 @@ Key test files:
 | `../planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` | 🔜 **ACTIVE** — Plan to align web staging sharing behavior with CLI multi-machine pattern: 5 phases, 9 files touched |
 | `../planning/E2E_CROSS_CLIENT_BUGS.md` | ✅ **RESOLVED** — E2E cross-client test findings: 4 bugs fixed in Green phase (2026-07-01) |
 | `../planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` | 🔜 **ACTIVE** — Hash-index genesis check strategy. 4-phase TDD. 210× speedup. (2026-06-30) |
+| `../planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` | 🔜 **ACTIVE** — Stable `activity_id` + staging hash index plan. 4-phase TDD. (2026-07-07) |
+| `../planning/STAGING_ACTIVITY_ID_TESTS.md` | 🔴 **NEW** — Phase 1 test catalog: 116 tests (A–J). Phase 2 RED pending. (2026-07-07) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |

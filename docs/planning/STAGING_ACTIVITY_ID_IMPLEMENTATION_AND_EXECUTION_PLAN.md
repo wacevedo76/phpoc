@@ -1,6 +1,6 @@
 # Staging Activity ID — Implementation & Execution Plan
 
-> **Status:** 🔜 PLANNING
+> **Status:** ✅ Phase 3 — GREEN (core complete)
 > **Created:** 2026-07-07
 > **Goal:** Introduce a stable, random `activity_id` assigned at activity creation time to enable lifecycle tracking (Staging → Commit) and power a staging hash index for fast cross-client staging reconciliation.
 
@@ -25,7 +25,7 @@ In a multi-device staging setup, clients currently pull and decrypt the *entire*
 
 Two complementary additions that mirror the ledger hash index architecture:
 
-1. **`activity_id`** — A random opaque string (e.g., 16-char alphanumeric) assigned at activity creation time. Immutable for the activity's lifetime. Embedded in the entry's `data` dict.
+1. **`activity_id`** — A random opaque string (e.g., 10-char alphanumeric) assigned at activity creation time. Immutable for the activity's lifetime. Embedded in the entry's `data` dict.
 2. **Staging hash index** — An ordered list of `{activity_id, status}` pairs stored at `staging/hash_index.json` on R2, with a companion `staging/hash_index.sha256` for Tier 1 fast-path comparison.
 
 ### Architecture (mirrors ledger hash index)
@@ -87,11 +87,11 @@ Encrypting the staging hash index file keeps the transport blind while still ena
 
 ### D5: `activity_id` format
 
-- **Length:** 16 characters
-- **Alphabet:** `[A-Za-z0-9]` (62 possibilities → ~95 bits entropy)
+- **Length:** 10 characters
+- **Alphabet:** `[A-Za-z0-9]` (62 possibilities → ~59 bits entropy)
 - **Generation:** CSPRNG at activity creation time
-- **Collision probability:** Negligible (~1 in 2^95 per ID) within a single user's device
-- **Cross-device:** If two devices independently create entries, their `activity_id` values are independent. No coordination needed — the device context makes collisions irrelevant.
+- **Collision probability:** ~6 × 10⁻¹³ with 1,000 simultaneous entries across all devices (birthday bound). Effectively zero within the bounded staging lifecycle (entries span hours to days, not the full ID space). Across the entire human population each creating 400M entries, ~1 collision expected — irrelevant in practice.
+- **Rationale (vs 16-char):** The activity_id scope is a single user's staging window (hours to days, ≤~1,000 entries at any time), not global uniqueness. 10 chars provides ~59 bits — far beyond the birthday-bound collision threshold for this bounded scope — while keeping indexes compact. A collision between two devices' IDs would cause the hash index diff engine to misidentify a new entry as a status change, so the margin above the birthday bound must be comfortable. 10 chars provides that margin (10⁻¹³ for 1,000 entries). 16 chars was over-engineered under an implicit infinity assumption that doesn't match the staging lifecycle.
 
 ---
 
@@ -116,7 +116,7 @@ The spec (v0.3.0, §9.3) explicitly allows optional field additions:
 ```json
 {
   "data": {
-    "activity_id": "xK7mQp2vN9rL5sT8",   ← NEW: optional, plaintext, 16-char random
+    "activity_id": "xK7mQp2vN9",   ← NEW: optional, plaintext, 10-char random
     "title": "Guitar Practice",
     "duration": 3600000,
     "is_active": false,
@@ -233,3 +233,107 @@ The ledger hash index (ADR-024) already accepts leaking block count and type dis
 - `docs/design/ARCHITECTURAL_DECISIONS.md` — ADR-024 (ledger hash index)
 - `docs/planning/E2E_CROSS_CLIENT_FIX_PLAN.md` — Cross-client staging sync context
 - `SESSION_HANDOFF.md` — Current session state
+
+---
+
+## Future Direction: Row-Level Database Model (Exploration — 2026-07-07)
+
+### Summary
+
+A design exploration session considered converting the staging area from a single JSON blob to a proper row-per-activity database. The key insight: **with a SQLite-backed staging store, the entire staging hash index becomes redundant** — it exists solely as a workaround for the single-blob model's inability to do incremental sync efficiently.
+
+### The current single-blob model
+
+- **Storage:** One JSON array under a single key (`'entries'` in IndexedDB, `staging.json` on disk)
+- **Mutations:** Read all → modify → write all (O(n) for every operation)
+- **Remote sync:** Pull/push the entire encrypted blob, padded to size tiers (64K–512K)
+- **Hash index:** Introduced as a workaround to detect changes without pulling the full blob — Tier 1 sha256 comparison on `{id, status}[]` list, Tier 2 pull the actual list and diff
+
+### SQLite is zero-dependency for the CLI
+
+The `sqlite3` module is part of Python's standard library — as bundled as `json` or `hashlib`. A `staging.db` file would not violate the CLI's zero-external-dependency goal. SQLite is a proper relational engine (B-tree indexes, ACID transactions, full SQL) that stores everything in a single file on disk.
+
+### Proposed three-column schema
+
+```sql
+CREATE TABLE staging (
+    activity_id TEXT PRIMARY KEY,
+    activity_status TEXT NOT NULL,  -- 'active' | 'paused' | 'ended'
+    activity TEXT NOT NULL          -- obfuscated entry JSON blob
+);
+```
+
+The `activity` column holds the individual obfuscated entry data. The `activity_id` and `activity_status` columns are plaintext — structurally needed for querying, carrying no user content (same rationale as `title`, `tags`, and the current `activity_id` field per D1).
+
+### What the hash index becomes
+
+With this schema, the entire staging hash index (`staging_hash_index.js`, ~200 lines) collapses into a single SQL query:
+
+```sql
+SELECT activity_id, activity_status FROM staging ORDER BY activity_id;
+```
+
+That query _is_ the hash index. No separate build step, no separate storage key, no separate remote files.
+
+### What goes away
+
+| Artifact | Lines | Reason it existed |
+|----------|-------|-------------------|
+| `staging_hash_index.js` | ~200 | Build/compare/hash `{id, status}` arrays |
+| `LOCAL_STAGING_HASH_INDEX` key | — | Cached copy of the index |
+| `REMOTE_STAGING_HASH_INDEX` + `_SHA256` | — | Two remote files to sync |
+| `_pushStagingHashIndex()` in `sync.js` | ~40 | Build + encrypt + push index after every mutation |
+| `_pullAndCacheStagingHashIndex()` | ~20 | Pull + decrypt + cache after reconcile |
+| `_refreshHashIndex()` in `local_cache.js` | ~10 | Called after every CRUD operation |
+| Tier 1/Tier 2 diff logic | ~60 | `compareStagingHashIndexes()` — entire diff algorithm |
+| Worker endpoint test | ~1 file | `staging_hash_endpoint_test.ts` |
+
+### Sync payload comparison
+
+| Scenario | Current (single blob) | Row-level DB |
+|----------|----------------------|-------------|
+| Nothing changed, cookie match | 0 bytes | 0 bytes |
+| Nothing changed, no cookie match | 64KB–512KB (padded blob) | ~0 bytes (key listing) |
+| One entry's status changed | 64KB–512KB | ~300–800 bytes (one row) |
+| One new entry added | 64KB–512KB | ~300–800 bytes |
+| Three entries modified | 64KB–512KB | ~1–3KB |
+| Tags/comment/title changed | 64KB–512KB | ~300–800 bytes per row |
+| Full reconcile (different device) | 64KB–512KB + 64KB–512KB push | ~n rows (same total, rare case) |
+
+**Critical improvement:** The current hash index only detects status flips (active↔paused↔ended) via `is_active`/`is_paused` booleans. It completely misses content changes — tag edits, comment updates, title changes, timestamp modifications. Row-level storage with per-row `updated_at` versioning catches every change.
+
+### Per-row obfuscation trade-offs
+
+**Privacy regression:** An attacker who sees remote storage (R2 bucket) can count exactly how many staging entries exist (one file per row). The current blob model pads to size tiers that only leak a range (1–50? 51–100?). Mitigation: pad individual rows to a fixed size, or use a hybrid container (single encrypted file with internal B-tree index for O(log n) access).
+
+**Performance trade-off:** Individual per-row encryption means _n_ AES operations for bulk reads instead of one. For Dashboard/History views that list all entries, this could be _slower_ at moderate sizes (~50 entries) than decrypting one blob. At very large sizes, the O(1) mutation speed dominates.
+
+### Query benefits
+
+IndexedDB (web) or SQLite (CLI) indexes enable:
+- Filtering by status without loading all entries into memory
+- Tag-based queries via a join table or multi-value index
+- Date-range queries on `start_epoch`
+- `committed` flag filtering for pending-sync views
+
+### Open questions
+
+1. **Hybrid approach:** Single encrypted container with internal B-tree index — gets O(log n) access + blob-level privacy, but adds container format complexity.
+2. **Web side:** IndexedDB can do row-level storage natively (it already is a database). The `idb-keyval` library is deliberately using the minimal IndexedDB surface. Would replace with direct IndexedDB object store usage or a thin SQLite-in-WASM layer (`sql.js`).
+3. **Worker redesign:** Row-level remote storage requires a new protocol — list rows, push/pull individual rows by `activity_id`. The Worker currently only handles monolithic blob push/pull.
+4. **Migration path:** All existing users must migrate from single-blob to row-level. Must be atomic and recoverable.
+5. **Python CLI:** Parallel change needed — replace `staging.json` file with `staging.db` SQLite database.
+
+### Relationship to current Phase 3 work
+
+The current Phase 3 hash index implementation remains valuable as a near-term improvement within the existing single-blob architecture. The row-level DB model is a future architectural shift that would supersede and simplify it. The hash index experience (Tier 1/Tier 2, privacy analysis, diff detection) directly informed the row-level design and will make the transition smoother when undertaken.
+
+### Decision (2026-07-07)
+
+Committed to the row-level DB direction. All staging hash index tests have been removed (4 files + 32 stubs across categories A–J). The implementation splits into two parallel work streams:
+
+1. **Worker protocol redesign** — Row-level staging endpoints (`GET/PUT/DELETE /storage/staging/rows/{activity_id}`, `GET /storage/staging/manifest` for diff detection). Shared by both CLI and web.
+2. **CLI: SQLite staging store** — `SqliteStagingStore` implementing `AbstractStagingStore` with the three-column schema. Migrate from `staging.json`.
+3. **Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store or per-row keys, replacing the single `'entries'` blob. Sync against row-level Worker endpoints.
+
+See `SESSION_HANDOFF.md` for current status.

@@ -44,6 +44,9 @@
 
 import { jsonSort } from '../ledger/utils.js';
 import { parsePlainInt, parsePlainJSON } from './entry_dto.js';
+import { generateActivityId } from './activity_id.js';
+import { buildStagingHashIndex } from './staging_hash_index.js';
+import { LOCAL_STAGING_HASH_INDEX } from './keys.js';
 
 /**
  * @typedef {Object} StagingEntry
@@ -74,12 +77,16 @@ export class LocalCache {
    * @param {import('./storage.js').StorageBackend} storage - Storage backend.
    * @param {import('../crypto/index.js').CryptoService} crypto - WASM CryptoService
    *   (for UUID generation and SHA-256 hashing).
+   * @param {object} [options]
+   * @param {() => string} [options.generateId] - Injectible activity_id generator (test seam).
    */
-  constructor(storage, crypto) {
+  constructor(storage, crypto, options = {}) {
     /** @private */
     this._storage = storage;
     /** @private */
     this._crypto = crypto;
+    /** @private */
+    this._generateId = options.generateId || generateActivityId;
   }
 
   // ------------------------------------------------------------------
@@ -144,9 +151,11 @@ export class LocalCache {
 
     const normalizedTags = _normalizeTags(tags);
     const entryId = this._crypto.generateUuid();
+    const activityId = this._generateId();
 
     // Build data object in spec format (§3.1.1)
     const data = {
+      activity_id: activityId,
       entry_id: entryId,
       title,
       duration: endEpoch ? (endEpoch - startEpoch) : 0,
@@ -180,6 +189,14 @@ export class LocalCache {
 
     entries.push(rawEntry);
     await this._storage.set(ENTRIES_KEY, entries);
+
+    // Update staging hash index after append
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — index always rebuildable
+    }
+
     return hash.slice(0, 10);
   }
 
@@ -276,6 +293,13 @@ export class LocalCache {
     freshRaw.hash = await this._hashData(freshRaw.data);
     fresh[index] = freshRaw;
     await this._storage.set(ENTRIES_KEY, fresh);
+
+    // Update staging hash index after mutation
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — index always rebuildable
+    }
   }
 
   /**
@@ -298,6 +322,13 @@ export class LocalCache {
     if (changed) {
       await this._storage.set(ENTRIES_KEY, rawEntries);
     }
+
+    // Update staging hash index after markCommitted
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — index always rebuildable
+    }
   }
 
   /**
@@ -313,6 +344,13 @@ export class LocalCache {
     }
     rawEntries.splice(index, 1);
     await this._storage.set(ENTRIES_KEY, rawEntries);
+
+    // Update staging hash index after delete
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — hash index is always rebuildable
+    }
   }
 
   /**
@@ -331,6 +369,13 @@ export class LocalCache {
       }
     }
     await this._storage.set(ENTRIES_KEY, rawEntries);
+
+    // Update staging hash index after batch removal
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — hash index is always rebuildable
+    }
   }
 
   // ------------------------------------------------------------------
@@ -376,6 +421,13 @@ export class LocalCache {
     raw.hash = await this._hashData(data);
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
+
+    // Update staging hash index after addPause
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — hash index is always rebuildable
+    }
   }
 
   /**
@@ -416,6 +468,13 @@ export class LocalCache {
     raw.hash = await this._hashData(data);
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
+
+    // Update staging hash index after closePause
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — hash index is always rebuildable
+    }
   }
 
   // ------------------------------------------------------------------
@@ -439,6 +498,49 @@ export class LocalCache {
       }
     }
     return Math.max(0, (endEpoch - startEpoch) - totalPauseMs);
+  }
+
+  // ------------------------------------------------------------------
+  // Staging hash index
+  // ------------------------------------------------------------------
+
+  /**
+   * Rebuild the staging hash index from current entries and persist.
+   *
+   * Called automatically after every mutation (append, update, delete,
+   * addPause, closePause, removeMultiple). Non-fatal — failures are
+   * silently caught (index is always rebuildable from entries).
+   *
+   * @private
+   */
+  async _refreshHashIndex() {
+    const entries = await this.readEntries();
+    const hashIndex = buildStagingHashIndex(entries);
+    await this._storage.set(LOCAL_STAGING_HASH_INDEX, hashIndex);
+  }
+
+  /**
+   * Read the staging hash index from local storage.
+   *
+   * Returns the cached index if available. Does NOT rebuild from entries.
+   * Use after a successful remote pull to compare against the remote index.
+   *
+   * @returns {Promise<{id: string, status: string}[]>}
+   */
+  async readHashIndex() {
+    return (await this._storage.get(LOCAL_STAGING_HASH_INDEX)) || [];
+  }
+
+  /**
+   * Write a staging hash index to local storage.
+   *
+   * Used after pulling and decrypting the remote hash index to cache it.
+   *
+   * @param {{id: string, status: string}[]} index
+   * @returns {Promise<void>}
+   */
+  async writeHashIndex(index) {
+    await this._storage.set(LOCAL_STAGING_HASH_INDEX, index || []);
   }
 
   // ------------------------------------------------------------------
@@ -484,6 +586,7 @@ export class LocalCache {
       : endDeviceUuidRaw;
 
     return {
+      activity_id: data.activity_id || '',
       entry_id: data.entry_id || '',
       title: data.title || '',
       start_epoch: startEpoch || 0,
@@ -513,7 +616,9 @@ export class LocalCache {
    * @private
    */
   _dtoToRaw(dto) {
+    const activityId = dto.activity_id;
     const data = {
+      activity_id: activityId || undefined,
       entry_id: dto.entry_id || '',
       title: dto.title || '',
       startTime_enc: `plain:${dto.start_epoch ?? 0}`,
