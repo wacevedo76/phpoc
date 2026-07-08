@@ -30,25 +30,19 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 1. **✅ Phase 2 — RED:** 5 test files, 116 RED stubs.
 2. **✅ Phase 3 — GREEN (core):** New modules + wiring. **527/527 staging tests pass.**
 3. **✅ Workflow spec written** — `docs/planning/STAGING_HASH_INDEX_WORKFLOW.md`
-4. **🔜 Sync logic design FIRST** — before any Worker or SQLite code. Row-level staging changes every sync flow:
-   - **Remote→Local pull:** Manifest-based diff (`GET /storage/staging/manifest` → compare `{id, status, updated_at}` rows → pull only changed). Replaces Tier 1/Tier 2 hash index.
-   - **Local→Remote push:** Push only rows with `updated_at > last_sync_at`. Replaces monolithic `pushBlobOnly` / `pushToRemote`.
-   - **Merge engine:** Redesign `mergeEntries()` for row-level conflict resolution. Same `entry_id` dedup key, but row-by-row LWW (last-writer-wins by `updated_at`) instead of array-level "remote wins on tie."
-   - **Auth / Re-Auth speed:** Cookie fast path unchanged. On mismatch, manifest pull (~500 bytes) replaces 64KB–512KB blob pull. Common case: 0 changed rows → instant READY.
-   - **Staging→Ledger dedup:** `markCommitted()` already uses `entry_id` dedup. Row-level model must ensure a committed row isn't re-synced from remote before local deletion. Add `committed_at` timestamp to rows — skip rows where `committed_at <= last_sync_at` on pull.
-   - **Consistency guarantees:** Per-row `updated_at` versioning prevents lost updates. Remote manifest provides authoritative row list for deletion detection. Rows deleted locally after commit must propagate as tombstones (soft delete) or manifest diff catches them.
+4. **✅ Sync logic design complete** — See ADR-025 (`docs/design/ARCHITECTURAL_DECISIONS.md`) and implementation plan (`docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md`). 8-scenario LWW resolution table, sync cycle contract (5 phases), Worker endpoint spec, per-row obfuscation format, push guard (409 Conflict).
 5. **🔜 Worker protocol redesign** (implements the sync logic contract):
-   - `GET /storage/staging/manifest` → `{rows: [{id, status, updated_at}], version}` for diff detection
+   - `GET /storage/staging/manifest` → `{rows: [{activity_id, activity_status, updated_at}], version}` for diff detection
    - `GET /storage/staging/rows/{activity_id}` → single obfuscated row
-   - `PUT /storage/staging/rows/{activity_id}` → push single obfuscated row
+   - `PUT /storage/staging/rows/{activity_id}` → push single obfuscated row with `updated_at` guard (409 Conflict)
    - `DELETE /storage/staging/rows/{activity_id}` → remove row + update manifest
-   - Define per-row obfuscation format: padding tier, encryption, `updated_at` in plaintext header
-6. **🔜 Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store or per-row keys. Migrate from single `'entries'` blob. Implement sync logic from step 4.
-7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema. Migrate from `staging.json`. Implement sync logic from step 4. All 1609 Python tests must pass.
-7. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
-8. **🔜 Verify CLI onboarding**
-9. **🔜 Verify web onboarding**
-10. **🔜 Clean up diagnostics + Run test suites**
+   - Define per-row obfuscation format: per-row key derivation, encryption, plaintext `updated_at`
+6. **🔜 Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store with `activity_id` key path. Migrate from single `'entries'` blob. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`.
+7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema (`activity_id`, `activity_status`, `activity`). Migrate from `staging.json`. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`. All 1609 Python tests must pass.
+8. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
+9. **🔜 Verify CLI onboarding**
+10. **🔜 Verify web onboarding**
+11. **🔜 Clean up diagnostics + Run test suites**
 
 ## Files Created (Phase 3)
 | File | Purpose |

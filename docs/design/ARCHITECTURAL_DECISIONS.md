@@ -510,7 +510,7 @@ Random filler bytes pad to class ceiling before encryption. User-configurable. B
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Transport** | ADR-021 (Sync Optimization), ADR-022 (Device Cookie), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path) |
+| **Sync / Transport** | ADR-021 (Sync Optimization), ADR-022 (Device Cookie), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path), ADR-025 (Row-Level Staging Sync) |
 
 ---
 
@@ -824,7 +824,7 @@ Three complementary changes:
 | **Dependencies** | ADR-006 (Zero External Deps) |
 | **Session** | ADR-014 (RAM Cache), ADR-015 (Cookie + Seq Model) |
 | **Configuration** | ADR-016 (XDG Base Directories), ADR-017 (Commented Template), ADR-018 (Config CLI), ADR-019 (Priority Chain CLI Flag + Config Data Dir) |
-| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path) |
+| **Sync / Staging** | ADR-021 (Sync Optimization: Stable IDs + Freshness Pull), ADR-022 (Device Cookie Fast-Path), ADR-023 (Serverless HTTP Transport), ADR-024 (Hash Index Fast Path), ADR-025 (Row-Level Staging Sync) |
 
 ### Context
 Activities that cross midnight (e.g., 23:30 → 01:30) are stored under their start date only. This creates two problems:
@@ -1378,3 +1378,155 @@ truthy). This eliminates redundant pushes on identical-chain logins:
 - ADR-022 (Device Cookie Fast-Path) — the cookie check happens before the genesis gate;
   the hash index fast path is additive, not a replacement
 - `docs/planning/BACKLOG.md` P5 (CLI Unlock Latency) — partially resolved
+
+---
+
+## ADR-025: Row-Level Staging Sync — LWW Resolution Model
+
+**Date:** 2026-07-08
+**Status:** 🔮 Design direction — implementation plan defined (`docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md`)
+
+### Context
+
+The staging area is currently a single monolithic encrypted blob pushed/pulled as
+one unit (ADR-015b). Phase 3 work introduced `activity_id` (stable 10-char
+CSPRNG identifiers) and a staging hash index for fast cross-client reconciliation.
+
+The next architectural shift converts staging from a flat blob to a **row-per-activity
+database** (SQLite on CLI, IndexedDB object store on web). This eliminates the need
+for a separate staging hash index — the rows themselves ARE the index — and enables
+100×+ smaller sync payloads (pull only changed rows instead of 64KB–512KB blob).
+
+This ADR defines the **sync resolution model** for row-level staging. The model
+covers all 8 conflict/merge scenarios that arise when two clients operate on the
+same logical staging area via a remote row store.
+
+### Decision
+
+**Core principle: Last-Writer-Wins by `updated_at`.** Every staging row carries an
+`updated_at` timestamp. Resolution is always LWW — the row with the newer timestamp
+wins, whether it's local or remote.
+
+**The 8-resolution scenario table:**
+
+| # | Situation | Resolution |
+|---|---|---|
+| 1 | Same id, status differs, remote `updated_at` newer | Pull full row from remote → overwrite local |
+| 2 | Same id, status differs, local `updated_at` newer | Push local row to remote in push phase |
+| 3 | Same id, same status, `updated_at` differs | LWW on full row (pull or push, whichever is newer). `updated_at` is the single version signal — no separate content hash needed in manifest. |
+| 4 | In remote manifest, not in local | Pull full activity row to local |
+| 5 | In local, not in remote manifest, **in ledger hash index** | Delete from local staging (committed elsewhere) |
+| 6 | In local, not in remote manifest, **not in ledger hash index** | Push to remote (genuinely new activity) |
+| 7 | Remote empty (all committed) | Fast path: clear local staging, done |
+| 8 | Committed on device A, device B unaware | Resolved by scenario 5 — ledger hash index pull reveals committed status |
+
+**Sync cycle flow (per-connect):**
+
+```
+1. Cookie fast path (ADR-022) — unchanged, guards entry to sync
+2. Pull remote staging manifest  →  [{activity_id, status, updated_at}, ...]
+3. Pull ledger hash index        →  {entry_id → committed_at} (inline, always fresh)
+4. Diff + LWW resolution:
+   a. Compare manifest rows to local rows by activity_id
+   b. For each difference, apply scenario table above
+5. Push local changes to remote  →  PUT rows with updated_at guard
+   a. Worker rejects if incoming updated_at ≤ stored updated_at → 409 Conflict
+   b. Client re-pulls manifest on 409 and retries resolution
+6. Return control to user — staging sync complete
+```
+
+**Async ledger sync follows independently:**
+
+```
+7+. Pull new ledger blocks (background, does not block user)
+8+. Verify chain integrity
+9+. Update local ledger + ledger hash index
+```
+
+**Push guard (Worker-side):**
+
+The Worker rejects `PUT /storage/staging/rows/{activity_id}` when the incoming
+`updated_at` is less than or equal to the currently stored `updated_at`. This
+prevents older writes from overwriting newer data on a timing race. Client treats
+`409 Conflict` as a signal to re-pull the manifest and re-resolve.
+
+**Ledger hash index as tombstone mechanism:**
+
+No ghost rows are stored in the staging database. Instead, the ledger hash index
+(already maintained per ADR-024) is pulled inline during the staging sync cycle.
+It answers the question "has this entry been committed?" — which is the same
+information a traditional tombstone row would provide, without polluting the
+staging DB.
+
+**Staging vs ledger separation:**
+
+| | Staging Sync | Ledger Sync |
+|---|---|---|
+| **Frequency** | Every connect/reconnect | Periodic / background |
+| **Latency budget** | Must be fast (user waiting) | Can be slow (async) |
+| **Data volume** | Small (manifest ~500B, changed rows only) | Large (full block blobs) |
+| **Criticality** | Blocks user workflow | Doesn't block |
+| **Bridge** | Ledger hash index (inline pull, tiny) | — |
+
+### Rationale
+
+- **LWW by `updated_at`:** Single-actor reality. Humans realistically operate one
+device at a time. LWW is the simplest model that handles the rare cross-device
+overlap correctly.
+- **No content hash in manifest:** `updated_at` doubles as content version signal.
+Any change to the activity blob bumps `updated_at`. No need for a separate hash.
+- **Push guard (409):** Minimal server-side enforcement (numeric comparison, no
+version tokens). Prevents the worst-class race (B's newer write overwritten by
+A's older arriving-later write) at near-zero complexity cost.
+- **Ledger hash index stays:** Immutable blocks can't be queried row-by-row.
+The hash index remains the fast lookup for "is this committed?" and doubles as
+the tombstone mechanism, avoiding ghost rows in staging.
+- **Pull-side races accepted:** Between manifest fetch and row pulls, remote
+state can change. Single-user reality makes this vanishingly unlikely;
+any inconsistency self-corrects on the next sync cycle.
+- **Async ledger sync:** Staging is the hot path (user is waiting). Ledger blocks
+can arrive in the background. The ledger hash index is the only bridge needed
+inline — and it's tiny.
+
+### Consequences
+
+- **Positive:**
+  - Staging sync payloads shrink 100×+ (changed rows only vs full blob)
+  - Hash index for staging becomes unnecessary — rows ARE the index
+  - Ledger hash index serves double duty (commit lookup + tombstone signal)
+  - Clean separation: staging sync is blocking and fast; ledger sync is async
+  - Push guard prevents data regression from transport-level race conditions
+  - Single-actor LWW is the simplest correct model for this use case
+
+- **Negative:**
+  - Requires Worker protocol redesign (new REST endpoints for row-level ops)
+  - Per-row `updated_at` requires reliable clock sources on all clients (acceptable
+    for single-user; clock skew across devices is bounded to seconds)
+  - Migration from blob-based staging to row-based staging needed on both CLI and web
+  - Worker must implement `updated_at` comparison guard (trivial numeric check, but
+    new endpoint behavior to test)
+
+- **Open questions:**
+  - Clock skew tolerance: how far apart can two devices' clocks be before LWW
+    produces the wrong winner? Mitigated by single-user reality.
+  - Worker protocol specifics (endpoint paths, per-row obfuscation format) deferred
+    to implementation plan.
+
+### Implementation Plan
+
+Detailed implementation rules and step-by-step phases are defined in:
+`docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md`
+
+### Related
+
+- ADR-015 (Multi-Device Shared Encrypted Staging) — the original shared staging model;
+  this ADR replaces its blob-level sync with row-level sync
+- ADR-015b (Staging Obfuscation) — per-row obfuscation format to be designed for
+  the new Worker endpoints
+- ADR-021 (Sync Optimization) — stable entry IDs and freshness tracking remain;
+  row-level sync extends these to the staging DB
+- ADR-022 (Device Cookie Fast-Path) — unchanged, still guards entry to sync cycle
+- ADR-024 (Hash Index Fast Path) — ledger hash index is reused as tombstone mechanism
+- `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` — Phase 3
+  activity_id + staging hash index work that this design supersedes (staging hash index
+  becomes redundant)
