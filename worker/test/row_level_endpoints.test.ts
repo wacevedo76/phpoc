@@ -111,9 +111,11 @@ function validRow(overrides: Partial<Record<string, unknown>> = {}): Record<stri
 let _counter = 0;
 function uniqueId(label: string): string {
   _counter++;
-  // Keep under 20 chars to pass ACTIVITY_ID_RE validation
+  // ACTIVITY_ID_RE requires 10-20 alphanumeric chars.
+  // Pad short labels to ensure minimum 10 chars.
   const suffix = Date.now().toString(36).slice(-6);
-  return `${label.slice(0, 4)}${suffix}${_counter}`;
+  const base = label.slice(0, 4).padEnd(4, 'x');
+  return `${base}${suffix}${_counter}`;
 }
 
 // ── Cleanup ───────────────────────────────────────────────────────────────

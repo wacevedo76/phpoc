@@ -32,7 +32,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `domain/staging/remote_sync.py` | COLD | Blob obfuscation, pull/push, device cookie |
 | `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id` |
 | `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
-| `worker/src/index.ts` | COLD | Cloudflare Worker (149 lines, dumb blob store) |
+| `worker/src/index.ts` | HOT | Cloudflare Worker router (~175 lines): CORS, auth, generic blob handlers + row-level staging dispatch |
+| `worker/src/row_level_staging.ts` | HOT | **NEW (Phase 4 REFACTOR)** — Row-level staging types, validation, manifest helpers, 4 HTTP handlers extracted from index.ts (ADR-025) |
 
 ### Web/Mobile (phpoc-web)
 
@@ -116,8 +117,11 @@ Key test files:
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
 - `tests/test_cross_platform_integration.py` — 🔜 Cross-platform live integration tests (CLI ↔ Worker), blob/cookie/ledger round-trips, full 8-step workflow
 - `tests/test_cross_platform_crypto.py` — 🔜 Python ↔ WASM obfuscation compatibility verification
-- `worker/test/index.test.ts` — 🔜 Worker HTTP endpoint tests (auth, CORS, GET/PUT/DELETE, list, error handling)
-- `worker/test/staging_hash_endpoint_test.ts` — 🔴 RED **NEW** — 10 tests (Category G): `GET /storage/staging/hash_index.sha256` endpoint. Phase 2 RED. (2026-07-07)
+- `worker/test/index.test.ts` — 🟢 GREEN — 49 Worker blob store integration tests (auth, CORS, GET/PUT/DELETE, list, error handling)
+- `worker/test/row_level_endpoints.test.ts` — 🟢 GREEN **NEW (Phase 3)** — 55 row-level staging endpoint tests (manifest, row CRUD, push guard, auth/cors, edge cases)
+- `phpoc-web/test/row_staging_store_test.mjs` — 🔴 RED **NEW (Phase 2)** — 49 assertions, Group S (S1–S25): RowStagingStore IndexedDB CRUD with activity_id key path
+- `phpoc-web/test/row_sync_test.mjs` — 🔴 RED **NEW (Phase 2)** — 134 assertions, Groups D (D1–D35: buildDiff 8-scenario resolution) + W (W1–W30: RowSync HTTP integration)
+- `phpoc-web/test/row_integration_test.mjs` — 🔴 RED **NEW (Phase 2)** — 70 assertions, Groups M (M1–M12: blob→rows migration) + I (I1–I18: full sync integration)
 
 ### Active docs
 

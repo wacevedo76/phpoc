@@ -9,7 +9,7 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1609/1609 PY tests pass  |  **Web:** 750 JS tests pass (495 staging + 255 sync)  |  **Worker:** 48 vitest tests pass
+- **CLI:** 1609/1609 PY tests pass  |  **Web:** 750 JS tests pass (495 staging + 255 sync)  |  **Worker:** 104 vitest tests pass (49 blob + 55 row-level)
 - **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
 - **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
 
@@ -36,13 +36,8 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
    - `PUT /storage/staging/rows/{activity_id}` → 200 | 400 (validation) | 409 (push guard)
    - `DELETE /storage/staging/rows/{activity_id}` → 200 | 404
    - Deployed to `https://phpoc-staging-testing.wacevedo.workers.dev`
-4. **🔜 Worker protocol redesign — Phase 3 (GREEN)** — Implement 4 new endpoints in `worker/src/index.ts`:
-   - `GET /storage/staging/manifest` → `{rows: [{activity_id, activity_status, updated_at}], version}`
-   - `GET /storage/staging/rows/{activity_id}` → single row or 404
-   - `PUT /storage/staging/rows/{activity_id}` → store row with `updated_at` guard (409 Conflict)
-   - `DELETE /storage/staging/rows/{activity_id}` → remove row
-5. **🔜 Worker protocol redesign — Phase 4 (REFACTOR)** — Code review for modularity, clarity, security, conciseness
-6. **🔜 Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store with `activity_id` key path. Migrate from single `'entries'` blob. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`.
+5. **✅ Phase 4 (REFACTOR) complete** — Extracted to `worker/src/row_level_staging.ts`; `index.ts` is now a thin router. ACTIVITY_ID_RE tightened to 10-20 chars per spec. Worker AGENTS.md updated. 104/104 tests pass.
+6. **✅ Web: Worker ↔ IndexedDB row-level staging — Phase 2 complete (RED)** — 3 test files created, 253 assertions across 120 test IDs. All fail with ERR_MODULE_NOT_FOUND (no implementation yet — expected RED behavior). Phase 3 (GREEN: implementation) is next.
 7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema (`activity_id`, `activity_status`, `activity`). Migrate from `staging.json`. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`. All 1609 Python tests must pass.
 8. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
 9. **🔜 Verify CLI onboarding**
@@ -58,15 +53,34 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 ## Files Created (Worker Row-Level — Phase 2)
 | File | Purpose |
 |---|---|
-| `worker/test/row_level_endpoints.test.ts` | 55 RED tests for 4 new Worker endpoints (manifest, row CRUD, push guard, auth/cors, edge cases) |
+| `worker/test/row_level_endpoints.test.ts` | 55 integration tests for 4 Worker endpoints (manifest, row CRUD, push guard, auth/cors, edge cases) |
 | `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | Phase 1 test blueprint — 54 assertions across 5 groups |
 
-## Files Modified (Phase 3)
+## Files Created (Web Row-Level Phase 1)
+| File | Purpose |
+|---|---|
+| `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` | Phase 1 test blueprint — 120 assertions across 5 groups (S/D/W/M/I) for web row-level staging |
+
+## Files Created (Web Row-Level Phase 2 — RED)
+| File | Assertions | Groups |
+|---|---|---|
+| `test/row_staging_store_test.mjs` | 49 | S1–S25: RowStagingStore CRUD |
+| `test/row_sync_test.mjs` | 134 | D1–D35 (buildDiff) + W1–W30 (RowSync HTTP) |
+| `test/row_integration_test.mjs` | 70 | M1–M12 (Migration) + I1–I18 (Integration) |
+
+## Files Created (Phase 4 REFACTOR)
+| File | Purpose |
+|---|---|
+| `worker/src/row_level_staging.ts` | Extracted module: types, validation, manifest helpers, 4 HTTP handlers for row-level staging |
+
+## Files Modified (Phase 3 + 4)
 | File | Change |
 |---|---|
 | `phpoc-web/src/sync/keys.js` | Added `REMOTE_STAGING_HASH_INDEX`, `REMOTE_STAGING_HASH_INDEX_SHA256`, `LOCAL_STAGING_HASH_INDEX` |
 | `phpoc-web/src/sync/local_cache.js` | Constructor accepts injectible `generateId`; `append()` assigns `activity_id`; `_rawToDto()`/`_dtoToRaw()` preserve it; `readHashIndex()`/`writeHashIndex()`/`_refreshHashIndex()` for hash index persistence |
 | `phpoc-web/src/sync/sync.js` | `_pushStagingHashIndex()` pushes encrypted index + sha256 after blob push; `_pullAndCacheStagingHashIndex()` pulls + decrypts + caches; wired into `pushToRemote`, `pushBlobOnly`, `_reconcileDifferentDevice`, `clearRemote` |
+| `worker/src/index.ts` | Slimmed to thin router; row-level staging extracted to `row_level_staging.ts` |
+| `worker/AGENTS.md` | Updated for row-level staging endpoints + dual-tier architecture |
 
 ## Chain Integrity Fixes (Jul 5) ✅
 
