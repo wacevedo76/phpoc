@@ -25,18 +25,23 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 - **Trade-offs identified:** per-row encryption overhead on bulk reads, privacy regression (exposed entry count), Worker protocol redesign needed
 - **Current Phase 3 hash index work is still valid near-term** — the DB model is a future architectural shift that supersedes it
 
-## Immediate Next Steps (Jul 7)
-0. **✅ Phase 1 complete** — 116-test catalog.
-1. **✅ Phase 2 — RED:** 5 test files, 116 RED stubs.
-2. **✅ Phase 3 — GREEN (core):** New modules + wiring. **527/527 staging tests pass.**
-3. **✅ Workflow spec written** — `docs/planning/STAGING_HASH_INDEX_WORKFLOW.md`
-4. **✅ Sync logic design complete** — See ADR-025 (`docs/design/ARCHITECTURAL_DECISIONS.md`) and implementation plan (`docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md`). 8-scenario LWW resolution table, sync cycle contract (5 phases), Worker endpoint spec, per-row obfuscation format, push guard (409 Conflict).
-5. **🔜 Worker protocol redesign** (implements the sync logic contract):
-   - `GET /storage/staging/manifest` → `{rows: [{activity_id, activity_status, updated_at}], version}` for diff detection
-   - `GET /storage/staging/rows/{activity_id}` → single obfuscated row
-   - `PUT /storage/staging/rows/{activity_id}` → push single obfuscated row with `updated_at` guard (409 Conflict)
-   - `DELETE /storage/staging/rows/{activity_id}` → remove row + update manifest
-   - Define per-row obfuscation format: per-row key derivation, encryption, plaintext `updated_at`
+## Immediate Next Steps
+0. **✅ Phase 1–3 complete** — Staging activity_id + hash index. **527/527 staging tests pass.**
+1. **✅ Sync logic design complete** — ADR-025 + `ROW_LEVEL_STAGING_SYNC_PLAN.md`.
+2. **✅ Worker protocol redesign — Phase 1 (test exploration)** — 54 test assertions documented across 5 groups.
+3. **✅ Worker protocol redesign — Phase 2 (RED)** — `worker/test/row_level_endpoints.test.ts` created with 55 tests.
+4. **✅ Worker protocol redesign — Phase 3 (GREEN)** — 4 new endpoints implemented in `worker/src/index.ts`. **104/104 tests pass** (55 new + 48 existing).
+   - `GET /storage/staging/manifest` → `{rows: [...], version: N}`
+   - `GET /storage/staging/rows/{activity_id}` → row JSON or 404
+   - `PUT /storage/staging/rows/{activity_id}` → 200 | 400 (validation) | 409 (push guard)
+   - `DELETE /storage/staging/rows/{activity_id}` → 200 | 404
+   - Deployed to `https://phpoc-staging-testing.wacevedo.workers.dev`
+4. **🔜 Worker protocol redesign — Phase 3 (GREEN)** — Implement 4 new endpoints in `worker/src/index.ts`:
+   - `GET /storage/staging/manifest` → `{rows: [{activity_id, activity_status, updated_at}], version}`
+   - `GET /storage/staging/rows/{activity_id}` → single row or 404
+   - `PUT /storage/staging/rows/{activity_id}` → store row with `updated_at` guard (409 Conflict)
+   - `DELETE /storage/staging/rows/{activity_id}` → remove row
+5. **🔜 Worker protocol redesign — Phase 4 (REFACTOR)** — Code review for modularity, clarity, security, conciseness
 6. **🔜 Web: Worker ↔ IndexedDB row-level staging** — Direct IndexedDB object store with `activity_id` key path. Migrate from single `'entries'` blob. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`.
 7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema (`activity_id`, `activity_status`, `activity`). Migrate from `staging.json`. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`. All 1609 Python tests must pass.
 8. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
@@ -49,6 +54,12 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 |---|---|
 | `phpoc-web/src/sync/activity_id.js` | `generateActivityId()` — 10-char CSPRNG alphanumeric IDs |
 | `phpoc-web/src/sync/staging_hash_index.js` | `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` — ⏸️ future: superseded by SQLite row-level DB model |
+
+## Files Created (Worker Row-Level — Phase 2)
+| File | Purpose |
+|---|---|
+| `worker/test/row_level_endpoints.test.ts` | 55 RED tests for 4 new Worker endpoints (manifest, row CRUD, push guard, auth/cors, edge cases) |
+| `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | Phase 1 test blueprint — 54 assertions across 5 groups |
 
 ## Files Modified (Phase 3)
 | File | Change |
