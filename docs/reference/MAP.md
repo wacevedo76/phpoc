@@ -93,6 +93,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/activity_id.js` | 🟢 GREEN | **NEW (Phase 3)** — `generateActivityId()` 10-char CSPRNG alphanumeric IDs (~59 bits entropy) |
 | `phpoc-web/src/sync/staging_hash_index.js` | 🟢 GREEN | **NEW (Phase 3)** — `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` |
 | `phpoc-web/src/sync/local_cache.js` | 🟢 GREEN | **MODIFIED (Phase 3)** — activity_id field, hash index persistence, injectible `generateId` test seam |
+| `phpoc-web/src/sync/row_staging_store.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `RowStagingStore` — row-per-activity staging via `staging:row:{id}` keys. Also transport-compatible (`pull`/`push`/`delete` path-based). |
+| `phpoc-web/src/sync/row_sync.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `buildDiff()` 8-scenario LWW resolution + `RowSyncWorker` HTTP client (manifest, row CRUD, retry). |
+| `phpoc-web/src/sync/migration.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `migrateBlobToRows()` blob→rows conversion, idempotent (marker key), best-effort. |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
@@ -143,6 +146,7 @@ Key test files:
 | `../planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` | 🔜 **ACTIVE** — Stable `activity_id` + staging hash index plan. 4-phase TDD. (2026-07-07) |
 | `../planning/STAGING_ACTIVITY_ID_TESTS.md` | 🔴 **NEW** — Phase 1 test catalog: 116 tests (A–J). Phase 2 RED pending. (2026-07-07) |
 | `../planning/ROW_LEVEL_STAGING_SYNC_PLAN.md` | 🔜 **NEW** — Row-level staging sync plan: 8-scenario LWW resolution, sync cycle contract, Worker endpoints, migration. Companion to ADR-025. (2026-07-08) |
+| `../planning/CLI_SQLITE_STAGING_PHASE1.md` | 🔜 **NEW** — Phase 1 test blueprint for CLI SQLite staging store: 104 assertions across 10 groups (A–J). |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |

@@ -9,7 +9,7 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1609/1609 PY tests pass  |  **Web:** 750 JS tests pass (495 staging + 255 sync)  |  **Worker:** 104 vitest tests pass (49 blob + 55 row-level)
+- **CLI:** 1722 PY tests pass (1610 core + 104 SQLite staging)  |  **Web:** 750 JS tests pass  |  **Worker:** 104 vitest tests pass
 - **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
 - **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
 
@@ -19,9 +19,8 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 
 - **SQLite is stdlib** — zero-dependency for CLI, same as `json`/`hashlib`
 - **Three-column schema:** `activity_id` (PK), `activity_status` (plaintext), `activity` (obfuscated entry blob)
-- **Hash index becomes redundant** — `SELECT activity_id, activity_status FROM staging` IS the hash index. Entire `staging_hash_index.js` (~200 lines) + Tier 1/Tier 2 infrastructure goes away.
-- **Sync payloads shrink 100×+** — pull only changed rows (~300–800 bytes) instead of 64KB–512KB padded blob
-- **Content changes caught** — per-row versioning detects tag edits, title changes, etc. that the current status-only hash index misses
+- **Hash index becomes redundant** — `SELECT activity_id, activity_status FROM staging` IS the hash index. Entire ~200 lines + Tier 1/Tier 2 infrastructure goes away.
+- **Sync payloads shrink 100×+** — pull only changed rows (~300–800 bytes) instead of 64KB–512KB padded blob; content changes caught — per-row versioning detects tag edits, title changes, etc. that the current status-only hash index misses
 - **Trade-offs identified:** per-row encryption overhead on bulk reads, privacy regression (exposed entry count), Worker protocol redesign needed
 - **Current Phase 3 hash index work is still valid near-term** — the DB model is a future architectural shift that supersedes it
 
@@ -37,50 +36,45 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
    - `DELETE /storage/staging/rows/{activity_id}` → 200 | 404
    - Deployed to `https://phpoc-staging-testing.wacevedo.workers.dev`
 5. **✅ Phase 4 (REFACTOR) complete** — Extracted to `worker/src/row_level_staging.ts`; `index.ts` is now a thin router. ACTIVITY_ID_RE tightened to 10-20 chars per spec. Worker AGENTS.md updated. 104/104 tests pass.
-6. **✅ Web: Worker ↔ IndexedDB row-level staging — Phase 2 complete (RED)** — 3 test files created, 253 assertions across 120 test IDs. All fail with ERR_MODULE_NOT_FOUND (no implementation yet — expected RED behavior). Phase 3 (GREEN: implementation) is next.
-7. **🔜 CLI: SQLite staging store** — `SqliteStagingStore` with three-column schema (`activity_id`, `activity_status`, `activity`). Migrate from `staging.json`. Implement sync logic per `ROW_LEVEL_STAGING_SYNC_PLAN.md`. All 1609 Python tests must pass.
-8. **🔜 Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py`
-9. **🔜 Verify CLI onboarding**
+6. **✅ Web: Worker ↔ IndexedDB row-level staging — Phase 3 complete (GREEN)** — `RowStagingStore`, `buildDiff`, `RowSyncWorker`, and `migrateBlobToRows` implemented. **254/254 tests pass** (52 store + 132 sync + 70 integration).
+7. **✅ CLI: SQLite staging store — Phase 2 (RED) complete** — `tests/test_sqlite_staging.py` with 104 tests across 10 groups (A–J). All RED (skipped — modules not implemented).
+7a. **✅ CLI: SQLite staging store — Phase 3 (GREEN)** — `SqliteStagingStore`, `buildDiff()`, `migrate_staging_to_sqlite()` implemented. **104/104 tests pass.**
+7b. **✅ CLI: SQLite staging store — Phase 4 (REFACTOR) complete** — 6 improvements across 3 files: extracted _normalize_core(), unified _insert_row/_insert_row_in_tx, extracted _safe_ts(), narrowed except, simplified activity_blob. 104/104 tests pass.
+8. **🔜 Verify CLI onboarding from existing R2/Worker** — import existing ledger, confirm sync with Worker (`https://phpoc-staging-testing.wacevedo.workers.dev`)
+9. **🔜 Verify CLI onboarding (ph init fresh ledger)**
 10. **🔜 Verify web onboarding**
 11. **🔜 Clean up diagnostics + Run test suites**
+12. **⏸️ Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py` (deprioritized — new ledger started)
 
-## Files Created (Phase 3)
-| File | Purpose |
-|---|---|
-| `phpoc-web/src/sync/activity_id.js` | `generateActivityId()` — 10-char CSPRNG alphanumeric IDs |
-| `phpoc-web/src/sync/staging_hash_index.js` | `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` — ⏸️ future: superseded by SQLite row-level DB model |
-
-## Files Created (Worker Row-Level — Phase 2)
-| File | Purpose |
-|---|---|
-| `worker/test/row_level_endpoints.test.ts` | 55 integration tests for 4 Worker endpoints (manifest, row CRUD, push guard, auth/cors, edge cases) |
-| `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | Phase 1 test blueprint — 54 assertions across 5 groups |
-
-## Files Created (Web Row-Level Phase 1)
-| File | Purpose |
-|---|---|
-| `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` | Phase 1 test blueprint — 120 assertions across 5 groups (S/D/W/M/I) for web row-level staging |
-
-## Files Created (Web Row-Level Phase 2 — RED)
-| File | Assertions | Groups |
+## Files Created (Completed Work)
+| Phase | File | Purpose |
 |---|---|---|
-| `test/row_staging_store_test.mjs` | 49 | S1–S25: RowStagingStore CRUD |
-| `test/row_sync_test.mjs` | 134 | D1–D35 (buildDiff) + W1–W30 (RowSync HTTP) |
-| `test/row_integration_test.mjs` | 70 | M1–M12 (Migration) + I1–I18 (Integration) |
-
-## Files Created (Phase 4 REFACTOR)
-| File | Purpose |
-|---|---|
-| `worker/src/row_level_staging.ts` | Extracted module: types, validation, manifest helpers, 4 HTTP handlers for row-level staging |
+| Web P2 | `test/row_staging_store_test.mjs` | 49 tests (RowStagingStore CRUD) |
+| Web P2 | `test/row_sync_test.mjs` | 134 tests (buildDiff + RowSync HTTP) |
+| Web P2 | `test/row_integration_test.mjs` | 70 tests (Migration + Integration) |
+| Web P3 | `src/sync/row_staging_store.js` | IndexedDB CRUD + transport interface |
+| Web P3 | `src/sync/row_sync.js` | buildDiff() LWW + RowSyncWorker |
+| Web P3 | `src/sync/migration.js` | migrateBlobToRows() |
+| Web P3 | `src/sync/activity_id.js` | generateActivityId() |
+| Web P3 | `src/sync/staging_hash_index.js` | ⏸️ superseded by SQLite DB model |
+| Worker P2 | `test/row_level_endpoints.test.ts` | 55 integration tests |
+| Worker P4 | `src/row_level_staging.ts` | Types, validation, 4 HTTP handlers |
+| CLI P1 | `docs/planning/CLI_SQLITE_STAGING_PHASE1.md` | 104 assertions, 10 groups A–J |
+| CLI P2 | `tests/test_sqlite_staging.py` | 104 RED tests (Groups A–J) |
+| CLI P3 | `storage/implementations/sqlite_staging.py` | SqliteStagingStore (+AbstractStagingStore + row-level ops) |
+| CLI P3 | `core/sync/diff_engine.py` | buildDiff() + DiffResult (Python port of JS) |
+| CLI P3 | `scripts/migrate_staging.py` | migrate_staging_to_sqlite() |
+| Docs | `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` | 120 assertions, 5 groups |
+| Docs | `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | 54 assertions, 5 groups |
 
 ## Files Modified (Phase 3 + 4)
 | File | Change |
 |---|---|
-| `phpoc-web/src/sync/keys.js` | Added `REMOTE_STAGING_HASH_INDEX`, `REMOTE_STAGING_HASH_INDEX_SHA256`, `LOCAL_STAGING_HASH_INDEX` |
-| `phpoc-web/src/sync/local_cache.js` | Constructor accepts injectible `generateId`; `append()` assigns `activity_id`; `_rawToDto()`/`_dtoToRaw()` preserve it; `readHashIndex()`/`writeHashIndex()`/`_refreshHashIndex()` for hash index persistence |
-| `phpoc-web/src/sync/sync.js` | `_pushStagingHashIndex()` pushes encrypted index + sha256 after blob push; `_pullAndCacheStagingHashIndex()` pulls + decrypts + caches; wired into `pushToRemote`, `pushBlobOnly`, `_reconcileDifferentDevice`, `clearRemote` |
-| `worker/src/index.ts` | Slimmed to thin router; row-level staging extracted to `row_level_staging.ts` |
-| `worker/AGENTS.md` | Updated for row-level staging endpoints + dual-tier architecture |
+| `phpoc-web/src/sync/keys.js` | Added REMOTE_STAGING_HASH_INDEX, SHA256, LOCAL |
+| `phpoc-web/src/sync/local_cache.js` | activity_id support, hash index persistence |
+| `phpoc-web/src/sync/sync.js` | Push/pull staging hash index, genesis collision guard |
+| `worker/src/index.ts` | Slimmed to thin router |
+| `worker/AGENTS.md` | Updated for row-level staging endpoints |
 
 ## Chain Integrity Fixes (Jul 5) ✅
 
@@ -103,5 +97,7 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 - **Browser:** Vivaldi `--remote-debugging-port=9222`. Connect: `agent_browser connect 9222` with `sessionMode: "fresh"`
 - **Tab rule:** `tab list` → find `localhost:5173` → `tab t<N>`. Do NOT open new tabs.
 - **Dev server:** `cd phpoc-web && npx vite --host 0.0.0.0 --port 5173`
-- **Worker:** `https://phpoc-staging-testing.wacevedo.workers.dev`
-- **E2E test creds:** passphrase `NewPass456!`, seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`
+- **Workers:**
+  - **Testing:** `https://phpoc-staging-testing.wacevedo.workers.dev` — API key `iXCjwoA9sBXPg3mP5Fi9uew+7ZctkcMi`
+  - **Production (personal):** `https://phpoc-staging.wacevedo.workers.dev` — do not use for testing
+- **E2E test creds:** passphrase `NewPass456!`, seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`

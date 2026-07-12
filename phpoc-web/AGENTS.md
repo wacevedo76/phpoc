@@ -12,7 +12,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/components/sync/` — SyncIndicator
 - `src/components/ui/` — Icon components
 - `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils
-- `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory
+- `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory, row_staging_store, row_sync, migration
 - `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
 - `src/context/` — DevModeContext (dev and production share the same boot path; no mock services or DummyCryptoService fallbacks remain)

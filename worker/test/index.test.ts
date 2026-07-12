@@ -19,8 +19,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 // ── Constants ────────────────────────────────────────────────────────────
 
 const WORKER_URL = 'https://phpoc-staging-testing.wacevedo.workers.dev';
-const API_KEY = 'ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO';
+const API_KEY = process.env.PHPOC_API_KEY || '';
 const API_KEY_HEADER = 'X-Api-Key';
+
+if (!API_KEY) {
+  throw new Error('PHPOC_API_KEY environment variable is required for tests. Set it before running: PHPOC_API_KEY="your-key" npx vitest run');
+}
 
 // Test prefix ensures no collision with real data or other test runs
 const TEST_PREFIX = `_vitest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}/`;
