@@ -931,5 +931,198 @@ class TestSyncLedgerBlocksMerge(unittest.TestCase):
         self.assertFalse(result)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Category G: _deduplicate_from_remote_ledger — entry_index fix
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestDeduplicateFromRemoteLedger(unittest.TestCase):
+    """Verify _deduplicate_from_remote_ledger uses cache-level
+    read_entries() (which adds entry_index) rather than raw store
+    read_entries() (which omits it), preventing a NoneType
+    comparison error in remove_entries."""
+
+    # Timestamp for "2026-07-13 08:30:00 UTC" in milliseconds
+    TEST_START_MS = 1783931400000
+
+    def setUp(self):
+        # Staging service mock with nested _local / _store structure
+        self.svc = MagicMock()
+        self.svc.check_and_sync.return_value = MagicMock()
+        self.svc.get_pending_sync.return_value = []
+
+        # _local.read_entries() — cache-level, adds entry_index
+        # _local._store.read_entries() — raw store, no entry_index (BUG)
+        self.svc._local = MagicMock()
+        self.svc._local._store = MagicMock()
+
+        # Raw store entries — NO entry_index (current bug path)
+        raw_entry = {
+            "data": {
+                "title": "Cross-client sync test",
+                "startTime_enc": "plain:%d" % self.TEST_START_MS,
+                "is_active": False,
+            },
+        }
+        self.svc._local._store.read_entries.return_value = [raw_entry]
+
+        # Cache entries — WITH entry_index (correct path post-fix)
+        self.svc._local.read_entries.return_value = [{
+            "entry_index": 0,
+            "title": "Cross-client sync test",
+            "start_epoch": self.TEST_START_MS,
+            "date": "2026-07-13",
+            "data": {
+                "title": "Cross-client sync test",
+                "startTime_enc": "plain:%d" % self.TEST_START_MS,
+            },
+        }]
+
+        # Engine mock
+        self.engine = MagicMock()
+        self.engine.commit.return_value = "abc123"
+        self.engine.verify.return_value = True
+
+        # Transport mock
+        self.transport = MagicMock()
+
+    # ── Regression: entry_index is None before fix ──────────────
+
+    def test_deduplicate_called_with_valid_indices_not_none(self):
+        """remove_synced must receive integer indices, not None.
+
+        Before the fix, _store.read_entries() was used which returns
+        entries without entry_index, causing entry.get("entry_index")
+        → None.  This leads to a TypeError ("<=" not supported
+        between int and NoneType) inside remove_entries.
+
+        After the fix, _local.read_entries() is used which always
+        includes entry_index from enumerate().
+        """
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        # Mock RemoteLedgerSync to return matching remote blocks
+        with patch(
+            "domain.ledger.remote_sync.RemoteLedgerSync"
+        ) as mock_rls_cls:
+            mock_rls = MagicMock()
+            # Return one matching block with same title + date
+            mock_block = {
+                "type": "day",
+                "date": "2026-07-13",
+                "entries": [
+                    {"data": {"title": "Cross-client sync test"}}
+                ],
+            }
+            mock_rls.pull_hash_index.return_value = ["abc"]
+            mock_rls.pull_block_by_index.return_value = mock_block
+            mock_rls_cls.return_value = mock_rls
+
+            orch._deduplicate_from_remote_ledger()
+
+        # Verify remove_synced was called
+        self.svc.remove_synced.assert_called_once()
+
+        # Extract the indices argument — must NOT contain None
+        call_args = self.svc.remove_synced.call_args[0]
+        self.assertEqual(len(call_args), 1, "remove_synced expects 1 positional arg")
+        indices = call_args[0]
+        self.assertIsInstance(indices, list)
+        self.assertNotIn(None, indices,
+            "indices must not contain None — entry_index was missing")
+        self.assertEqual(indices, [0],
+            "deduplication should identify index 0 as matching")
+
+    def test_deduplicate_no_match_does_not_call_remove(self):
+        """When remote titles don't match, remove_synced is NOT called."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        with patch(
+            "domain.ledger.remote_sync.RemoteLedgerSync"
+        ) as mock_rls_cls:
+            mock_rls = MagicMock()
+            # Non-matching block
+            mock_block = {
+                "type": "day",
+                "date": "2026-06-01",
+                "entries": [
+                    {"data": {"title": "Something else"}}
+                ],
+            }
+            mock_rls.pull_hash_index.return_value = ["xyz"]
+            mock_rls.pull_block_by_index.return_value = mock_block
+            mock_rls_cls.return_value = mock_rls
+
+            orch._deduplicate_from_remote_ledger()
+
+        self.svc.remove_synced.assert_not_called()
+
+    def test_deduplicate_no_transport_skips(self):
+        """Without transport, deduplication is skipped entirely."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=None,  # No transport
+        )
+
+        orch._deduplicate_from_remote_ledger()
+
+        # Neither the raw store nor the cache should be read
+        self.svc.remove_synced.assert_not_called()
+
+    def test_deduplicate_no_master_key_skips(self):
+        """Without master_key, deduplication is skipped."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=None,  # No master key
+            transport=self.transport,
+        )
+
+        orch._deduplicate_from_remote_ledger()
+        self.svc.remove_synced.assert_not_called()
+
+    def test_deduplicate_empty_remote_skips(self):
+        """When remote has no blocks, deduplication skips gracefully."""
+        from core.sync import SyncOrchestrator
+
+        orch = SyncOrchestrator(
+            staging_service=self.svc,
+            ledger_engine=self.engine,
+            master_key=TEST_MASTER_KEY,
+            transport=self.transport,
+        )
+
+        with patch(
+            "domain.ledger.remote_sync.RemoteLedgerSync"
+        ) as mock_rls_cls:
+            mock_rls = MagicMock()
+            mock_rls.pull_hash_index.return_value = None
+            mock_rls._list_remote_block_indices.return_value = set()
+            mock_rls_cls.return_value = mock_rls
+
+            orch._deduplicate_from_remote_ledger()
+
+        self.svc.remove_synced.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

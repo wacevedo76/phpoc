@@ -42,7 +42,11 @@ from security.crypto import CryptoManager, NoAuthCryptoManager
 # ═══════════════════════════════════════════════════════════════════════════
 
 WORKER_URL = "https://phpoc-staging-testing.wacevedo.workers.dev"
-API_KEY = "ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO"
+API_KEY = os.environ.get(
+    "PHPOC_CLOUDFLARE_API_KEY",
+    # Fallback for local dev — always use env var in CI
+    ""
+)
 
 # Test master key — 32 bytes (base64-decoded seed)
 TEST_MASTER_KEY = hashlib.sha256(b"test-cross-platform-master-key-2026").digest()

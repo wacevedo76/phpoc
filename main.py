@@ -803,10 +803,14 @@ def main():
 
         till_date = _resolve_till_date(args.till) if args.till else None
         skip_confirmation = getattr(args, 'yes', False)
-        sync_orchestrator.sync(
+        ok = sync_orchestrator.sync(
             till_date=till_date,
             skip_confirmation=skip_confirmation,
         )
+        if ok:
+            print("\u2713 Sync successful.")
+        elif skip_confirmation:
+            print("Sync failed — verify ledger integrity and try again.")
     elif args.command == "verify":
         result = ledger.verify()
         print(result)

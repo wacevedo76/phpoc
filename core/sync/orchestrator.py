@@ -561,7 +561,7 @@ class SyncOrchestrator:
             # Find local staging entries matching remote committed entries
             staging = self._staging._local._store.read_entries()
             indices_to_remove = []
-            for entry in staging:
+            for entry_idx, entry in enumerate(staging):
                 data = entry.get("data", {})
                 title = data.get("title", "")
                 if not title:
@@ -579,7 +579,7 @@ class SyncOrchestrator:
                         continue
 
                 if (entry_date, title) in remote_titles:
-                    indices_to_remove.append(entry.get("entry_index"))
+                    indices_to_remove.append(entry_idx)
 
             if indices_to_remove:
                 logger.info(

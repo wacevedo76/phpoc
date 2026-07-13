@@ -25,26 +25,9 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 - **Current Phase 3 hash index work is still valid near-term** — the DB model is a future architectural shift that supersedes it
 
 ## Immediate Next Steps
-0. **✅ Phase 1–3 complete** — Staging activity_id + hash index. **527/527 staging tests pass.**
-1. **✅ Sync logic design complete** — ADR-025 + `ROW_LEVEL_STAGING_SYNC_PLAN.md`.
-2. **✅ Worker protocol redesign — Phase 1 (test exploration)** — 54 test assertions documented across 5 groups.
-3. **✅ Worker protocol redesign — Phase 2 (RED)** — `worker/test/row_level_endpoints.test.ts` created with 55 tests.
-4. **✅ Worker protocol redesign — Phase 3 (GREEN)** — 4 new endpoints implemented in `worker/src/index.ts`. **104/104 tests pass** (55 new + 48 existing).
-   - `GET /storage/staging/manifest` → `{rows: [...], version: N}`
-   - `GET /storage/staging/rows/{activity_id}` → row JSON or 404
-   - `PUT /storage/staging/rows/{activity_id}` → 200 | 400 (validation) | 409 (push guard)
-   - `DELETE /storage/staging/rows/{activity_id}` → 200 | 404
-   - Deployed to `https://phpoc-staging-testing.wacevedo.workers.dev`
-5. **✅ Phase 4 (REFACTOR) complete** — Extracted to `worker/src/row_level_staging.ts`; `index.ts` is now a thin router. ACTIVITY_ID_RE tightened to 10-20 chars per spec. Worker AGENTS.md updated. 104/104 tests pass.
-6. **✅ Web: Worker ↔ IndexedDB row-level staging — Phase 3 complete (GREEN)** — `RowStagingStore`, `buildDiff`, `RowSyncWorker`, and `migrateBlobToRows` implemented. **254/254 tests pass** (52 store + 132 sync + 70 integration).
-7. **✅ CLI: SQLite staging store — Phase 2 (RED) complete** — `tests/test_sqlite_staging.py` with 104 tests across 10 groups (A–J). All RED (skipped — modules not implemented).
-7a. **✅ CLI: SQLite staging store — Phase 3 (GREEN)** — `SqliteStagingStore`, `buildDiff()`, `migrate_staging_to_sqlite()` implemented. **104/104 tests pass.**
-7b. **✅ CLI: SQLite staging store — Phase 4 (REFACTOR) complete** — 6 improvements across 3 files: extracted _normalize_core(), unified _insert_row/_insert_row_in_tx, extracted _safe_ts(), narrowed except, simplified activity_blob. 104/104 tests pass.
-8. **🔜 Verify CLI onboarding from existing R2/Worker** — import existing ledger, confirm sync with Worker (`https://phpoc-staging-testing.wacevedo.workers.dev`)
-9. **🔜 Verify CLI onboarding (ph init fresh ledger)**
-10. **🔜 Verify web onboarding**
-11. **🔜 Clean up diagnostics + Run test suites**
-12. **⏸️ Fix the broken chain:** `python3 scripts/fix_chain_genesis_link.py` (deprioritized — new ledger started)
+0–11. **✅ Archived** — See `docs/planning/archive/SESSION_HISTORY_2026-07-13.md`
+12. **🔜 Clean up diagnostics + Run test suites**
+13. **⏸️ Fix the broken chain** (deprioritized — new ledger started)
 
 ## Files Created (Completed Work)
 | Phase | File | Purpose |
@@ -84,6 +67,7 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 - **CLI read commands block on specifier mismatch** (Python-side, not web)
 - **Pre-existing test failures** — `ledger_sync_test.mjs` (A3c), `commit_push_integration_test.mjs`
 - **Diagnostic logging** in `remote_sync.py` `_verify_chain` — remove after chain is fixed
+- **Deduplication bug in SyncOrchestrator** — ✅ FIXED. `_deduplicate_from_remote_ledger` used `entry.get("entry_index")` on raw store entries that lack the field → `None` → `remove_entries(0 <= None)` TypeError. Fixed by using `enumerate()` on the store list. 5 new tests, 55/55 pass.
 
 ## Test Ledger Credentials
 
@@ -94,10 +78,12 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 
 ## Browser E2E Setup
 
-- **Browser:** Vivaldi `--remote-debugging-port=9222`. Connect: `agent_browser connect 9222` with `sessionMode: "fresh"`
-- **Tab rule:** `tab list` → find `localhost:5173` → `tab t<N>`. Do NOT open new tabs.
+- **Browser:** Vivaldi via `agent_browser` with `sessionMode: "fresh"` and `--executable-path "/usr/bin/vivaldi-stable"` (Vivaldi not started with `--remote-debugging-port`)
+- **Tab rule:** `tab list` → find `localhost:5173`. Do NOT open new tabs.
+- **Active tab:** `t1` (localhost:5173) — reused across sessions
 - **Dev server:** `cd phpoc-web && npx vite --host 0.0.0.0 --port 5173`
 - **Workers:**
-  - **Testing:** `https://phpoc-staging-testing.wacevedo.workers.dev` — API key `iXCjwoA9sBXPg3mP5Fi9uew+7ZctkcMi`
+  - **Testing:** `https://phpoc-staging-testing.wacevedo.workers.dev` — API token in `TEST_CREDENTIALS.md` (gitignored)
   - **Production (personal):** `https://phpoc-staging.wacevedo.workers.dev` — do not use for testing
 - **E2E test creds:** passphrase `NewPass456!`, seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`
+- **R2 test ledger (E2ETest):** passphrase `E2EPass123!`, seed `fK0kCIjLAzFTmHmE6XaD/Y+YfRyBVQ07dG8DaVRtS+4=`

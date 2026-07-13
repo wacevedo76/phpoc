@@ -3,7 +3,7 @@
 > **Date:** 2026-06-30
 > **Test attempted:** Full roundtrip — CLI → R2 → Web → R2 → CLI
 > **Status:** Blocked by 4 bugs + 1 plumbing issue
-> **Credentials used:** passphrase `NewPass456!`, recovery seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, Worker API key `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO`
+> **Credentials used:** passphrase `NewPass456!`, recovery seed `g92sVRVPPxN4uRffWHBBkHskcEtCQvhaTO9GJJxWhlY=`, Worker API token in `TEST_CREDENTIALS.md` (gitignored)
 
 ## Test Flow Attempted
 

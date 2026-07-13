@@ -12,8 +12,11 @@
 | Field | Value |
 |---|---|
 | **Worker URL** | `https://phpoc-staging-testing.wacevedo.workers.dev` |
-| **API Key** | `ZfkbMrrdRaY7DeoanY1GqQAOSLDmI6gO` |
+| **API Token** | See `TEST_CREDENTIALS.md` (gitignored) |
 | **Header** | `X-Api-Key` |
+
+> **⚠️ Never use real ledger data with the test Worker.** Always use test-specific passphrases and seeds.
+> See `TEST_CREDENTIALS.md` for current test ledger credentials.
 
 These credentials are used by:
 - `tests/test_cross_platform_integration.py` — Python live integration tests

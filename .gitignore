@@ -13,3 +13,6 @@ node_modules/
 
 # Build artifacts
 phpoc-web/dist/
+
+# Test credentials (secrets)
+TEST_CREDENTIALS.md

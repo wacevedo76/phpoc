@@ -49,6 +49,7 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - Add tests for new functionality before or alongside implementation
 - Use `conftest.py` fixtures for shared setup
 - Phase-numbered tests reflect development history — maintain the numbering for new phases
+- **Remote/live tests:** Use credentials from `TEST_CREDENTIALS.md` (gitignored) for Worker access. Set `PHPOC_CLOUDFLARE_API_KEY` env var before running `test_cross_platform_integration.py`.
 
 ## Verification
 - Test suite itself verifies correctness
