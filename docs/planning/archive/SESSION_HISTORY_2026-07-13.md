@@ -22,5 +22,13 @@
 | Worker URL | `https://phpoc-staging-testing.wacevedo.workers.dev` |
 | API Token | See `TEST_CREDENTIALS.md` (gitignored) |
 
+## Cleanup — Diagnostic Logging Removal (2026-07-13)
+- **Removed TEMP DIAG blocks** from `domain/ledger/remote_sync.py`:
+  - `pull_blocks()`: 33-line chain linkage dump + genesis identity dump
+  - `_verify_chain()`: 12-line block hash diagnostic on first 5 blocks
+  - Removed now-unused `import sys`
+- **Credential audit:** `TEST_CREDENTIALS.md` confirmed gitignored and not tracked. Worker tests use `PHPOC_API_KEY` env var only.
+- **Full test suite run:** PY 1719 pass / 2 flaky, Web 51 pass / 9 pre-existing failures, Worker 104 pass
+
 ## Bug Found
 - **SyncOrchestrator deduplication**: `"<=" not supported between instances of 'int' and 'NoneType'` on cross-client sync pull. Non-blocking — merge succeeds.

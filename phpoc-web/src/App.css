@@ -27,6 +27,9 @@
   --accent-blue: #4285f4;
   --accent-blue-bg: rgba(66, 133, 244, 0.12);
 
+  --accent-encrypted: #FE59C2;
+  --accent-encrypted-bg: rgba(254, 89, 194, 0.10);
+
   --border-color: #2d3140;
   --border-radius: 12px;
   --border-radius-sm: 8px;
@@ -669,6 +672,60 @@ a { color: var(--accent-blue); text-decoration: none; }
   color: var(--text-muted);
 }
 
+/* Timestamps row: start time + pause info */
+.pill-timestamps {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 0.1rem;
+  flex-wrap: wrap;
+}
+
+.pill-start-time {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pill-pause-now {
+  color: var(--accent-yellow);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pill-pause-count {
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+/* Encryption indicator */
+.pill-encrypted-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-encrypted);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.pill-encrypted-icon svg {
+  flex-shrink: 0;
+}
+
+/* Label text ("Started", "Paused", etc.) — normal color */
+.pill-label {
+  color: var(--text-muted);
+}
+
+/* Data values — encrypted/obfuscated → #FE59C2 */
+.pill-data {
+  color: var(--accent-encrypted);
+}
+
 /* Bottom half: pause/play | stop */
 .pill-bottom {
   display: flex;
@@ -1159,6 +1216,82 @@ a { color: var(--accent-blue); text-decoration: none; }
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: 0.2rem;
+}
+
+/* ── History timestamps (start/end/pauses) ─────────────────────── */
+.history-entry-times {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.history-time-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.history-time-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.history-entry-pauses {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.3rem;
+}
+
+.history-pauses-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.history-pause-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-left: 0.25rem;
+}
+
+.history-pause-icon {
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.history-pause-times {
+  color: var(--text-muted);
+}
+
+.history-pause-dur {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+/* Encryption indicator for history cards */
+.history-encrypted-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-encrypted);
+  opacity: 0.7;
+  margin-bottom: 0.15rem;
+}
+
+.history-encrypted-icon svg {
+  flex-shrink: 0;
+}
+
+/* Data values — encrypted/obfuscated → #FE59C2 */
+.history-data {
+  color: var(--accent-encrypted);
 }
 
 /* Staging vs Committed indicators */

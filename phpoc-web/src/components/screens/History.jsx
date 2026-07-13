@@ -313,6 +313,31 @@ export default function History() {
     return `${hours}h ${mins}m`;
   };
 
+  /**
+   * Format epoch ms to a short time string (e.g. "2:14 PM").
+   */
+  const formatTime = (epoch) => {
+    if (!epoch) return '';
+    return new Date(epoch).toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  /**
+   * Format a pause duration in ms as "Xm" or "Xh Ym".
+   */
+  const fmtPauseDuration = (start, stop) => {
+    if (!start || !stop) return '';
+    const ms = stop - start;
+    if (ms <= 0) return '';
+    const totalMin = Math.floor(ms / 60000);
+    if (totalMin < 60) return `${totalMin}m`;
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  };
+
   const formatDateLabel = (dateStr) => {
     const d = new Date(dateStr + 'T00:00:00');
     const today = new Date();
@@ -515,9 +540,53 @@ export default function History() {
                       <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
                     </div>
 
-                    {/* Expanded details: tags and comment */}
+                    {/* Expanded details: timestamps, tags, and comment */}
                     {isExpanded && (
                       <div className="history-entry-details" onClick={(e) => e.stopPropagation()}>
+                        {/* Encryption indicator — lock icon only */}
+                        <span className="history-encrypted-icon" title={entry.committed ? 'Data is encrypted in the ledger' : 'Data is obfuscated in staging'}>
+                          <Icons.lock size={10} />
+                        </span>
+
+                        {/* Timestamps: start / end */}
+                        <div className="history-entry-times">
+                          <span className="history-time-row">
+                            <span className="history-time-label">Started:</span>
+                            <span className="history-data">{formatTime(entry.start_epoch)}</span>
+                          </span>
+                          {entry.end_epoch && (
+                            <span className="history-time-row">
+                              <span className="history-time-label">Ended:</span>
+                              <span className="history-data">{formatTime(entry.end_epoch)}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Pause intervals */}
+                        {entry.pauses?.length > 0 && (
+                          <div className="history-entry-pauses">
+                            <span className="history-pauses-label">
+                              {entry.pauses.length} pause{entry.pauses.length !== 1 ? 's' : ''}
+                            </span>
+                            {entry.pauses.map((p, i) => (
+                              <div key={i} className="history-pause-item">
+                                <span className="history-pause-icon">⏸</span>
+                                <span className="history-pause-times history-data">
+                                  {formatTime(p.pause_start)}
+                                  {p.pause_stop != null
+                                    ? ` – ${formatTime(p.pause_stop)}`
+                                    : ' – …'}
+                                </span>
+                                {p.pause_stop != null && (
+                                  <span className="history-pause-dur history-data">
+                                    ({fmtPauseDuration(p.pause_start, p.pause_stop)})
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         {/* Tags — editable for staging, read-only for committed */}
                         <div className="history-entry-tags">
                           {currentTags.map((tag, i) => (

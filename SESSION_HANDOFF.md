@@ -9,7 +9,7 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1722 PY tests pass (1610 core + 104 SQLite staging)  |  **Web:** 750 JS tests pass  |  **Worker:** 104 vitest tests pass
+- **CLI:** 1719 PY tests pass (2 flaky: staging service timeout ordering)  |  **Web:** 51 JS suites pass, 9 fail (pre-existing)  |  **Worker:** 104 vitest tests pass
 - **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
 - **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
 
@@ -26,7 +26,7 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 
 ## Immediate Next Steps
 0–11. **✅ Archived** — See `docs/planning/archive/SESSION_HISTORY_2026-07-13.md`
-12. **🔜 Clean up diagnostics + Run test suites**
+12. **✅ Clean up diagnostics + Run test suites** — Completed 2026-07-13
 13. **⏸️ Fix the broken chain** (deprioritized — new ledger started)
 
 ## Files Created (Completed Work)
@@ -66,7 +66,6 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 ## Known Issues
 - **CLI read commands block on specifier mismatch** (Python-side, not web)
 - **Pre-existing test failures** — `ledger_sync_test.mjs` (A3c), `commit_push_integration_test.mjs`
-- **Diagnostic logging** in `remote_sync.py` `_verify_chain` — remove after chain is fixed
 - **Deduplication bug in SyncOrchestrator** — ✅ FIXED. `_deduplicate_from_remote_ledger` used `entry.get("entry_index")` on raw store entries that lack the field → `None` → `remove_entries(0 <= None)` TypeError. Fixed by using `enumerate()` on the store list. 5 new tests, 55/55 pass.
 
 ## Test Ledger Credentials

@@ -17,7 +17,6 @@ RemoteStagingSync, sharing the same master-key sub-key derivation.
 import json
 import hashlib
 import logging
-import sys
 from typing import Optional, List, Dict, Any, Tuple
 
 from domain.staging.remote_sync import RemoteStagingSync
@@ -187,39 +186,6 @@ class RemoteLedgerSync:
         # Verify chain integrity: check prev_hash linkage
         combined = (local_blocks or []) + new_blocks
 
-        # TEMP DIAG: dump full chain linkage
-        sys.stderr.write("\n[DIAG] Full chain linkage (first 10 + last 3 blocks):\n")
-        for di in range(1, min(len(combined), 11)):
-            p = combined[di - 1]
-            c = combined[di]
-            ph = p.get("block_hash") or p.get("day_hash") or p.get("month_hash") or p.get("year_hash") or "NONE"
-            ch = c.get("block_hash") or c.get("day_hash") or c.get("month_hash") or c.get("year_hash") or "NONE"
-            match = "✓" if c.get("prev_hash") == ph else "✗"
-            sys.stderr.write(
-                f"  [{di-1}]{p.get('type')} hash={ph[:12]} date={p.get('date','?')} -> [{di}]{c.get('type')} "
-                f"prev={c.get('prev_hash','?')[:12]} date={c.get('date','?')} hash={ch[:12]} {match}\n"
-            )
-        if len(combined) > 11:
-            sys.stderr.write(f"  ... ({len(combined) - 11} blocks omitted) ...\n")
-            for di in range(len(combined) - 3, len(combined)):
-                if di < 11: continue
-                p = combined[di - 1]
-                c = combined[di]
-                ph = p.get("block_hash") or p.get("day_hash") or p.get("month_hash") or p.get("year_hash") or "NONE"
-                ch = c.get("block_hash") or c.get("day_hash") or c.get("month_hash") or c.get("year_hash") or "NONE"
-                match = "✓" if c.get("prev_hash") == ph else "✗"
-                sys.stderr.write(
-                    f"  [{di-1}]{p.get('type')} hash={ph[:12]} date={p.get('date','?')} -> [{di}]{c.get('type')} "
-                    f"prev={c.get('prev_hash','?')[:12]} date={c.get('date','?')} hash={ch[:12]} {match}\n"
-                )
-        # Dump genesis identity for timeline investigation
-        g = combined[0]
-        if g.get('identity'):
-            sys.stderr.write(
-                f"[DIAG] genesis identity: user={g['identity'].get('username','?')} "
-                f"email={g['identity'].get('email','?')}\n"
-            )
-        sys.stderr.flush()
         divergence_idx = self._verify_chain(combined, strict=False)
         if divergence_idx is not None:
             # Chains diverged — the remote chain is incompatible with local.
@@ -529,21 +495,6 @@ class RemoteLedgerSync:
                 or prev.get("month_hash")
                 or prev.get("year_hash")
             )
-            # TEMP DIAG: dump blocks 0-4 on first pass
-            if i <= 4:
-                c_hash = (
-                    current.get("block_hash")
-                    or current.get("day_hash")
-                    or current.get("month_hash")
-                    or current.get("year_hash")
-                )
-                match = '✓' if current.get('prev_hash') == prev_hash else '✗'
-                sys.stderr.write(
-                    f"[DIAG] block[{i-1}]={prev.get('type')} hash={prev_hash[:8]}… -> "
-                    f"block[{i}]={current.get('type')} prev_hash={current.get('prev_hash','NONE')[:8]}… "
-                    f"own_hash={c_hash[:8]}… {match}\n"
-                )
-                sys.stderr.flush()
             if not prev_hash:
                 if strict:
                     raise ValueError(

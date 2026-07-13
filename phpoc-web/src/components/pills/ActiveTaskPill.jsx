@@ -1,5 +1,16 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Icons } from '../ui/Icons.jsx';
+
+/**
+ * Format epoch ms to a short time string (e.g. "2:14 PM").
+ */
+function formatTime(epoch) {
+  if (!epoch) return '';
+  return new Date(epoch).toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 /**
  * ActiveTaskPill — pill-shaped button representing one active activity.
@@ -7,8 +18,10 @@ import { Icons } from '../ui/Icons.jsx';
  * Layout inside the pill (top-to-bottom, left-to-right):
  *
  *   ┌──────────────────────────────┐
- *   │       Coding Practice        │  ← Title (top half)
- *   │        ⏸      ⏹️           │  ← Pause/Play (left)  Stop (right)
+ *   │  Coding Practice    01:23:45 │  ← Title + elapsed
+ *   │  Started 2:14 PM  ⏸ 3:30 PM │  ← Start time + pause state
+ *   │  ─────────────────────────── │
+ *   │  ▶       │       ⏹          │  ← Pause/Play (left)  Stop (right)
  *   └──────────────────────────────┘
  *
  * Props:
@@ -51,12 +64,44 @@ export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapse
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
+  // Compute pause info: current active pause (if paused) and completed pause count
+  const pauseInfo = useMemo(() => {
+    const pauses = task.pauses || [];
+    const completedPauses = pauses.filter(p => p.pause_stop != null);
+    const activePause = pauses.find(p => p.pause_stop == null);
+    return { completedPauses, activePause, totalPauses: pauses.length };
+  }, [task.pauses]);
+
   const tagEls = task.tags?.length > 0 && (
     <div className="pill-tags">
       {task.tags.slice(0, 2).map((tag, i) => (
         <span key={i} className="pill-tag">#{tag}</span>
       ))}
       {task.tags.length > 2 && <span className="pill-tag-more">+{task.tags.length - 2}</span>}
+    </div>
+  );
+
+  // Timestamps row: lock icon + start time + pause state (labels dim, values colored)
+  const timestampEls = (
+    <div className="pill-timestamps">
+      <span className="pill-encrypted-icon" title="Data is encrypted in the ledger">
+        <Icons.lock size={9} />
+      </span>
+      <span className="pill-start-time" title={`Started ${new Date(task.start_epoch).toLocaleString()}`}>
+        <span className="pill-label">Started</span>{' '}
+        <span className="pill-data">{formatTime(task.start_epoch)}</span>
+      </span>
+      {task.is_paused && pauseInfo.activePause && (
+        <span className="pill-pause-now" title={`Paused at ${new Date(pauseInfo.activePause.pause_start).toLocaleString()}`}>
+          <span className="pill-label">⏸ Paused</span>{' '}
+          <span className="pill-data">{formatTime(pauseInfo.activePause.pause_start)}</span>
+        </span>
+      )}
+      {pauseInfo.completedPauses.length > 0 && (
+        <span className="pill-pause-count" title={`${pauseInfo.completedPauses.length} pause(s) completed`}>
+          {pauseInfo.completedPauses.length} pause{pauseInfo.completedPauses.length !== 1 ? 's' : ''}
+        </span>
+      )}
     </div>
   );
 
@@ -70,6 +115,7 @@ export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapse
         </div>
         <span className="pill-elapsed">{formatElapsed(elapsedMs)}</span>
         {tagEls}
+        {timestampEls}
       </div>
 
       {/* Bottom half: Pause/Play (left) | Stop (right) */}
