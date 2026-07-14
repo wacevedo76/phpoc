@@ -1,16 +1,19 @@
 import json
 import time
 import calendar
+import logging
 import re
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
-from security.crypto import AbstractCryptoManager
+from typing import Optional, List, Dict, Any, Set, Tuple
+from security.crypto import AbstractCryptoManager, CryptoManager
 from domain.staging.service import StagingService
 from domain.staging.service import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from cli.trace import trace
 from cli.background import _show_sync_notifications, _spawn_background_sync_check
 from cli.wal import _write_wal_pending, _spawn_background_push
+
+logger = logging.getLogger(__name__)
 
 
 class CLIInterface:
@@ -31,6 +34,13 @@ class CLIInterface:
         If cookie mismatch or expired, pulls remote blob, merges, and
         if required, prompts for authentication.
 
+        After the staging sync, also pulls remote ledger blocks into the
+        local chain so that the local ledger reflects commits made from
+        other clients (e.g. phpoc-web). Then cross-references staging
+        entries against the ledger and removes any that have already been
+        committed — preventing duplicate commits and incorrect "(Staged)"
+        display.
+
         Only one device can access staging at a time. If the remote
         device_specifier doesn't match local, a different device has
         staging. Authentication is required to proceed.
@@ -49,6 +59,10 @@ class CLIInterface:
         result = self._staging.check_and_sync(timeout_ms=500)
 
         if result == SyncCheckResult.READY:
+            # After staging sync, also pull remote ledger blocks so the
+            # local chain has all entries committed by other clients.
+            # Then remove any staging entries already committed.
+            self._sync_remote_ledger_and_dedup()
             return True
 
         if result == SyncCheckResult.OFFLINE:
@@ -56,14 +70,74 @@ class CLIInterface:
             return True
 
         if result == SyncCheckResult.REAUTH_NEEDED:
-            # Specifier mismatch or stale session — must re-auth.
-            # Only one device can access staging at a time.
-            if not require_auth:
+            if require_auth:
+                # Write commands: signal caller to handle re-auth.
+                # Only one device can access staging at a time.
                 print("\nRemote staging is held by a different device.")
                 print("Please re-authenticate to access remote staging.")
-            return False
+                return False
+
+            # Auto-handle re-auth for read commands (require_auth=False).
+            # Replaces the duplicate check_and_sync + re-auth blocks that
+            # were previously in main.py for view/list handlers.
+            print("\nRemote session expired — please re-authenticate.")
+            auth = getattr(self, '_auth', None)
+            if auth is None or not auth.login():
+                return False
+
+            mk = auth.get_key()
+            if not isinstance(mk, bytes) or len(mk) != 32:
+                return False
+
+            self._rebuild_after_reauth(mk)
+
+            # Claim remote staging + sync remote ledger (best effort)
+            try:
+                self._staging._reconcile_and_claim(mk)
+            except Exception:
+                pass  # Best effort — continue with local data
+            self._sync_remote_ledger_and_dedup()
+
+            return True
 
         return True
+
+    def _rebuild_after_reauth(self, mk: bytes):
+        """Rebuild crypto, staging, and ledger engine with a fresh master key.
+
+        Called after re-authentication when the crypto context changes.
+        Preserves existing store instances — rebuilds only the objects that
+        hold crypto references.
+        """
+        fresh_crypto = CryptoManager(mk)
+        self._crypto = fresh_crypto
+
+        # Rebuild StagingService with fresh crypto, preserving store + config
+        old_staging = self._staging
+        staging_store = old_staging._local._store
+        transport = getattr(old_staging._remote, '_transport', None)
+        device_id_provider = getattr(old_staging, '_device_id_provider', None)
+        cookie_ttl = getattr(old_staging, '_cookie_ttl_minutes', 30)
+        data_dir = getattr(old_staging, '_data_dir', None)
+
+        self._staging = StagingService(
+            crypto=fresh_crypto,
+            staging_store=staging_store,
+            transport=transport,
+            device_id_provider=device_id_provider,
+            cookie_ttl_minutes=cookie_ttl,
+            data_dir=str(data_dir) if data_dir else None,
+        )
+
+        # Rebuild LedgerEngine with fresh crypto
+        old_engine = self._ledger_engine
+        self._ledger_engine = LedgerEngine(
+            crypto=fresh_crypto,
+            store=old_engine.store,
+            index_store=old_engine.index_store,
+            staging_store=staging_store,
+            identity_secret=None,
+        )
 
     def _resolve_title(self, identifier):
         """Resolve a string identifier to a title.
@@ -339,6 +413,209 @@ class CLIInterface:
         for title, total_ms in sorted(rep.items(), key=lambda x: x[1], reverse=True):
             print(f"{title}: {total_ms // 60000}m")
 
+    # ------------------------------------------------------------------
+    # Remote ledger sync + staging dedup (called from _sync_before_command)
+    # ------------------------------------------------------------------
+
+    # Cache of remote ledger entries for display, keyed by (date, title):
+    # {(date_str, title): {"startTime_enc": ..., "endTime_enc": ...,
+    #                      "duration": ..., "tags": ..., "comment": ...}}
+    _remote_ledger_cache: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None
+    _remote_ledger_cache_time: float = 0.0
+
+    def _sync_remote_ledger_and_dedup(self):
+        """Pull remote ledger blocks and remove committed entries from staging.
+
+        Pulls remote ledger blocks by index (no chain verification needed —
+        blocks from divergent chains are still valid for dedup purposes)
+        and cross-references staging entries against committed entries.
+        Staging entries whose (date, title) exist in the remote ledger are
+        removed from staging to prevent duplicate commits and incorrect
+        "(Staged)" display.
+
+        Also caches remote ledger entries for display in ``list_habits``
+        so that entries committed by other clients (e.g. phpoc-web) appear
+        in the "synced" section even when they aren't in the local chain.
+
+        This is a best-effort operation. Failures are non-fatal — the
+        caller continues with whatever data is locally available.
+        """
+        transport = getattr(self._staging._remote, '_transport', None)
+        if transport is None:
+            return
+
+        mk = getattr(self._crypto, 'master_key', None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            return
+
+        # Cache TTL: skip pull if we've pulled within the last 30 seconds
+        now = time.time()
+        if self._remote_ledger_cache is not None and \
+           (now - self._remote_ledger_cache_time) < 30:
+            # Cache is fresh — use it for dedup without re-pulling
+            self._remove_committed_from_staging(
+                self._remote_ledger_cache
+            )
+            return
+
+        try:
+            from domain.ledger.remote_sync import RemoteLedgerSync
+            ledger_sync = RemoteLedgerSync(transport, mk)
+
+            # Collect committed (date, title) pairs from ALL remote blocks.
+            # We pull by index (no chain verification) to handle divergent
+            # chains. Also cache entry data for display purposes.
+            committed_titles: Dict[Tuple[str, str], int] = {}  # {(date,title): count}
+            remote_entries: Dict[Tuple[str, str], Dict[str, Any]] = {}  # display cache
+
+            # Determine which block indices to pull
+            try:
+                existing_indices = ledger_sync._list_remote_block_indices()
+            except Exception:
+                existing_indices = set()
+
+            if not existing_indices:
+                return
+
+            for idx in sorted(existing_indices):
+                try:
+                    block = ledger_sync.pull_block_by_index(idx)
+                except Exception:
+                    continue
+                if not block:
+                    continue
+                if block.get("type", "day") != "day":
+                    continue
+                date_str = block.get("date", "")
+                if not date_str:
+                    continue
+                for entry in block.get("entries", []):
+                    data = entry.get("data", {})
+                    title = data.get("title", "")
+                    if not title:
+                        continue
+                    key = (date_str, title)
+                    committed_titles[key] = committed_titles.get(key, 0) + 1
+                    # Cache one entry per (date, title) for display
+                    if key not in remote_entries:
+                        remote_entries[key] = dict(data)
+
+            if not committed_titles:
+                return
+
+            # Cache for display (30-second TTL, refreshed on next pull)
+            self._remote_ledger_cache = remote_entries
+            self._remote_ledger_cache_time = now
+
+            # Merge remote index into local (so local index has all totals)
+            try:
+                remote_index = ledger_sync.pull_index()
+                if remote_index:
+                    self._merge_remote_index(remote_index)
+            except Exception as exc:
+                logger.debug(
+                    "_sync_remote_ledger_and_dedup: pull_index failed: %s", exc
+                )
+
+            # Remove staging entries that exist in remote ledger
+            self._remove_committed_from_staging(committed_titles)
+
+        except Exception as exc:
+            logger.debug(
+                "_sync_remote_ledger_and_dedup: failed: %s", exc
+            )
+
+    def _merge_remote_index(self, remote_index: Dict[str, Any]):
+        """Merge a remote blind index into the local index.
+
+        For each (date, title) pair, the local index is updated to the
+        maximum of local and remote durations (remote wins on conflict).
+        """
+        local_index = self._ledger_engine.index.get_all()
+        for date_str, titles in remote_index.items():
+            if date_str not in local_index:
+                local_index[date_str] = dict(titles)
+            else:
+                for title, duration in titles.items():
+                    existing = local_index[date_str].get(title, 0)
+                    if duration > existing:
+                        local_index[date_str][title] = duration
+
+        # Write merged index back
+        self._ledger_engine.index.clear()
+        for date_str, titles in local_index.items():
+            for title, duration in titles.items():
+                self._ledger_engine.index.update(date_str, title, duration)
+
+    def _remove_committed_from_staging(
+        self,
+        committed_titles: Dict[Tuple[str, str], int],
+    ):
+        """Remove staging entries that have already been committed to the ledger.
+
+        Args:
+            committed_titles: Dict of {(date_str, title): count} from the
+                remote ledger blocks.
+        """
+        staging_raw = self._staging._local._store.read_entries()
+        if not staging_raw:
+            return
+
+        if not committed_titles:
+            return
+
+        # Identify staging entries to remove (by index).
+        # Uses a mutable copy of committed_titles to handle duplicate
+        # titles on the same date correctly.
+        indices_to_remove: List[int] = []
+        remaining = dict(committed_titles)
+
+        for entry_idx, entry in enumerate(staging_raw):
+            data = entry.get("data", {})
+            title = data.get("title", "")
+            if not title:
+                continue
+
+            # Decode start_epoch to get date
+            start_val = data.get("startTime_enc", "")
+            if isinstance(start_val, str) and start_val.startswith("plain:"):
+                try:
+                    start_epoch = int(start_val[6:])
+                    date_str = time.strftime(
+                        "%Y-%m-%d", time.gmtime(start_epoch // 1000)
+                    )
+                except Exception:
+                    continue
+            else:
+                continue
+
+            key = (date_str, title)
+            if remaining.get(key, 0) > 0:
+                indices_to_remove.append(entry_idx)
+                remaining[key] -= 1
+
+        if indices_to_remove:
+            logger.info(
+                "Removing %d staging entries already committed to ledger: %s",
+                len(indices_to_remove),
+                [
+                    staging_raw[i]["data"].get("title", "?")
+                    for i in indices_to_remove
+                ],
+            )
+            self._staging.remove_synced(indices_to_remove)
+
+            # Push the cleaned staging to remote so other clients don't
+            # re-introduce the committed entries
+            mk = getattr(self._crypto, 'master_key', None)
+            if isinstance(mk, bytes) and len(mk) == 32:
+                try:
+                    self._staging.push_blob_only(master_key=mk)
+                except Exception as exc:
+                    logger.debug(
+                        "_remove_committed_from_staging: push failed: %s", exc
+                    )
+
     @trace
     def list_habits(self, source: str, days_limit=None, from_date=None, to_date=None, show_comments=False, show_tags=False):
         if not self._sync_before_command(require_auth=False):
@@ -376,6 +653,32 @@ class CLIInterface:
 
             for entry in day.get("entries", []):
                 synced_by_date[date_str].append({"source": "synced", "data": entry["data"], "date": date_str})
+
+        # Also include cached remote ledger entries (pulled by
+        # _sync_remote_ledger_and_dedup) so entries committed by other
+        # clients (e.g. phpoc-web) appear in the "synced" section even
+        # when they aren't in the local chain (divergent chains).
+        if source in ['synced', 'all'] and self._remote_ledger_cache:
+            for (remote_date, title), data in self._remote_ledger_cache.items():
+                # Apply date filters
+                if (from_date and remote_date < from_date) or \
+                   (to_date and remote_date > to_date):
+                    continue
+                # Skip if already in local synced data (avoid duplicates
+                # where the same entry exists in both local and remote chains)
+                if remote_date in synced_by_date:
+                    local_titles = {
+                        e["data"].get("title") for e in synced_by_date[remote_date]
+                    }
+                    if title in local_titles:
+                        continue
+                if remote_date not in synced_by_date:
+                    synced_by_date[remote_date] = []
+                synced_by_date[remote_date].append({
+                    "source": "synced",
+                    "data": data,
+                    "date": remote_date,
+                })
 
         # Process staged data
         # Group staged data by date to match ledger format for consistent display
@@ -484,7 +787,23 @@ class CLIInterface:
 
             # Process staged entries for this date
             if source in ['staged', 'all'] and date_str in staged_by_date:
+                # Dedup: skip staged entries already shown as synced (ledger).
+                # When source='all', an entry that was committed but still
+                # remains in staging would appear twice without this guard.
+                # Uses a Counter (not a set) to handle multiple entries with
+                # the same title on the same date correctly.
+                from collections import Counter
+                synced_counts: Counter = Counter()
+                if source == 'all':
+                    for entry_data in (synced_by_date.get(date_str, []) +
+                                       peek_entries.get(date_str, [])):
+                        synced_counts[(date_str, entry_data['data'].get('title', ''))] += 1
+
                 for entry_data in staged_by_date[date_str]:
+                    key = (date_str, entry_data['data'].get('title', ''))
+                    if source == 'all' and synced_counts.get(key, 0) > 0:
+                        synced_counts[key] -= 1
+                        continue
                     self._print_entry(entry_data, show_comments=show_comments, show_tags=show_tags)
 
     @staticmethod

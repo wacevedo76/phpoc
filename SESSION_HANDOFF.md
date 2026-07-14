@@ -9,25 +9,25 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1719 PY tests pass (2 flaky: staging service timeout ordering)  |  **Web:** 51 JS suites pass, 9 fail (pre-existing)  |  **Worker:** 104 vitest tests pass
+- **CLI:** 1743 PY tests pass (2 flaky: staging service timeout ordering)  |  **Web:** 51 JS suites pass, 9 fail (pre-existing)  |  **Worker:** 104 vitest tests pass
 - **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
 - **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
 
 ## Discussion Summary — Staging DB Model Exploration (Jul 7)
 
-Explored converting the staging area from a single JSON blob to a row-per-activity SQLite database. Key findings documented in `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` §"Future Direction":
-
-- **SQLite is stdlib** — zero-dependency for CLI, same as `json`/`hashlib`
-- **Three-column schema:** `activity_id` (PK), `activity_status` (plaintext), `activity` (obfuscated entry blob)
-- **Hash index becomes redundant** — `SELECT activity_id, activity_status FROM staging` IS the hash index. Entire ~200 lines + Tier 1/Tier 2 infrastructure goes away.
-- **Sync payloads shrink 100×+** — pull only changed rows (~300–800 bytes) instead of 64KB–512KB padded blob; content changes caught — per-row versioning detects tag edits, title changes, etc. that the current status-only hash index misses
-- **Trade-offs identified:** per-row encryption overhead on bulk reads, privacy regression (exposed entry count), Worker protocol redesign needed
-- **Current Phase 3 hash index work is still valid near-term** — the DB model is a future architectural shift that supersedes it
+Explored converting staging area from JSON blob to row-per-activity SQLite. Key findings in `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` §"Future Direction". Current hash index work valid near-term; DB model is a future architectural shift.
 
 ## Immediate Next Steps
 0–11. **✅ Archived** — See `docs/planning/archive/SESSION_HISTORY_2026-07-13.md`
 12. **✅ Clean up diagnostics + Run test suites** — Completed 2026-07-13
 13. **⏸️ Fix the broken chain** (deprioritized — new ledger started)
+14. **✅ Fix CLI staging/ledger reconciliation for cross-platform commits** — Completed 2026-07-13
+15. **🔜 CLI command timing fixes (F1–F4)** — `docs/planning/CLI_COMMAND_TIMING_FIXES.md`
+    - F1: Remove duplicate `check_and_sync` call (~3.6s savings) — **✅ Done (Phases 1–4)**
+    - F2: Persistent cache for remote ledger blocks (~5.5s savings)
+    - F3: Skip blob push when staging unchanged (~1.2s savings)
+    - F4: HTTP connection pooling + reduced timeouts (~2–3s savings)
+    - Execute in order F1→F4 with 4-phase TDD per fix
 
 ## Files Created (Completed Work)
 | Phase | File | Purpose |
@@ -49,6 +49,8 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 | CLI P3 | `scripts/migrate_staging.py` | migrate_staging_to_sqlite() |
 | Docs | `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` | 120 assertions, 5 groups |
 | Docs | `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | 54 assertions, 5 groups |
+| CLI-F1 P1 | `docs/planning/CLI_COMMAND_TIMING_F1_PHASE1.md` | 23 assertions, 6 groups A–F |
+| CLI-F1 P2 | `tests/test_cli_interface.py` | 24 tests, 6 groups — 11 RED, 13 GREEN |
 
 ## Files Modified (Phase 3 + 4)
 | File | Change |
@@ -58,6 +60,8 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 | `phpoc-web/src/sync/sync.js` | Push/pull staging hash index, genesis collision guard |
 | `worker/src/index.ts` | Slimmed to thin router |
 | `worker/AGENTS.md` | Updated for row-level staging endpoints |
+| `cli/interface.py` | F1 P3: Auto-handle REAUTH_NEEDED in `_sync_before_command(require_auth=False)`. P4: Extract `_rebuild_after_reauth()` helper, simplify auto-handle block |
+| `main.py` | F1 P3: Removed duplicate `check_and_sync` + re-auth blocks from `view`, `list active`, `list all|synced|staged` handlers; set `cli._auth = auth`; moved `list` handler after `revert` |
 
 ## Chain Integrity Fixes (Jul 5) ✅
 
@@ -66,7 +70,8 @@ Explored converting the staging area from a single JSON blob to a row-per-activi
 ## Known Issues
 - **CLI read commands block on specifier mismatch** (Python-side, not web)
 - **Pre-existing test failures** — `ledger_sync_test.mjs` (A3c), `commit_push_integration_test.mjs`
-- **Deduplication bug in SyncOrchestrator** — ✅ FIXED. `_deduplicate_from_remote_ledger` used `entry.get("entry_index")` on raw store entries that lack the field → `None` → `remove_entries(0 <= None)` TypeError. Fixed by using `enumerate()` on the store list. 5 new tests, 55/55 pass.
+- **Deduplication bug in SyncOrchestrator** — ✅ FIXED.
+- **CLI staging/ledger reconciliation for cross-platform commits** — ✅ FIXED. When phpoc-web committed entries to the ledger and synced to R2, `ph list all` showed them as "(Staged)" because `_sync_before_command` only synced the staging blob (not ledger blocks) and the local ledger was stale. Fixed by adding `_sync_remote_ledger_and_dedup()` to `_sync_before_command`: pulls remote ledger blocks by index (no chain verification), cross-references staging against committed (date, title) pairs, removes matches. Also displays cached remote entries in `list_habits` synced section via `_remote_ledger_cache`. File: `cli/interface.py`.
 
 ## Test Ledger Credentials
 

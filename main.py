@@ -624,6 +624,7 @@ def main():
         identity_secret=None,
     )
     cli = CLIInterface(staging_service, ledger_engine, crypto)
+    cli._auth = auth  # For _sync_before_command auto-handle re-auth
 
     # Phase B: Replay any pending WAL (crash-safe deferred push) before commands.
     # Skipped for 'dev' commands — they are diagnostic-only and must not mutate
@@ -699,33 +700,6 @@ def main():
     elif args.command == "view":
         show_tags = args.show_tags if hasattr(args, 'show_tags') else False
         show_comments = args.show_comments if hasattr(args, 'show_comments') else False
-
-        # If auth gate detects specifier mismatch (different device wrote),
-        # auto-prompt for re-authentication instead of printing a message.
-        # Use login() not authenticate() to force passphrase entry (bypass
-        # session cache) — cross-device consent requires explicit input.
-        result = staging_service.check_and_sync(timeout_ms=500)
-        if result == SyncCheckResult.REAUTH_NEEDED:
-            if not auth.login():
-                print("Authentication required.")
-                exit(1)
-            # Re-auth succeeded — rebuild staging service with fresh crypto
-            mk = auth.get_key()
-            fresh_crypto = CryptoManager(mk)
-            staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
-            staging_service = StagingService(
-                crypto=fresh_crypto,
-                staging_store=staging_store,
-                transport=transport,
-                device_id_provider=device_id_provider,
-                cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
-                data_dir=str(CONFIG_DIR),
-            )
-            result = staging_service._reconcile_and_claim(mk)
-            if result == SyncCheckResult.OFFLINE:
-                pass  # Continue with local data
-            # Recreate CLI too (view_active uses self._crypto directly)
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
 
         cli.view_active(show_tags=show_tags, show_comments=show_comments)
     elif args.command == "tags":
@@ -911,77 +885,6 @@ def main():
             to_date=args.to_date,
         )
         cli.show_rep(args.days, from_date=from_str, to_date=to_str)
-    elif args.command == "list":
-        if args.source == "active":
-            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
-            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
-            # Re-auth handling: if cookie mismatch or TTL expired, prompt for
-            # authentication before displaying data (same as ph view).
-            result = staging_service.check_and_sync(timeout_ms=500)
-            if result == SyncCheckResult.REAUTH_NEEDED:
-                if not auth.login():
-                    print("Authentication required.")
-                    exit(1)
-                mk = auth.get_key()
-                fresh_crypto = CryptoManager(mk)
-                staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
-                staging_service = StagingService(
-                    crypto=fresh_crypto,
-                    staging_store=staging_store,
-                    transport=transport,
-                    device_id_provider=device_id_provider,
-                    cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
-                    data_dir=str(CONFIG_DIR),
-                )
-                result = staging_service._reconcile_and_claim(mk)
-                if result == SyncCheckResult.OFFLINE:
-                    pass  # Continue with local data
-                cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
-            cli.view_active(show_tags=show_tags, show_comments=show_comments)
-        else:
-            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
-            from_str, to_str = CLIInterface._resolve_date_filters(
-                days=args.days,
-                date=getattr(args, 'date', None),
-                week=getattr(args, 'week', None),
-                month=getattr(args, 'month', None),
-                year=getattr(args, 'year', None),
-                from_date=args.from_date,
-                to_date=args.to_date,
-            )
-            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
-            # Re-auth handling: if cookie mismatch or TTL expired, prompt for
-            # authentication before displaying data (same as ph view).
-            result = staging_service.check_and_sync(timeout_ms=500)
-            if result == SyncCheckResult.REAUTH_NEEDED:
-                if not auth.login():
-                    print("Authentication required.")
-                    exit(1)
-                mk = auth.get_key()
-                fresh_crypto = CryptoManager(mk)
-                staging_store = FileStagingStore(CONFIG_DIR / "staging.json")
-                staging_service = StagingService(
-                    crypto=fresh_crypto,
-                    staging_store=staging_store,
-                    transport=transport,
-                    device_id_provider=device_id_provider,
-                    cookie_ttl_minutes=CONFIG.get("cookie.ttl_minutes", 30),
-                    data_dir=str(CONFIG_DIR),
-                )
-                result = staging_service._reconcile_and_claim(mk)
-                if result == SyncCheckResult.OFFLINE:
-                    pass  # Continue with local data
-                # Rebuild ledger_engine + cli with fresh crypto
-                ledger_engine = LedgerEngine(
-                    crypto=fresh_crypto,
-                    store=store,
-                    index_store=store,
-                    staging_store=staging_store,
-                    identity_secret=None,
-                )
-                cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
-            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str,
-                            show_comments=show_comments, show_tags=show_tags)
     elif args.command == "modify":
         # Re-auth: sync remote staging before modifying local staging.
         result = staging_service.check_and_sync(timeout_ms=500)
@@ -1131,6 +1034,25 @@ def main():
                 print("Chain intact and verified.")
             else:
                 print("WARN: Chain verification failed.")
+    elif args.command == "list":
+        if args.source == "active":
+            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
+            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+            cli.view_active(show_tags=show_tags, show_comments=show_comments)
+        else:
+            show_comments = args.show_comments if hasattr(args, 'show_comments') else False
+            from_str, to_str = CLIInterface._resolve_date_filters(
+                days=args.days,
+                date=getattr(args, 'date', None),
+                week=getattr(args, 'week', None),
+                month=getattr(args, 'month', None),
+                year=getattr(args, 'year', None),
+                from_date=args.from_date,
+                to_date=args.to_date,
+            )
+            show_tags = args.show_tags if hasattr(args, 'show_tags') else False
+            cli.list_habits(args.source, args.days, from_date=from_str, to_date=to_str,
+                            show_comments=show_comments, show_tags=show_tags)
 
 
 def _handle_config_command(args, config):
