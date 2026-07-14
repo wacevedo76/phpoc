@@ -32,7 +32,7 @@ export default defineConfig({
     },
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       // WASM artifacts are bundled from src/crypto/wasm/ — Vite natively
       // handles .wasm files via new URL() asset references.
     },

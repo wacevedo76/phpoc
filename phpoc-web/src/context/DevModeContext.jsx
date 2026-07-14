@@ -1363,7 +1363,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Auth state (derived from phase)
     user: {
       isAuthenticated: phase === 'ready',
-      deviceId: phase === 'ready' && effectiveServices.crypto
+      deviceId: phase === 'ready' && effectiveServices.crypto?.hasMasterKey?.()
         ? effectiveServices.crypto.getDeviceIdWithCachedKey?.() || 'unknown'
         : null,
       masterKeyCached: phase === 'ready' && !!effectiveServices.crypto?.hasMasterKey?.(),

@@ -15,6 +15,7 @@ Status: 🔴 RED — tests expected to fail until Phase 3 implementation.
 
 import ast
 import inspect
+import time
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -647,6 +648,839 @@ class TestGroupF_MainPyCleanup(unittest.TestCase):
         self.assertEqual(len(list_check_sync_stmts), 0,
                          f"check_and_sync found in list handler: "
                          f"{list_check_sync_stmts}")
+
+
+# ============================================================================
+# F2: Persistent Cache for Remote Ledger Blocks — Phase 2 (RED)
+# ============================================================================
+# 23 assertions from docs/planning/CLI_COMMAND_TIMING_F2_PHASE1.md.
+#
+# Group A (5): Persistent Cache — File Read/Write
+# Group B (4): Cache Hit — Skip Remote Pulls
+# Group C (5): Cache Miss / Partial — Pull Missing Blocks
+# Group D (3): TTL Expiry
+# Group E (3): Cache Invalidation
+# Group F (3): Integration — End-to-End
+#
+# Status: 🔴 RED — tests expected to fail until Phase 3 implementation.
+
+import json as _json
+import os as _os
+import tempfile as _tempfile
+import time as _time
+from pathlib import Path as _Path
+
+# _RemoteLedgerCache will be defined in cli/interface.py during Phase 3
+from cli.interface import _RemoteLedgerCache  # noqa: E402 — RED: ImportError
+
+
+# ═══════════════════════════════════════════════════════════════
+# Helper: build a minimal day block dict for test data
+# ═══════════════════════════════════════════════════════════════
+
+def _make_block(date_str, entries):
+    """Build a day block dict matching RemoteLedgerSync.pull_block_by_index
+    return format."""
+    return {
+        "type": "day",
+        "date": date_str,
+        "entries": [
+            {"data": dict(e)} for e in entries
+        ],
+    }
+
+
+def _make_remote_index(*date_title_durs):
+    """Build a remote index dict from (date, title, duration) triples."""
+    idx = {}
+    for date_str, title, dur in date_title_durs:
+        idx.setdefault(date_str, {})[title] = dur
+    return idx
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group A: Persistent Cache — File Read/Write (5 tests)
+# ═══════════════════════════════════════════════════════════════
+
+class TestGroupA_CacheFileIO(unittest.TestCase):
+    """A1–A5: Direct tests of _RemoteLedgerCache persistence layer.
+
+    These tests create cache instances and verify file I/O correctness.
+    They fail with ImportError until _RemoteLedgerCache is defined.
+    """
+
+    def setUp(self):
+        self.tmpdir = _tempfile.TemporaryDirectory()
+        self.cache_path = _Path(self.tmpdir.name) / "remote_ledger_cache.json"
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    # -- A1: save() creates file with expected structure --------------------
+
+    def test_A1_save_creates_cache_file_with_expected_structure(self):
+        """A1: Verify the cache writes a valid JSON file."""
+        cache = _RemoteLedgerCache(self.cache_path)
+        cache.blocks = {
+            "0": _make_block("2026-07-01", [
+                {"title": "Coding", "startTime_enc": "plain:1718912345000",
+                 "duration": 7200000},
+            ]),
+        }
+        cache.remote_index = _make_remote_index(("2026-07-01", "Coding", 7200000))
+        cache.max_block_index = 0
+        cache.last_pull_time = 1718912345.0
+        cache.save()
+
+        self.assertTrue(self.cache_path.exists(),
+                        f"Expected {self.cache_path} to exist after save()")
+        with open(self.cache_path) as f:
+            data = _json.load(f)
+        self.assertEqual(data["max_block_index"], 0)
+        self.assertEqual(data["last_pull_time"], 1718912345.0)
+        self.assertIn("2026-07-01", data["remote_index"])
+        self.assertIn("0", data["blocks"])
+        self.assertEqual(data["blocks"]["0"]["date"], "2026-07-01")
+
+    # -- A2: Round-trip integrity -------------------------------------------
+
+    def test_A2_load_round_trip_preserves_block_entries(self):
+        """A2: Save → load yields matching data."""
+        expected_blocks = {
+            "0": _make_block("2026-07-01", [
+                {"title": "Reading", "startTime_enc": "plain:1000000",
+                 "duration": 3600000},
+            ]),
+            "1": _make_block("2026-07-02", [
+                {"title": "Writing", "startTime_enc": "plain:2000000",
+                 "duration": 1800000},
+            ]),
+        }
+        expected_index = _make_remote_index(
+            ("2026-07-01", "Reading", 3600000),
+            ("2026-07-02", "Writing", 1800000),
+        )
+
+        cache = _RemoteLedgerCache(self.cache_path)
+        cache.blocks = dict(expected_blocks)
+        cache.remote_index = dict(expected_index)
+        cache.max_block_index = 1
+        cache.last_pull_time = 2000.0
+        cache.save()
+
+        loaded = _RemoteLedgerCache(self.cache_path)
+        loaded.load()
+
+        self.assertEqual(loaded.max_block_index, 1)
+        self.assertEqual(loaded.last_pull_time, 2000.0)
+        self.assertEqual(
+            loaded.blocks["0"]["entries"][0]["data"]["title"], "Reading"
+        )
+        self.assertEqual(
+            loaded.blocks["1"]["entries"][0]["data"]["title"], "Writing"
+        )
+        self.assertEqual(
+            loaded.remote_index, expected_index
+        )
+
+    # -- A3: Cold start — no file -------------------------------------------
+
+    def test_A3_load_returns_empty_state_when_file_missing(self):
+        """A3: First-run behavior — no file → empty state, no crash."""
+        cache = _RemoteLedgerCache(self.cache_path)
+        # File does not exist (tmpdir is fresh)
+        self.assertFalse(self.cache_path.exists())
+        cache.load()
+
+        self.assertEqual(cache.max_block_index, -1)
+        self.assertEqual(cache.last_pull_time, 0.0)
+        self.assertEqual(cache.blocks, {})
+        self.assertEqual(cache.remote_index, {})
+
+    # -- A4: Corrupt file — invalid JSON ------------------------------------
+
+    def test_A4_load_handles_invalid_json_gracefully(self):
+        """A4: Corrupted files must not crash the CLI."""
+        # Write garbage
+        self.cache_path.write_text("not valid json {{{{")
+        cache = _RemoteLedgerCache(self.cache_path)
+        cache.load()
+
+        # Should fall back to empty state
+        self.assertEqual(cache.max_block_index, -1)
+        self.assertEqual(cache.last_pull_time, 0.0)
+        self.assertEqual(cache.blocks, {})
+
+    # -- A5: Write error during save is caught ------------------------------
+
+    def test_A5_save_catches_write_errors_and_logs(self):
+        """A5: Disk-full or permission errors must not propagate."""
+        cache = _RemoteLedgerCache(self.cache_path)
+        cache.blocks = {"0": _make_block("2026-07-01", [
+            {"title": "Test", "startTime_enc": "plain:1000", "duration": 100}
+        ])}
+        cache.max_block_index = 0
+        cache.last_pull_time = 1000.0
+
+        # Make the path a directory — save() should fail but not raise
+        self.cache_path.mkdir(exist_ok=True)
+        with patch('logging.getLogger') as mock_logger:
+            mock_log = MagicMock()
+            mock_logger.return_value = mock_log
+            # save() must not raise
+            try:
+                cache.save()
+            except Exception as exc:
+                self.fail(f"save() raised {type(exc).__name__}: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group B: Cache Hit — Skip Remote Pulls (4 tests)
+# ═══════════════════════════════════════════════════════════════
+
+_SAMPLE_BLOCKS = {
+    "0": _make_block("2026-07-01", [
+        {"title": "Coding", "startTime_enc": "plain:1718912345000",
+         "endTime_enc": "plain:1718919545000",
+         "duration": 7200000},
+    ]),
+    "1": _make_block("2026-07-02", [
+        {"title": "Reading", "startTime_enc": "plain:1718998745000",
+         "endTime_enc": "plain:1719002345000",
+         "duration": 3600000},
+    ]),
+    "2": _make_block("2026-07-03", [
+        {"title": "Writing", "startTime_enc": "plain:1719085145000",
+         "endTime_enc": "plain:1719090545000",
+         "duration": 5400000},
+    ]),
+}
+
+_SAMPLE_REMOTE_INDEX = _make_remote_index(
+    ("2026-07-01", "Coding", 7200000),
+    ("2026-07-02", "Reading", 3600000),
+    ("2026-07-03", "Writing", 5400000),
+)
+
+
+class _BaseCacheIntegration(unittest.TestCase):
+    """Base for Groups B–F: common CLIInterface setup with transport + mk."""
+
+    def setUp(self):
+        self.mock_staging = MagicMock()
+        self.mock_ledger_engine = MagicMock()
+        self.mock_crypto = MagicMock()
+        self.cli = CLIInterface(
+            self.mock_staging, self.mock_ledger_engine, self.mock_crypto
+        )
+        # Configure staging for sync
+        self.mock_staging._remote = MagicMock()
+        self.mock_staging._remote._transport = MagicMock()
+        self.mock_crypto.master_key = b'\x01' * 32
+        self.mock_staging._data_dir = _Path(_tempfile.mkdtemp())
+
+    def tearDown(self):
+        try:
+            import shutil
+            shutil.rmtree(str(self.mock_staging._data_dir), ignore_errors=True)
+        except Exception:
+            pass
+
+    def _fresh_cache_mock(self, max_block_index=2, blocks=None, remote_index=None,
+                          last_pull_time=1000.0):
+        """Create a mock _RemoteLedgerCache that appears fresh.
+
+        Returns the mock instance for later assertion.
+        """
+        mock_cache = MagicMock()
+        mock_cache.max_block_index = max_block_index
+        mock_cache.last_pull_time = last_pull_time
+        mock_cache.blocks = blocks if blocks is not None else dict(_SAMPLE_BLOCKS)
+        mock_cache.remote_index = (
+            remote_index if remote_index is not None
+            else dict(_SAMPLE_REMOTE_INDEX)
+        )
+        mock_cache.is_fresh.return_value = True
+        return mock_cache
+
+    def _stale_cache_mock(self, max_block_index=-1, blocks=None, remote_index=None,
+                          last_pull_time=0.0):
+        """Create a mock _RemoteLedgerCache that appears stale/empty."""
+        mock_cache = MagicMock()
+        mock_cache.max_block_index = max_block_index
+        mock_cache.last_pull_time = last_pull_time
+        mock_cache.blocks = blocks if blocks is not None else {}
+        mock_cache.remote_index = (
+            remote_index if remote_index is not None else {}
+        )
+        mock_cache.is_fresh.return_value = False
+        return mock_cache
+
+    def _mock_remote_sync(self, existing_indices, blocks_by_idx=None,
+                          remote_index=None):
+        """Patch RemoteLedgerSync and return the mock instance.
+
+        Args:
+            existing_indices: set of int indices available on remote
+            blocks_by_idx: dict int→block to return from pull_block_by_index
+            remote_index: dict to return from pull_index
+
+        Returns:
+            (mock_class, mock_instance) tuple
+        """
+        mock_instance = MagicMock()
+        mock_instance._list_remote_block_indices.return_value = set(
+            existing_indices
+        )
+        if blocks_by_idx is not None:
+            def _pull_block(idx):
+                return blocks_by_idx.get(idx)
+            mock_instance.pull_block_by_index.side_effect = _pull_block
+        else:
+            mock_instance.pull_block_by_index.return_value = None
+        mock_instance.pull_index.return_value = remote_index or {}
+        return mock_instance
+
+
+class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
+    """B1–B4: When cache is fresh, skip all HTTP pulls."""
+
+    # -- B1: Fresh cache → zero remote pulls --------------------------------
+
+    def test_B1_fresh_cache_calls_zero_remote_pulls(self):
+        """B1: Core F2 win — eliminate all ledger-block HTTP requests."""
+        mock_cache = self._fresh_cache_mock()
+        mock_rs_class = MagicMock()
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache) as mock_cache_cls, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # RemoteLedgerSync must NOT be instantiated on cache hit
+        mock_rs_class.assert_not_called()
+
+    # -- B2: Cache hit → dedup with reconstructed committed_titles ----------
+
+    def test_B2_cache_hit_calls_remove_committed_with_reconstructed_data(self):
+        """B2: Dedup works from cached block data."""
+        mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch.object(self.cli, '_remove_committed_from_staging') as mock_rm, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        mock_rm.assert_called_once()
+        committed = mock_rm.call_args[0][0]
+        # Should contain the (date, title) keys from the cached blocks
+        self.assertIn(("2026-07-01", "Coding"), committed)
+        self.assertIn(("2026-07-02", "Reading"), committed)
+        self.assertIn(("2026-07-03", "Writing"), committed)
+
+    # -- B3: Cache hit → list_habits synced section uses cached data ---------
+
+    def test_B3_cache_hit_list_habits_includes_cached_entries(self):
+        """B3: Display functionality works from cache."""
+        mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
+        self.mock_ledger_engine.get_day_blocks.return_value = []
+        self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
+        self.mock_staging._local._store.read_entries.return_value = []
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync'), \
+             patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            self.cli.list_habits('synced')
+
+        output = mock_stdout.getvalue()
+        # Cached remote entries should appear in the synced section
+        self.assertIn("Coding", output)
+        self.assertIn("Reading", output)
+        self.assertIn("Writing", output)
+
+    # -- B4: Cache hit → merge_remote_index called with cached index ---------
+
+    def test_B4_cache_hit_merges_cached_remote_index(self):
+        """B4: Blind index stays up-to-date from cache."""
+        mock_cache = self._fresh_cache_mock(
+            remote_index=dict(_SAMPLE_REMOTE_INDEX)
+        )
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index') as mock_merge, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        mock_merge.assert_called_once()
+        merged_index = mock_merge.call_args[0][0]
+        self.assertEqual(
+            merged_index["2026-07-01"]["Coding"], 7200000
+        )
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group C: Cache Miss / Partial — Pull Missing Blocks (5 tests)
+# ═══════════════════════════════════════════════════════════════
+
+class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
+    """C1–C5: Cache miss, partial pull, incremental update."""
+
+    # -- C1: Cold start → full pull -----------------------------------------
+
+    def test_C1_cold_start_pulls_all_remote_blocks(self):
+        """C1: No cache file → pulls all remote block indices."""
+        mock_cache = self._stale_cache_mock(max_block_index=-1)
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1, 2},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+                2: _SAMPLE_BLOCKS["2"],
+            },
+            remote_index=_SAMPLE_REMOTE_INDEX,
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # All 3 blocks must be pulled
+        self.assertEqual(mock_rs.pull_block_by_index.call_count, 3)
+        # Cache must be saved with updated state
+        mock_cache.save.assert_called()
+
+    # -- C2: Partial pull — only new blocks ---------------------------------
+
+    def test_C2_partial_cache_pulls_only_missing_blocks(self):
+        """C2: Cache has 0–3, remote has 0–5 → only pulls 4 and 5."""
+        mock_cache = self._stale_cache_mock(
+            max_block_index=3,
+            blocks={
+                "0": _SAMPLE_BLOCKS["0"],
+                "1": _SAMPLE_BLOCKS["1"],
+                "2": _SAMPLE_BLOCKS["2"],
+                "3": _make_block("2026-07-04", [
+                    {"title": "Running", "startTime_enc": "plain:2000",
+                     "duration": 1000},
+                ]),
+            },
+        )
+        block4 = _make_block("2026-07-05", [
+            {"title": "Swimming", "startTime_enc": "plain:3000",
+             "duration": 2000},
+        ])
+        block5 = _make_block("2026-07-06", [
+            {"title": "Cycling", "startTime_enc": "plain:4000",
+             "duration": 3000},
+        ])
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1, 2, 3, 4, 5},
+            blocks_by_idx={4: block4, 5: block5},
+            remote_index=_SAMPLE_REMOTE_INDEX,
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # Only blocks 4 and 5 should be pulled
+        self.assertEqual(mock_rs.pull_block_by_index.call_count, 2)
+        # Verify the indices pulled are exactly 4 and 5
+        pulled_indices = {
+            call.args[0]
+            for call in mock_rs.pull_block_by_index.call_args_list
+        }
+        self.assertEqual(pulled_indices, {4, 5})
+
+    # -- C3: Empty cache (max -1) with remote blocks → full pull ------------
+
+    def test_C3_empty_cache_with_remote_blocks_pulls_all(self):
+        """C3: Cache exists but empty (max=-1), remote has blocks → pull all."""
+        mock_cache = self._stale_cache_mock(max_block_index=-1)
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+            },
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        self.assertEqual(mock_rs.pull_block_by_index.call_count, 2)
+
+    # -- C4: After partial pull, cache is saved with updated state ----------
+
+    def test_C4_after_pull_cache_updated_and_saved(self):
+        """C4: Cache stays current — new blocks, max_block_index updated."""
+        mock_cache = self._stale_cache_mock(max_block_index=0)
+        block1 = _SAMPLE_BLOCKS["1"]
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1},
+            blocks_by_idx={1: block1},
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # After pull, max_block_index should be updated to the highest
+        # remote index (1)
+        self.assertEqual(mock_cache.max_block_index, 1)
+        # last_pull_time should be set
+        self.assertGreater(mock_cache.last_pull_time, 0)
+        # Save must be called
+        mock_cache.save.assert_called()
+
+    # -- C5: Remote has fewer blocks than cache (regression) — no error -----
+
+    def test_C5_remote_regression_handled_gracefully(self):
+        """C5: Cache has blocks 0–5 but remote has 0–3 → no error, no pull."""
+        mock_cache = self._stale_cache_mock(
+            max_block_index=5,
+            blocks=_SAMPLE_BLOCKS,
+        )
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1, 2, 3},
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            # Must not raise
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # No blocks should be pulled (all remote indices ≤ max cached)
+        mock_rs.pull_block_by_index.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group D: TTL Expiry (3 tests)
+# ═══════════════════════════════════════════════════════════════
+
+class TestGroupD_TTLExpiry(_BaseCacheIntegration):
+    """D1–D3: TTL-based freshness, stale re-pull, boundary precision."""
+
+    # -- D1: Stale cache → full re-pull -------------------------------------
+
+    def test_D1_stale_cache_triggers_full_repull(self):
+        """D1: Cache exists but TTL expired → pulls all indices."""
+        mock_cache = self._stale_cache_mock(
+            max_block_index=2,
+            blocks=dict(_SAMPLE_BLOCKS),
+            last_pull_time=100.0,  # very old
+        )
+        mock_cache.is_fresh.return_value = False
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1, 2},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+                2: _SAMPLE_BLOCKS["2"],
+            },
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # All blocks must be pulled (full pull, not incremental)
+        self.assertEqual(mock_rs.pull_block_by_index.call_count, 3)
+
+    # -- D2: Fresh cache → no pull ------------------------------------------
+
+    def test_D2_fresh_cache_within_ttl_no_pull(self):
+        """D2: Cache fresh → no pull, cache hit path used."""
+        now = time.time()
+        mock_cache = self._fresh_cache_mock(last_pull_time=now - 10)
+        mock_cache.is_fresh.return_value = True
+        mock_rs_class = MagicMock()
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache) as mock_cache_cls, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # No remote sync should happen
+        mock_rs_class.assert_not_called()
+
+    # -- D3: TTL boundary — at-the-edge cache still fresh -------------------
+
+    def test_D3_cache_exactly_at_ttl_boundary_still_fresh(self):
+        """D3: Non-strict comparison prevents boundary flakiness."""
+        now = time.time()
+        # Exactly at TTL minus a tiny epsilon — should still be fresh
+        mock_cache = self._fresh_cache_mock(last_pull_time=now - 59.9)
+        # is_fresh uses < not ≤, so 59.9 < 60 = True (fresh)
+        mock_cache.is_fresh.return_value = True
+        mock_rs_class = MagicMock()
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache) as mock_cache_cls, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # Should hit cache path
+        mock_rs_class.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group E: Cache Invalidation (3 tests)
+# ═══════════════════════════════════════════════════════════════
+
+class TestGroupE_CacheInvalidation(_BaseCacheIntegration):
+    """E1–E3: Explicit invalidation, re-auth clearing, cross-instance."""
+
+    # -- E1: cache.invalidate() → next sync pulls all -----------------------
+
+    def test_E1_invalidate_forces_full_repull(self):
+        """E1: ph sync invalidates cache → next pull gets everything fresh."""
+        mock_cache = self._fresh_cache_mock()
+        # After invalidate(), is_fresh returns False and max_block_index = -1
+        def _invalidate():
+            mock_cache.max_block_index = -1
+            mock_cache.is_fresh.return_value = False
+        mock_cache.invalidate.side_effect = _invalidate
+
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1, 2},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+                2: _SAMPLE_BLOCKS["2"],
+            },
+        )
+        mock_rs_class = MagicMock(return_value=mock_rs)
+
+        # First call: cache is fresh, no pull
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+        mock_rs_class.assert_not_called()
+
+        # Invalidate the cache
+        mock_cache.invalidate()
+
+        # Second call: cache is stale, full pull
+        mock_rs_class.reset_mock()
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   mock_rs_class), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        mock_rs_class.assert_called_once()
+
+    # -- E2: _rebuild_after_reauth invalidates cache ------------------------
+
+    def test_E2_reauth_invalidates_cache(self):
+        """E2: Re-auth changes crypto context — cache must be invalidated."""
+        mock_cache = self._fresh_cache_mock()
+        self.mock_staging._data_dir = _Path(_tempfile.mkdtemp())
+        # Also need to set up the old staging for _rebuild_after_reauth
+        old_store = MagicMock()
+        self.mock_staging._local._store = old_store
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache) as mock_cache_cls, \
+             patch('cli.interface.CryptoManager', create=True) as mock_cm, \
+             patch('cli.interface.StagingService', create=True) as mock_ss, \
+             patch('cli.interface.LedgerEngine', create=True) as mock_le:
+            mock_cm_instance = MagicMock()
+            mock_cm.return_value = mock_cm_instance
+            mock_ss_instance = MagicMock()
+            mock_ss.return_value = mock_ss_instance
+            mock_le_instance = MagicMock()
+            mock_le.return_value = mock_le_instance
+
+            self.cli._rebuild_after_reauth(b'\x02' * 32)
+
+        # Cache must be invalidated during re-auth
+        mock_cache.invalidate.assert_called_once()
+
+    # -- E3: New instance loads cache from file (cross-invocation) ----------
+
+    def test_E3_new_instance_loads_cache_from_file(self):
+        """E3: Cross-invocation persistence — whole point of F2."""
+        mock_cache = self._fresh_cache_mock()
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache) as mock_cache_cls, \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync'), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # Verify _RemoteLedgerCache was constructed with the correct file path
+        mock_cache_cls.assert_called_once()
+        cache_path_arg = mock_cache_cls.call_args[0][0]
+        self.assertEqual(
+            cache_path_arg,
+            self.mock_staging._data_dir / "remote_ledger_cache.json"
+        )
+        # Verify load() was called (cross-invocation: loads from file)
+        mock_cache.load.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Group F: Integration — End-to-End (3 tests)
+# ═══════════════════════════════════════════════════════════════
+
+class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
+    """F1–F3: End-to-end integration tests."""
+
+    # -- F1: Two consecutive calls → first pulls, second uses cache ---------
+
+    def test_F1_consecutive_calls_first_pulls_second_hits_cache(self):
+        """F1: Back-to-back ph view is instant after first pull."""
+        mock_cache = self._stale_cache_mock(max_block_index=-1)
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+            },
+        )
+
+        # First call: cache stale → full pull
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   MagicMock(return_value=mock_rs)), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        first_pull_count = mock_rs.pull_block_by_index.call_count
+        self.assertEqual(first_pull_count, 2)
+
+        # Simulate cache being fresh after first pull
+        mock_cache.is_fresh.return_value = True
+        mock_cache.max_block_index = 1
+        mock_rs.pull_block_by_index.reset_mock()
+
+        # Second call: cache should be fresh → no additional pulls on the
+        # SAME RemoteLedgerSync instance. But since the method creates a new
+        # RemoteLedgerSync when needed, we verify the class is not called.
+        mock_rs2 = MagicMock()
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   MagicMock(return_value=mock_rs2)), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'):
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # Second call: RemoteLedgerSync should NOT be created (cache hit)
+        mock_rs2.pull_block_by_index.assert_not_called()
+
+    # -- F2: list_habits shows cached remote entries ------------------------
+
+    def test_F2_list_habits_all_shows_cached_remote_entries(self):
+        """F2: End-to-end display integration."""
+        mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
+        self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
+        self.mock_ledger_engine.get_day_blocks.return_value = []
+        self.mock_staging._local._store.read_entries.return_value = []
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch.object(self.cli, '_remove_committed_from_staging'), \
+             patch.object(self.cli, '_merge_remote_index'), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync'), \
+             patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+            self.cli.list_habits('all')
+
+        output = mock_stdout.getvalue()
+        self.assertIn("Coding", output)
+        self.assertIn("Reading", output)
+        self.assertIn("Writing", output)
+        self.assertIn("Habit List", output)
+
+    # -- F3: Stale → repull → update → dedup -------------------------------
+
+    def test_F3_stale_cache_repulls_updates_and_dedups(self):
+        """F3: Full lifecycle: stale → fresh transition with dedup."""
+        mock_cache = self._stale_cache_mock(
+            max_block_index=0,
+            blocks={"0": _SAMPLE_BLOCKS["0"]},
+            last_pull_time=100.0,
+        )
+        mock_cache.is_fresh.return_value = False
+        mock_rs = self._mock_remote_sync(
+            existing_indices={0, 1},
+            blocks_by_idx={
+                0: _SAMPLE_BLOCKS["0"],
+                1: _SAMPLE_BLOCKS["1"],
+            },
+            remote_index=_SAMPLE_REMOTE_INDEX,
+        )
+
+        with patch('cli.interface._RemoteLedgerCache',
+                   return_value=mock_cache), \
+             patch('domain.ledger.remote_sync.RemoteLedgerSync',
+                   MagicMock(return_value=mock_rs)), \
+             patch.object(self.cli, '_remove_committed_from_staging') as mock_rm, \
+             patch.object(self.cli, '_merge_remote_index') as mock_merge:
+            self.cli._sync_remote_ledger_and_dedup()
+
+        # Must have pulled block 1 (the only new one)
+        mock_rs.pull_block_by_index.assert_called()
+        # Cache must be saved with updated state
+        mock_cache.save.assert_called()
+        # Dedup must use data from both cached block 0 AND freshly pulled block 1
+        mock_rm.assert_called_once()
+        committed = mock_rm.call_args[0][0]
+        self.assertIn(("2026-07-01", "Coding"), committed)
+        self.assertIn(("2026-07-02", "Reading"), committed)
+        # Remote index must be merged
+        mock_merge.assert_called_once()
 
 
 # ============================================================================

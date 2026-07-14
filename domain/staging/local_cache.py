@@ -221,6 +221,7 @@ class LocalStagingCache:
             "media": media if media is not None else [],
             "entry_id": str(uuid.uuid4()),
             "device_uuid_enc": self._encrypt_field(device_uuid or ""),
+            "end_device_uuid_enc": self._encrypt_field(""),
         }
         if comment is not None:
             data["comment"] = comment

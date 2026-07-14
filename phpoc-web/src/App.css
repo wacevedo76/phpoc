@@ -1876,6 +1876,15 @@ a { color: var(--accent-blue); text-decoration: none; }
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.3rem 0;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+/* Dirty state: subtle left border + background highlight */
+.sync-pill-endtime-dirty {
+  border-left: 3px solid var(--accent, #4a90d9);
+  padding-left: 0.6rem;
+  background: rgba(74, 144, 217, 0.04);
+  border-radius: 4px;
 }
 
 .sync-pill-endtime-row {
@@ -1940,6 +1949,15 @@ a { color: var(--accent-blue); text-decoration: none; }
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+/* Dirty state: subtle left border + background highlight */
+.sync-pill-pauses-dirty {
+  border-left: 3px solid var(--accent, #4a90d9);
+  padding-left: 0.6rem;
+  background: rgba(74, 144, 217, 0.04);
+  border-radius: 4px;
 }
 
 .sync-pill-pauses-label {
@@ -2031,6 +2049,29 @@ a { color: var(--accent-blue); text-decoration: none; }
 }
 
 /* ── Delete from staging button ─────────────────────────────── */
+.sync-pill-action-row {
+  padding: 0.3rem 0 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sync-pill-save-btn {
+  font-size: 0.75rem !important;
+  padding: 0.25rem 0.75rem !important;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  animation: pulse-save-btn 0.4s ease-out;
+}
+
+@keyframes pulse-save-btn {
+  0% { transform: scale(0.92); opacity: 0.6; }
+  60% { transform: scale(1.04); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 .sync-pill-delete-row {
   padding: 0.15rem 0;
   display: flex;

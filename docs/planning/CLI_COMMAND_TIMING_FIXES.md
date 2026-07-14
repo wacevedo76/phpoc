@@ -1,6 +1,6 @@
 # CLI Command Timing Fixes
 
-> **Status:** ✅ F1 complete (4-phase TDD), 🔜 F2–F4 remaining
+> **Status:** ✅ F1 complete (4-phase TDD), ✅ F2 complete (4-phase TDD), 🔜 F3–F4 remaining
 > **Investigation date:** 2026-07-14
 > **Measured baseline:** `ph view` takes 5–10s on warm cache, ~26s on cold start (8 ledger blocks, Cloudflare Worker backend)
 

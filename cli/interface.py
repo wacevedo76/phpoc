@@ -4,6 +4,7 @@ import calendar
 import logging
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Set, Tuple
 from security.crypto import AbstractCryptoManager, CryptoManager
 from domain.staging.service import StagingService
@@ -14,6 +15,81 @@ from cli.background import _show_sync_notifications, _spawn_background_sync_chec
 from cli.wal import _write_wal_pending, _spawn_background_push
 
 logger = logging.getLogger(__name__)
+
+
+class _RemoteLedgerCache:
+    """Persistent file-backed cache for remote ledger blocks.
+
+    Caches pulled ledger blocks to ``<data_dir>/remote_ledger_cache.json``
+    so that back-to-back CLI invocations (e.g. ``ph view``) skip re-pulling
+    blocks that haven't changed.  The cache is a performance optimization —
+    all errors are non-fatal and degrade gracefully to a full pull.
+    """
+
+    def __init__(self, cache_path):
+        self._cache_path = Path(cache_path)
+        self.max_block_index: int = -1
+        self.last_pull_time: float = 0.0
+        self.blocks: Dict[str, Dict[str, Any]] = {}
+        self.remote_index: Dict[str, Dict[str, Any]] = {}
+
+    def load(self):
+        """Load cache from disk.  Missing or corrupt files → empty defaults."""
+        if not self._cache_path.exists():
+            return
+        try:
+            with open(self._cache_path) as f:
+                data = json.load(f)
+            self.max_block_index = data.get("max_block_index", -1)
+            self.last_pull_time = data.get("last_pull_time", 0.0)
+            self.blocks = data.get("blocks", {})
+            self.remote_index = data.get("remote_index", {})
+        except (json.JSONDecodeError, Exception):
+            # Corrupt or unreadable — keep defaults, fall through to pull
+            pass
+
+    def save(self):
+        """Persist cache to disk.  Write errors are caught and logged."""
+        try:
+            data = {
+                "max_block_index": self.max_block_index,
+                "last_pull_time": self.last_pull_time,
+                "blocks": self.blocks,
+                "remote_index": self.remote_index,
+            }
+            with open(self._cache_path, 'w') as f:
+                json.dump(data, f)
+        except Exception:
+            logger.debug(
+                "_RemoteLedgerCache.save: failed to write cache",
+                exc_info=True,
+            )
+
+    def is_fresh(self, ttl: float = 60) -> bool:
+        """Return True when the cache has been pulled within *ttl* seconds.
+
+        Uses exclusive less-than so that boundary values (e.g. 59.9 s
+        against a 60 s TTL) are still considered fresh.
+        """
+        return (
+            self.last_pull_time > 0
+            and (time.time() - self.last_pull_time) < ttl
+        )
+
+    def invalidate(self):
+        """Reset cache state and delete the backing file.
+
+        The next ``_sync_remote_ledger_and_dedup`` call will perform a full
+        pull as if the cache had never existed.
+        """
+        self.max_block_index = -1
+        self.last_pull_time = 0.0
+        self.blocks = {}
+        self.remote_index = {}
+        try:
+            self._cache_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 class CLIInterface:
@@ -108,6 +184,9 @@ class CLIInterface:
         Called after re-authentication when the crypto context changes.
         Preserves existing store instances — rebuilds only the objects that
         hold crypto references.
+
+        Also invalidates the persistent remote-ledger cache because cached
+        blocks may have been encrypted under a different master key.
         """
         fresh_crypto = CryptoManager(mk)
         self._crypto = fresh_crypto
@@ -119,6 +198,14 @@ class CLIInterface:
         device_id_provider = getattr(old_staging, '_device_id_provider', None)
         cookie_ttl = getattr(old_staging, '_cookie_ttl_minutes', 30)
         data_dir = getattr(old_staging, '_data_dir', None)
+
+        # Invalidate remote ledger cache — may be from a different identity
+        cache_path = self._get_remote_ledger_cache_path()
+        if cache_path:
+            try:
+                _RemoteLedgerCache(cache_path).invalidate()
+            except Exception:
+                pass
 
         self._staging = StagingService(
             crypto=fresh_crypto,
@@ -423,12 +510,125 @@ class CLIInterface:
     _remote_ledger_cache: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None
     _remote_ledger_cache_time: float = 0.0
 
+    def _get_remote_ledger_cache_path(self) -> Optional[Path]:
+        """Return the cache file path, or None when data_dir is unavailable."""
+        data_dir = getattr(self._staging, '_data_dir', None)
+        if data_dir is None:
+            return None
+        return Path(data_dir) / "remote_ledger_cache.json"
+
+    def _apply_cached_ledger_data(self, cache: "_RemoteLedgerCache"):
+        """Reconstruct instance display/dedup state from *cache* blocks.
+
+        Called after a cache hit or after freshly-pulled blocks have been
+        merged into the cache.  Updates ``_remote_ledger_cache``,
+        removes committed entries from staging, and merges the remote
+        blind index.
+        """
+        committed_titles, remote_entries = (
+            self._reconstruct_from_cache_blocks(cache.blocks)
+        )
+        self._remote_ledger_cache = remote_entries
+        self._remote_ledger_cache_time = time.time()
+        if cache.remote_index:
+            self._merge_remote_index(cache.remote_index)
+        if committed_titles:
+            self._remove_committed_from_staging(committed_titles)
+
+    @staticmethod
+    def _reconstruct_from_cache_blocks(
+        blocks: Dict[str, Dict[str, Any]]
+    ) -> Tuple[Dict[Tuple[str, str], int], Dict[Tuple[str, str], Dict[str, Any]]]:
+        """Reconstruct ``committed_titles`` + ``remote_entries`` from cached
+        block data."""
+        committed_titles: Dict[Tuple[str, str], int] = {}
+        remote_entries: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for block in blocks.values():
+            date_str = block.get("date", "")
+            if not date_str:
+                continue
+            for entry in block.get("entries", []):
+                data = entry.get("data", {})
+                title = data.get("title", "")
+                if not title:
+                    continue
+                key = (date_str, title)
+                committed_titles[key] = committed_titles.get(key, 0) + 1
+                if key not in remote_entries:
+                    remote_entries[key] = dict(data)
+        return committed_titles, remote_entries
+
+    def _refresh_remote_ledger_cache(
+        self,
+        cache: "_RemoteLedgerCache",
+        transport,
+        mk: bytes,
+    ) -> bool:
+        """Pull remote ledger blocks and update *cache* in place.
+
+        Returns True if any blocks were pulled (or repulled after TTL
+        expiry), False if the remote has no blocks to pull.
+        """
+        from domain.ledger.remote_sync import RemoteLedgerSync
+        ledger_sync = RemoteLedgerSync(transport, mk)
+
+        try:
+            existing_indices = ledger_sync._list_remote_block_indices()
+        except Exception:
+            existing_indices = set()
+
+        if not existing_indices:
+            return False
+
+        # TTL expired → discard stale blocks and re-pull everything
+        if cache.last_pull_time > 0:
+            cache.blocks = {}
+            cache.max_block_index = -1
+            start_idx = 0
+        else:
+            # Cold start or incremental — pull only new blocks
+            start_idx = max(cache.max_block_index + 1, 0)
+
+        for idx in sorted(existing_indices):
+            if idx < start_idx:
+                continue
+            try:
+                block = ledger_sync.pull_block_by_index(idx)
+            except Exception:
+                continue
+            if not block or block.get("type", "day") != "day":
+                continue
+            # Store by string index for JSON serialisation
+            cache.blocks[str(idx)] = block
+            cache.max_block_index = max(cache.max_block_index, idx)
+
+        cache.last_pull_time = time.time()
+
+        # Pull remote index (best effort)
+        try:
+            remote_index = ledger_sync.pull_index()
+            if remote_index:
+                cache.remote_index = remote_index
+        except Exception as exc:
+            logger.debug(
+                "_refresh_remote_ledger_cache: pull_index failed: %s", exc
+            )
+
+        cache.save()
+        return True
+
     def _sync_remote_ledger_and_dedup(self):
         """Pull remote ledger blocks and remove committed entries from staging.
 
-        Pulls remote ledger blocks by index (no chain verification needed —
-        blocks from divergent chains are still valid for dedup purposes)
-        and cross-references staging entries against committed entries.
+        Uses a persistent file cache (``_RemoteLedgerCache``) so that
+        back-to-back CLI invocations skip re-pulling blocks that haven't
+        changed.  On cache hit the method reconstructs ``committed_titles``
+        and ``remote_entries`` from the cached blocks without any HTTP
+        requests.  On cache miss it pulls only new blocks (incremental) or
+        performs a full repull when the TTL has expired.
+
+        Pulled blocks are pulled by index (no chain verification needed —
+        blocks from divergent chains are still valid for dedup purposes).
         Staging entries whose (date, title) exist in the remote ledger are
         removed from staging to prevent duplicate commits and incorrect
         "(Staged)" display.
@@ -448,77 +648,22 @@ class CLIInterface:
         if not isinstance(mk, bytes) or len(mk) != 32:
             return
 
-        # Cache TTL: skip pull if we've pulled within the last 30 seconds
-        now = time.time()
-        if self._remote_ledger_cache is not None and \
-           (now - self._remote_ledger_cache_time) < 30:
-            # Cache is fresh — use it for dedup without re-pulling
-            self._remove_committed_from_staging(
-                self._remote_ledger_cache
-            )
-            return
-
         try:
-            from domain.ledger.remote_sync import RemoteLedgerSync
-            ledger_sync = RemoteLedgerSync(transport, mk)
+            cache_path = self._get_remote_ledger_cache_path()
+            if cache_path is None:
+                return
+            cache = _RemoteLedgerCache(cache_path)
+            cache.load()
 
-            # Collect committed (date, title) pairs from ALL remote blocks.
-            # We pull by index (no chain verification) to handle divergent
-            # chains. Also cache entry data for display purposes.
-            committed_titles: Dict[Tuple[str, str], int] = {}  # {(date,title): count}
-            remote_entries: Dict[Tuple[str, str], Dict[str, Any]] = {}  # display cache
-
-            # Determine which block indices to pull
-            try:
-                existing_indices = ledger_sync._list_remote_block_indices()
-            except Exception:
-                existing_indices = set()
-
-            if not existing_indices:
+            # ── cache hit: reconstruct from disk, zero HTTP ──────────
+            if cache.is_fresh(ttl=60):
+                self._apply_cached_ledger_data(cache)
                 return
 
-            for idx in sorted(existing_indices):
-                try:
-                    block = ledger_sync.pull_block_by_index(idx)
-                except Exception:
-                    continue
-                if not block:
-                    continue
-                if block.get("type", "day") != "day":
-                    continue
-                date_str = block.get("date", "")
-                if not date_str:
-                    continue
-                for entry in block.get("entries", []):
-                    data = entry.get("data", {})
-                    title = data.get("title", "")
-                    if not title:
-                        continue
-                    key = (date_str, title)
-                    committed_titles[key] = committed_titles.get(key, 0) + 1
-                    # Cache one entry per (date, title) for display
-                    if key not in remote_entries:
-                        remote_entries[key] = dict(data)
-
-            if not committed_titles:
-                return
-
-            # Cache for display (30-second TTL, refreshed on next pull)
-            self._remote_ledger_cache = remote_entries
-            self._remote_ledger_cache_time = now
-
-            # Merge remote index into local (so local index has all totals)
-            try:
-                remote_index = ledger_sync.pull_index()
-                if remote_index:
-                    self._merge_remote_index(remote_index)
-            except Exception as exc:
-                logger.debug(
-                    "_sync_remote_ledger_and_dedup: pull_index failed: %s", exc
-                )
-
-            # Remove staging entries that exist in remote ledger
-            self._remove_committed_from_staging(committed_titles)
+            # ── cache miss / expired: pull from remote ───────────────
+            pulled = self._refresh_remote_ledger_cache(cache, transport, mk)
+            if pulled:
+                self._apply_cached_ledger_data(cache)
 
         except Exception as exc:
             logger.debug(

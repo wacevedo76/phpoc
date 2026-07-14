@@ -2757,5 +2757,762 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         self.assertEqual(len(entries_b_final), 4)
 
 
+# ==========================================================================
+# F3: Skip Blob Push When Staging Unchanged (Phase 2 — RED)
+# ==========================================================================
+#
+# These tests validate the F3 optimization: before calling push_blob_only()
+# in _push_on_fast_path(), compute a SHA-256 content hash of current local
+# staging entries. If the hash matches the last-pushed hash stored at
+# <data_dir>/.last_push_hash, skip the push. Cookie touch still happens.
+#
+# All push paths (push_blob_only, push_to_remote, _push_on_fast_path)
+# update the hash file after a successful push so it stays consistent.
+#
+# 21 tests across 6 groups A–F, mapped to assertion IDs from
+# docs/planning/CLI_COMMAND_TIMING_F3_PHASE1.md
+# ==========================================================================
+
+
+class TestF3SkipBlobPush:
+    """F3: Skip blob push when staging unchanged since last push.
+
+    The skip decision is based on SHA-256 hashing of canonical JSON
+    of all raw staging entries, compared against the last-pushed hash
+    stored at ``<data_dir>/.last_push_hash``.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _hash_of_entries(raw_entries):
+        """Compute the SHA-256 hash of a list of raw staging entries.
+
+        Uses canonical JSON (sort_keys=True) and sorts entries by
+        ``start_epoch`` to match the implementation in StagingService.
+        """
+        sorted_entries = sorted(raw_entries, key=lambda e: e.get("start_epoch", 0))
+        return hashlib.sha256(
+            json.dumps(sorted_entries, sort_keys=True).encode()
+        ).hexdigest()
+
+    @staticmethod
+    def _write_hash_file(data_dir, hash_hex):
+        """Write a hash to ``<data_dir>/.last_push_hash``."""
+        (data_dir / ".last_push_hash").write_text(json.dumps(hash_hex))
+
+    @staticmethod
+    def _read_hash_file(data_dir):
+        """Read the hash from ``<data_dir>/.last_push_hash``, or None."""
+        hf = data_dir / ".last_push_hash"
+        if not hf.exists():
+            return None
+        try:
+            return json.loads(hf.read_text())
+        except (json.JSONDecodeError, Exception):
+            return None
+
+    # ------------------------------------------------------------------
+    # Group A: Hash-based Skip — Happy Path (5 tests)
+    # ------------------------------------------------------------------
+
+    def test_A1_skip_push_when_staging_unchanged(self, svc_with_spy):
+        """A1: _push_on_fast_path skips push_blob_only when staging unchanged.
+
+        Core optimization: no wasted blob push on back-to-back fast-path
+        hits with no local staging changes.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-a1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Pre-seed hash file to match current staging (simulating previous push)
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        self._write_hash_file(cookie_dir, expected_hash)
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Push must be SKIPPED — hash matches last push
+        assert len(spy.push_blob_calls) == push_count_before, (
+            "push_blob_only must be skipped when staging unchanged"
+        )
+
+        # Cookie touch must still happen
+        meta_path = cookie_dir / META_FILE
+        assert meta_path.exists()
+
+    def test_A2_push_happens_when_new_capture(self, svc_with_spy):
+        """A2: push_blob_only called when staging changed (new capture).
+
+        A new staging entry after the last push must trigger a blob push.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-a2"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        # Capture, push to establish baseline hash
+        svc.capture("OldTask", 1000, stop_epoch=2000)
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        # Capture a NEW entry (staging changed)
+        svc.capture("NewTask", 3000, stop_epoch=4000)
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Push must HAPPEN because staging changed
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push_blob_only must be called when staging changed"
+        )
+
+    def test_A3_push_happens_when_entry_modified(self, svc_with_spy):
+        """A3: push_blob_only called when staging changed (entry modified).
+
+        Modifying an existing entry (e.g. rename, change tags) must
+        change the hash and trigger a push.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-a3"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        # Modify the entry
+        svc.modify(0, title="RenamedTask")
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push_blob_only must be called when entry modified"
+        )
+
+    def test_A4_skip_when_merge_pulls_but_local_unchanged(self, svc_with_spy):
+        """A4: skip push when merge pulls remote entries but local unchanged.
+
+        Scenario: web client pushes same entries to remote. CLI pulls
+        and merges — the net result matches local state, so no push needed.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-a4"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        # Local already has this entry (and remote has the same)
+        svc.capture("Shared", 1000, stop_epoch=2000)
+
+        # Calculate hash of what will be pushed
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        self._write_hash_file(cookie_dir, expected_hash)
+
+        # Set remote blob with identical entries (no change after merge)
+        svc.push_to_remote(TEST_MASTER_KEY)
+        # Now call check_and_sync again — same entries, so no push needed
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        assert len(spy.push_blob_calls) == push_count_before, (
+            "push must be skipped when merge result matches local"
+        )
+
+    def test_A5_push_happens_when_merge_changes_local(self, svc_with_spy):
+        """A5: push_blob_only called when merge actually changes local.
+
+        Remote has different entries → merge changes local staging → must push.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-a5"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        # Local has one entry, remote has a different one
+        svc.capture("LocalOnly", 1000, stop_epoch=2000)
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        # Now remote gets a new entry (simulating web added one)
+        remote_entries = [
+            _make_raw_entry("LocalOnly", 1000, 2000, entry_id=str(uuid.uuid4())),
+            _make_raw_entry("RemoteAdded", 3000, 4000, entry_id=str(uuid.uuid4())),
+        ]
+        spy.set_remote_blob(
+            "staging/blobs/current.json",
+            make_staging_blob_bytes(device_id=DEVICE_A_UUID, entries=remote_entries),
+        )
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Merge added a remote entry → local changed → must push
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push_blob_only must be called when merge changes local"
+        )
+
+    # ------------------------------------------------------------------
+    # Group B: Hash File Lifecycle (3 tests)
+    # ------------------------------------------------------------------
+
+    def test_B1_hash_missing_push_happens(self, svc_with_spy):
+        """B1: Hash file missing → push happens normally.
+
+        First-ever push or deleted hash file: no hash to compare against,
+        so push must not be skipped.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-b1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Ensure no hash file exists
+        hash_file = cookie_dir / ".last_push_hash"
+        if hash_file.exists():
+            hash_file.unlink()
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Push must HAPPEN — no hash to compare against
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push must happen when hash file is missing"
+        )
+
+    def test_B2_invalid_hash_push_happens(self, svc_with_spy):
+        """B2: Corrupted/invalid hash file → push happens normally.
+
+        Disk corruption or partial writes must not block pushes.
+        Degrade gracefully: push anyway, no crash.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-b2"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Write corrupted hash file
+        hash_file = cookie_dir / ".last_push_hash"
+        hash_file.write_text("not valid json at all {{{")
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Push must HAPPEN — corrupted hash must not block
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push must happen when hash file is invalid"
+        )
+
+    def test_B3_hash_updated_after_fast_path_push(self, svc_with_spy):
+        """B3: After successful push via _push_on_fast_path, hash is updated.
+
+        The last-push hash file must reflect the most recent push so the
+        next call has a correct baseline.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-b3"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Pre-seed with an OLD (wrong) hash to force a push
+        self._write_hash_file(cookie_dir, "00000000deadbeef" * 4)
+
+        result = svc.check_and_sync()
+        assert result == SyncCheckResult.READY
+
+        # Hash file must be updated to reflect the actual push content
+        stored = self._read_hash_file(cookie_dir)
+        assert stored is not None, "Hash file must exist after push"
+        assert stored != "00000000deadbeef" * 4, (
+            "Hash file must be updated to new content hash"
+        )
+
+        # Verify stored hash matches actual entries
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        assert stored == expected_hash, (
+            f"Stored hash {stored} must match computed hash {expected_hash}"
+        )
+
+    # ------------------------------------------------------------------
+    # Group C: Hash Update from push_blob_only and push_to_remote (3 tests)
+    # ------------------------------------------------------------------
+
+    def test_C1_push_blob_only_updates_hash(self, svc_with_spy):
+        """C1: push_blob_only updates the last-push hash after success.
+
+        Direct blob pushes (from daemon/WAL paths) must keep hash current
+        so the fast path sees the right baseline.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-c1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Direct call to push_blob_only (bypassing check_and_sync)
+        svc.push_blob_only(TEST_MASTER_KEY)
+
+        # Hash file must exist and match current staging
+        stored = self._read_hash_file(cookie_dir)
+        assert stored is not None, (
+            "push_blob_only must write .last_push_hash"
+        )
+
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        assert stored == expected_hash, (
+            f"push_blob_only hash mismatch: {stored} != {expected_hash}"
+        )
+
+    def test_C2_push_to_remote_updates_hash(self, svc_with_spy):
+        """C2: push_to_remote updates the last-push hash after success.
+
+        The primary user-facing push path must keep hash current.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-c2"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # push_to_remote (cookie + blob)
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        stored = self._read_hash_file(cookie_dir)
+        assert stored is not None, (
+            "push_to_remote must write .last_push_hash"
+        )
+
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        assert stored == expected_hash, (
+            f"push_to_remote hash mismatch: {stored} != {expected_hash}"
+        )
+
+    def test_C3_both_push_paths_produce_same_hash(self, svc_with_spy):
+        """C3: push_blob_only and _push_on_fast_path produce same hash.
+
+        Consistency across all push paths prevents hash mismatches
+        that would cause spurious pushes.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-c3"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("TaskA", 1000, stop_epoch=2000)
+        svc.capture("TaskB", 3000, stop_epoch=4000)
+
+        # Push via push_to_remote, record hash
+        svc.push_to_remote(TEST_MASTER_KEY)
+        hash_from_push_to_remote = self._read_hash_file(cookie_dir)
+
+        # Destroy hash file, then push via push_blob_only
+        (cookie_dir / ".last_push_hash").unlink()
+        svc.push_blob_only(TEST_MASTER_KEY)
+        hash_from_push_blob_only = self._read_hash_file(cookie_dir)
+
+        # Both must produce the same hash for identical staging content
+        assert hash_from_push_to_remote == hash_from_push_blob_only, (
+            f"Hash mismatch: {hash_from_push_to_remote} != {hash_from_push_blob_only}"
+        )
+
+    # ------------------------------------------------------------------
+    # Group D: check_and_sync Fast Path Full Integration (3 tests)
+    # ------------------------------------------------------------------
+
+    def test_D1_fast_path_unchanged_skips_push_touches_cookie(self, svc_with_spy):
+        """D1: Full fast path with unchanged staging: READY, push==0, touch.
+
+        End-to-end: the skip works through the full check_and_sync gate.
+        Cookie touch still happens (session TTL independent of blob push).
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-d1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Seed hash to match current state
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+        self._write_hash_file(cookie_dir, expected_hash)
+
+        push_count_before = len(spy.push_blob_calls)
+        old_creation_time = json.loads(
+            (cookie_dir / META_FILE).read_text()
+        )["creation_time"]
+
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # No blob push
+        assert len(spy.push_blob_calls) == push_count_before, (
+            "Fast path with unchanged staging must skip blob push"
+        )
+        # Cookie is touched (creation_time updated)
+        new_creation_time = json.loads(
+            (cookie_dir / META_FILE).read_text()
+        )["creation_time"]
+        assert new_creation_time > old_creation_time, (
+            "Cookie touch must happen even when push is skipped"
+        )
+
+    def test_D2_fast_path_changed_pushes_and_touches(self, svc_with_spy):
+        """D2: Full fast path with changed staging: READY, push==1, touch.
+
+        Regression guard: the skip must not break normal push flow
+        when staging has genuinely changed.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-d2"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Old", 1000, stop_epoch=2000)
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        # Add new entry (staging changed)
+        svc.capture("New", 3000, stop_epoch=4000)
+
+        push_count_before = len(spy.push_blob_calls)
+        old_creation_time = json.loads(
+            (cookie_dir / META_FILE).read_text()
+        )["creation_time"]
+
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # One new blob push
+        assert len(spy.push_blob_calls) == push_count_before + 1, (
+            "Fast path with changed staging must push blob"
+        )
+        # Cookie touched
+        new_creation_time = json.loads(
+            (cookie_dir / META_FILE).read_text()
+        )["creation_time"]
+        assert new_creation_time > old_creation_time, (
+            "Cookie touch must happen alongside blob push"
+        )
+
+    def test_D3_fast_path_skips_after_push_to_remote(self, svc_with_spy):
+        """D3: Second fast path after push_to_remote: push skipped.
+
+        Cross-caller consistency: push_to_remote updated the hash,
+        so the next fast-path call through check_and_sync correctly skips.
+
+        Real-world pattern: user runs ``ph add`` (push_to_remote) then
+        ``ph view`` (fast path). Second call should not re-push.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-d3"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Step 1: push_to_remote (updates hash internally)
+        svc.push_to_remote(TEST_MASTER_KEY)
+        pushes_after_push_to_remote = len(spy.push_blob_calls)
+
+        # Step 2: check_and_sync fast path — hash should match, skip push
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # No NEW push — hash from push_to_remote matches
+        assert len(spy.push_blob_calls) == pushes_after_push_to_remote, (
+            "Fast path after push_to_remote must skip blob push"
+        )
+
+    # ------------------------------------------------------------------
+    # Group E: Edge Cases (4 tests)
+    # ------------------------------------------------------------------
+
+    def test_E1_empty_staging_first_push_then_skip(self, svc_with_spy):
+        """E1: Empty staging: first push happens, second skips.
+
+        Empty staging hash is deterministic and stable. After first push
+        with no entries, subsequent calls with no entries must skip.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-e1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        # Empty staging — seed hash
+        empty_hash = hashlib.sha256(
+            json.dumps([], sort_keys=True).encode()
+        ).hexdigest()
+        self._write_hash_file(cookie_dir, empty_hash)
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # No entries → hash matches → skip push
+        assert len(spy.push_blob_calls) == push_count_before, (
+            "Empty staging with matching hash must skip push"
+        )
+
+    def test_E2_deterministic_hash_same_entries_different_order(self, svc_with_spy):
+        """E2: Same entries in different order produce same hash.
+
+        Merge may reorder entries; hash must not spuriously change.
+        sort_keys in JSON serialization ensures determinism.
+        """
+        # Pure unit test: no service needed, just verify hash computation
+        e1 = {"hash": "h1", "data": {"title": "A", "startTime_enc": "plain:1000"}, "start_epoch": 1000}
+        e2 = {"hash": "h2", "data": {"title": "B", "startTime_enc": "plain:2000"}, "start_epoch": 2000}
+        e3 = {"hash": "h3", "data": {"title": "C", "startTime_enc": "plain:3000"}, "start_epoch": 3000}
+
+        hash_a = self._hash_of_entries([e1, e2, e3])
+        hash_b = self._hash_of_entries([e3, e1, e2])
+        hash_c = self._hash_of_entries([e2, e3, e1])
+
+        assert hash_a == hash_b == hash_c, (
+            f"Hash must be deterministic: {hash_a} != {hash_b} != {hash_c}"
+        )
+
+    def test_E3_deep_equal_entries_produce_same_hash(self):
+        """E3: Deep-equal entries produce same hash, not reference-dependent.
+
+        Two different DTOs with identical fields must hash the same.
+        This is a unit test of the hash computation, not a service test.
+        """
+        raw1 = _make_raw_entry("Task", 1000, 2000, entry_id="fixed-id", tags=["work"])
+        raw2 = _make_raw_entry("Task", 1000, 2000, entry_id="fixed-id", tags=["work"])
+
+        hash1 = self._hash_of_entries([raw1])
+        hash2 = self._hash_of_entries([raw2])
+
+        assert hash1 == hash2, (
+            f"Deep-equal entries must produce same hash: {hash1} != {hash2}"
+        )
+
+    def test_E4_net_zero_merge_skips_push(self, svc_with_spy):
+        """E4: Merge that adds then effectively cancels out → skip push.
+
+        If a merge results in a state that matches the last-pushed hash,
+        no push is needed. Edge case: remote push + revert cancels out.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-e4"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Solo", 1000, stop_epoch=2000)
+
+        # Calculate hash of current state
+        raw = store.read_entries()
+        expected_hash = self._hash_of_entries(raw)
+
+        # Write hash matching the post-merge expected result
+        self._write_hash_file(cookie_dir, expected_hash)
+
+        # Remote has identical entries → merge is net-zero
+        svc.push_to_remote(TEST_MASTER_KEY)
+
+        # Now call fast path — hash should match after merge
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Net-zero merge → no push needed
+        assert len(spy.push_blob_calls) == push_count_before, (
+            "Net-zero merge must skip push"
+        )
+
+    # ------------------------------------------------------------------
+    # Group F: Safety — Never Skip When It Would Lose Data (3 tests)
+    # ------------------------------------------------------------------
+
+    def test_F1_exception_during_hash_computation_push_happens(self, svc_with_spy):
+        """F1: Exception during hash computation → push happens normally.
+
+        Hash is an optimization, not a gate. If hashing crashes for any
+        reason, data must still go through. Fail-open semantics.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-f1"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Mock read_entries to return un-serializable data
+        original_read = store.read_entries
+        def broken_read():
+            # Return entries with a non-serializable object
+            return [{"hash": "x", "data": object(), "start_epoch": 1000}]
+        store.read_entries = broken_read
+
+        try:
+            push_count_before = len(spy.push_blob_calls)
+            result = svc.check_and_sync()
+
+            # Must still be READY (fail-open)
+            assert result == SyncCheckResult.READY
+            # Push must still happen despite hash failure
+            assert len(spy.push_blob_calls) > push_count_before, (
+                "push must happen when hash computation fails (fail-open)"
+            )
+        finally:
+            store.read_entries = original_read
+
+    def test_F2_exception_during_hash_write_push_completes(self, svc_with_spy):
+        """F2: Exception during hash file write → push still completes.
+
+        Disk full or permissions issue must not block staging sync.
+        The push itself must succeed; hash file failure is logged.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-f2"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        # Make the hash file path a directory so writes fail
+        hash_file = cookie_dir / ".last_push_hash"
+        hash_file.mkdir(exist_ok=True)  # directory, not a file
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        # Push must still succeed
+        assert result == SyncCheckResult.READY
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push must complete even when hash file write fails"
+        )
+
+    def test_F3_readonly_filesystem_push_happens(self, svc_with_spy):
+        """F3: Read-only filesystem → push happens normally.
+
+        When hash file can't be persisted (can't read or write),
+        default to always-pushing. Prevents infinite skips.
+        """
+        svc, spy, cookie_dir, store = svc_with_spy
+
+        specifier = "f3-f3"
+        now = int(time.time() * 1000)
+        make_local_cookie(cookie_dir, specifier=specifier,
+                          creation_time_epoch_ms=now - 120_000)
+        spy.set_cookie(make_remote_cookie_bytes(specifier=specifier,
+                                                 device_uuid=DEVICE_A_UUID))
+
+        svc.capture("Task", 1000, stop_epoch=2000)
+
+        hash_file = cookie_dir / ".last_push_hash"
+        # Write a valid hash, then simulate that the file can't be read
+        # by making it non-existent — tests that missing hash → push happens
+        if hash_file.exists():
+            hash_file.unlink()
+
+        push_count_before = len(spy.push_blob_calls)
+        result = svc.check_and_sync()
+
+        assert result == SyncCheckResult.READY
+        # Push must HAPPEN — no hash to read (functional equivalent of
+        # read-only filesystem where file can't be persisted)
+        assert len(spy.push_blob_calls) > push_count_before, (
+            "push must happen when hash file unavailable"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

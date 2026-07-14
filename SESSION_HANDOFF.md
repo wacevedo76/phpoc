@@ -9,25 +9,30 @@
 
 ## Current State
 - **Branch:** `mobile-poc`
-- **CLI:** 1743 PY tests pass (2 flaky: staging service timeout ordering)  |  **Web:** 51 JS suites pass, 9 fail (pre-existing)  |  **Worker:** 104 vitest tests pass
-- **Chain integrity fixes (Jul 5):** ✅ 4 gaps closed
-- **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index tests removed (4 files + 32 stubs) — superseded by SQLite row-level DB model
-
-## Discussion Summary — Staging DB Model Exploration (Jul 7)
-
-Explored converting staging area from JSON blob to row-per-activity SQLite. Key findings in `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` §"Future Direction". Current hash index work valid near-term; DB model is a future architectural shift.
+- **CLI:** 1787 PY tests pass (2 flaky: staging service timeout ordering)  |  **Web:** 51 JS suites pass, 9 fail (pre-existing)  |  **Worker:** 104 vitest tests pass
+- **Chain integrity fixes (Jul 5):** ✅. **Staging Activity ID (Jul 7):** ✅ Phase 3 core done; ⏸️ hash index superseded by SQLite DB model.
 
 ## Immediate Next Steps
-0–11. **✅ Archived** — See `docs/planning/archive/SESSION_HISTORY_2026-07-13.md`
-12. **✅ Clean up diagnostics + Run test suites** — Completed 2026-07-13
+0–14. **✅ Archived** — See `docs/planning/archive/SESSION_HISTORY_2026-07-13.md`
 13. **⏸️ Fix the broken chain** (deprioritized — new ledger started)
 14. **✅ Fix CLI staging/ledger reconciliation for cross-platform commits** — Completed 2026-07-13
 15. **🔜 CLI command timing fixes (F1–F4)** — `docs/planning/CLI_COMMAND_TIMING_FIXES.md`
     - F1: Remove duplicate `check_and_sync` call (~3.6s savings) — **✅ Done (Phases 1–4)**
-    - F2: Persistent cache for remote ledger blocks (~5.5s savings)
-    - F3: Skip blob push when staging unchanged (~1.2s savings)
+    - F2: Persistent cache for remote ledger blocks (~5.5s savings) — **✅ Done (Phases 1–4)** (P4: extracted `_refresh_remote_ledger_cache()` + combined condition)
+    - F3: Skip blob push when staging unchanged (~1.2s savings) — **✅ Done (Phases 1–4)** (P4: extracted `_push_hash_path` property, `_update_push_hash()` method)
     - F4: HTTP connection pooling + reduced timeouts (~2–3s savings)
     - Execute in order F1→F4 with 4-phase TDD per fix
+16. **✅ Sync tab: explicit "Save Changes" button for activity cards** — Completed 2026-07-14
+17. **✅ F2 Phase 4 (REFACTOR)** — Completed 2026-07-14
+    - Extracted `_refresh_remote_ledger_cache()` from `_sync_remote_ledger_and_dedup()` (~45 lines → 3-line call site)
+    - Combined `if not block` + type-check into single condition
+    - All 1766 tests pass, zero regressions
+18. **✅ F3 Phase 3 (GREEN)** — Completed 2026-07-14. 
+19. **✅ F3 Phase 4 (REFACTOR)** — Completed 2026-07-14
+    - Extracted `_push_hash_path` property (deduplicated path construction ×3)
+    - Extracted `_update_push_hash()` method (deduplicated hash-compute+save from `push_to_remote`/`push_blob_only`)
+    - All 1787 tests pass, zero regressions
+    - **Next:** F4 (HTTP connection pooling + reduced timeouts)
 
 ## Files Created (Completed Work)
 | Phase | File | Purpose |
@@ -50,7 +55,11 @@ Explored converting staging area from JSON blob to row-per-activity SQLite. Key 
 | Docs | `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` | 120 assertions, 5 groups |
 | Docs | `docs/planning/WORKER_ROW_LEVEL_TESTS_PHASE1.md` | 54 assertions, 5 groups |
 | CLI-F1 P1 | `docs/planning/CLI_COMMAND_TIMING_F1_PHASE1.md` | 23 assertions, 6 groups A–F |
-| CLI-F1 P2 | `tests/test_cli_interface.py` | 24 tests, 6 groups — 11 RED, 13 GREEN |
+| CLI-F1 P2 | `tests/test_cli_interface.py` | 24 tests, 6 groups — all GREEN ✅ |
+| CLI-F2 P1 | `docs/planning/CLI_COMMAND_TIMING_F2_PHASE1.md` | 23 assertions, 6 groups A–F |
+| CLI-F2 P2 | `tests/test_cli_interface.py` | 23 tests, 6 groups — all GREEN ✅ |
+| CLI-F3 P1 | `docs/planning/CLI_COMMAND_TIMING_F3_PHASE1.md` | 21 assertions, 6 groups A–F |
+| CLI-F3 P2 | `tests/test_staging_sync_optimization.py` | 21 tests (12 RED, 9 GREEN) — `TestF3SkipBlobPush` class |
 
 ## Files Modified (Phase 3 + 4)
 | File | Change |
@@ -60,7 +69,10 @@ Explored converting staging area from JSON blob to row-per-activity SQLite. Key 
 | `phpoc-web/src/sync/sync.js` | Push/pull staging hash index, genesis collision guard |
 | `worker/src/index.ts` | Slimmed to thin router |
 | `worker/AGENTS.md` | Updated for row-level staging endpoints |
-| `cli/interface.py` | F1 P3: Auto-handle REAUTH_NEEDED in `_sync_before_command(require_auth=False)`. P4: Extract `_rebuild_after_reauth()` helper, simplify auto-handle block |
+| `cli/interface.py` | F1 P3: Auto-handle REAUTH_NEEDED. F1 P4: Extract `_rebuild_after_reauth()`. F2 P3: `_RemoteLedgerCache` persistent cache + refactored `_sync_remote_ledger_and_dedup` + cache invalidation in `_rebuild_after_reauth`. F2 P4: Extract `_apply_cached_ledger_data()` + `_get_remote_ledger_cache_path()`, deduplicate cache path + reconstruct/apply blocks |
+| `domain/staging/service.py` | F3 P3: Hash helpers, hash-skip in `_push_on_fast_path`, hash save in `push_blob_only`/`push_to_remote`, monotonic `_touch_local_cookie`, non-serialisable fallback, `device_uuid` in `_raw_entry_to_dto`. F3 P4: Extracted `_push_hash_path` property + `_update_push_hash()` method |
+| `domain/staging/local_cache.py` | F3 P3: `end_device_uuid_enc` in `append()` for format consistency |
+| `tests/test_staging_sync_optimization.py` | F3 P3: `_hash_of_entries` sorts by `start_epoch` |
 | `main.py` | F1 P3: Removed duplicate `check_and_sync` + re-auth blocks from `view`, `list active`, `list all|synced|staged` handlers; set `cli._auth = auth`; moved `list` handler after `revert` |
 
 ## Chain Integrity Fixes (Jul 5) ✅

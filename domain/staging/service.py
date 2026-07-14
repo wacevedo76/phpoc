@@ -33,6 +33,7 @@ Auth gate flow::
     4. Create new cookie (local + remote) → READY
 """
 
+import hashlib
 import json
 import time
 import logging
@@ -368,6 +369,59 @@ class StagingService:
             return False
 
     # ------------------------------------------------------------------
+    # Push hash helpers (F3: skip blob push when staging unchanged)
+    # ------------------------------------------------------------------
+
+    @property
+    def _push_hash_path(self) -> Path:
+        """Path to the last-push hash file."""
+        return self._data_dir / ".last_push_hash"
+
+    def _compute_staging_hash(self) -> Optional[str]:
+        """Compute SHA-256 over canonical JSON of all raw staging entries.
+
+        Returns the hex digest, or None if computing the hash fails
+        (fail-open — the caller treats None as "hash unknown, push").
+
+        Entries are sorted by ``start_epoch`` before hashing so that
+        reordering by the merge engine does not produce spurious changes.
+        """
+        try:
+            raw = self._local._store.read_entries()
+            sorted_raw = sorted(raw, key=lambda e: e.get("start_epoch", 0))
+            return hashlib.sha256(
+                json.dumps(sorted_raw, sort_keys=True).encode()
+            ).hexdigest()
+        except Exception:
+            return None
+
+    def _get_last_push_hash(self) -> Optional[str]:
+        """Read the last-pushed hash. Returns None if missing/corrupt."""
+        if not self._push_hash_path.exists():
+            return None
+        try:
+            return json.loads(self._push_hash_path.read_text())
+        except (json.JSONDecodeError, Exception):
+            return None
+
+    def _save_last_push_hash(self, hash_hex: str):
+        """Persist the last-pushed hash. Failures logged, never raised."""
+        try:
+            self._push_hash_path.write_text(json.dumps(hash_hex))
+        except Exception:
+            logger.debug("Could not write .last_push_hash", exc_info=True)
+
+    def _update_push_hash(self):
+        """Compute current staging hash and persist it.
+
+        No-op if hash computation fails (fail-open — the caller already
+        pushed; a missing hash just means the next call will push again).
+        """
+        current_hash = self._compute_staging_hash()
+        if current_hash is not None:
+            self._save_last_push_hash(current_hash)
+
+    # ------------------------------------------------------------------
     # Cookie helpers
     # ------------------------------------------------------------------
 
@@ -387,6 +441,11 @@ class StagingService:
             if not specifier:
                 return
             now_ms = int(time.time() * 1000)
+            old_ms = local_cookie.get("creation_time", 0)
+            # Ensure strictly-increasing creation_time even when two
+            # touches happen within the same system-clock millisecond.
+            if now_ms <= old_ms:
+                now_ms = old_ms + 1
             meta_path.write_text(json.dumps({
                 "device_specifier": specifier,
                 "creation_time": now_ms,
@@ -411,32 +470,61 @@ class StagingService:
         """
         # Pull remote blob, merge with local, then push reconciled result
         mk = getattr(self._crypto, "master_key", None)
-        if isinstance(mk, bytes) and len(mk) == 32:
+        if not (isinstance(mk, bytes) and len(mk) == 32):
+            self._touch_local_cookie()
+            return
+
+        # F3: Snapshot local hash BEFORE merge so local modifications
+        # (e.g. via modify()) are detected even if the remote-wins
+        # merge would revert them.
+        pre_merge_hash = self._compute_staging_hash()
+        last_hash = self._get_last_push_hash()
+        # Push if hashes are missing or differ (fail-open: None → push)
+        local_changed = (
+            pre_merge_hash is None
+            or last_hash is None
+            or pre_merge_hash != last_hash
+        )
+
+        try:
+            remote_blob = self._remote.pull(master_key=mk)
+        except Exception:
+            remote_blob = None
+
+        if remote_blob is not None and remote_blob is not BLOB_KEY_MISMATCH and "entries" in remote_blob:
             try:
-                remote_blob = self._remote.pull(master_key=mk)
+                local_entries = self._local.read_entries()
+                remote_dtos = []
+                for raw_entry in remote_blob.get("entries", []):
+                    dto = self._raw_entry_to_dto(raw_entry)
+                    if dto is not None:
+                        remote_dtos.append(dto)
+                merged = self._merge.merge(
+                    local_entries, remote_dtos
+                )
+                # Filter out entries already committed by another client
+                # (e.g. web committed + pushed, CLI hasn't synced yet)
+                merged = [e for e in merged if not e.get("committed")]
+                self._local.write_entries(merged)
             except Exception:
-                remote_blob = None
+                pass  # Merge failure — push local as-is
 
-            if remote_blob is not None and remote_blob is not BLOB_KEY_MISMATCH and "entries" in remote_blob:
-                try:
-                    local_entries = self._local.read_entries()
-                    remote_dtos = []
-                    for raw_entry in remote_blob.get("entries", []):
-                        dto = self._raw_entry_to_dto(raw_entry)
-                        if dto is not None:
-                            remote_dtos.append(dto)
-                    merged = self._merge.merge(
-                        local_entries, remote_dtos
-                    )
-                    # Filter out entries already committed by another client
-                    # (e.g. web committed + pushed, CLI hasn't synced yet)
-                    merged = [e for e in merged if not e.get("committed")]
-                    self._local.write_entries(merged)
-                except Exception:
-                    pass  # Merge failure — push local as-is
+        # F3: Decide whether to push
+        should_push = local_changed
+        if not should_push:
+            # Local unchanged before merge. Check if merge introduced changes.
+            post_merge_hash = self._compute_staging_hash()
+            should_push = (
+                post_merge_hash is None  # fail-open
+                or last_hash is None
+                or post_merge_hash != last_hash
+            )
 
-            # Push the (merged or local) blob to remote
-            self.push_blob_only(master_key=mk)
+        if should_push:
+            try:
+                self.push_blob_only(master_key=mk)
+            except Exception:
+                pass  # Best-effort push — data stays local for retry
 
         # Touch local cookie to extend session TTL
         self._touch_local_cookie()
@@ -625,6 +713,19 @@ class StagingService:
                 "%Y-%m-%d", time.gmtime(start_epoch // 1000)
             )
 
+            # Decrypt device provenance fields
+            device_uuid_raw = data.get("device_uuid_enc", "")
+            if isinstance(device_uuid_raw, str) and device_uuid_raw.startswith("plain:"):
+                device_uuid = device_uuid_raw[6:]
+            else:
+                device_uuid = ""
+
+            end_device_uuid_raw = data.get("end_device_uuid_enc")
+            if isinstance(end_device_uuid_raw, str) and end_device_uuid_raw.startswith("plain:"):
+                end_device_uuid = end_device_uuid_raw[6:]
+            else:
+                end_device_uuid = ""
+
             return {
                 "entry_id": data.get("entry_id", ""),
                 "title": data.get("title", ""),
@@ -642,6 +743,8 @@ class StagingService:
                 "source": "remote",
                 "committed": raw_entry.get("committed", False),
                 "hash": raw_entry.get("hash", ""),
+                "device_uuid": device_uuid,
+                "end_device_uuid": end_device_uuid,
             }
         except Exception:
             return None
@@ -786,6 +889,9 @@ class StagingService:
         # committed to the ledger — producing ledger duplicates.
         self._remote.push(raw, device_id, master_key=master_key)
 
+        # F3: Save last-push hash so future fast-path calls can skip
+        self._update_push_hash()
+
         try:
             DeviceCookie.destroy_locally(self._data_dir)
             self._push_cookie(device_id)
@@ -835,8 +941,19 @@ class StagingService:
             pass
 
         device_id = identity.device_id if identity else "unknown"
-        self._remote.push(raw, device_id, master_key=master_key)
+        try:
+            self._remote.push(raw, device_id, master_key=master_key)
+        except (TypeError, ValueError):
+            # Non-serialisable staging data — push empty blob so the
+            # remote does not retain stale data that cannot be reconciled.
+            logger.warning(
+                "Staging data cannot be serialised; pushing empty blob "
+                "to prevent stale remote state."
+            )
+            self._remote.push([], device_id, master_key=master_key)
         self._last_push_at = int(time.time() * 1000)
+        # F3: Save last-push hash so future fast-path calls can skip
+        self._update_push_hash()
 
     def is_remote_available(self) -> bool:
         """Check if remote transport is configured and reachable."""

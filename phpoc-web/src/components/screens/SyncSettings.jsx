@@ -91,6 +91,17 @@ export default function SyncSettings() {
   const [newPauseStart, setNewPauseStart] = useState('');     // HH:MM string
   const [newPauseStop, setNewPauseStop] = useState('');       // HH:MM string (optional)
 
+  // ── Dirty tracking (unsaved timing changes per entry) ───────────
+  const [dirtyIds, setDirtyIds] = useState(new Set());
+
+  const markDirty = useCallback((entryId) => {
+    setDirtyIds((prev) => { const n = new Set(prev); n.add(entryId); return n; });
+  }, []);
+
+  const markClean = useCallback((entryId) => {
+    setDirtyIds((prev) => { const n = new Set(prev); n.delete(entryId); return n; });
+  }, []);
+
   // ── Sync status ─────────────────────────────────────────────────
   const [remoteStatus, setRemoteStatus] = useState(STATUS_READY);
   const [syncing, setSyncing] = useState(false);
@@ -160,6 +171,7 @@ export default function SyncSettings() {
       setEditEndTimes({});
       setEditPauses({});
       setAddingPauseFor(null);
+      setDirtyIds(new Set());
     } catch (err) {
       console.warn('Sync: failed to load entries', err);
     } finally {
@@ -217,6 +229,7 @@ export default function SyncSettings() {
         setEditComments((s) => { const { [entryId]: _, ...rest } = s; return rest; });
         setEditEndTimes((s) => { const { [entryId]: _, ...rest } = s; return rest; });
         setEditPauses((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+        setDirtyIds((prev) => { const n = new Set(prev); n.delete(entryId); return n; });
         if (addingPauseFor === entryId) setAddingPauseFor(null);
       } else {
         next.add(entryId);
@@ -348,54 +361,77 @@ export default function SyncSettings() {
   }, []);
 
   /**
-   * Save end time for an entry via sync.modify().
-   * Recalculates duration: duration = (newEnd - start_epoch) - total_pause_ms.
+   * Save all timing changes (end time + pauses) for an entry in one
+   * sync.modify() call. Recalculates duration accounting for pauses.
+   * This is the explicit "Save Changes" action — changes are NOT
+   * auto-saved until the user clicks the button.
    */
-  const saveEndTime = useCallback(async (entryId, newEndEpoch) => {
+  const handleSaveEntry = useCallback(async (entryId) => {
     const entry = allEntries.find((e) => e.entry_id === entryId);
     if (!entry || entry.is_active) return;
-    if (newEndEpoch === null || newEndEpoch === undefined) return;
+
+    const newEndEpoch = editEndTimes[entryId];
+    const newPauses = editPauses[entryId];
+    if (newEndEpoch === undefined && newPauses === undefined) return;
 
     setSaving((s) => ({ ...s, [entryId]: true }));
     try {
-      // Recalculate duration accounting for pauses
-      const pauses = editPauses[entryId] || entry.pauses || [];
+      const fields = {};
+
+      // Compute duration accounting for pauses (use new pauses if edited, else original)
+      const pauses = newPauses !== undefined ? newPauses : (entry.pauses || []);
+      const endEpoch = newEndEpoch !== undefined ? newEndEpoch : entry.end_epoch;
       let totalPauseMs = 0;
       for (const p of pauses) {
         if (p.pause_start != null && p.pause_stop != null) {
           totalPauseMs += p.pause_stop - p.pause_start;
         }
       }
-      const newDuration = Math.max(0, (newEndEpoch - entry.start_epoch) - totalPauseMs);
 
-      await sync.modify(entry.entry_index, {
-        end_epoch: newEndEpoch,
-        duration: newDuration,
-      });
-      setAllEntries((prev) => prev.map((e) =>
-        e.entry_id === entryId ? { ...e, end_epoch: newEndEpoch, duration: newDuration } : e
-      ));
+      if (newEndEpoch !== undefined) {
+        fields.end_epoch = newEndEpoch;
+      }
+      if (newPauses !== undefined) {
+        fields.pauses = pauses;
+      }
+      if (endEpoch) {
+        fields.duration = Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs);
+      }
+
+      await sync.modify(entry.entry_index, fields);
+
+      // Update local state with saved values
+      setAllEntries((prev) => prev.map((e) => {
+        if (e.entry_id !== entryId) return e;
+        const updates = {};
+        if (newEndEpoch !== undefined) updates.end_epoch = newEndEpoch;
+        if (newPauses !== undefined) updates.pauses = pauses;
+        if (endEpoch) updates.duration = Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs);
+        return { ...e, ...updates };
+      }));
+
+      markClean(entryId);
     } catch (err) {
-      console.warn('Failed to save end time:', err);
+      console.warn('Failed to save entry:', err);
     } finally {
       setSaving((s) => ({ ...s, [entryId]: false }));
     }
-  }, [allEntries, editPauses, sync]);
+  }, [allEntries, editEndTimes, editPauses, sync, markClean]);
 
   /**
    * Quick-adjust end time by an offset in minutes.
+   * Updates local state only — NOT auto-saved. User must click "Save Changes".
    */
   const quickAdjustEndTime = useCallback((entryId, offsetMinutes) => {
     const currentEnd = editEndTimes[entryId];
     if (currentEnd === undefined || currentEnd === null) return;
     const newEnd = currentEnd + offsetMinutes * 60000;
-    // Clamp: end time cannot be before start time
     const entry = allEntries.find((e) => e.entry_id === entryId);
-    const earliest = entry ? entry.start_epoch + 60000 : currentEnd - 3600000; // min 1 min duration
+    const earliest = entry ? entry.start_epoch + 60000 : currentEnd - 3600000;
     const clamped = Math.max(newEnd, earliest);
     setEditEndTimes((prev) => ({ ...prev, [entryId]: clamped }));
-    saveEndTime(entryId, clamped);
-  }, [editEndTimes, allEntries, saveEndTime]);
+    markDirty(entryId);
+  }, [editEndTimes, allEntries, markDirty]);
 
   const handleEndTimeChange = useCallback((entryId, timeStr) => {
     const entry = allEntries.find((e) => e.entry_id === entryId);
@@ -403,9 +439,9 @@ export default function SyncSettings() {
     const newEpoch = timeStrToEpoch(timeStr, entry.start_epoch);
     if (newEpoch !== null) {
       setEditEndTimes((prev) => ({ ...prev, [entryId]: newEpoch }));
-      saveEndTime(entryId, newEpoch);
+      markDirty(entryId);
     }
-  }, [allEntries, timeStrToEpoch, saveEndTime]);
+  }, [allEntries, timeStrToEpoch, markDirty]);
 
   /**
    * Format ms duration → editable string like "1h 15m" or "45m".
@@ -457,7 +493,8 @@ export default function SyncSettings() {
 
   /**
    * Handle duration change: parse string, compute new end_epoch.
-   * end_epoch = start_epoch + duration_ms + total_pause_ms
+   * end_epoch = start_epoch + duration_ms + total_pause_ms.
+   * Updates local state only — NOT auto-saved. User must click "Save Changes".
    */
   const handleDurationChange = useCallback((entryId, durationStr) => {
     const entry = allEntries.find((e) => e.entry_id === entryId);
@@ -466,7 +503,6 @@ export default function SyncSettings() {
     const durationMs = parseDurationStr(durationStr);
     if (durationMs === null) return;
 
-    // Account for pauses
     const pauses = editPauses[entryId] || entry.pauses || [];
     let totalPauseMs = 0;
     for (const p of pauses) {
@@ -477,50 +513,22 @@ export default function SyncSettings() {
 
     const newEnd = entry.start_epoch + durationMs + totalPauseMs;
     setEditEndTimes((prev) => ({ ...prev, [entryId]: newEnd }));
-    saveEndTime(entryId, newEnd);
-  }, [allEntries, editPauses, parseDurationStr, saveEndTime]);
+    markDirty(entryId);
+  }, [allEntries, editPauses, parseDurationStr, markDirty]);
 
   // ── Pause helpers ─────────────────────────────────────────────
 
   /**
-   * Save pauses for an entry via sync.modify().
-   * Recalculates duration.
+   * Remove a pause from the edit state. Marks the entry as dirty —
+   * changes are NOT auto-saved. User must click "Save Changes".
    */
-  const savePauses = useCallback(async (entryId, pauses) => {
-    const entry = allEntries.find((e) => e.entry_id === entryId);
-    if (!entry || entry.is_active) return;
-    setSaving((s) => ({ ...s, [entryId]: true }));
-    try {
-      // Recalculate duration
-      const endEpoch = editEndTimes[entryId] !== undefined ? editEndTimes[entryId] : entry.end_epoch;
-      let totalPauseMs = 0;
-      for (const p of pauses) {
-        if (p.pause_start != null && p.pause_stop != null) {
-          totalPauseMs += p.pause_stop - p.pause_start;
-        }
-      }
-      const newDuration = endEpoch
-        ? Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs)
-        : 0;
-
-      await sync.modify(entry.entry_index, { pauses, duration: newDuration });
-      setAllEntries((prev) => prev.map((e) =>
-        e.entry_id === entryId ? { ...e, pauses, duration: newDuration } : e
-      ));
-    } catch (err) {
-      console.warn('Failed to save pauses:', err);
-    } finally {
-      setSaving((s) => ({ ...s, [entryId]: false }));
-    }
-  }, [allEntries, editEndTimes, sync]);
-
   const removePause = useCallback((entryId, pauseIndex) => {
     const current = editPauses[entryId];
     if (!current) return;
     const updated = current.filter((_, i) => i !== pauseIndex);
     setEditPauses((prev) => ({ ...prev, [entryId]: updated }));
-    savePauses(entryId, updated);
-  }, [editPauses, savePauses]);
+    markDirty(entryId);
+  }, [editPauses, markDirty]);
 
   const addPause = useCallback((entryId) => {
     const entry = allEntries.find((e) => e.entry_id === entryId);
@@ -555,8 +563,8 @@ export default function SyncSettings() {
     setAddingPauseFor(null);
     setNewPauseStart('');
     setNewPauseStop('');
-    savePauses(entryId, updated);
-  }, [allEntries, newPauseStart, newPauseStop, editPauses, timeStrToEpoch, savePauses]);
+    markDirty(entryId);
+  }, [allEntries, newPauseStart, newPauseStop, editPauses, timeStrToEpoch, markDirty]);
 
   const cancelAddPause = useCallback(() => {
     setAddingPauseFor(null);
@@ -584,6 +592,7 @@ export default function SyncSettings() {
       setEditComments((s) => { const { [entryId]: _, ...rest } = s; return rest; });
       setEditEndTimes((s) => { const { [entryId]: _, ...rest } = s; return rest; });
       setEditPauses((s) => { const { [entryId]: _, ...rest } = s; return rest; });
+      setDirtyIds((prev) => { const n = new Set(prev); n.delete(entryId); return n; });
     } catch (err) {
       console.warn('Failed to delete entry:', err);
     } finally {
@@ -1095,8 +1104,19 @@ export default function SyncSettings() {
               rows={2}
             />
 
-            {/* ── Delete from staging ──────────────────────────── */}
-            <div className="sync-pill-delete-row">
+            {/* ── Save Changes + Delete row ────────────────────── */}
+            <div className="sync-pill-action-row">
+              {dirtyIds.has(entry.entry_id) && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-xs sync-pill-save-btn"
+                  onClick={(e) => { e.stopPropagation(); handleSaveEntry(entry.entry_id); }}
+                  disabled={isSaving}
+                  title="Save end time and pause changes to staging"
+                >
+                  {isSaving ? '⋯ Saving…' : '💾 Save Changes'}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-danger btn-xs sync-pill-delete-btn"
@@ -1119,6 +1139,7 @@ export default function SyncSettings() {
               onDurationChange={handleDurationChange}
               onQuickAdjust={quickAdjustEndTime}
               saving={isSaving}
+              isDirty={dirtyIds.has(entry.entry_id)}
             />
 
             {/* ── Pauses section ──────────────────────────────── */}
@@ -1130,6 +1151,7 @@ export default function SyncSettings() {
               newPauseStop={newPauseStop}
               epochToTimeStr={epochToTimeStr}
               saving={isSaving}
+              isDirty={dirtyIds.has(entry.entry_id)}
               onRemovePause={removePause}
               onStartAddPause={setAddingPauseFor}
               onSetPauseStart={setNewPauseStart}
@@ -1442,6 +1464,7 @@ function EndTimeEditor({
   onDurationChange,
   onQuickAdjust,
   saving,
+  isDirty,
 }) {
   const entryId = entry.entry_id;
   const currentEnd = editEndTimes[entryId];
@@ -1480,7 +1503,7 @@ function EndTimeEditor({
   };
 
   return (
-    <div className="sync-pill-endtime">
+    <div className={`sync-pill-endtime${isDirty ? ' sync-pill-endtime-dirty' : ''}`}>
       <div className="sync-pill-endtime-row">
         <span className="sync-pill-endtime-label">End</span>
         <div className="sync-pill-endtime-controls">
@@ -1547,6 +1570,7 @@ function PausesEditor({
   newPauseStop,
   epochToTimeStr,
   saving,
+  isDirty,
   onRemovePause,
   onStartAddPause,
   onSetPauseStart,
@@ -1571,7 +1595,7 @@ function PausesEditor({
   };
 
   return (
-    <div className="sync-pill-pauses">
+    <div className={`sync-pill-pauses${isDirty ? ' sync-pill-pauses-dirty' : ''}`}>
       <span className="sync-pill-pauses-label">Pauses</span>
 
       {/* Existing pauses list */}
