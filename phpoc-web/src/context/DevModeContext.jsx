@@ -1325,7 +1325,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       await sync.pushLedgerBlocks();
       const mk = crypto.getMasterKey();
       if (mk) {
-        await sync.pushBlobOnly(mk).catch(() => {});
+        // Push updated staging blob with committed flags to remote.
+        // Best-effort — merge_engine.js preserves the local committed flag
+        // so a stale remote blob won't revert committed entries.
+        await sync.pushBlobOnly(mk).catch((err) => {
+          console.warn('commitEntries: pushBlobOnly failed, committed flags not yet on remote:', err.message);
+        });
       }
     }
     return result;

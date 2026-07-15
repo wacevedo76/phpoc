@@ -126,6 +126,8 @@ export class RemoteSync {
         device_uuid: e.device_uuid || deviceId,
         end_device_uuid: e.end_device_uuid || '',
       },
+      committed: e.committed ?? false,
+      block_index: e.block_index ?? null,
     }));
 
     const blob = {

@@ -3,6 +3,7 @@
 > **Status:** 🟢 GREEN (wiring complete — all 60 assertions pass, 0 failures)
 > **Created:** 2026-06-22
 > **Completed:** 2026-06-22
+> **Regression fixed:** 2026-07-15 — 3 bugs in test infrastructure (storage format, genesis date causing summary insertion, missing decryptWithCachedKey)
 > **Test file:** `phpoc-web/test/commit_push_integration_test.mjs`
 > **Code modified:** `phpoc-web/src/context/DevModeContext.jsx` (1 line) + `phpoc-web/src/sync/sync.js` (field name compatibility fix)
 

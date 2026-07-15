@@ -661,9 +661,8 @@ export class SyncService {
   /**
    * After successful auth: claim staging ownership for this device.
    *
-   * Pulls remote cookie to discover which device last wrote, then:
-   *   Same device → _reconcileSameDevice (push only, touch cookie)
-   *   Different device / first time → _reconcileDifferentDevice (pull, merge, push, new cookie)
+   * Pulls remote cookie to discover which device last wrote, then
+   * reconciles via _reconcileDifferentDevice (pull, merge, push, new cookie).
    *
    * @param {string} masterKeyHex - 64-char hex master key.
    * @returns {Promise<SyncCheckResult>}
@@ -715,31 +714,7 @@ export class SyncService {
   }
 
   /**
-   * Case A — Same device that last wrote: push only, touch cookie.
-   * No remote cookie push (remote already has the matching specifier).
-   * @returns {Promise<SyncCheckResult>}
-   * @private
-   */
-  async _reconcileSameDevice(masterKeyHex, localDeviceUuid, remoteCookieSpecifier) {
-    await this.pushBlobOnly(masterKeyHex, localDeviceUuid);
-
-    // Touch local cookie: update creation_time, keep specifier
-    if (remoteCookieSpecifier) {
-      try {
-        await this._storage.set(LOCAL_COOKIE, {
-          device_specifier: remoteCookieSpecifier,
-          creation_time: Date.now(),
-        });
-      } catch {
-        // Non-critical
-      }
-    }
-
-    return SyncResult.READY;
-  }
-
-  /**
-   * Case B — Different device or first-time setup: pull, reconcile, push, new cookie.
+   * Pull remote blob, reconcile, push merged entries, create cookie.
    * @returns {Promise<SyncCheckResult>}
    * @private
    */
@@ -768,7 +743,10 @@ export class SyncService {
           .map((raw) => rawEntryToDTO(raw))
           .filter(Boolean);
         const merged = mergeEntries(localEntries, remoteDTOs);
-        await this._local.writeEntries(merged);
+        // Filter committed entries — same as CLI service.py:505-507:
+        // "merged = [e for e in merged if not e.get('committed')]"
+        const uncommitted = merged.filter((e) => !e.committed);
+        await this._local.writeEntries(uncommitted);
       } catch (err) {
         console.warn('Merge failed, pushing local blob:', err.message);
       }
@@ -780,7 +758,7 @@ export class SyncService {
     // After pushBlobOnly already published the hash index, also pull
     // and cache it locally so future Tier 1 checks are instantaneous
     try {
-      await this._pullAndCacheStagingHashIndex(mk);
+      await this._pullAndCacheStagingHashIndex(masterKeyHex);
     } catch {
       // Non-critical — rebuildable from entries
     }

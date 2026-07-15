@@ -63,6 +63,8 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
       hash: rawEntry.hash || '',
       device_uuid: data.device_uuid || '',
       end_device_uuid: data.end_device_uuid || '',
+      committed: true,
+      block_index: null,
     };
   } catch {
     return null;
@@ -128,6 +130,8 @@ export function rawEntryToDTO(rawEntry) {
       hash: rawEntry.hash || '',
       device_uuid: deviceUuid,
       end_device_uuid: endDeviceUuid,
+      committed: rawEntry.committed ?? false,
+      block_index: rawEntry.block_index ?? null,
     };
   } catch {
     return null;

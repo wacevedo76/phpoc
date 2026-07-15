@@ -88,18 +88,19 @@ export async function exportLedger(entries, crypto, masterKey) {
  * Export the committed ledger chain to a sealed JSON Blob.
  *
  * PURE READ OPERATION: does NOT commit staging entries. Exports
- * ONLY the committed block chain. Staging entries are never included
- * (D11: Staging-Ledger Separation).
+ * the committed block chain plus optional staging entries for full
+ * fidelity roundtrip (staging included only when caller provides it).
  *
  * @param {object[]} blocks — Committed ledger blocks (genesis, day, month_summary).
  *        Each block has: type, day_index, date, prev_hash, entries[], day_hash, etc.
  * @param {object} crypto - CryptoService instance with seal().
  * @param {string} masterKey - 64-char hex master key.
+ * @param {object[]} [staging] - Optional staging entries to include in export.
  * @returns {Blob} application/json Blob ready for file download.
  * @throws {Error} If blocks is not an array, crypto lacks seal(),
  *         or masterKey is missing/empty.
  */
-export async function exportLedgerFull(blocks, crypto, masterKey) {
+export async function exportLedgerFull(blocks, crypto, masterKey, staging = null) {
   // ── Validation ──────────────────────────────────────────────────
   if (!Array.isArray(blocks)) {
     throw new Error('exportLedgerFull: blocks must be an array');
@@ -120,6 +121,11 @@ export async function exportLedgerFull(blocks, crypto, masterKey) {
     ledger: blocks,
     seal: '', // placeholder, computed below
   };
+
+  // Include staging if provided (optional, for full-fidelity roundtrip)
+  if (Array.isArray(staging)) {
+    payload.staging = staging;
+  }
 
   // Seal covers the committed ledger chain only (D11)
   payload.seal = crypto.seal(JSON.stringify(blocks), masterKey);

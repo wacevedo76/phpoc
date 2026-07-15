@@ -157,16 +157,16 @@ export async function importLedger(file, crypto, masterKey) {
       // Backward-compat fallback 1: JSON.stringify(all fields) — old stopped entries
       const jsStringifyAll = crypto.sha256(JSON.stringify(hashData));
       if (entry.hash !== jsStringifyAll) {
-        // Backward-compat fallback 2: JSON.stringify(core fields only)
+        // Backward-compat fallback 2: canonical core fields only
         // — old active entries (stale hashes from LocalCache)
         const coreData = {};
         for (const key of Object.keys(entry).sort()) {
-          if (key !== 'hash' && key !== 'committed' && key !== 'block_index') {
+          if (key !== 'hash' && key !== 'committed' && key !== 'block_index' && key !== 'entry_index') {
             coreData[key] = entry[key];
           }
         }
-        const jsStringifyCore = crypto.sha256(JSON.stringify(coreData));
-        if (entry.hash !== jsStringifyCore) {
+        const jsonSortCoreHash = crypto.sha256(jsonSort(coreData));
+        if (entry.hash !== jsonSortCoreHash) {
           throw new Error(
             `importLedger: entry hash mismatch at index ${i} ` +
             `("${entry.title || 'untitled'}") — file may be corrupted`

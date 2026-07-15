@@ -227,7 +227,7 @@ console.log('\n=== 8. v2 Roundtrip — Blocks + Staging ===');
     makeStagingEntry({ entry_id: 'stg-b', title: 'Pending B' }),
   ];
 
-  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, staging, crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, crypto, MASTER_KEY, staging);
   t.assert(exportBlob instanceof Blob, 'export: returns Blob');
 
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);
@@ -242,7 +242,7 @@ console.log('\n=== 8. v2 Roundtrip — Blocks + Staging ===');
 console.log('\n=== 9. v2 Roundtrip — Empty Staging ===');
 
 {
-  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, [], crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, crypto, MASTER_KEY, []);
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);
 
   t.assertEq(result.count, 0, 'staging count = 0');
@@ -264,7 +264,7 @@ console.log('\n=== 10. v2 Roundtrip — Active Staging in v2 ===');
     }),
   ];
 
-  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, activeStaging, crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, crypto, MASTER_KEY, activeStaging);
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);
 
   t.assertEq(result.entries[0].is_active, true, 'active flag in v2 preserved');
@@ -313,7 +313,7 @@ console.log('\n=== 13. Chain-Like Structure Roundtrip (as v2) ===');
 {
   // Genesis-only chain exported as v2
   const genesisOnly = [SAMPLE_BLOCKS[0]];
-  const exportBlob = await exportLedgerFull(genesisOnly, [], crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(genesisOnly, crypto, MASTER_KEY, []);
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);
 
   t.assertEq(result.formatVersion, '2', 'formatVersion = "2"');
@@ -464,7 +464,7 @@ console.log('\n=== 15. C2 — Roundtrip with readEntries()-shaped entries (v2) =
     entry.hash = crypto.sha256(jsonSort(core));
   }
 
-  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, staging, crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(SAMPLE_BLOCKS, crypto, MASTER_KEY, staging);
   t.assert(exportBlob instanceof Blob, 'C2: export returns Blob');
 
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);
@@ -613,7 +613,7 @@ console.log('\n=== 17. C4 — Single active entry from app flow (v2) ===');
   // Use genesis-only blocks (matching real app scenario)
   const genesisBlocks = [SAMPLE_BLOCKS[0]];
 
-  const exportBlob = await exportLedgerFull(genesisBlocks, appStaging, crypto, MASTER_KEY);
+  const exportBlob = await exportLedgerFull(genesisBlocks, crypto, MASTER_KEY, appStaging);
   t.assert(exportBlob instanceof Blob, 'C4: export v2 returns Blob');
 
   const result = await importLedger(exportBlob, crypto, MASTER_KEY);

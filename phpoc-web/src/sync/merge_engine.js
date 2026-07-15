@@ -66,10 +66,20 @@ export function mergeEntries(localEntries, remoteEntries) {
     seen.set(key, { ...entry, source: 'local' });
   }
 
-  // Process remote entries — overwrite on tie (remote is more recent)
+  // Process remote entries — merge into map preserving committed flag.
+  // committed=true is irreversible: once a local entry has been committed
+  // (markCommitted ran after engine.commit), it must not be downgraded by
+  // a stale remote blob that hasn't been updated yet (e.g. pushBlobOnly
+  // failed silently).
   for (const entry of remoteEntries) {
     const key = dedupKey(entry);
-    seen.set(key, { ...entry, source: 'remote' });
+    const local = seen.get(key);
+    seen.set(key, {
+      ...entry,
+      source: 'remote',
+      committed: (local?.committed || entry.committed) || false,
+      block_index: entry.block_index ?? local?.block_index ?? null,
+    });
   }
 
   // Sort by start_epoch ascending

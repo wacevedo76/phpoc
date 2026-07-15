@@ -126,6 +126,10 @@ class MockCrypto {
 
   // ── pushLedgerBlocks interface ──────────────────────────────────
 
+  decryptWithCachedKey(value) {
+    return this.decrypt(value, this._mk);
+  }
+
   obfuscateBlob(plaintext, mk) {
     const key = mk || this._mk || DEFAULT_MK;
     const plainBytes = Buffer.from(plaintext, 'utf-8');
@@ -171,12 +175,20 @@ function createSyncService({
 }
 
 /**
- * Add staging entries directly to storage.
- * Entries are set as completed (is_active: false) so they can be committed.
+ * Add staging entries directly to storage in raw format ({hash, data: {..._enc}}).
+ * Matches the format expected by LocalCache._rawToDto() and produced by
+ * LocalCache.append(). Entries are set as completed (is_active: false) so
+ * they can be committed.
+ *
+ * Returns plain objects with entry_id, is_active, etc. for caller convenience.
+ *
+ * @returns {Promise<object[]>} Flat DTO-like objects (entry_id, title, is_active, …).
  */
-async function addStagingEntries(storage, entries) {
+async function addStagingEntries(storage, crypto, entries) {
   const existing = (await storage.get('entries')) || [];
-  const newEntries = entries.map((e, i) => ({
+
+  // Build flat objects first (caller-friendly return value)
+  const flatEntries = entries.map((e, i) => ({
     entry_id: e.entry_id || `entry-test-${String(i).padStart(4, '0')}`,
     title: e.title || `Test Task ${i + 1}`,
     duration: e.duration ?? 1800,
@@ -187,15 +199,46 @@ async function addStagingEntries(storage, entries) {
     pauses: [],
     tags: e.tags || ['test'],
     media: [],
-    device_uuid: 'test-device',
+    device_uuid: e.device_uuid || 'test-device',
     metadata: {},
     comment: e.comment || null,
-    hash: `hash-${i}`,
     committed: false,
     block_index: null,
   }));
-  await storage.set('entries', [...existing, ...newEntries]);
-  return newEntries;
+
+  /** Convert flat entry to raw format ({hash, data: {..._enc}}). */
+  function toRaw(f) {
+    const data = {
+      activity_id: `act-${f.entry_id}`,
+      entry_id: f.entry_id,
+      title: f.title,
+      startTime_enc: `plain:${f.start_epoch}`,
+      endTime_enc: f.end_epoch != null ? `plain:${f.end_epoch}` : undefined,
+      duration: f.duration,
+      is_active: f.is_active,
+      is_paused: f.is_paused,
+      pauses_enc: 'plain:[]',
+      tags: f.tags,
+      media: f.media,
+      device_uuid_enc: `plain:${f.device_uuid}`,
+      end_device_uuid_enc: 'plain:',
+      metadata_enc: 'plain:{}',
+    };
+    if (f.comment != null) data.comment = f.comment;
+
+    // Strip undefined fields (matching LocalCache.append)
+    const cleanData = {};
+    for (const k of Object.keys(data).sort()) {
+      if (data[k] !== undefined) cleanData[k] = data[k];
+    }
+    const hash = crypto.sha256(JSON.stringify(cleanData));
+
+    return { hash, data: cleanData, committed: false, block_index: null };
+  }
+
+  const rawEntries = flatEntries.map(toRaw);
+  await storage.set('entries', [...existing, ...rawEntries]);
+  return flatEntries;
 }
 
 /**
@@ -203,10 +246,14 @@ async function addStagingEntries(storage, entries) {
  * to append day blocks to.
  */
 async function seedGenesisBlock(storage, crypto, mk) {
+  // Use April 2024 to match entry dates (all tests use April 2024 epochs).
+  // This prevents YearMonthSummaryPolicy from inserting summary blocks
+  // (month_summary/year_summary) between genesis and the first day block,
+  // keeping block index 1 as the day block with entries.
   const genesisBlock = {
     type: 'genesis',
     index: 0,
-    date: '2026-01-01',
+    date: '2024-04-01',
     day_hash: crypto.seal('genesis-content', mk),
     month_hash: null,
     year_hash: null,
@@ -216,7 +263,7 @@ async function seedGenesisBlock(storage, crypto, mk) {
     identity_pub_key: crypto.sha256('test-pubkey'),
     entries: [],
     previous_hash: null,
-    created_at: '2026-01-01T00:00:00Z',
+    created_at: '2024-04-01T00:00:00Z',
     seal: crypto.seal('genesis-seal', mk),
     signature: crypto.sign(crypto.seal('genesis-content', mk), null),
   };
@@ -320,7 +367,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-a1-01', title: 'Alpha Task', start_epoch: 1714032000000, duration: 3600, is_active: false },
       { entry_id: 'entry-a1-02', title: 'Beta Task', start_epoch: 1714053600000, duration: 1800, is_active: false },
     ]);
@@ -368,7 +415,7 @@ async function run() {
     await seedGenesisBlock(storage, crypto, mk);
 
     // First commit: 2 entries
-    const batch1 = await addStagingEntries(storage, [
+    const batch1 = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-a3-01', title: 'First Batch A', start_epoch: 1714032000000, is_active: false },
       { entry_id: 'entry-a3-02', title: 'First Batch B', start_epoch: 1714053600000, is_active: false },
     ]);
@@ -376,7 +423,7 @@ async function run() {
     t.assert(result1 !== undefined, 'A3a. first commit returned result');
 
     // Second commit: 1 more entry (different start_epoch to avoid collision)
-    const batch2 = await addStagingEntries(storage, [
+    const batch2 = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-a3-03', title: 'Second Batch', start_epoch: 1714075200000, is_active: false },
     ]);
     const result2 = await commitEntriesFlow(sync, crypto, storage, batch2.map(e => e.entry_id));
@@ -401,7 +448,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       {
         entry_id: 'entry-a4-01',
         title: 'Focus Session',
@@ -439,7 +486,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-a5-01', title: 'To Commit', start_epoch: 1714000000000, is_active: false },
       { entry_id: 'entry-a5-02', title: 'Stay Active', start_epoch: 1714003600000, is_active: true },
     ]);
@@ -455,9 +502,10 @@ async function run() {
     t.assert(committedInStaging !== undefined && committedInStaging.committed === true,
       'A5c. committed entry has committed=true flag');
 
-    // Committed entry appears in getCompleted
+    // Committed entry appears in getCompleted (match by title — ledger
+    // entry_id is the block hash, not the staging entry_id).
     const completed = await sync.getCompleted();
-    const committedEntry = completed.find(e => e.entry_id === 'entry-a5-01');
+    const committedEntry = completed.find(e => e.title === 'To Commit');
     t.assert(committedEntry !== undefined, 'A5d. committed entry in getCompleted');
     if (committedEntry) {
       t.assertEq(committedEntry.committed, true, 'A5e. committed flag is true');
@@ -479,7 +527,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-b1-01', title: 'Result Test 1', start_epoch: 1714000000000, is_active: false },
       { entry_id: 'entry-b1-02', title: 'Result Test 2', start_epoch: 1714003600000, is_active: false },
     ]);
@@ -501,7 +549,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-b2-01', title: 'Error Test', start_epoch: 1714000000000, is_active: false },
       { entry_id: 'entry-b2-02', title: 'Error Test 2', start_epoch: 1714003600000, is_active: false },
     ]);
@@ -532,7 +580,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-b3-01', title: 'Re-commit Test', start_epoch: 1714000000000, is_active: false },
     ]);
     const entryIds = stagingEntries.map(e => e.entry_id);
@@ -563,7 +611,7 @@ async function run() {
     await seedGenesisBlock(storage, crypto, mk);
 
     // Pre-populate some staging entries for commit
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-c1-01', title: 'Sync Task A', start_epoch: 1714032000000, is_active: false },
       { entry_id: 'entry-c1-02', title: 'Sync Task B', start_epoch: 1714053600000, is_active: false },
     ]);
@@ -611,7 +659,7 @@ async function run() {
     transport._store.set('staging/blobs/device_cookie.bin', new Uint8Array([4, 5, 6]));
 
     // Commit entries → push ledger blocks
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-c2-01', title: 'Path Test', start_epoch: 1714000000000, is_active: false },
     ]);
     await commitEntriesFlow(sync, crypto, storage, stagingEntries.map(e => e.entry_id));
@@ -653,7 +701,7 @@ async function run() {
     transport.resetCalls();
 
     // Only active entries, no completed ones
-    await addStagingEntries(storage, [
+    await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-c3-01', title: 'Active Only', start_epoch: 1714000000000, is_active: true },
     ]);
 
@@ -683,7 +731,7 @@ async function run() {
     await seedGenesisBlock(storage, crypto, mk);
 
     // Commit some entries
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-d1-01', title: 'Commit This', start_epoch: 1714000000000, is_active: false },
     ]);
     await commitEntriesFlow(sync, crypto, storage, stagingEntries.map(e => e.entry_id));
@@ -691,7 +739,7 @@ async function run() {
     transport.resetCalls();
 
     // Capture a new staging entry (simulates auto-sync trigger)
-    const newEntry = await addStagingEntries(storage, [
+    const newEntry = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-d1-02', title: 'New Active', start_epoch: 1714007200000, is_active: true },
     ]);
 
@@ -719,7 +767,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-d2-01', title: 'Commit Me', start_epoch: 1714000000000, is_active: false },
       { entry_id: 'entry-d2-02', title: 'Leave Me', start_epoch: 1714003600000, is_active: false },
       { entry_id: 'entry-d2-03', title: 'Active One', start_epoch: 1714007200000, is_active: true },
@@ -744,7 +792,7 @@ async function run() {
     const mk = DEFAULT_MK;
     await seedGenesisBlock(storage, crypto, mk);
 
-    const stagingEntries = await addStagingEntries(storage, [
+    const stagingEntries = await addStagingEntries(storage, crypto, [
       { entry_id: 'entry-d3-01', title: 'Completed Task', start_epoch: 1714000000000, is_active: false },
       { entry_id: 'entry-d3-02', title: 'Active Task', start_epoch: 1714003600000, is_active: true },
     ]);
@@ -752,7 +800,8 @@ async function run() {
     await commitEntriesFlow(sync, crypto, storage, ['entry-d3-01']);
 
     const completed = await sync.getCompleted();
-    const committedEntry = completed.find(e => e.entry_id === 'entry-d3-01');
+    // Find by title — ledger entry_id is the block hash, not staging entry_id.
+    const committedEntry = completed.find(e => e.title === 'Completed Task');
     t.assert(committedEntry !== undefined, 'D3a. committed entry appears in getCompleted');
     if (committedEntry) {
       t.assertEq(committedEntry.committed, true, 'D3b. committed flag is true');

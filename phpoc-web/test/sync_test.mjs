@@ -140,6 +140,44 @@ assertEq(result5[0].entry_id, 'b', 'sorted asc: first');
 assertEq(result5[1].entry_id, 'c', 'sorted asc: middle');
 assertEq(result5[2].entry_id, 'a', 'sorted asc: last');
 
+// 1g. Local committed=true survives stale remote (committed=false on same key)
+// Fix: committed flag is irreversible — local committed must not be downgraded
+// by a stale remote blob (e.g. when pushBlobOnly failed after commit).
+const local6 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: true, block_index: 5 }];
+const remote6 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: false, block_index: null }];
+const result6 = mergeEntries(local6, remote6);
+assertEq(result6.length, 1, 'g. dedup to one entry');
+assertEq(result6[0].committed, true, 'g. committed=true preserved from local');
+assertEq(result6[0].block_index, 5, 'g. block_index preserved from local');
+assertEq(result6[0].source, 'remote', 'g. source=remote (other fields overwritten)');
+
+// 1h. Remote committed=true overwrites local committed=false (normal case)
+const local7 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: false, block_index: null }];
+const remote7 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: true, block_index: 3 }];
+const result7 = mergeEntries(local7, remote7);
+assertEq(result7.length, 1, 'h. dedup to one entry');
+assertEq(result7[0].committed, true, 'h. committed=true from remote');
+assertEq(result7[0].block_index, 3, 'h. block_index from remote');
+assertEq(result7[0].source, 'remote', 'h. source=remote');
+
+// 1i. Both committed — remote block_index wins, committed stays true
+const local8 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: true, block_index: 2 }];
+const remote8 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: true, block_index: 7 }];
+const result8 = mergeEntries(local8, remote8);
+assertEq(result8.length, 1, 'i. dedup to one entry');
+assertEq(result8[0].committed, true, 'i. committed=true (both were true)');
+assertEq(result8[0].block_index, 7, 'i. block_index from remote');
+assertEq(result8[0].source, 'remote', 'i. source=remote');
+
+// 1j. Neither committed — stays false
+const local9 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: false, block_index: null }];
+const remote9 = [{ entry_id: 'id1', title: 'Coding', start_epoch: 1000, committed: false, block_index: null }];
+const result9 = mergeEntries(local9, remote9);
+assertEq(result9.length, 1, 'j. dedup to one entry');
+assertEq(result9[0].committed, false, 'j. committed=false preserved');
+assertEq(result9[0].block_index, null, 'j. block_index=null');
+assertEq(result9[0].source, 'remote', 'j. source=remote');
+
 // ══════════════════════════════════════════════════════════════════════
 // 2. DeviceCookie
 // ══════════════════════════════════════════════════════════════════════

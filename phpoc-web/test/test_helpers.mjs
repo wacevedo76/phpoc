@@ -33,8 +33,8 @@ export class TestHelpers {
     else {
       this.failed++; this.errors.push(label);
       process.stdout.write('  ✗');
-      console.log(`\n      got:      ${JSON.stringify(actual).slice(0, 160)}`);
-      console.log(`      expected: ${JSON.stringify(expected).slice(0, 160)}`);
+      console.log(`\n      got:      ${String(JSON.stringify(actual)).slice(0, 160)}`);
+      console.log(`      expected: ${String(JSON.stringify(expected)).slice(0, 160)}`);
     }
     console.log(`  ${label}`);
   }

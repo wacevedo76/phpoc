@@ -3886,6 +3886,344 @@ async function run() {
       `W4c. hash index bootstrap pushes hash_index files (got ${ledgerPushes.length} ledger pushes)`);
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Group L: _reconcileDifferentDevice Committed Entry Filter
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Bug #3 (sync.js ~769-776): _reconcileDifferentDevice merges remote
+  // entries into local without filtering committed entries. The CLI
+  // equivalent (service.py:505-507) does:
+  //   merged = [e for e in merged if not e.get("committed")]
+  // The web must do the same post-merge filter.
+  //
+  console.log('\n── Group L: Committed Entry Filter in Merge ──\n');
+
+  /**
+   * Push a remote blob with raw entries that include committed/block_index
+   * at the top level (as the CLI produces).
+   */
+  async function pushRemoteBlobWithCommitted(transport, crypto, entries, deviceId, mk) {
+    const rawEntries = entries.map(e => ({
+      entry_id: e.entry_id || `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      hash: e.hash || `h-${e.entry_id || 'unknown'}`,
+      data: {
+        entry_id: e.entry_id,
+        title: e.title,
+        startTime_enc: `plain:${e.start_epoch}`,
+        endTime_enc: e.end_epoch != null ? `plain:${e.end_epoch}` : undefined,
+        duration: e.duration || 0,
+        is_active: e.is_active || false,
+        is_paused: e.is_paused || false,
+        pauses_enc: 'plain:[]',
+        metadata_enc: 'plain:{}',
+        tags: e.tags || [],
+        comment: e.comment || null,
+        media: e.media || [],
+        device_uuid: deviceId,
+        end_device_uuid: '',
+      },
+      committed: e.committed !== undefined ? e.committed : undefined,
+      block_index: e.block_index != null ? e.block_index : undefined,
+    }));
+
+    const blob = JSON.stringify({
+      device_id: deviceId,
+      device_proof: '',
+      entries: rawEntries,
+      updated_at: Date.now(),
+    });
+    const obfuscated = crypto.obfuscateBlob(blob, mk);
+    const bytes = new Uint8Array(Buffer.from(obfuscated, 'base64'));
+    await transport.push(BLOB_PATH, bytes);
+  }
+
+  // L1. Remote committed entry → NOT written to local staging after merge
+  {
+    const mk = 'l1-filter-l1-filter-l1-filter-l1-filter-l1';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l1',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l1-0001-0000-0000-000000000001';
+
+    // Two-phase: outer sees null → enters _reconcileAndClaim
+    // inner sees different UUID → _reconcileDifferentDevice
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l1',
+    })));
+
+    // Push remote blob with one committed entry
+    await pushRemoteBlobWithCommitted(transport, crypto, [{
+      entry_id: 'rem-l1-committed',
+      title: 'Remote Committed',
+      start_epoch: 5000,
+      committed: true,
+      block_index: 3,
+    }], remoteDeviceUuid, mk);
+
+    await sync.capture({ title: 'Local L1', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L1. different device sync → READY');
+
+    const entries = await sync.readEntries();
+    const hasRemoteCommitted = entries.some(e => e.title === 'Remote Committed');
+    t.assert(!hasRemoteCommitted,
+      'L1. remote committed entry NOT written to local staging after merge');
+    t.assert(entries.some(e => e.title === 'Local L1'),
+      'L1b. local entry preserved');
+  }
+
+  // L2. Remote uncommitted entry → IS written to local staging after merge
+  {
+    const mk = 'l2-uncom-l2-uncom-l2-uncom-l2-uncom-l2-uncom';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l2',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l2-0002-0000-0000-000000000002';
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l2',
+    })));
+
+    await pushRemoteBlobWithCommitted(transport, crypto, [{
+      entry_id: 'rem-l2-uncommitted',
+      title: 'Remote Uncommitted',
+      start_epoch: 5000,
+      committed: false,
+    }], remoteDeviceUuid, mk);
+
+    await sync.capture({ title: 'Local L2', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L2. different device sync → READY');
+
+    const entries = await sync.readEntries();
+    t.assert(entries.some(e => e.title === 'Remote Uncommitted'),
+      'L2. remote uncommitted entry IS written to local staging after merge');
+  }
+
+  // L3. Mixed committed/uncommitted remote → only uncommitted survive
+  {
+    const mk = 'l3-mixed-l3-mixed-l3-mixed-l3-mixed-l3-mixed';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l3',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l3-0003-0000-0000-000000000003';
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l3',
+    })));
+
+    // Push 3 remote entries: 2 committed, 1 uncommitted
+    await pushRemoteBlobWithCommitted(transport, crypto, [
+      { entry_id: 'rem-l3-c1', title: 'Remote C1', start_epoch: 5000, committed: true, block_index: 1 },
+      { entry_id: 'rem-l3-u1', title: 'Remote U1', start_epoch: 6000, committed: false },
+      { entry_id: 'rem-l3-c2', title: 'Remote C2', start_epoch: 7000, committed: true, block_index: 2 },
+    ], remoteDeviceUuid, mk);
+
+    await sync.capture({ title: 'Local L3', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L3. mixed sync → READY');
+
+    const entries = await sync.readEntries();
+    const titles = entries.map(e => e.title).sort();
+
+    // After fix: only Local L3 + Remote U1 should survive
+    t.assertEq(entries.length, 2, 'L3a. exactly 2 entries after filtering (local + uncommitted)');
+    t.assert(!entries.some(e => e.title === 'Remote C1'), 'L3b. Remote C1 (committed) filtered');
+    t.assert(!entries.some(e => e.title === 'Remote C2'), 'L3c. Remote C2 (committed) filtered');
+    t.assert(entries.some(e => e.title === 'Remote U1'), 'L3. only uncommitted remote entry survives');
+  }
+
+  // L4. Remote committed entry that shadows local → remote filtered, local preserved
+  // mergeEntries: remote wins on same entry_id → but post-merge filter removes it
+  {
+    const mk = 'l4-shadow-l4-shadow-l4-shadow-l4-shadow-l4';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l4',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l4-0004-0000-0000-000000000004';
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l4',
+    })));
+
+    // Push remote blob with committed entry that has same entry_id as local
+    const sharedEntryId = 'shared-entry-l4';
+    await pushRemoteBlobWithCommitted(transport, crypto, [{
+      entry_id: sharedEntryId,
+      title: 'Shadowed Remote',
+      start_epoch: 5000,
+      committed: true,
+      block_index: 4,
+    }, {
+      entry_id: 'rem-l4-uncom',
+      title: 'Remote Uncommitted L4',
+      start_epoch: 6000,
+      committed: false,
+    }], remoteDeviceUuid, mk);
+
+    // Local entry with same entry_id (simulating before remote committed it)
+    await sync._local.writeEntries([{
+      entry_id: sharedEntryId,
+      title: 'Shadowed Local',
+      start_epoch: 1000,
+      committed: false,
+      source: 'local',
+    }]);
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L4. shadowed sync → READY');
+
+    const entries = await sync.readEntries();
+    // mergeEntries: remote wins (same entry_id). But post-merge filter removes
+    // the committed entry. The local uncommitted was overwritten by the remote
+    // committed version, and that committed version gets filtered.
+    // Result: neither version of sharedEntryId survives.
+    const hasShadowed = entries.some(e => e.entry_id === sharedEntryId);
+    t.assert(!hasShadowed,
+      'L4. shadowed committed entry filtered (neither version survives after merge + filter)');
+
+    // Remote uncommitted should survive
+    t.assert(entries.some(e => e.title === 'Remote Uncommitted L4'),
+      'L4b. uncommitted remote entry preserved');
+  }
+
+  // L5. Post-merge write contains zero entries with committed=true
+  {
+    const mk = 'l5-invar-l5-invar-l5-invar-l5-invar-l5-invar';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l5',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l5-0005-0000-0000-000000000005';
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l5',
+    })));
+
+    // Push only committed entries (all committed)
+    await pushRemoteBlobWithCommitted(transport, crypto, [
+      { entry_id: 'rem-l5-c1', title: 'All C1', start_epoch: 5000, committed: true, block_index: 1 },
+      { entry_id: 'rem-l5-c2', title: 'All C2', start_epoch: 6000, committed: true, block_index: 1 },
+      { entry_id: 'rem-l5-c3', title: 'All C3', start_epoch: 7000, committed: true, block_index: 1 },
+    ], remoteDeviceUuid, mk);
+
+    await sync.capture({ title: 'Local L5', startEpoch: 1000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L5. all-committed remote → READY');
+
+    const entries = await sync.readEntries();
+    const committedCount = entries.filter(e => e.committed === true).length;
+    t.assertEq(committedCount, 0, 'L5. post-merge write contains zero entries with committed=true');
+    t.assertEq(entries.length, 1, 'L5b. only local uncommitted entry survives');
+  }
+
+  // L6. block_index preserved for committed entries that survive filtering
+  // (If any committed entry survives, it should keep block_index)
+  {
+    const mk = 'l6-bi----l6-bi----l6-bi----l6-bi----l6-bi';
+    const { sync, storage, crypto, transport } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await storage.set('cookie', {
+      device_specifier: 'spec-l6',
+      creation_time: Date.now(),
+    });
+
+    const remoteDeviceUuid = 'remote-l6-0006-0000-0000-000000000006';
+
+    transport.queueResponse(COOKIE_PATH, null);
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: remoteDeviceUuid,
+      device_specifier: 'spec-remote-l6',
+    })));
+
+    // Push: one committed (should be filtered), one uncommitted (should survive)
+    await pushRemoteBlobWithCommitted(transport, crypto, [
+      { entry_id: 'rem-l6-committed', title: 'RC', start_epoch: 5000, committed: true, block_index: 9 },
+      { entry_id: 'rem-l6-uncommitted', title: 'RU', start_epoch: 6000, committed: false },
+    ], remoteDeviceUuid, mk);
+
+    // Also write a committed entry locally to verify the post-merge filter
+    // handles local committed entries too.
+    await sync._local.writeEntries([{
+      entry_id: 'local-l6-committed',
+      title: 'Local Committed L6',
+      start_epoch: 1000,
+      committed: true,
+      block_index: 5,
+      source: 'local',
+    }]);
+
+    await sync.capture({ title: 'Local Active L6', startEpoch: 3000 });
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'L6. block_index test → READY');
+
+    const entries = await sync.readEntries();
+    // Remote committed (RC) filtered; local committed (Local Committed L6) filtered
+    // Surviving: RU and Local Active L6
+    t.assert(!entries.some(e => e.title === 'RC'), 'L6a. remote committed filtered');
+    t.assert(!entries.some(e => e.title === 'Local Committed L6'), 'L6b. local committed filtered');
+    t.assert(entries.some(e => e.title === 'RU'), 'L6c. uncommitted remote survives');
+    t.assert(entries.some(e => e.title === 'Local Active L6'), 'L6d. uncommitted local survives');
+  }
+
   // ── Results ───────────────────────────────────────────────────────
   t.summary('SyncService Auth Gate & Reconcile');
 }

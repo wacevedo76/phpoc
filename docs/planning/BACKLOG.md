@@ -1,12 +1,29 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-07-04
-> **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues),
+> **Last updated:** 2026-07-15
+> **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
 >
+> **Severity tiers** (from flaw documents): 🔴 Critical — 🟠 High — 🟡 Medium — 🟢 Low
+>
 > **Rule:** Every item here has a concrete next action. No "someday" items.
 > Phases are ordered — each phase unblocks the next.
+> Within each phase, items are ordered by severity (Critical → High → Medium → Low).
+
+---
+
+## ✅ Completed: Web Staging Committed-Flag Loss
+
+### B-01: Committed ledger entries duplicated as staging (web sync) ✅
+
+**Plan:** `docs/planning/WEB_STAGING_COMMITTED_FLAG_LOSS_PHASE1.md`
+
+**Completed:** 2026-07-15 — Full 4-phase TDD.
+- Phase 1: 27 assertions across 5 groups (A–E)
+- Phase 2: 28 RED tests across 4 files
+- Phase 3: 3 bugs fixed — `entry_dto.js` (committed/block_index in rawEntryToDTO + rawCommittedEntryToDTO), `remote_sync.js` (serialization in pushBlob), `sync.js` (post-merge committed filter in `_reconcileDifferentDevice`)
+- Phase 4: 2 refactors — fixed undefined `mk` bug, removed dead `_reconcileSameDevice`
 
 ---
 
@@ -14,15 +31,14 @@
 
 *No code, no tests, no migrations. Fix spec credibility now.*
 
-| # | Action | File | What to change |
-|---|--------|------|----------------|
-| I-16 | Delete duplicate paragraph | `docs/spec/PHPSPEC.md` §9.3 | Remove the repeated paragraph before migration pseudocode |
-| I-15 | Fix AES-128 justification | `docs/spec/PHPSPEC.md` §2.6 | Replace "effective security level is 256 bits" with "AES-128 provides adequate security; the per-operation HMAC derivation ensures uniformly distributed key material from the 256-bit MK" |
-| I-08 | Add Known Limitations section | `docs/spec/PHPSPEC.md` | New section at top: honest disclosure of HMAC≠signature, plaintext index, plaintext staging, key-derived device IDs, no key rotation. Cross-link to this backlog. |
-| I-10 | Fix zero-dependency claim | `docs/spec/PHPSPEC.md` §1.1 | Change to "The CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core (`phpoc-crypto-core` / `ring`)." |
-| I-13 | Fix Invariant #1 | `docs/reference/MAP.md` Architecture Invariants §1 | Scope to "CLI reference implementation: zero external dependencies. Web/mobile: single shared Rust crypto core." |
-| I-14 | Remove forward-looking content | `docs/spec/PHPSPEC.md` §5.5, §6.1, §9.3 | Delete all v0.4.0+ present-tense descriptions. Add header: "Current version: 0.4.0. See CHANGELOG.md for changes." |
-| I-11 | Add blob obfuscation portability warning | `docs/spec/PHPSPEC.md` §8.5 | Add: "⚠️ Portability hazard — this is the highest-risk primitive for cross-platform interop. Implementers must validate against the crypto test vector suite." |
+| # | Sev | Action | File | What to change |
+|---|-----|--------|------|----------------|
+| I-08 | 🟠 | Add Known Limitations section | `docs/spec/PHPSPEC.md` | New section at top: honest disclosure of HMAC≠signature, plaintext index, plaintext staging, key-derived device IDs, no key rotation. Cross-link to this backlog. |
+| I-10 | 🟡 | Fix zero-dependency claim | `docs/spec/PHPSPEC.md` §1.1 | Change to "The CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core (`phpoc-crypto-core` / `ring`)." |
+| I-13 | 🟡 | Fix Invariant #1 | `docs/reference/MAP.md` Architecture Invariants §1 | Scope to "CLI reference implementation: zero external dependencies. Web/mobile: single shared Rust crypto core." |
+| I-14 | 🟡 | Remove forward-looking content | `docs/spec/PHPSPEC.md` §5.5, §6.1, §9.3 | Delete all v0.4.0+ present-tense descriptions. Add header: "Current version: 0.4.0. See CHANGELOG.md for changes." |
+| I-15 | 🟢 | Fix AES-128 justification | `docs/spec/PHPSPEC.md` §2.6 | Replace "effective security level is 256 bits" with "AES-128 provides adequate security; the per-operation HMAC derivation ensures uniformly distributed key material from the 256-bit MK" |
+| I-16 | 🟢 | Delete duplicate paragraph | `docs/spec/PHPSPEC.md` §9.3 | Remove the repeated paragraph before migration pseudocode |
 
 **Next action:** Pick any item, edit the file, commit. ~30 min each.
 
@@ -62,11 +78,13 @@
 
 ## 🟡 Phase 2 — Low-Effort Code Fixes
 
-*After Phase 1. Small, low-risk changes that improve correctness.*
+*After Phase 1. Small, low-risk changes that improve correctness.
+Ordered per flaw-doc recommended attack sequence: naming → salt → integrity → platform warnings.*
 
-### I-04: Rename HMAC "signature" → "seal"/"tag"
+### I-04 🟠: Rename HMAC "signature" → "seal"/"tag"
 
 **Why:** Misleads implementers about security properties. Must happen before real Ed25519 is added.
+**Flaw doc attack order:** Step 2 (naming fixes).
 
 | File | Change |
 |------|--------|
@@ -80,9 +98,10 @@
 
 **Next action:** Pick up after Phase 1. Start with spec rename, then code.
 
-### I-05: Per-user PBKDF2 salt
+### I-05 🟠: Per-user PBKDF2 salt
 
 **Why:** Fixed `b"session-salt"` enables cross-user rainbow tables when passphrases are reused.
+**Flaw doc attack order:** Step 3 (salt fix).
 
 | File | Change |
 |------|--------|
@@ -96,9 +115,10 @@
 
 **Next action:** Add backward-compat salt detection (try new salt first, fall back to old).
 
-### I-06: Make `content_hash` required at v0.4.0+
+### I-06 🟠: Make `content_hash` required at v0.4.0+
 
 **Why:** Optional means entries without it have zero re-encryption-survivable integrity.
+**Flaw doc attack order:** Step 4 (integrity fixes).
 
 | File | Change |
 |------|--------|
@@ -111,15 +131,31 @@
 
 **Next action:** Add format_version gating to verification functions.
 
+### I-11 🟡: Add blob obfuscation portability warning + test vectors
+
+**Why:** CROSS_PLATFORM §3 rates blob obfuscation as the highest-risk primitive for cross-platform interop. The spec describes the scheme but never flags the hazard.
+**Flaw doc attack order:** Step 5 (platform warnings).
+
+| File | Change |
+|------|--------|
+| `docs/spec/PHPSPEC.md` §8.5 | Add: "⚠️ Portability hazard — this is the highest-risk primitive for cross-platform interop. Implementers must validate against the crypto test vector suite." |
+| `tests/data/crypto_test_vectors.json` | Expand to include blob obfuscation edge cases (empty blob, exactly-at-tier-ceiling, class transition) |
+
+**Effort:** ~2 hours. **Blocked by:** nothing.
+
+**Next action:** Add spec warning first, then expand test vectors.
+
 ---
 
 ## 🟠 Phase 3 — Encryption Gaps
 
-*After Phase 1. Real security holes that need closing.*
+*After Phase 1. Real security holes that need closing.
+Both rated Critical in the flaw documents — they undermine the protocol's core privacy promises.*
 
-### I-03: Encrypt staging at rest
+### I-03 🔴: Encrypt staging at rest
 
 **Why:** `staging.json` uses `plain:` prefix — on-disk staging is unencrypted, contradicting the protocol's first design principle.
+**Flaw doc severity:** Critical. The most recent, most sensitive data is the least protected.
 
 | File | Change |
 |------|--------|
@@ -132,9 +168,10 @@
 
 **Next action:** After Phase 1a, implement encrypted staging write/read in `service.py` first.
 
-### I-02: Encrypt blind index
+### I-02 🔴: Encrypt blind index
 
 **Why:** `index.json` stores `{date: {activity_title: total_duration_ms}}` in plain JSON next to the encrypted ledger.
+**Flaw doc severity:** Critical. The index reveals exactly what activities a user does and for how long — undermines the entire privacy model at the most exposed point.
 
 | File | Change |
 |------|--------|
@@ -153,9 +190,10 @@
 
 *After Phases 2–3. Major features that need design work before implementation.*
 
-### I-01: Key rotation
+### I-01 🔴: Key rotation
 
 **Why:** One MK protects everything forever. Compromise = permanent, catastrophic, no remediation path.
+**Flaw doc severity:** Critical — the single biggest architectural gap in the protocol.
 
 **Required:** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
 
@@ -170,9 +208,10 @@
 
 **Next action:** Write ADR. No code until design is reviewed.
 
-### I-09: Hardware-bound device attribution
+### I-09 🟡: Hardware-bound device attribution
 
 **Why:** Device IDs are derived from MK. Any device with the MK can impersonate any other device.
+**Flaw doc severity:** Medium — "device attribution is theater."
 
 | File | Change |
 |------|--------|
@@ -182,9 +221,10 @@
 
 **Effort:** Medium. **Depends on:** nothing. **Next action:** Generate device-local UUID4 secret, use in HMAC derivation.
 
-### I-12: System architecture document
+### I-12 🟡: System architecture document
 
 **Why:** The spec is narrow (format only). DESIGN_GOALS is broad (aspirations). No single document describes the full system.
+**Flaw doc observation:** #16 — the spec is the narrowest document but claims to be authoritative.
 
 **Deliverable:** New `docs/design/SYSTEM_ARCHITECTURE.md` covering: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core.
 
@@ -238,16 +278,17 @@
 
 ## Summary by Phase
 
-| Phase | Items | Status |
-|-------|-------|--------|
-| **0** — Doc fixes | I-16, I-15, I-08, I-10, I-13, I-14, I-11 (7) | 🟢 Do anytime |
-| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | 🔜 In progress |
-| **2** — Low-effort code | I-04, I-05, I-06 (3) | After Phase 1 |
-| **3** — Encryption gaps | I-02, I-03 (2) | After Phase 1 |
-| **4** — Architectural | I-01, I-09, I-12 (3) | After Phases 2-3 |
-| **5** — CLI polish | P5, P4 (2) | After Phase 4 |
-| **6** — Cross-client | P1, indent=2 (2) | After Phase 5 |
-| **7** — Remote sync | P3 (1) | After Phase 6 |
+| Phase | Items | Critical | High | Medium | Low |
+|-------|-------|----------|------|--------|-----|
+| **0** — Doc fixes | I-08, I-10, I-13, I-14, I-15, I-16 (6) | 0 | 1 | 3 | 2 |
+| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
+| **2** — Low-effort code | I-04, I-05, I-06, I-11 (4) | 0 | 3 | 1 | 0 |
+| **3** — Encryption gaps | I-03, I-02 (2) | 2 | 0 | 0 | 0 |
+| **4** — Architectural | I-01, I-09, I-12 (3) | 1 | 0 | 2 | 0 |
+| **5** — CLI polish | P5, P4 (2) | — | — | — | — |
+| **6** — Cross-client | P1, indent=2 (2) | — | — | — | — |
+| **7** — Remote sync | P3 (1) | — | — | — | — |
+| **Totals** | **27 open** | **3** | **4** | **6** | **2** |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅ — Canonical Ledger Format, 2026-07-03.
 
