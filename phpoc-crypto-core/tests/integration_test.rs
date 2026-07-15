@@ -2,6 +2,10 @@
 //!
 //! Validates the full crypto pipeline end-to-end against test vectors
 //! extracted from the CLI reference implementation.
+//!
+//! I-11 Phase 2 (RED): Added tier selection, key derivation, and deterministic
+//! blob obfuscation vector validation. The deterministic tests are RED because
+//! obfuscate_blob_deterministic() is a stub that panics (Phase 3).
 
 use phpoc_crypto_core::*;
 use serde::{Deserialize, Serialize};
@@ -14,6 +18,12 @@ struct CryptoTestVectors {
     hmac_sha256: Vec<HmacVector>,
     sha256: Vec<Sha256Vector>,
     blob_obfuscation: Vec<BlobVector>,
+    #[serde(default)]
+    blob_key_derivation: Vec<BlobKeyDerivationVector>,
+    #[serde(default)]
+    blob_tier_selection: Vec<TierSelectionVector>,
+    #[serde(default)]
+    blob_obfuscation_deterministic: Vec<BlobDeterministicVector>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -56,6 +66,39 @@ struct BlobVector {
     note: Option<String>,
 }
 
+/// Group E: Blob key derivation test vectors.
+#[derive(Debug, Deserialize, Serialize)]
+struct BlobKeyDerivationVector {
+    master_key_hex: String,
+    expected_hex: String,
+    #[allow(dead_code)]
+    note: Option<String>,
+}
+
+/// Group B: Tier selection test vectors.
+#[derive(Debug, Deserialize, Serialize)]
+struct TierSelectionVector {
+    plaintext_size: usize,
+    #[serde(default)]
+    expected_tier: usize,
+    #[serde(default)]
+    expected_error: bool,
+    #[allow(dead_code)]
+    note: Option<String>,
+}
+
+/// Group D: Deterministic blob obfuscation test vectors.
+#[derive(Debug, Deserialize, Serialize)]
+struct BlobDeterministicVector {
+    master_key_hex: String,
+    plaintext: String,
+    salt_hex: String,
+    nonce_hex: String,
+    expected_hex: String,
+    #[allow(dead_code)]
+    note: Option<String>,
+}
+
 /// Load test vectors from the JSON file.
 fn load_test_vectors() -> CryptoTestVectors {
     let path = concat!(
@@ -67,6 +110,12 @@ fn load_test_vectors() -> CryptoTestVectors {
     serde_json::from_str(&content)
         .expect("Failed to parse crypto_test_vectors.json")
 }
+
+
+
+// ===========================================================================
+// Existing tests (unchanged)
+// ===========================================================================
 
 #[test]
 fn test_pbkdf2_vectors() {
@@ -153,6 +202,123 @@ fn test_blob_roundtrip() {
         );
     }
 }
+
+// ===========================================================================
+// Group E: Blob Key Derivation Vectors (I-11 Phase 2)
+// ===========================================================================
+
+#[test]
+fn test_blob_key_derivation_vectors() {
+    let vectors = load_test_vectors();
+    for (i, v) in vectors.blob_key_derivation.iter().enumerate() {
+        let mk_hex = hex::decode(&v.master_key_hex).unwrap();
+        let mk: [u8; 32] = mk_hex.try_into().unwrap();
+
+        let blob_key = key_derivation::derive_blob_key(&mk);
+        let got_hex = hex::encode(blob_key);
+
+        assert_eq!(
+            got_hex, v.expected_hex,
+            "Blob key derivation vector {} failed: expected {}, got {}",
+            i, v.expected_hex, got_hex
+        );
+    }
+}
+
+// ===========================================================================
+// Group B: Tier Selection Vectors (I-11 Phase 2)
+// ===========================================================================
+
+#[test]
+fn test_blob_tier_selection_vectors() {
+    let vectors = load_test_vectors();
+    for (i, v) in vectors.blob_tier_selection.iter().enumerate() {
+        let result = blob::select_tier(v.plaintext_size);
+        if v.expected_error {
+            assert!(
+                result.is_err(),
+                "Tier selection vector {} (size={}): expected error but got Ok({})",
+                i, v.plaintext_size,
+                result.unwrap_or(0)
+            );
+        } else {
+            let tier = result.unwrap_or_else(|e| {
+                panic!(
+                    "Tier selection vector {} (size={}): expected tier {} but got error: {:?}",
+                    i, v.plaintext_size, v.expected_tier, e
+                )
+            });
+            assert_eq!(
+                tier, v.expected_tier,
+                "Tier selection vector {} (size={}): expected {}, got {}",
+                i, v.plaintext_size, v.expected_tier, tier
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// Group D: Deterministic Blob Obfuscation Vectors (I-11 Phase 3 — GREEN)
+// ===========================================================================
+
+/// D1/D3: Rust obfuscate_blob_deterministic matches expected_hex from vectors.
+#[test]
+fn test_blob_deterministic_vectors() {
+    let vectors = load_test_vectors();
+    for (i, v) in vectors.blob_obfuscation_deterministic.iter().enumerate() {
+        let mk_hex = hex::decode(&v.master_key_hex).unwrap();
+        let mk: [u8; 32] = mk_hex.try_into().unwrap();
+        let plaintext = v.plaintext.as_bytes();
+        let salt: [u8; 16] = hex::decode(&v.salt_hex).unwrap().try_into().unwrap();
+        let nonce: [u8; 8] = hex::decode(&v.nonce_hex).unwrap().try_into().unwrap();
+
+        let obfuscated = blob::obfuscate_blob_deterministic(plaintext, &mk, &salt, &nonce)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Deterministic vector {}: obfuscation failed: {:?}",
+                    i, e
+                )
+            });
+
+        let got_hex = hex::encode(&obfuscated);
+        assert_eq!(
+            got_hex, v.expected_hex,
+            "Deterministic vector {}: output mismatch (note: {})",
+            i,
+            v.note.as_deref().unwrap_or(""),
+        );
+    }
+}
+
+/// Validate that deterministic vector expected_hex can be deobfuscated
+/// back to the original plaintext (D4).
+#[test]
+fn test_blob_deterministic_deobfuscation() {
+    let vectors = load_test_vectors();
+    for (i, v) in vectors.blob_obfuscation_deterministic.iter().enumerate() {
+        let mk_hex = hex::decode(&v.master_key_hex).unwrap();
+        let mk: [u8; 32] = mk_hex.try_into().unwrap();
+        let plaintext = v.plaintext.as_bytes();
+        let obfuscated = hex::decode(&v.expected_hex).unwrap();
+
+        let deobfuscated = blob::deobfuscate_blob(&obfuscated, &mk);
+        assert!(
+            deobfuscated.is_some(),
+            "Deterministic vector {}: deobfuscation returned None",
+            i
+        );
+        assert_eq!(
+            deobfuscated.unwrap(),
+            plaintext,
+            "Deterministic vector {}: deobfuscation returned wrong plaintext",
+            i
+        );
+    }
+}
+
+// ===========================================================================
+// Full encryption/decryption/seal roundtrip (unchanged)
+// ===========================================================================
 
 #[test]
 fn test_full_encrypt_decrypt_seal_roundtrip() {

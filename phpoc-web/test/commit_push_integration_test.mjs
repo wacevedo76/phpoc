@@ -115,6 +115,10 @@ class MockCrypto {
     return createHash('sha256').update(data + key).digest('hex');
   }
 
+  mac(data, identitySecretHex) {
+    return this.sign(data, identitySecretHex);
+  }
+
   sign(dataStr, identitySecret) {
     return `sig:${createHash('sha256').update(dataStr + (identitySecret || '')).digest('hex')}`;
   }
@@ -265,7 +269,7 @@ async function seedGenesisBlock(storage, crypto, mk) {
     previous_hash: null,
     created_at: '2024-04-01T00:00:00Z',
     seal: crypto.seal('genesis-seal', mk),
-    signature: crypto.sign(crypto.seal('genesis-content', mk), null),
+    signature: crypto.mac(crypto.seal('genesis-content', mk), null),
   };
   await storage.set('ledger:blocks', [genesisBlock]);
   await storage.set('ledger:index', {

@@ -113,7 +113,7 @@ def _make_ledger_block(block_index: int, entries: List[Dict] = None,
     }
     # Compute a simple hash for the block
     block_json = json.dumps(block, sort_keys=True, default=str)
-    block["signature"] = hashlib.sha256(block_json.encode()).hexdigest()
+    block["identity_seal"] = hashlib.sha256(block_json.encode()).hexdigest()
     return block
 
 

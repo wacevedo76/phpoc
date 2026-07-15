@@ -283,7 +283,7 @@ export class GenesisGate {
           const remoteHashKey = remoteGenesis.block_hash ? 'block_hash' : 'day_hash';
           const checkData = {};
           for (const [k, v] of Object.entries(remoteGenesis)) {
-            if (k !== remoteHashKey && k !== 'signature' && k !== 'format_version') checkData[k] = v;
+            if (k !== remoteHashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') checkData[k] = v;
           }
           const recomputedHash = crypto.seal(jsonSort(checkData), masterKey);
           if (recomputedHash === localGenesisHash) {

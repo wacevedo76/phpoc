@@ -193,11 +193,11 @@ def _make_genesis_block(mk: bytes = TEST_MK) -> dict:
     }
 
     # Compute the seal over the core data (without day_hash and signature)
-    check_data = {k: v for k, v in block.items() if k not in ("day_hash", "signature")}
+    check_data = {k: v for k, v in block.items() if k not in ("day_hash", "identity_seal", "signature")}
     block["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
 
     # Sign with identity secret
-    block["signature"] = crypto.sign(block["day_hash"], bytes.fromhex(identity_secret_hex))
+    block["identity_seal"] = crypto.mac(block["day_hash"], bytes.fromhex(identity_secret_hex))
 
     return block
 
@@ -248,12 +248,12 @@ def _make_day_block(
         "signature": "",  # optional
     }
 
-    seal_data = {k: v for k, v in block.items() if k not in ("day_hash", "signature")}
+    seal_data = {k: v for k, v in block.items() if k not in ("day_hash", "identity_seal", "signature")}
     block["day_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
     # Get identity secret to sign
     identity_secret_hex = "ab" * 32
-    block["signature"] = crypto.sign(block["day_hash"], bytes.fromhex(identity_secret_hex))
+    block["identity_seal"] = crypto.mac(block["day_hash"], bytes.fromhex(identity_secret_hex))
 
     return block
 
@@ -358,7 +358,7 @@ def _prepopulate_chain_divergent(transport: MockOnboardingTransport, mk: bytes =
     b1["prev_hash"] = "0000000000000000000000000000000000000000000000000000000000000000"
     # Re-seal with corrupted prev_hash
     crypto = _make_crypto(mk)
-    seal_data = {k: v for k, v in b1.items() if k not in ("day_hash", "signature")}
+    seal_data = {k: v for k, v in b1.items() if k not in ("day_hash", "identity_seal", "signature")}
     b1["day_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
     # Block 2: chains from block 1 (internally consistent)

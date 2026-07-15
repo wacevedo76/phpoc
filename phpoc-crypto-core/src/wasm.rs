@@ -57,6 +57,34 @@ pub fn derive_pdk(passphrase: &str, iterations: u32) -> String {
     hex::encode(key)
 }
 
+/// Derive a PDK with a custom per-user salt.
+///
+/// * `passphrase` — user's passphrase.
+/// * `salt_hex` — 32-char hex-encoded 16-byte per-user salt
+///   (SHA-256(identity_pub_key_hex)[:16]).
+/// * `iterations` — 600000 (standard) or 100000 (legacy).
+///
+/// Returns hex-encoded 32-byte PDK.
+#[wasm_bindgen]
+pub fn derive_pdk_with_salt(passphrase: &str, salt_hex: &str, iterations: u32) -> Result<String, JsValue> {
+    let salt_bytes = hex::decode(salt_hex).map_err(|e| {
+        JsValue::from_str(&format!("invalid salt hex: {}", e))
+    })?;
+    if salt_bytes.len() != 16 {
+        return Err(JsValue::from_str("salt must be 16 bytes (32 hex chars)"));
+    }
+    let mut salt = [0u8; 16];
+    salt.copy_from_slice(&salt_bytes);
+
+    let iters = if iterations == 100_000 {
+        key_derivation::PdkIterations::Legacy
+    } else {
+        key_derivation::PdkIterations::Standard
+    };
+    let key = key_derivation::derive_pdk_with_salt(passphrase, &salt, iters);
+    Ok(hex::encode(key))
+}
+
 /// Derive the 32-byte Master Key from a base64-encoded recovery seed.
 ///
 /// Returns hex-encoded 64-character master key, or throws an error.

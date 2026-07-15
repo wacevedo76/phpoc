@@ -51,11 +51,11 @@ SAMPLE_ENTRY_DATA_1.content_hash = crypto.sha256(
     startTime_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_1.startTime_enc, MASTER_KEY),
     endTime_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_1.endTime_enc, MASTER_KEY),
     duration: SAMPLE_ENTRY_DATA_1.duration,
-    tags: SAMPLE_ENTRY_DATA_1.tags,
+    tags: [...SAMPLE_ENTRY_DATA_1.tags].sort(),
     pauses_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_1.pauses_enc, MASTER_KEY),
     metadata_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_1.metadata_enc, MASTER_KEY),
     comment: SAMPLE_ENTRY_DATA_1.comment,
-    media: SAMPLE_ENTRY_DATA_1.media,
+    media: [...SAMPLE_ENTRY_DATA_1.media].sort(),
   }, null, 2)
 );
 
@@ -77,11 +77,11 @@ SAMPLE_ENTRY_DATA_2.content_hash = crypto.sha256(
     startTime_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_2.startTime_enc, MASTER_KEY),
     endTime_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_2.endTime_enc, MASTER_KEY),
     duration: SAMPLE_ENTRY_DATA_2.duration,
-    tags: SAMPLE_ENTRY_DATA_2.tags,
+    tags: [...SAMPLE_ENTRY_DATA_2.tags].sort(),
     pauses_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_2.pauses_enc, MASTER_KEY),
     metadata_enc: crypto.decrypt(SAMPLE_ENTRY_DATA_2.metadata_enc, MASTER_KEY),
     comment: SAMPLE_ENTRY_DATA_2.comment,
-    media: SAMPLE_ENTRY_DATA_2.media,
+    media: [...SAMPLE_ENTRY_DATA_2.media].sort(),
   }, null, 2)
 );
 
@@ -145,7 +145,7 @@ if (typeof LedgerChain === 'function') {
   t.assert(!chain.verifySeal({ type: 'tampered' }, seal1), 'verifySeal returns false for tampered data');
 
   // Test 8: computeSignature with identity secret
-  const sig = chain.computeSignature(seal1);
+  const sig = chain.computeIdentityMac(seal1);
   if (IDENTITY_SECRET) {
     t.assert(typeof sig === 'string', 'computeSignature returns a string with identity secret');
     t.assert(/^[0-9a-f]{64}$/.test(sig), 'signature is 64 hex chars');
@@ -153,9 +153,9 @@ if (typeof LedgerChain === 'function') {
 
   // Test 9: verifySignature
   if (sig && IDENTITY_SECRET) {
-    t.assert(chain.verifySignature(seal1, sig), 'verifySignature returns true for valid signature');
-    t.assert(!chain.verifySignature(seal1 + 'x', sig), 'verifySignature returns false for bad data');
-    t.assert(!chain.verifySignature(seal1, sig + 'x'), 'verifySignature returns false for bad signature');
+    t.assert(chain.verifyIdentityMac(seal1, sig), 'verifySignature returns true for valid signature');
+    t.assert(!chain.verifyIdentityMac(seal1 + 'x', sig), 'verifySignature returns false for bad data');
+    t.assert(!chain.verifyIdentityMac(seal1, sig + 'x'), 'verifySignature returns false for bad signature');
   }
 
   // ── Block building: buildDayBlock ──────────────────
@@ -216,8 +216,8 @@ if (typeof LedgerChain === 'function') {
   // Test 17: Day block with optional identity signature
   const chainWithSig = new LedgerChain(crypto, makeEmptyStore(), MASTER_KEY, IDENTITY_SECRET);
   const sigBlock = await chainWithSig.buildDayBlock(entries, ZERO_HASH, '2026-01-15');
-  t.assertHasKeys(sigBlock, ['signature'], 'block with identity secret includes signature');
-  t.assert(/^[0-9a-f]{64}$/.test(sigBlock.signature), 'signature is 64 hex chars');
+  t.assertHasKeys(sigBlock, ['identity_seal'], 'block with identity secret includes identity_seal');
+  t.assert(/^[0-9a-f]{64}$/.test(sigBlock.identity_seal), 'identity_seal is 64 hex chars');
 
   // ── Append operations ──────────────────────────────
   console.log('\n=== Append Operations ===');
@@ -395,7 +395,7 @@ if (typeof LedgerChain === 'function') {
   const sigBlock1b = await chainBadSig.buildDayBlock(entries, ZERO_HASH, '2026-01-15');
   await chainBadSig.append(sigBlock1b);
   const storedBadSig = await storeBadSig.get('ledger:blocks');
-  storedBadSig[0].signature = 'f'.repeat(64);
+  storedBadSig[0].identity_seal = 'f'.repeat(64);
   await storeBadSig.set('ledger:blocks', storedBadSig);
   t.assert(!(await chainBadSig.verify()), 'verify() returns false when signature is broken');
 
@@ -440,9 +440,10 @@ if (typeof LedgerChain === 'function') {
   const sigForMiss = await chainMissSig.buildDayBlock(entries, ZERO_HASH, '2026-01-20');
   await chainMissSig.append(sigForMiss);
   const storedMissSig = await storeMissSig.get('ledger:blocks');
+  delete storedMissSig[0].identity_seal;
   delete storedMissSig[0].signature;
   await storeMissSig.set('ledger:blocks', storedMissSig);
-  t.assert(!(await chainMissSig.verify()), 'verify() returns false when signature is missing on signed chain');
+  t.assert(!(await chainMissSig.verify()), 'verify() returns false when identity seal is missing on signed chain');
 
   // Test 43: verifyBlock(0) returns false when signature missing on signed block 0
   const storeMissSig2 = makeEmptyStore();
@@ -450,9 +451,10 @@ if (typeof LedgerChain === 'function') {
   const sigForMiss2 = await chainMissSig2.buildDayBlock(entries, ZERO_HASH, '2026-01-21');
   await chainMissSig2.append(sigForMiss2);
   const storedMissSig2 = await storeMissSig2.get('ledger:blocks');
+  delete storedMissSig2[0].identity_seal;
   delete storedMissSig2[0].signature;
   await storeMissSig2.set('ledger:blocks', storedMissSig2);
-  t.assert(!(await chainMissSig2.verifyBlock(0)), 'verifyBlock(0) returns false when signature missing on signed block 0');
+  t.assert(!(await chainMissSig2.verifyBlock(0)), 'verifyBlock(0) returns false when identity seal missing on signed block 0');
 
   // ══════════════════════════════════════════════════════════════
   // Canonical Ledger Format — Phase 2 RED Tests
@@ -480,7 +482,7 @@ if (typeof LedgerChain === 'function') {
       'A1-js: Genesis must NOT contain format_version (I-07)');
     const sealData = { ...genesis };
     genesis.block_hash = clfComputeSeal(sealData);
-    genesis.signature = crypto.sign(genesis.block_hash, IDENTITY_SECRET);
+    genesis.identity_seal = crypto.mac(genesis.block_hash, IDENTITY_SECRET);
     t.assert(typeof genesis.block_hash === 'string' && genesis.block_hash.length === 64,
       'A2-js: Genesis uses block_hash not day_hash (I-17)');
     t.assert(genesis.day_hash === undefined,
@@ -536,13 +538,13 @@ if (typeof LedgerChain === 'function') {
         identity_secret_enc_fallback: 'enc:cafebabe' },
       prev_hash: '0'.repeat(64), entries: [] };
     g.block_hash = clfComputeSeal(g);
-    g.signature = crypto.sign(g.block_hash, IDENTITY_SECRET);
+    g.identity_seal = crypto.mac(g.block_hash, IDENTITY_SECRET);
     return g;
   };
   const buildNewDay = (prevHash) => {
     const d = { type: 'day', day_index: 1, date: '2026-07-03', prev_hash: prevHash, entries: [] };
     d.day_hash = clfComputeSeal(d);
-    d.signature = crypto.sign(d.day_hash, IDENTITY_SECRET);
+    d.identity_seal = crypto.mac(d.day_hash, IDENTITY_SECRET);
     return d;
   };
 
@@ -613,7 +615,7 @@ if (typeof LedgerChain === 'function') {
     delete genSealData.block_hash;
     delete genSealData.signature;
     genBlock.block_hash = crypto.seal(JSON.stringify(jsonSort(genSealData)));
-    genBlock.signature = crypto.sign(genBlock.block_hash, IDENTITY_SECRET);
+    genBlock.identity_seal = crypto.mac(genBlock.block_hash, IDENTITY_SECRET);
 
     const dayBlock = {
       type: 'day',
@@ -630,7 +632,7 @@ if (typeof LedgerChain === 'function') {
     delete daySealData.day_hash;
     delete daySealData.signature;
     dayBlock.day_hash = crypto.seal(JSON.stringify(jsonSort(daySealData)));
-    dayBlock.signature = crypto.sign(dayBlock.day_hash, IDENTITY_SECRET);
+    dayBlock.identity_seal = crypto.mac(dayBlock.day_hash, IDENTITY_SECRET);
 
     // Test genesis block
     {
@@ -677,6 +679,258 @@ if (typeof LedgerChain === 'function') {
     t.skip(!LedgerMerge, 'R5(merge): LedgerMerge._verifyBlockData not available');
   }
 }
+
+  // ══════════════════════════════════════════════════════════════
+  // I-06: content_hash required at format_version >= 0.4.0
+  // Group B — chain.js: content_hash verification + format_version gating
+  // ══════════════════════════════════════════════════════════════
+  console.log('\n=== I-06 Group B — content_hash format_version gating (chain.js) ===');
+
+  // Helper: compute content_hash the same way Python _verify_content_hash does
+  const computeContentHash = (data) => {
+    const content = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === 'content_hash') continue;
+      if (key.endsWith('_enc') && value !== null && value !== '') {
+        try {
+          content[key] = crypto.decrypt(value, MASTER_KEY);
+        } catch (_) {
+          content[key] = value;
+        }
+      } else if (Array.isArray(value)) {
+        content[key] = [...value].sort();
+      } else {
+        content[key] = value;
+      }
+    }
+    return crypto.sha256(jsonSort(content));
+  };
+
+  // Helper: build a genesis block with optional format_version
+  const buildContentHashGenesis = (formatVersion) => {
+    const g = {
+      type: 'genesis',
+      day_index: 0,
+      date: '2026-06-01',
+      identity: {
+        username: 'tester', email: 'test@example.com',
+        recovery_seed_enc: 'enc:seed', identity_pub_key: 'a'.repeat(64),
+        identity_secret_enc_fallback: 'enc:secret',
+      },
+      prev_hash: '0'.repeat(64),
+      entries: [],
+    };
+    if (formatVersion !== undefined) {
+      g.format_version = formatVersion;
+    }
+    // Seal: exclude hash keys + identity_seal + signature + format_version (I-07)
+    const sealData = { ...g };
+    delete sealData.block_hash;
+    delete sealData.day_hash;
+    delete sealData.identity_seal;
+    delete sealData.signature;
+    delete sealData.format_version;
+    g.block_hash = crypto.seal(jsonSort(sealData), MASTER_KEY);
+    g.identity_seal = crypto.mac(g.block_hash, IDENTITY_SECRET);
+    return g;
+  };
+
+  // Helper: build a day block with entries
+  const buildContentHashDay = (prevHash, entries, dayIndex, dateStr) => {
+    const d = {
+      type: 'day',
+      day_index: dayIndex,
+      date: dateStr,
+      prev_hash: prevHash,
+      entries: entries.map(e => ({
+        hash: entryHash(e.data),
+        data: e.data,
+      })),
+    };
+    const sealData = { ...d };
+    delete sealData.day_hash;
+    delete sealData.identity_seal;
+    delete sealData.signature;
+    delete sealData.format_version;
+    d.day_hash = crypto.seal(jsonSort(sealData), MASTER_KEY);
+    d.identity_seal = crypto.mac(d.day_hash, IDENTITY_SECRET);
+    return d;
+  };
+
+  // Helper: make entry data dict (with or without content_hash)
+  const mkEntryData = (opts) => {
+    const { title, start_epoch, duration, tags, comment } = opts;
+    const data = {
+      title: title || 'Test',
+      startTime_enc: crypto.encrypt(String(start_epoch || 1700000000000), MASTER_KEY),
+      endTime_enc: crypto.encrypt(String((start_epoch || 1700000000000) + (duration || 3600000)), MASTER_KEY),
+      duration: duration || 3600000,
+      tags: tags || [],
+      pauses_enc: crypto.encrypt('[]', MASTER_KEY),
+      metadata_enc: crypto.encrypt('{}', MASTER_KEY),
+      comment: comment || '',
+      media: [],
+    };
+    if (opts.includeContentHash !== false) {
+      data.content_hash = computeContentHash(data);
+    }
+    return data;
+  };
+
+  // ── B1: Entry without content_hash at 0.4.0 → _verifyBlockData returns false
+  {
+    console.log('\n  --- B1: Missing content_hash at 0.4.0 → rejects ---');
+    const genesis = buildContentHashGenesis('0.4.0');
+    const entryData = mkEntryData({ includeContentHash: false });
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    // B1: missing content_hash at 0.4.0 must cause verification failure
+    t.assert(!(await chain._verifyBlockData(day, 1, true)),
+      'B1: _verifyBlockData returns false for entry without content_hash at format_version 0.4.0');
+  }
+
+  // ── B2: Entry with valid content_hash at 0.4.0 → returns true
+  {
+    console.log('\n  --- B2: Valid content_hash at 0.4.0 → accepts ---');
+    const genesis = buildContentHashGenesis('0.4.0');
+    const entryData = mkEntryData({ title: 'Valid Entry', includeContentHash: true });
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    t.assert(await chain._verifyBlockData(day, 1),
+      'B2: _verifyBlockData returns true for valid content_hash at format_version 0.4.0');
+  }
+
+  // ── B3: Entry with wrong content_hash at 0.4.0 → returns false
+  {
+    console.log('\n  --- B3: Wrong content_hash at 0.4.0 → rejects ---');
+    const genesis = buildContentHashGenesis('0.4.0');
+    const entryData = mkEntryData({ title: 'Tampered', includeContentHash: true });
+    entryData.content_hash = 'f'.repeat(64);  // wrong hash
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    t.assert(!(await chain._verifyBlockData(day, 1)),
+      'B3: _verifyBlockData returns false for wrong content_hash at format_version 0.4.0');
+  }
+
+  // ── B4: Entry without content_hash at 0.3.0 → returns true (backward compat)
+  {
+    console.log('\n  --- B4: Missing content_hash at 0.3.0 → accepts (backward compat) ---');
+    const genesis = buildContentHashGenesis('0.3.0');
+    const entryData = mkEntryData({ includeContentHash: false });
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    t.assert(await chain._verifyBlockData(day, 1),
+      'B4: _verifyBlockData returns true for missing content_hash at format_version 0.3.0');
+  }
+
+  // ── B5: Entry without content_hash at absent format_version → returns true
+  {
+    console.log('\n  --- B5: Missing content_hash, no format_version → accepts ---');
+    const genesis = buildContentHashGenesis(undefined);
+    const entryData = mkEntryData({ includeContentHash: false });
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    t.assert(await chain._verifyBlockData(day, 1),
+      'B5: _verifyBlockData returns true for missing content_hash with no format_version');
+  }
+
+  // ── B6: Full verify() on 0.4.0 chain with missing content_hash → false
+  {
+    console.log('\n  --- B6: Full verify() rejects missing content_hash at 0.4.0 ---');
+    const genesis = buildContentHashGenesis('0.4.0');
+    const entryData = mkEntryData({ includeContentHash: false });
+    const day = buildContentHashDay(genesis.block_hash, [{ data: entryData }], 1, '2026-06-01');
+
+    const store = makeEmptyStore();
+    await store.set('ledger:blocks', [genesis, day]);
+    const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+    t.assert(!(await chain.verify()),
+      'B6: verify() returns false for chain with missing content_hash at format_version 0.4.0');
+  }
+
+  // ── D3 (extended): _verifyBlockData sync between chain.js and merge.js with content_hash ──
+  console.log('\n=== I-06 Group D3 — Duplication consistency with content_hash cases ===');
+
+  // Re-import LedgerMerge (the R5 block scope is closed)
+  let LedgerMerge2;
+  try {
+    const mod2 = await import('../src/ledger/merge.js');
+    LedgerMerge2 = mod2.LedgerMerge;
+  } catch (_err2) {
+    LedgerMerge2 = undefined;
+  }
+
+  if (typeof LedgerMerge2 !== 'undefined' && LedgerMerge2) {
+    {
+      // D3a: Both reject missing content_hash at 0.4.0
+      console.log('\n  --- D3a: Both reject missing content_hash at 0.4.0 ---');
+      const entryData = mkEntryData({ includeContentHash: false });
+      const day = {
+        type: 'day', day_index: 1, date: '2026-06-01',
+        prev_hash: '0'.repeat(64),
+        entries: [{ hash: entryHash(entryData), data: entryData }],
+      };
+      day.day_hash = crypto.seal(jsonSort(day), MASTER_KEY);
+      day.identity_seal = crypto.mac(day.day_hash, IDENTITY_SECRET);
+
+      const genesis = buildContentHashGenesis('0.4.0');
+      const store = makeEmptyStore();
+      await store.set('ledger:blocks', [genesis, day]);
+      const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+      const chainResult = await chain._verifyBlockData(day, 1, true);
+      const mergeResult = await LedgerMerge2._verifyBlockData(
+        day, crypto, MASTER_KEY, IDENTITY_SECRET, true);
+      t.assertEq(chainResult, mergeResult,
+        'D3a: chain and merge agree on missing content_hash at 0.4.0 (both should reject)');
+    }
+    {
+      // D3b: Both accept valid content_hash at 0.4.0
+      console.log('\n  --- D3b: Both accept valid content_hash at 0.4.0 ---');
+      const entryData = mkEntryData({ title: 'Valid', includeContentHash: true });
+      const day = {
+        type: 'day', day_index: 1, date: '2026-06-01',
+        prev_hash: '0'.repeat(64),
+        entries: [{ hash: entryHash(entryData), data: entryData }],
+      };
+      day.day_hash = crypto.seal(jsonSort(day), MASTER_KEY);
+      day.identity_seal = crypto.mac(day.day_hash, IDENTITY_SECRET);
+
+      const genesis = buildContentHashGenesis('0.4.0');
+      const store = makeEmptyStore();
+      await store.set('ledger:blocks', [genesis, day]);
+      const chain = new LedgerChain(crypto, store, MASTER_KEY, IDENTITY_SECRET);
+
+      const chainResult = await chain._verifyBlockData(day, 1);
+      const mergeResult = await LedgerMerge2._verifyBlockData(
+        day, crypto, MASTER_KEY, IDENTITY_SECRET, true);
+      t.assertEq(chainResult, mergeResult,
+        'D3b: chain and merge agree on valid content_hash at 0.4.0 (both should accept)');
+    }
+  } else {
+    t.skip(!LedgerMerge2, 'D3(merge): LedgerMerge._verifyBlockData not available');
+  }
 
 // ── Summary ─────────────────────────────────────────────────────────
 t.summary('LedgerChain');

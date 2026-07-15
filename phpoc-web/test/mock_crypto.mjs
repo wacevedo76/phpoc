@@ -61,12 +61,12 @@ export class MockCrypto {
     return this.seal(data, masterKeyHex) === sealHex;
   }
 
-  sign(data, identitySecretHex) {
+  mac(data, identitySecretHex) {
     return deterministicHash('sign:' + data + identitySecretHex);
   }
 
-  verifySignature(data, signatureHex, identitySecretHex) {
-    return this.sign(data, identitySecretHex) === signatureHex;
+  verifyMac(data, macHex, identitySecretHex) {
+    return this.mac(data, identitySecretHex) === macHex;
   }
 
   sha256(data) {
@@ -111,5 +111,17 @@ export class MockCrypto {
    */
   decryptWithCachedKey(ciphertextHex) {
     return this.decrypt(ciphertextHex);
+  }
+
+  generateSeed() {
+    return 'MOCK_SEED_' + Math.random().toString(36).slice(2);
+  }
+
+  deriveMasterKey(seed) {
+    return this.sha256(seed);
+  }
+
+  derivePdk(passphrase, iterations) {
+    return this.sha256(passphrase + String(iterations));
   }
 }

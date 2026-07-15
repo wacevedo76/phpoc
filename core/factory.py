@@ -60,7 +60,7 @@ class LedgerFactory:
         seal_data = {k: v for k, v in genesis.items() if k != "signature"}
         genesis_json = json.dumps(seal_data, sort_keys=True)
         genesis["block_hash"] = crypto.seal(genesis_json)
-        genesis["signature"] = crypto.sign(genesis["block_hash"], identity_secret)
+        genesis["identity_seal"] = crypto.mac(genesis["block_hash"], identity_secret)
         
         # Create directory first
         ledger_path.parent.mkdir(parents=True, exist_ok=True)

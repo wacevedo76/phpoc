@@ -168,7 +168,7 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
   const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
-    content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
+    content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
   }
   return content;
 }
@@ -197,7 +197,7 @@ function buildGenesisBlock(opts = {}) {
   const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
-    content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
+    content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
   }
   return content;
 }
@@ -746,7 +746,7 @@ console.log('\n=== Group B — Merge on Genesis Match ===');
 
       const checkData = {};
       for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature') checkData[k] = v;
+        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
       }
       if (!crypto.verifySeal(jsonSort(checkData), block[hashKey], MASTER_KEY)) {
         sealsValid = false;

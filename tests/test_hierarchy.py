@@ -85,8 +85,8 @@ class TestHierarchyAndIndex(unittest.TestCase):
         # 2. Check all blocks have signatures
         for record in ledger_data:
             # Genesis is signed in Factory, others in sync_day
-            self.assertIn("signature", record)
-            self.assertNotEqual(record["signature"], "")
+            seal_val = record.get("identity_seal") or record.get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {record}")
+            self.assertNotEqual(record["identity_seal"], "")
             
         # 3. Full verification (HMAC seals + Signatures)
         self.assertTrue(self.ledger.verify())

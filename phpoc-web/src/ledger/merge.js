@@ -21,6 +21,41 @@
 import { getBlockHash, jsonSort, computeEntryHash } from './utils.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
 
+// Default format_version when genesis has none (pre-spec, implicit 0.2.0)
+const DEFAULT_FORMAT_VERSION = [0, 2, 0];
+// Content hash is required at this version and above
+const CONTENT_HASH_REQUIRED_VERSION = [0, 4, 0];
+
+/**
+ * Parse format_version from a genesis block into an array of ints.
+ * Returns [0, 2, 0] if genesis is null/undefined or has no format_version.
+ */
+function _parseFormatVersion(genesis) {
+  if (!genesis) return DEFAULT_FORMAT_VERSION;
+  const fv = genesis.format_version;
+  if (typeof fv !== 'string') return DEFAULT_FORMAT_VERSION;
+  try {
+    return fv.split('.').map(s => parseInt(s, 10));
+  } catch (_) {
+    return DEFAULT_FORMAT_VERSION;
+  }
+}
+
+/**
+ * Return true if the genesis format_version >= minimum (segment-wise int comparison).
+ */
+function _isFormatVersionAtLeast(genesis, minimum) {
+  const actual = _parseFormatVersion(genesis);
+  const maxLen = Math.max(actual.length, minimum.length);
+  for (let i = 0; i < maxLen; i++) {
+    const a = actual[i] || 0;
+    const m = minimum[i] || 0;
+    if (a > m) return true;
+    if (a < m) return false;
+  }
+  return true; // equal
+}
+
 export class LedgerMerge {
   /**
    * Merge two divergent ledger chains that share the same genesis block.
@@ -208,9 +243,9 @@ export class LedgerMerge {
         const dayJson = jsonSort(dayContent);
         dayContent.day_hash = await crypto.seal(dayJson, masterKey);
 
-        // Sign with identity secret if available
+        // Identity seal if identity secret is available
         if (identitySecret) {
-          dayContent.signature = await crypto.sign(dayContent.day_hash, identitySecret);
+          dayContent.identity_seal = await crypto.mac(dayContent.day_hash, identitySecret);
         }
 
         mergedChain.push(dayContent);
@@ -258,8 +293,9 @@ export class LedgerMerge {
   }
 
   /**
-   * Verify a single ledger chain: seal integrity, prev_hash linkage,
-   * entry hashes, and optional identity signatures for every block.
+   * Verify a single chain: seal integrity, prev_hash linkage,
+   * entry hashes, content_hash verification, and optional identity seals
+   * for every block.
    *
    * Mirrors LedgerChain._verifyBlockData() but operates on raw arrays
    * so the merge module stays standalone (no StorageBackend dependency).
@@ -276,8 +312,12 @@ export class LedgerMerge {
       return;  // Empty chain is valid (trivially)
     }
 
+    // Extract format_version from genesis (block 0) for content_hash gating
+    const genesis = chain[0];
+    const requireContentHash = _isFormatVersionAtLeast(genesis, CONTENT_HASH_REQUIRED_VERSION);
+
     // Block 0: seal + entry hashes
-    if (!LedgerMerge._verifyBlockData(chain[0], crypto, masterKey, identitySecret)) {
+    if (!LedgerMerge._verifyBlockData(chain[0], crypto, masterKey, identitySecret, requireContentHash)) {
       throw new Error(
         `${label} chain validation failed: block 0 seal or entry hash is invalid`
       );
@@ -295,7 +335,7 @@ export class LedgerMerge {
         );
       }
 
-      if (!LedgerMerge._verifyBlockData(current, crypto, masterKey, identitySecret)) {
+      if (!LedgerMerge._verifyBlockData(current, crypto, masterKey, identitySecret, requireContentHash)) {
         throw new Error(
           `${label} chain validation failed: block ${i} seal, signature, or entry hash is invalid`
         );
@@ -304,7 +344,8 @@ export class LedgerMerge {
   }
 
   /**
-   * Verify a single block's data: seal, optional signature, and entry hashes.
+   * Verify a single block's data: seal, optional identity seal, entry hashes,
+   * and content_hash verification.
    *
    * NOTE: This logic is intentionally duplicated from chain.js as
    * LedgerChain._verifyBlockData() because LedgerMerge is a standalone
@@ -312,17 +353,20 @@ export class LedgerMerge {
    * in sync — any bug fix in chain.js must be mirrored here.
    *
    * Checks performed:
-   *   1. Seal = HMAC of sorted keys (minus seal key + signature + format_version)
-   *   2. Signature over seal (if identitySecret is provided)
+   *   1. Seal = HMAC of sorted keys (minus seal key + identity_seal/signature + format_version)
+   *   2. Identity seal over seal (if identitySecret is provided)
    *   3. Entry hash = SHA-256 of pretty-printed entry data
+   *   4. Content hash verification — required if requireContentHash is true,
+   *      verified when present otherwise
    *
    * @param {object} block - Block dict.
    * @param {object} crypto - CryptoService-like object.
    * @param {string} masterKey - Hex master key.
    * @param {string|null} [identitySecret=null]
+   * @param {boolean} [requireContentHash=false] - If true, content_hash is mandatory.
    * @returns {boolean} True if the block is valid.
    */
-  static _verifyBlockData(block, crypto, masterKey, identitySecret = null) {
+  static _verifyBlockData(block, crypto, masterKey, identitySecret = null, requireContentHash = false) {
     const type = block.type || 'day';
     let hashKey;
     if (type === 'genesis') {
@@ -337,11 +381,11 @@ export class LedgerMerge {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, signature, and format_version
+    // Build check data: everything except the hash key, identity_seal, signature, and format_version
     // I-07: format_version excluded from seal computation.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'format_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') {
         checkData[k] = v;
       }
     }
@@ -351,26 +395,94 @@ export class LedgerMerge {
       return false;
     }
 
-    // 2. Identity signature (only if identity secret is set)
+    // 2. Identity seal (supports both 'identity_seal' and legacy 'signature')
     if (identitySecret) {
-      if (!block.signature) {
+      const sealValue = block.identity_seal || block.signature;
+      if (!sealValue) {
         return false;
       }
-      if (!crypto.verifySignature(block[hashKey], block.signature, identitySecret)) {
+      if (!crypto.verifyMac(block[hashKey], sealValue, identitySecret)) {
         return false;
       }
     }
 
     // 3. Entry hashes for day blocks
+    // 4. Content hash verification
     if (type === 'day' && block.entries) {
       for (const entry of block.entries) {
         const expectedHash = computeEntryHash(entry.data, crypto);
         if (expectedHash !== entry.hash) {
           return false;
         }
+
+        // Content hash check
+        const data = entry.data;
+        const hasContentHash = data.content_hash !== undefined && data.content_hash !== null && data.content_hash !== '';
+
+        if (requireContentHash && !hasContentHash) {
+          // format_version >= 0.4.0: content_hash is mandatory
+          return false;
+        }
+
+        if (hasContentHash) {
+          if (!LedgerMerge._verifyContentHash(data, crypto, masterKey)) {
+            return false;
+          }
+        }
       }
     }
 
     return true;
+  }
+
+  /**
+   * Verify the content_hash of an entry's data dict.
+   *
+   * Uses the extensible algorithm first, then falls back to the legacy
+   * v0.3.0 algorithm for pre-existing entries.
+   */
+  static _verifyContentHash(data, crypto, masterKey) {
+    // Extensible algorithm: decrypt _enc fields, sort lists, exclude content_hash
+    const content = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === 'content_hash') continue;
+      if (key.endsWith('_enc') && value !== null && value !== '') {
+        try {
+          content[key] = crypto.decrypt(value, masterKey);
+        } catch (_) {
+          content[key] = value;
+        }
+      } else if (Array.isArray(value)) {
+        content[key] = [...value].sort();
+      } else {
+        content[key] = value;
+      }
+    }
+    const computed = crypto.sha256(jsonSort(content));
+    if (computed === data.content_hash) return true;
+
+    // Fallback: legacy v0.3.0 algorithm — hardcoded field order,
+    // _enc values decrypted, JSON.stringify with indent=2 and no sort_keys.
+    const decrypt = (encVal) => {
+      if (!encVal) return encVal;
+      try {
+        return crypto.decrypt(encVal, masterKey);
+      } catch (_) {
+        return encVal;
+      }
+    };
+    const legacyObj = {
+      title: data.title || '',
+      startTime_enc: decrypt(data.startTime_enc),
+      endTime_enc: decrypt(data.endTime_enc),
+      duration: data.duration || 0,
+      tags: [...(data.tags || [])].sort(),
+      pauses_enc: decrypt(data.pauses_enc),
+      metadata_enc: decrypt(data.metadata_enc),
+      comment: data.comment || '',
+      media: [...(data.media || [])].sort(),
+    };
+    const legacyHash = crypto.sha256(JSON.stringify(legacyObj, null, 2));
+    return legacyHash === data.content_hash;
   }
 }

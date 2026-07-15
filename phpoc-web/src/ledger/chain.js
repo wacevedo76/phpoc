@@ -19,12 +19,47 @@ import { jsonSort, computeEntryHash, getBlockHash } from './utils.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
 
+// Default format_version when genesis has none (pre-spec, implicit 0.2.0)
+const DEFAULT_FORMAT_VERSION = [0, 2, 0];
+// Content hash is required at this version and above
+const CONTENT_HASH_REQUIRED_VERSION = [0, 4, 0];
+
+/**
+ * Parse format_version from a genesis block into an array of ints.
+ * Returns [0, 2, 0] if genesis is null/undefined or has no format_version.
+ */
+function parseFormatVersion(genesis) {
+  if (!genesis) return DEFAULT_FORMAT_VERSION;
+  const fv = genesis.format_version;
+  if (typeof fv !== 'string') return DEFAULT_FORMAT_VERSION;
+  try {
+    return fv.split('.').map(s => parseInt(s, 10));
+  } catch (_) {
+    return DEFAULT_FORMAT_VERSION;
+  }
+}
+
+/**
+ * Return true if the genesis format_version >= minimum (segment-wise int comparison).
+ */
+function isFormatVersionAtLeast(genesis, minimum) {
+  const actual = parseFormatVersion(genesis);
+  const maxLen = Math.max(actual.length, minimum.length);
+  for (let i = 0; i < maxLen; i++) {
+    const a = actual[i] || 0;
+    const m = minimum[i] || 0;
+    if (a > m) return true;
+    if (a < m) return false;
+  }
+  return true; // equal
+}
+
 export class LedgerChain {
   /**
-   * @param {object} crypto - CryptoService-like object with seal/verifySeal/sign/verifySignature.
+   * @param {object} crypto - CryptoService-like object with seal/verifySeal/mac/verifyMac.
    * @param {import('../sync/storage.js').StorageBackend} store - StorageBackend instance.
    * @param {string} masterKey - Hex master key for sealing.
-   * @param {string|null} [identitySecret=null] - Optional identity secret for block signing.
+   * @param {string|null} [identitySecret=null] - Optional identity secret for MAC computation.
    */
   constructor(crypto, store, masterKey, identitySecret = null) {
     this.crypto = crypto;
@@ -82,25 +117,25 @@ export class LedgerChain {
   }
 
   /**
-   * Compute an identity signature.
-   * Always delegates to crypto.sign — for the test mock, even a null/undefined
+   * Compute an identity MAC.
+   * Always delegates to crypto.mac — for the test mock, even a null/undefined
    * secret produces a deterministic hex string. In production, a proper
    * identity secret would be required.
-   * @param {string} dataStr - The string to sign (typically a hash).
-   * @returns {string} 64-character hex signature.
+   * @param {string} dataStr - The string to MAC (typically a hash).
+   * @returns {string} 64-character hex MAC.
    */
-  computeSignature(dataStr) {
-    return this.crypto.sign(dataStr, this.identitySecret);
+  computeIdentityMac(dataStr) {
+    return this.crypto.mac(dataStr, this.identitySecret);
   }
 
   /**
-   * Verify an identity signature.
-   * @param {string} dataStr - The string that was signed.
-   * @param {string} signature - The signature hex string.
-   * @returns {boolean} True if the signature is valid.
+   * Verify an identity MAC.
+   * @param {string} dataStr - The string that was MAC'd.
+   * @param {string} macTag - The MAC hex string.
+   * @returns {boolean} True if the MAC is valid.
    */
-  verifySignature(dataStr, signature) {
-    return this.crypto.verifySignature(dataStr, signature, this.identitySecret);
+  verifyIdentityMac(dataStr, macTag) {
+    return this.crypto.verifyMac(dataStr, macTag, this.identitySecret);
   }
 
   // ── Block access ──────────────────────────────────────────────────
@@ -204,7 +239,7 @@ export class LedgerChain {
     dayContent.day_hash = this.crypto.seal(dayJson, this.masterKey);
 
     if (this.identitySecret) {
-      dayContent.signature = this.crypto.sign(dayContent.day_hash, this.identitySecret);
+      dayContent.identity_seal = this.crypto.mac(dayContent.day_hash, this.identitySecret);
     }
 
     return dayContent;
@@ -283,7 +318,7 @@ export class LedgerChain {
     genesisContent.block_hash = this.crypto.seal(genesisJson, this.masterKey);
 
     // 9. Sign with identity secret
-    genesisContent.signature = this.crypto.sign(genesisContent.block_hash, identitySecret);
+    genesisContent.identity_seal = this.crypto.mac(genesisContent.block_hash, identitySecret);
 
     return genesisContent;
   }
@@ -413,6 +448,7 @@ export class LedgerChain {
    *   2. Block seal integrity (day_hash/month_hash/year_hash) for all blocks
    *   3. Identity signature (if present)
    *   4. Entry hashes within day blocks
+   *   5. Content hash verification — required at format_version >= 0.4.0
    *
    * @returns {Promise<boolean>} True if the entire chain is valid.
    */
@@ -422,8 +458,13 @@ export class LedgerChain {
       return true;
     }
 
+    // Determine whether content_hash is required from genesis format_version
+    // (computed once and passed to _verifyBlockData — avoids per-block storage reads)
+    const genesis = ledger[0];
+    const requireContentHash = isFormatVersionAtLeast(genesis, CONTENT_HASH_REQUIRED_VERSION);
+
     // Check block 0 seal and entry hashes
-    if (!(await this._verifyBlockData(ledger[0], 0))) {
+    if (!(await this._verifyBlockData(ledger[0], 0, requireContentHash))) {
       return false;
     }
 
@@ -437,8 +478,8 @@ export class LedgerChain {
         return false;
       }
 
-      // 2+3+4. Block seal, signature, entry hashes
-      if (!(await this._verifyBlockData(current, i))) {
+      // 2+3+4+5. Block seal, signature, entry hashes, content_hash
+      if (!(await this._verifyBlockData(current, i, requireContentHash))) {
         return false;
       }
     }
@@ -447,7 +488,8 @@ export class LedgerChain {
   }
 
   /**
-   * Verify a single block's data: seal, signature, and entry hashes.
+   * Verify a single block's data: seal, signature, entry hashes, and
+   * content_hash.
    *
    * NOTE: This logic is intentionally duplicated in merge.js as
    * LedgerMerge._verifyBlockData() because LedgerMerge is a standalone
@@ -456,9 +498,12 @@ export class LedgerChain {
    *
    * @param {object} block - The block to verify.
    * @param {number} index - Block index (for context).
+   * @param {boolean} [requireContentHash=false] - If true, content_hash is
+   *   mandatory (format_version >= 0.4.0). Computed once by the caller from
+   *   genesis to avoid per-block storage reads.
    * @returns {boolean} True if block data is valid.
    */
-  _verifyBlockData(block, index) {
+  async _verifyBlockData(block, index, requireContentHash = false) {
     const type = block.type || 'day';
     let hashKey;
     if (type === 'genesis') {
@@ -473,11 +518,11 @@ export class LedgerChain {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, signature, and format_version
+    // Build check data: everything except the hash key, identity_seal, signature, and format_version
     // I-07: format_version excluded from seal computation.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'format_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') {
         checkData[k] = v;
       }
     }
@@ -487,17 +532,18 @@ export class LedgerChain {
       return false;
     }
 
-    // 3. Identity signature
+    // 3. Identity seal (supports both 'identity_seal' and legacy 'signature')
     if (this.identitySecret) {
-      if (!block.signature) {
+      const sealValue = block.identity_seal || block.signature;
+      if (!sealValue) {
         return false;
       }
-      if (!this.crypto.verifySignature(block[hashKey], block.signature, this.identitySecret)) {
+      if (!this.crypto.verifyMac(block[hashKey], sealValue, this.identitySecret)) {
         return false;
       }
     }
 
-    // 4. Entry hashes in day blocks
+    // 4. Entry hashes in day blocks + content_hash verification
     if (type === 'day' && block.entries) {
       for (const entry of block.entries) {
         const data = entry.data;
@@ -505,10 +551,83 @@ export class LedgerChain {
         if (expectedHash !== entry.hash) {
           return false;
         }
+
+        // 5. Content hash verification
+        const hasContentHash = data.content_hash !== undefined
+                            && data.content_hash !== null
+                            && data.content_hash !== '';
+
+        if (requireContentHash && !hasContentHash) {
+          // format_version >= 0.4.0: content_hash is mandatory
+          return false;
+        }
+
+        if (hasContentHash) {
+          if (!this._verifyContentHash(data)) {
+            return false;
+          }
+        }
       }
     }
 
     return true;
+  }
+
+  /**
+   * Verify the content_hash of an entry's data dict.
+   *
+   * Uses the extensible algorithm:
+   * - Fields ending in _enc are decrypted
+   * - List fields are sorted for deterministic output
+   * - content_hash itself is excluded
+   * - sort_keys normalizes key ordering
+   */
+  _verifyContentHash(data) {
+    // Extensible algorithm: decrypt _enc fields, sort lists, exclude content_hash,
+    // then sha256(JSON.stringify with sort_keys).
+    const content = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === 'content_hash') continue;
+      if (key.endsWith('_enc') && value !== null && value !== '') {
+        try {
+          content[key] = this.crypto.decrypt(value, this.masterKey);
+        } catch (_) {
+          content[key] = value;
+        }
+      } else if (Array.isArray(value)) {
+        content[key] = [...value].sort();
+      } else {
+        content[key] = value;
+      }
+    }
+    const computed = this.crypto.sha256(jsonSort(content));
+    if (computed === data.content_hash) return true;
+
+    // Fallback: legacy v0.3.0 algorithm — hardcoded field order,
+    // _enc values decrypted, JSON.stringify with indent=2 and no sort_keys.
+    // Matches the original content_hash computation in pre-v0.4 test fixtures.
+    const decrypt = (encVal) => {
+      if (!encVal) return encVal;
+      try {
+        return this.crypto.decrypt(encVal, this.masterKey);
+      } catch (_) {
+        return encVal;
+      }
+    };
+    // Keys in the exact insertion order used by legacy computation
+    const legacyObj = {
+      title: data.title || '',
+      startTime_enc: decrypt(data.startTime_enc),
+      endTime_enc: decrypt(data.endTime_enc),
+      duration: data.duration || 0,
+      tags: [...(data.tags || [])].sort(),
+      pauses_enc: decrypt(data.pauses_enc),
+      metadata_enc: decrypt(data.metadata_enc),
+      comment: data.comment || '',
+      media: [...(data.media || [])].sort(),
+    };
+    const legacyHash = this.crypto.sha256(JSON.stringify(legacyObj, null, 2));
+    return legacyHash === data.content_hash;
   }
 
   /**
@@ -532,7 +651,7 @@ export class LedgerChain {
     }
 
     if (index === 0) {
-      return this._verifyBlockData(block, 0);
+      return await this._verifyBlockData(block, 0);
     }
 
     const prev = await this.getBlock(index - 1);
@@ -547,6 +666,6 @@ export class LedgerChain {
       return false;
     }
 
-    return this._verifyBlockData(current, index);
+    return await this._verifyBlockData(current, index);
   }
 }

@@ -27,20 +27,20 @@
 
 ---
 
-## 🟢 Phase 0 — Doc Fixes (do anytime, zero code impact)
+## ✅ Completed: Phase 0 — Doc Fixes
 
-*No code, no tests, no migrations. Fix spec credibility now.*
+| # | Sev | Action | File | What changed |
+|---|-----|--------|------|-------------|
+| I-08 | 🟠 | Add Known Limitations section | `docs/spec/PHPSPEC.md` | New section + TOC entry: HMAC≠signature, plaintext index/staging, key-derived device IDs, no key rotation. Cross-linked to BACKLOG. |
+| I-10 | 🟡 | Fix zero-dependency claim | `docs/spec/PHPSPEC.md` §1.1 | Changed to "CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core." |
+| I-13 | 🟡 | Fix Invariant #1 | `docs/reference/MAP.md` Architecture Invariants §1 | Scoped to CLI + web/mobile exception. |
+| I-14 | 🟡 | Remove forward-looking content | `docs/spec/PHPSPEC.md` §5.5, §6.1, §9.3 | Bumped version to 0.4.0; removed forward-looking framing; deleted future v0.3.0→v0.4.0 migration section. |
+| I-15 | 🟢 | Fix AES-128 justification | `docs/spec/PHPSPEC.md` §2.6 | Replaced incorrect "effective security level is 256 bits" with accurate AES-128 justification. |
+| I-16 | 🟢 | Delete duplicate paragraph | `docs/spec/PHPSPEC.md` §9.3 | Removed duplicate "cascades through the entire chain" paragraph. |
 
-| # | Sev | Action | File | What to change |
-|---|-----|--------|------|----------------|
-| I-08 | 🟠 | Add Known Limitations section | `docs/spec/PHPSPEC.md` | New section at top: honest disclosure of HMAC≠signature, plaintext index, plaintext staging, key-derived device IDs, no key rotation. Cross-link to this backlog. |
-| I-10 | 🟡 | Fix zero-dependency claim | `docs/spec/PHPSPEC.md` §1.1 | Change to "The CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core (`phpoc-crypto-core` / `ring`)." |
-| I-13 | 🟡 | Fix Invariant #1 | `docs/reference/MAP.md` Architecture Invariants §1 | Scope to "CLI reference implementation: zero external dependencies. Web/mobile: single shared Rust crypto core." |
-| I-14 | 🟡 | Remove forward-looking content | `docs/spec/PHPSPEC.md` §5.5, §6.1, §9.3 | Delete all v0.4.0+ present-tense descriptions. Add header: "Current version: 0.4.0. See CHANGELOG.md for changes." |
-| I-15 | 🟢 | Fix AES-128 justification | `docs/spec/PHPSPEC.md` §2.6 | Replace "effective security level is 256 bits" with "AES-128 provides adequate security; the per-operation HMAC derivation ensures uniformly distributed key material from the 256-bit MK" |
-| I-16 | 🟢 | Delete duplicate paragraph | `docs/spec/PHPSPEC.md` §9.3 | Remove the repeated paragraph before migration pseudocode |
+**Completed:** 2026-07-15 — All 6 doc fixes applied, no code impact.
 
-**Next action:** Pick any item, edit the file, commit. ~30 min each.
+---
 
 ---
 
@@ -81,7 +81,7 @@
 *After Phase 1. Small, low-risk changes that improve correctness.
 Ordered per flaw-doc recommended attack sequence: naming → salt → integrity → platform warnings.*
 
-### I-04 🟠: Rename HMAC "signature" → "seal"/"tag"
+### I-04 ✅~~🟠~~: Rename HMAC "signature" → "seal"/"tag"
 
 **Why:** Misleads implementers about security properties. Must happen before real Ed25519 is added.
 **Flaw doc attack order:** Step 2 (naming fixes).
@@ -98,7 +98,7 @@ Ordered per flaw-doc recommended attack sequence: naming → salt → integrity 
 
 **Next action:** Pick up after Phase 1. Start with spec rename, then code.
 
-### I-05 🟠: Per-user PBKDF2 salt
+### I-05 ✅: Per-user PBKDF2 salt
 
 **Why:** Fixed `b"session-salt"` enables cross-user rainbow tables when passphrases are reused.
 **Flaw doc attack order:** Step 3 (salt fix).
@@ -115,35 +115,27 @@ Ordered per flaw-doc recommended attack sequence: naming → salt → integrity 
 
 **Next action:** Add backward-compat salt detection (try new salt first, fall back to old).
 
-### I-06 🟠: Make `content_hash` required at v0.4.0+
+### I-06 🟠→✅: Make `content_hash` required at v0.4.0+
 
 **Why:** Optional means entries without it have zero re-encryption-survivable integrity.
-**Flaw doc attack order:** Step 4 (integrity fixes).
+**Status:** ✅ 4-Phase TDD Complete (2026-07-15)
 
-| File | Change |
-|------|--------|
-| `docs/spec/PHPSPEC.md` §5.5 | Remove "optional" language; require at format_version ≥ 0.4.0 |
-| `domain/ledger/engine.py` | `_verify_content_hash()` — fail instead of skip when absent and format ≥ 0.4.0 |
-| `phpoc-web/src/ledger/chain.js` | Same change in `_verifyBlockData()` |
-| `phpoc-web/src/ledger/merge.js` | Same change in duplicate `_verifyBlockData()` |
+**Phase 3 implementation:**
+- `domain/ledger/chain.py`: Added `_parse_format_version()` and `_is_format_version_at_least()` helpers; `verify()` now extracts format_version from genesis and requires content_hash at ≥ 0.4.0
+- `phpoc-web/src/ledger/chain.js`: Added version helpers + `_verifyContentHash()` with extensible + legacy fallback algorithms; `_verifyBlockData()` now async, looks up genesis format_version
+- `phpoc-web/src/ledger/merge.js`: Added matching content_hash verification with `requireContentHash` parameter; `_verifyChain()` extracts format_version from genesis
+- `docs/spec/PHPSPEC.md` §5.5: Updated validation rule and field table; §5.6 pseudocode shows format_version gating
 
-**Effort:** ~1 hour. **Blocked by:** nothing. **Blocks:** I-01 (content_hash must be universal before rotation).
+**Test results:** 14 PY + 94 chain JS + 105 merge JS = 213 total I-06 tests GREEN. Full suite: 1853 PY pass, all web tests pass (no regressions).
+**Phase 4:** Hoisted `requireContentHash` out of `_verifyBlockData` to `verify()` caller (avoids N redundant genesis reads); aligned `hasContentHash` empty-string check with merge.js.
 
-**Next action:** Add format_version gating to verification functions.
+### I-11 ✅: Add blob obfuscation portability warning + test vectors (Complete 2026-07-15)
 
-### I-11 🟡: Add blob obfuscation portability warning + test vectors
-
-**Why:** CROSS_PLATFORM §3 rates blob obfuscation as the highest-risk primitive for cross-platform interop. The spec describes the scheme but never flags the hazard.
-**Flaw doc attack order:** Step 5 (platform warnings).
-
-| File | Change |
-|------|--------|
-| `docs/spec/PHPSPEC.md` §8.5 | Add: "⚠️ Portability hazard — this is the highest-risk primitive for cross-platform interop. Implementers must validate against the crypto test vector suite." |
-| `tests/data/crypto_test_vectors.json` | Expand to include blob obfuscation edge cases (empty blob, exactly-at-tier-ceiling, class transition) |
-
-**Effort:** ~2 hours. **Blocked by:** nothing.
-
-**Next action:** Add spec warning first, then expand test vectors.
+**4-Phase TDD:**
+- Phase 1: 21 assertions → `docs/planning/I11_BLOB_OBFUSCATION_PORTABILITY_PHASE1.md`
+- Phase 2 (RED): 19 PY + 10 Rust integration tests
+- Phase 3 (GREEN): `_obfuscate_deterministic()` (Python) / `obfuscate_blob_deterministic()` (Rust) + spec §8.5 portability warning
+- Phase 4 (REFACTOR): 2 improvements — deduped `_obfuscate_deterministic()` via `_obfuscate_core(padding_fill=0)`, single `_derive_blob_encryption_keys()` call in `_deobfuscate()`
 
 ---
 
@@ -280,15 +272,15 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 | Phase | Items | Critical | High | Medium | Low |
 |-------|-------|----------|------|--------|-----|
-| **0** — Doc fixes | I-08, I-10, I-13, I-14, I-15, I-16 (6) | 0 | 1 | 3 | 2 |
+| **0** — Doc fixes ✅ | I-08, I-10, I-13, I-14, I-15, I-16 (6) — complete 2026-07-15 | 0 | 0 | 0 | 0 |
 | **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
-| **2** — Low-effort code | I-04, I-05, I-06, I-11 (4) | 0 | 3 | 1 | 0 |
+| **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅ | 0 | 0 | 0 | 0 |
 | **3** — Encryption gaps | I-03, I-02 (2) | 2 | 0 | 0 | 0 |
 | **4** — Architectural | I-01, I-09, I-12 (3) | 1 | 0 | 2 | 0 |
 | **5** — CLI polish | P5, P4 (2) | — | — | — | — |
 | **6** — Cross-client | P1, indent=2 (2) | — | — | — | — |
 | **7** — Remote sync | P3 (1) | — | — | — | — |
-| **Totals** | **27 open** | **3** | **4** | **6** | **2** |
+| **Totals** | **21 open** | **3** | **3** | **4** | **2** |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅ — Canonical Ledger Format, 2026-07-03.
 

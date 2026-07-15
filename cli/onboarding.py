@@ -495,6 +495,8 @@ def _extract_identity_from_genesis(ledger_blocks: list, mk: bytes, identity_path
 def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
     """Set a new passphrase and re-seal/re-sign the ledger (same as ph recover).
 
+    Uses per-user PBKDF2 salt derived from identity_pub_key when available.
+
     Returns True on success.
     """
     print("\n=== Step 6: Setting New Passphrase ===")
@@ -504,8 +506,10 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
         if p1 == p2:
             break
         print("  Passphrases do not match. Try again.")
-    
-    pdk = hashlib.pbkdf2_hmac("sha256", p1.encode(), b"session-salt", 600000, 32)
+
+    from security.auth import get_pdk_salt_from_genesis
+    salt = get_pdk_salt_from_genesis(ledger_path)
+    pdk = hashlib.pbkdf2_hmac("sha256", p1.encode(), salt, 600000, 32)
     
     try:
         ledger_data = json.loads(ledger_path.read_text())
@@ -536,15 +540,17 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
     identity_secret = ledger_domain._get_identity_secret()
     
     # Re-seal and re-sign genesis
+    # I-17: genesis uses block_hash (not day_hash). I-07: exclude format_version.
+    genesis_hash_key = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
     check_data = {
         k: v for k, v in ledger_data[0].items()
-        if k not in ["day_hash", "signature"]
+        if k not in (genesis_hash_key, "signature", "format_version")
     }
-    ledger_data[0]["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
+    ledger_data[0][genesis_hash_key] = crypto.seal(json.dumps(check_data, sort_keys=True))
     
     if identity_secret:
-        ledger_data[0]["signature"] = crypto.sign(
-            ledger_data[0]["day_hash"], identity_secret
+        ledger_data[0]["identity_seal"] = crypto.mac(
+            ledger_data[0][genesis_hash_key], identity_secret
         )
     
     # Re-chain all subsequent blocks
@@ -560,14 +566,15 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
             "year_hash"
         )
         
+        # I-07: format_version excluded from seal. identity_seal also excluded.
         seal_data = {
             k: v for k, v in block.items()
-            if k not in [hash_key, "signature"]
+            if k not in (hash_key, "identity_seal", "signature", "format_version")
         }
         block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
         
-        if identity_secret and block.get("signature") is not None:
-            block["signature"] = crypto.sign(block[hash_key], identity_secret)
+        if identity_secret and block.get("identity_seal") is not None:
+            block["identity_seal"] = crypto.mac(block[hash_key], identity_secret)
     
     ledger_path.write_text(json.dumps(ledger_data, indent=2))
     print("  Passphrase set. Ledger re-sealed and re-signed.")

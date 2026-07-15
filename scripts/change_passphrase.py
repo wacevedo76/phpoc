@@ -74,9 +74,12 @@ def main():
             break
         print("Passphrases do not match or too short. Try again.")
 
-    # 4. Derive new PDK
+    # 4. Derive new PDK with per-user salt (if identity_pub_key available)
+    from security.auth import get_pdk_salt_from_genesis
+    salt = get_pdk_salt_from_genesis(LEDGER_FILE)
+
     new_pdk = hashlib.pbkdf2_hmac(
-        'sha256', new_pp.encode(), b"session-salt", 600000, 32
+        'sha256', new_pp.encode(), salt, 600000, 32
     )
     print(f"✅ New PDK derived ({len(new_pdk)} bytes)")
 
@@ -115,7 +118,7 @@ def main():
         # Re-seal and re-sign
         genesis_json = json.dumps(genesis, sort_keys=True)
         genesis["day_hash"] = crypto.seal(genesis_json)
-        genesis["signature"] = crypto.sign(genesis["day_hash"], identity_secret)
+        genesis["identity_seal"] = crypto.mac(genesis["day_hash"], identity_secret)
 
         # Write back
         LEDGER_FILE.write_text(json.dumps([genesis], indent=2))

@@ -56,7 +56,15 @@ class MockCrypto {
   }
 
   // sign() is not needed for genesis gate (identitySecret=null), but must exist for API compat
+  mac(data, identitySecretHex) {
+    return this.sign(data, identitySecretHex);
+  }
+
   sign(hash, secret) { return 'mock-sig'; }
+
+  verifyMac(data, macHex, identitySecretHex) {
+    return this.verifySignature(data, macHex, identitySecretHex);
+  }
 
   verifySignature(hash, sig, secret) { return true; }
 

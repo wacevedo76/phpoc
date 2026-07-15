@@ -429,7 +429,7 @@ def main():
         ledger_domain = LedgerDomain(crypto, store)
         identity_secret = ledger_domain._get_identity_secret()
         if identity_secret:
-            ledger_data[0]["signature"] = crypto.sign(ledger_data[0]["day_hash"], identity_secret)
+            ledger_data[0]["identity_seal"] = crypto.sign(ledger_data[0]["day_hash"], identity_secret)
 
         # 4. Re-chain all subsequent blocks: update prev_hash, re-seal, re-sign
         for i in range(1, len(ledger_data)):
@@ -451,8 +451,8 @@ def main():
             block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
             # Re-sign if identity is available
-            if identity_secret and block.get("signature") is not None:
-                block["signature"] = crypto.sign(block[hash_key], identity_secret)
+            if identity_secret and block.get("identity_seal") is not None:
+                block["identity_seal"] = crypto.sign(block[hash_key], identity_secret)
 
         LEDGER_PATH.write_text(json.dumps(ledger_data, indent=2))
 

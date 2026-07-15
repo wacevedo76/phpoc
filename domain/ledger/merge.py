@@ -226,11 +226,11 @@ class LedgerMerge:
                         else identity_secret
                     )
                     if inspect.iscoroutinefunction(crypto.sign):
-                        day_content["signature"] = await crypto.sign(
+                        day_content["identity_seal"] = await crypto.mac(
                             day_content["day_hash"], identity_bytes
                         )
                     else:
-                        day_content["signature"] = crypto.sign(
+                        day_content["identity_seal"] = crypto.mac(
                             day_content["day_hash"], identity_bytes
                         )
 
@@ -340,31 +340,31 @@ class LedgerMerge:
         else:
             hash_key = "day_hash"
 
-        # Build check data: everything except the hash key and signature
+        # Build check data: everything except the hash key, identity_seal, and signature
         check_data = {
             k: v for k, v in block.items()
-            if k != hash_key and k != "signature"
+            if k != hash_key and k != "signature" and k != "identity_seal"
         }
 
         # 1. Block seal
-        if not crypto.verifySeal(
+        if not crypto.verify_seal(
             json.dumps(check_data, sort_keys=True),
             block[hash_key],
-            master_key,
         ):
             return False
 
-        # 2. Identity signature (only if identity secret is set)
+        # 2. Identity seal (only if identity secret is set)
         if identity_secret:
-            if "signature" not in block:
+            if "identity_seal" not in block and "signature" not in block:
                 return False
             identity_bytes = (
                 bytes.fromhex(identity_secret)
                 if isinstance(identity_secret, str)
                 else identity_secret
             )
-            if not crypto.verifySignature(
-                block[hash_key], block["signature"], identity_bytes
+            seal_value = block.get("identity_seal") or block.get("signature")
+            if not crypto.verify_mac(
+                block[hash_key], seal_value, identity_bytes
             ):
                 return False
 

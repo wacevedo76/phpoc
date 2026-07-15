@@ -98,10 +98,19 @@ class _MockCrypto:
         """HMAC-SHA256 signature."""
         return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
 
+    def mac(self, data_str: str, identity_secret: bytes) -> str:
+        """Alias for sign."""
+        return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
+
     def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
         """Verify an HMAC-SHA256 signature."""
-        expected = self.sign(data_str, identity_secret)
+        expected = self.mac(data_str, identity_secret)
         return hmac.compare_digest(expected, signature)
+
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """Verify an HMAC MAC."""
+        expected = self.mac(data_str, identity_secret)
+        return hmac.compare_digest(expected, mac_tag)
 
 
 class _MockLedgerStore:
@@ -184,11 +193,11 @@ def build_minimal_genesis(crypto, include_format_version=True, include_block_has
 
     # Compute seal
     hash_key = "block_hash" if include_block_hash else "day_hash"
-    seal_data = {k: v for k, v in genesis.items() if k not in (hash_key, "signature")}
+    seal_data = {k: v for k, v in genesis.items() if k not in (hash_key, "identity_seal", "signature")}
     genesis[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
     # Add signature placeholder
-    genesis["signature"] = crypto.sign(genesis[hash_key], IDENTITY_SECRET_BYTES)
+    genesis["identity_seal"] = crypto.mac(genesis[hash_key], IDENTITY_SECRET_BYTES)
 
     return genesis
 
@@ -211,9 +220,9 @@ def build_day_block(crypto, prev_hash, entries_data, day_index=1, date_str="2026
     }
 
     hash_key = "day_hash"
-    seal_data = {k: v for k, v in block.items() if k not in (hash_key, "signature")}
+    seal_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal", "signature")}
     block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
-    block["signature"] = crypto.sign(block[hash_key], IDENTITY_SECRET_BYTES)
+    block["identity_seal"] = crypto.mac(block[hash_key], IDENTITY_SECRET_BYTES)
 
     return block
 
@@ -307,7 +316,7 @@ class TestGroupAGenesisCreation(unittest.TestCase):
 
         # Recompute: verify the stored block_hash matches seal of data without format_version
         seal_data = {k: v for k, v in genesis.items()
-                     if k not in ("block_hash", "signature")}
+                     if k not in ("block_hash", "identity_seal", "signature")}
         computed_seal = self.crypto.seal(json.dumps(seal_data, sort_keys=True))
         self.assertEqual(computed_seal, genesis["block_hash"],
                          "Genesis seal must be computed without format_version in check data")
@@ -420,7 +429,7 @@ class TestGroupBSealComputation(unittest.TestCase):
 
         # Verify using check data exclusion: exclude hash key + signature + format_version
         check_data = {k: v for k, v in block_data_with_fv.items()
-                      if k not in ("block_hash", "signature", "format_version")}
+                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
         seal_check = self.crypto.seal(json.dumps(check_data, sort_keys=True))
         self.assertEqual(seal_without, seal_check,
                          "Seal must be identical when format_version is excluded from check data")
@@ -512,7 +521,7 @@ class TestGroupCChainVerification(unittest.TestCase):
                 hash_key = "day_hash"
 
             check_data = {k: v for k, v in block.items()
-                          if k not in (hash_key, "signature")}
+                          if k not in (hash_key, "identity_seal", "signature")}
             self.assertTrue(
                 self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), block[hash_key]),
                 f"Block seal must verify for {block_type} block"
@@ -810,10 +819,10 @@ class TestGroupFImportAfterMigration(unittest.TestCase):
         }
         # OLD: seal includes format_version
         seal_data = {k: v for k, v in sorted(genesis.items())
-                     if k not in ("day_hash", "signature")}
+                     if k not in ("day_hash", "identity_seal", "signature")}
         genesis["day_hash"] = self.crypto.seal(
             json.dumps(seal_data, sort_keys=True))
-        genesis["signature"] = self.crypto.sign(
+        genesis["identity_seal"] = self.crypto.mac(
             genesis["day_hash"], IDENTITY_SECRET_BYTES)
 
         day = {
@@ -833,10 +842,10 @@ class TestGroupFImportAfterMigration(unittest.TestCase):
             ],
         }
         seal_data = {k: v for k, v in sorted(day.items())
-                     if k not in ("day_hash", "signature")}
+                     if k not in ("day_hash", "identity_seal", "signature")}
         day["day_hash"] = self.crypto.seal(
             json.dumps(seal_data, sort_keys=True))
-        day["signature"] = self.crypto.sign(
+        day["identity_seal"] = self.crypto.mac(
             day["day_hash"], IDENTITY_SECRET_BYTES)
 
         return [genesis, day]

@@ -146,21 +146,21 @@ if (typeof YearMonthSummaryPolicy === 'function') {
   t.assertEq(afterYearSum.length, 0,
     'no redundant December month summary when year summary is prev block');
 
-  // Test 11: Identity signature on summary blocks
+  // Test 11: Identity seal on summary blocks
   const prevOct = makePrevBlock({ type: 'day', date: '2025-10-15' });
   const withSigBlocks = policyWithSig.getSummaryBlocks(prevOct, '2026-01-01');
   if (withSigBlocks.length > 0) {
     for (const block of withSigBlocks) {
-      t.assert(typeof block.signature === 'string',
-        `summary block of type ${block.type} has signature when identity secret is provided`);
+      t.assert(typeof block.identity_seal === 'string',
+        `summary block of type ${block.type} has identity_seal when identity secret is provided`);
     }
   }
 
   // Test 12: No identity signature without identity secret
   const noSigBlocks = policy.getSummaryBlocks(prevOct, '2026-01-01');
   for (const block of noSigBlocks) {
-    t.assertEq(block.signature, undefined,
-      `summary block of type ${block.type} has no signature without identity secret`);
+    t.assertEq(block.identity_seal, undefined,
+      `summary block of type ${block.type} has no identity_seal without identity secret`);
   }
 
   // Test 13: Consecutive month boundaries (multiple month skips)

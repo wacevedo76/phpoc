@@ -639,8 +639,8 @@ if (typeof LedgerEngine === 'function') {
   const throwingCrypto = {
     seal: crypto.seal.bind(crypto),
     verifySeal: crypto.verifySeal.bind(crypto),
-    sign: crypto.sign.bind(crypto),
-    verifySignature: crypto.verifySignature.bind(crypto),
+    mac: crypto.mac.bind(crypto),
+    verifyMac: crypto.verifyMac.bind(crypto),
     sha256: crypto.sha256.bind(crypto),
     encrypt: crypto.encrypt.bind(crypto),
     decrypt: () => { throw new Error('decrypt failed'); },

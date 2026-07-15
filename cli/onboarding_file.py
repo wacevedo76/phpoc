@@ -260,7 +260,7 @@ def _validate_raw_chain(blocks: list, crypto: CryptoManager, mk: bytes):
         check_data = {
             k: v
             for k, v in sorted(block.items())
-            if k not in (hash_field, "signature", "format_version")
+            if k not in (hash_field, "identity_seal", "signature", "format_version")
         }
         check_json = _json_sort(check_data)
         if not _verify_seal(check_json, block_hash, mk):
@@ -366,7 +366,10 @@ def _extract_identity(
 
 
 def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
-    """Prompt for a new local passphrase, re-encrypt seed, re-seal chain."""
+    """Prompt for a new local passphrase, re-encrypt seed, re-seal chain.
+
+    Uses per-user PBKDF2 salt derived from identity_pub_key when available.
+    """
     print("\n=== Set New Passphrase ===")
     while True:
         p1 = getpass.getpass("New Passphrase: ")
@@ -375,8 +378,10 @@ def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
             break
         print("  Passphrases do not match. Try again.")
 
+    from security.auth import get_pdk_salt_from_genesis
+    salt = get_pdk_salt_from_genesis(ledger_path)
     pdk = hashlib.pbkdf2_hmac(
-        "sha256", p1.encode(), b"session-salt", 600000, 32
+        "sha256", p1.encode(), salt, 600000, 32
     )
 
     ledger_data = json.loads(ledger_path.read_text())
@@ -422,7 +427,7 @@ def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
         json.dumps(check_data, sort_keys=True)
     )
     if identity_secret:
-        ledger_data[0]["signature"] = crypto.sign(
+        ledger_data[0]["identity_seal"] = crypto.mac(
             ledger_data[0][genesis_hash_key], identity_secret
         )
 
@@ -434,15 +439,16 @@ def _set_passphrase(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
         block["prev_hash"] = get_block_hash(prev)
 
         hash_key = BLOCK_HASH_FIELD.get(block.get("type", "day"), "day_hash")
+        # I-07: format_version excluded from seal. identity_seal also excluded.
         seal_data = {
             k: v
             for k, v in block.items()
-            if k not in (hash_key, "signature", "format_version")
+            if k not in (hash_key, "identity_seal", "signature", "format_version")
         }
         block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
-        if identity_secret and block.get("signature") is not None:
-            block["signature"] = crypto.sign(block[hash_key], identity_secret)
+        if identity_secret and block.get("identity_seal") is not None:
+            block["identity_seal"] = crypto.mac(block[hash_key], identity_secret)
 
     ledger_path.write_text(json.dumps(ledger_data, indent=2))
     print("  Passphrase set. Ledger re-sealed and re-signed.")

@@ -1,6 +1,7 @@
 # Personal History Protocol — Format Specification
 
-> **Version:** 0.3.0 (working tree)
+> **Version:** 0.4.0
+> **Current version:** 0.4.0. See `CHANGELOG.md` for changes.
 > **Status:** Draft
 
 This document defines the Personal History Protocol (PHPOC) ledger format — the block structure, encryption scheme, key derivation, chain validation, content hashing, and auxiliary data structures.
@@ -17,6 +18,21 @@ This document defines the Personal History Protocol (PHPOC) ledger format — th
 8. [Staging Area](#8-staging-area)
 9. [Implementation Considerations](#9-implementation-considerations)
 10. [Appendix: Example Ledger](#10-appendix-example-ledger)
+- [Known Limitations](#known-limitations)
+
+---
+
+## Known Limitations
+
+This specification and its reference implementations have known limitations that implementers and users should be aware of:
+
+- **HMAC as identity seal proxy (not true asymmetric signatures):** Block identity seals use HMAC-SHA256, not Ed25519 or any true public-key scheme. Anyone who knows the identity secret can both compute and verify — there is no public-key/private-key separation. This is sufficient for single-device tamper detection and authorship, but does not enable third-party verifiability.
+- **Plaintext blind index:** `index.json` stores `{date: {activity_title: total_duration_ms}}` in the clear next to the encrypted ledger. This reveals what activities a user does and for how long to anyone with filesystem access.
+- **Plaintext staging at rest:** Staging entries use a `plain:` prefix convention, leaving the most recent, most sensitive data unencrypted on disk.
+- **Key-derived device IDs:** Device identity is derived from the Master Key via HMAC, meaning any device with the MK can impersonate any other device. True hardware-bound device attribution (TPM, biometric, device-local secrets) is not yet implemented.
+- **No key rotation:** A single Master Key protects all data forever. If the MK is compromised, all historical and future data is exposed, with no remediation path.
+
+These limitations are tracked as active issues in the project backlog (`docs/planning/BACKLOG.md`). See severity tiers and dependency ordering there.
 
 ---
 
@@ -30,7 +46,7 @@ PHPOC is an **open, encrypted, self-sovereign ledger format** for tracking perso
 - **Portable.** The same format works across laptop, phone, wearable — any device that can read/write JSON and perform standard cryptographic operations.
 - **Verifiable.** Every entry is content-hashed and linked into an immutable chain. Tampering is detectable.
 - **Shareable by design.** The owner controls exactly which segments are shared — a date range, a blind index summary, a single activity type.
-- **Zero external dependencies.** The reference implementation uses only standard library cryptography (Python stdlib). The format itself requires only AES-CTR, HMAC-SHA256, PBKDF2, and SHA-256 — all widely available across platforms.
+- **Zero external dependencies.** The CLI reference implementation uses only Python stdlib crypto. Web/mobile use a shared Rust crypto core (`phpoc-crypto-core` / `ring`). The format itself requires only AES-CTR, HMAC-SHA256, PBKDF2, and SHA-256 — all widely available across platforms.
 
 ### 1.2 Chain Hierarchy
 
@@ -185,14 +201,26 @@ No key stretching or derivation is applied here — the Seed already has full 25
 
 ### 2.4 Passphrase-Derived Key (PDK)
 
-The PDK is derived from the user's passphrase and a fixed salt. It is used **only** to encrypt or decrypt the Seed (stored in the genesis block's `recovery_seed_enc` field).
+The PDK is derived from the user's passphrase and a per-user salt. It is used **only** to encrypt or decrypt the Seed (stored in the genesis block's `recovery_seed_enc` field).
+
+**Salt derivation:** The salt is derived from the `identity_pub_key` (64-char hex, SHA-256 of the Identity Secret):
+
+```
+salt = SHA-256(identity_pub_key_hex.encode())[:16]
+```
+
+This ensures that two users with the same passphrase produce different PDKs, preventing cross-user rainbow table attacks.
+
+**PDK derivation:**
 
 ```python
 import hashlib
+# Per-user salt from identity pub key
+salt = hashlib.sha256(identity_pub_key.encode()).digest()[:16]
 pdk = hashlib.pbkdf2_hmac(
     'sha256',                      # hash algorithm
     passphrase.encode('utf-8'),    # password bytes
-    b"session-salt",                # salt (hardcoded)
+    salt,                          # per-user salt (16 bytes)
     600000,                        # iterations (OWASP 2026 recommendation)
     32                             # output length in bytes
 )
@@ -201,11 +229,13 @@ pdk = hashlib.pbkdf2_hmac(
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
 | Algorithm | PBKDF2-HMAC-SHA256 | Widely available, standard library |
-| Salt | `b"session-salt"` | Fixed per application — uniqueness comes from passphrase entropy |
+| Salt | `SHA-256(identity_pub_key)[:16]` | Per-user — prevents cross-user rainbow tables when passphrases are reused |
 | Iterations | 600,000 | OWASP 2026 recommended minimum for PBKDF2-HMAC-SHA256 |
 | Output | 32 bytes (256 bits) | Matches AES-256 key size |
 
-> **Note on salt:** The salt is fixed (not per-user) because the PDK only protects the Seed, which is itself encrypted and stored inside the ledger. An attacker already has the encrypted Seed. A per-user salt would add no security here — the KDF work factor (600K iterations) is the protection.
+> **Backward compatibility:** Existing ledgers encrypted with the old fixed salt (`b"session-salt"`) are transparently upgraded to per-user salt on first successful authentication. Auth tries per-user salt first, then falls back to the old fixed salt (both 600K and 100K iteration variants).
+>
+> **Init flow:** During `ph init`, no `identity_pub_key` exists yet, so the old fixed salt is used. The first authentication after init performs the transparent upgrade.
 
 ### 2.5 Seed Encryption with PDK
 
@@ -237,13 +267,13 @@ def derive_sub_key(master_key: bytes, salt: bytes, length: int = 16) -> bytes:
 | Integrity | `random 16-byte salt + b"-integrity"` (per operation) | 32 bytes | HMAC-SHA256 auth tag over ciphertext |
 | Sealing | `b"integrity-key-salt"` (fixed) | 32 bytes | HMAC-SHA256 block seal |
 
-> **Why AES-128 and not AES-256?** Each encryption operation derives a unique 16-byte key from the 32-byte Master Key via HMAC. The effective security level is 256 bits (the Master Key entropy), with per-operation key diversification. The 16-byte AES key is sufficient for CTR mode — the bottleneck is the Master Key, not the block cipher key size.
+> **Why AES-128 and not AES-256?** AES-128 provides adequate security; the per-operation HMAC derivation ensures uniformly distributed key material from the 256-bit MK.
 
 ### 2.7 Identity Representation
 
 The current identity system uses **HMAC-SHA256 as a proxy for Ed25519** to remain zero-dependency. This is sufficient for single-device usage (tamper detection, authorship proof). A future version should upgrade to real Ed25519 for third-party verifiability.
 
-#### 2.7.1 Identity Secret & Signing
+#### 2.7.1 Identity Secret & MAC
 
 ```python
 import os, hmac, hashlib
@@ -251,13 +281,14 @@ import os, hmac, hashlib
 identity_secret = os.urandom(32)  # 32 bytes, high entropy
 identity_pub_key = hashlib.sha256(identity_secret).hexdigest()  # public identifier
 
-def sign(data_str: str, identity_secret: bytes) -> str:
-    """Sign data using HMAC-SHA256 as Ed25519 proxy."""
+def mac(data_str: str, identity_secret: bytes) -> str:
+    """Compute an HMAC-SHA256 MAC over data using the Identity Secret."""
     return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
 
-def verify_signature(data_str: str, signature: str, identity_secret: bytes) -> bool:
-    expected = sign(data_str, identity_secret)
-    return hmac.compare_digest(expected, signature)
+def verify_mac(data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+    """Verify an HMAC-SHA256 MAC tag."""
+    expected = mac(data_str, identity_secret)
+    return hmac.compare_digest(expected, mac_tag)
 ```
 
 The identity secret is a 32-byte random value. The public key is `SHA-256(identity_secret)`. This is not a true asymmetric key pair — anyone who knows the identity secret can both sign and verify. True public-key cryptography (Ed25519) is planned.
@@ -332,7 +363,7 @@ To recover a ledger when the passphrase is lost (but the Seed is known):
 
 1. **User provides the Recovery Seed** (base64 string)
 2. **Derive Master Key:** `master_key = base64.b64decode(seed)`
-3. **Derive new PDK:** `pdk = PBKDF2(new_passphrase, "session-salt", 600000, 32)`
+3. **Derive new PDK:** `pdk = PBKDF2(new_passphrase, per-user-salt, 600000, 32)`
 4. **Re-encrypt Seed:** `encrypted_seed = CryptoManager(pdk).encrypt(seed_string)`
 5. **Update genesis:** Replace `identity.recovery_seed_enc` with the new encrypted seed
 6. **Reseal genesis:** Recompute `day_hash` using the Master Key (unchanged)
@@ -759,7 +790,7 @@ An individual activity record stored inside a Day block's `entries` array. Each 
 | `metadata_enc` | string | ✅ | ✅ | Encrypted JSON object (arbitrary metadata) |
 | `tags` | array[string] | ✅ | No | Sorted list of lowercase, deduplicated tags (e.g., `["learning", "music"]`) |
 | `media` | array | ✅ | No | Array of media references (strings). Currently a stub — reserved for future use. |
-| `content_hash` | string (hex) | ⚠️ | No | SHA-256 of canonical plaintext representation — see §6 |
+| `content_hash` | string (hex) | ✅ | No | SHA-256 of canonical plaintext representation — see §6. Required at format_version ≥ 0.4.0. |
 | `comment` | string | ❌ | No | Free-text comment. Optional, may be absent. |
 | `device_id_enc` | string | ✅ | ✅ | Opaque device identifier (AES-CTR encrypted). Reveals nothing to an attacker. |
 | `transitions_enc` | string | ❌ | ✅ | Encrypted action trail — present when a task was paused/unpaused/ended by a different device than the one that started it (see below). Optional. |
@@ -929,11 +960,11 @@ This ensures that no part of an entry's data (encrypted or plaintext) has been a
 
 ### 5.5 Content Hash Verification
 
-The content hash (`content_hash` in `entry["data"]`) is an optional integrity check that survives re-encryption. While the entry hash (§5.4) would change if ciphertext fields are re-encrypted (e.g., by a different key), the content hash is computed from **plaintext values** and remains stable.
+The content hash (`content_hash` in `entry["data"]`) is an integrity check that survives re-encryption. While the entry hash (§5.4) would change if ciphertext fields are re-encrypted (e.g., by a different key), the content hash is computed from **plaintext values** and remains stable.
 
-#### Algorithm (v0.4.0+)
+#### Algorithm
 
-Starting with format v0.4.0, the content hash uses an **extensible algorithm** that iterates over **all** keys in the entry's data dict. This means any future fields added to the activity object are automatically covered without a spec update:
+The content hash uses an **extensible algorithm** that iterates over **all** keys in the entry's data dict. This means any future fields added to the activity object are automatically covered without a spec update:
 
 ```python
 def compute_content_hash(entry_data: dict, decrypt_fn) -> str:
@@ -967,13 +998,21 @@ def compute_content_hash(entry_data: dict, decrypt_fn) -> str:
 
 #### Validation rule
 
+At `format_version ≥ 0.4.0` (for the genesis block's `format_version`):
+
+content_hash is **mandatory** in every entry. Verification must fail if any entry
+in a day block lacks a `content_hash` field.
+
 If `content_hash` is present in `entry["data"]`:
 
 ```
 compute_content_hash(entry["data"], decrypt) == entry["data"]["content_hash"]
 ```
 
-If `content_hash` is absent, skip this check (legacy entries).
+At `format_version < 0.4.0` or absent (implicit 0.2.0):
+
+If `content_hash` is absent, skip this check (legacy entries). If present,
+verify it as above.
 
 #### Why Two Hashes?
 
@@ -988,6 +1027,11 @@ Both hashes should be verified during a full chain check.
 
 ```python
 def verify(ledger: list, master_key: bytes, identity_secret: bytes = None) -> bool:
+    # Determine whether content_hash is required from genesis format_version
+    genesis = ledger[0] if ledger else None
+    fv = genesis.get("format_version") if genesis else None
+    require_content_hash = _parse_semver(fv) >= (0, 4, 0)
+
     for i in range(1, len(ledger)):
         current = ledger[i]
         prev = ledger[i - 1]
@@ -1011,7 +1055,14 @@ def verify(ledger: list, master_key: bytes, identity_secret: bytes = None) -> bo
             for entry in current.get("entries", []):
                 if not _verify_entry_hash(entry):
                     return False
-                if "content_hash" in entry["data"]:
+                
+                has_content = "content_hash" in entry["data"]
+                
+                # At format_version >= 0.4.0, content_hash is mandatory
+                if require_content_hash and not has_content:
+                    return False
+                
+                if has_content:
                     if not _verify_content_hash(entry["data"], master_key):
                         return False
     
@@ -1033,7 +1084,7 @@ The algorithm used depends on the ledger's format version:
 | v0.3.0 and earlier | Legacy (hardcoded 9 fields) | Fixed set: startTime, endTime, metadata, pauses, tags, comment, media, title, duration |
 | v0.4.0+ | Extensible (iterates all keys) | **All** data fields, including any future additions |
 
-### 6.1 Extensible Algorithm (v0.4.0+)
+### 6.1 Extensible Algorithm
 
 The extensible algorithm iterates over **all** keys in the entry's data dict, making it automatically forward-compatible with any future fields:
 
@@ -1340,6 +1391,8 @@ Minimal two-method interface. Git is the first implementation with the blob stor
 
 #### Blob Obfuscation
 
+> ⚠️ **Cross-Platform Portability Hazard:** Blob obfuscation is the **highest-risk primitive for cross-platform interop**. Three implementations (Python stdlib, Rust `ring`, JS WASM) must produce byte-identical output for the same inputs. Subtle differences in HMAC padding, AES-CTR keystream, or tier arithmetic will produce incompatible wire formats that silently break multi-device sync. **All alternative implementations must validate against the deterministic blob obfuscation test vectors in `phpoc-crypto-core/tests/crypto_test_vectors.json`** before being considered production-ready.
+
 The serialized staging blob is obfuscated before being pushed to the remote:
 
 ```
@@ -1435,8 +1488,6 @@ Every ledger has an explicit format version stored in the genesis block's `forma
 
 Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. Because `format_version` is included in the block seal, adding it changes `day_hash`, which **cascades through the entire chain**:
 
-Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. Because `format_version` is included in the block seal, adding it changes `day_hash`, which **cascades through the entire chain**:
-
 ```python
 def upgrade_020_to_030(ledger: list, master_key, identity_secret=None) -> list:
     """One-time migration: add format_version to genesis, recompute all seals."""
@@ -1463,29 +1514,7 @@ def upgrade_020_to_030(ledger: list, master_key, identity_secret=None) -> list:
 
 A standalone migration script is provided at `scripts/migrate_format_version.py`. Run with `--help` for usage details.
 
-#### Migration (v0.3.0 → v0.4.0)
 
-Ledgers at format v0.3.0 can be upgraded to v0.4.0 to adopt the extensible content hash algorithm. This migration:
-
-1. **Bumps** `format_version` in genesis from `"0.3.0"` to `"0.4.0"`
-2. **Recomputes** every entry's `content_hash` using the new all-keys algorithm (§6.1)
-3. **Recomputes** every entry's `hash` (the entry hash covers the data dict, which includes `content_hash`)
-4. **Cascades** through all block seals — changed entries → changed day blocks → changed prev_hash linkage → changed seals throughout the entire chain
-
-The migration script at `scripts/migrate_format_version.py` handles this automatically:
-
-```bash
-# Preview changes
-python3 scripts/migrate_format_version.py --dry-run
-
-# Apply migration (writes to ledger.json.migrated)
-python3 scripts/migrate_format_version.py
-
-# Apply in-place (creates ledger.json.bak backup)
-python3 scripts/migrate_format_version.py --in-place
-```
-
-> **Backward compatibility:** After migration, the `verify()` function checks `format_version` to select the correct content hash algorithm. Old ledgers without the migration remain fully verifiable using the legacy algorithm.
 
 ### 9.4 Edge Cases
 

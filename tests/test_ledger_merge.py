@@ -89,13 +89,22 @@ class _MockCrypto:
     def sign(self, data_str: str, identity_secret: bytes) -> str:
         return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
 
+    def mac(self, data_str: str, identity_secret: bytes) -> str:
+        """Alias for sign."""
+        return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
+
     def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        expected = self.sign(data_str, identity_secret)
+        expected = self.mac(data_str, identity_secret)
         return hmac.compare_digest(expected, signature)
+
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """Verify an HMAC MAC."""
+        expected = self.mac(data_str, identity_secret)
+        return hmac.compare_digest(expected, mac_tag)
 
     def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
         """CamelCase alias matching the JS crypto interface."""
-        return self.verify_signature(data_str, signature, identity_secret)
+        return self.verify_mac(data_str, signature, identity_secret)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -220,10 +229,10 @@ def build_day_block(
         "entries": sorted_entries,
     }
     # Build seal from sorted keys (minus hash/signature)
-    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "signature")})
+    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "identity_seal", "signature")})
     content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     if IDENTITY_SECRET:
-        content["signature"] = crypto.sign(content["day_hash"], IDENTITY_SECRET_BYTES)
+        content["identity_seal"] = crypto.mac(content["day_hash"], IDENTITY_SECRET_BYTES)
     return content
 
 
@@ -244,10 +253,10 @@ def build_genesis_block() -> dict:
         "prev_hash": ZERO_HASH,
         "entries": [],
     }
-    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "signature")})
+    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "identity_seal", "signature")})
     content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     if IDENTITY_SECRET:
-        content["signature"] = crypto.sign(content["day_hash"], IDENTITY_SECRET_BYTES)
+        content["identity_seal"] = crypto.mac(content["day_hash"], IDENTITY_SECRET_BYTES)
     return content
 
 
@@ -824,7 +833,7 @@ class TestChainIntegrity(unittest.IsolatedAsyncioTestCase):
                     hash_key = "day_hash"
 
                 check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "signature")}
+                              if k not in (hash_key, "identity_seal", "signature")}
                 check_data = _sort_keys(check_data)
                 if not crypto.verify_seal(json.dumps(check_data, sort_keys=True),
                                           block[hash_key]):
@@ -941,7 +950,7 @@ class TestChainIntegrity(unittest.IsolatedAsyncioTestCase):
                     hash_key = "day_hash"
 
                 check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "signature")}
+                              if k not in (hash_key, "identity_seal", "signature")}
                 check_data = _sort_keys(check_data)
                 expected_seal = crypto.seal(json.dumps(check_data, sort_keys=True))
                 if block[hash_key] != expected_seal:
@@ -1165,10 +1174,10 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             "entries": [],
         }
         check_data = _sort_keys({k: v for k, v in genesis2_content.items()
-                                 if k not in ("day_hash", "signature")})
+                                 if k not in ("day_hash", "identity_seal", "signature")})
         genesis2_content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
         if IDENTITY_SECRET:
-            genesis2_content["signature"] = crypto.sign(genesis2_content["day_hash"],
+            genesis2_content["identity_seal"] = crypto.mac(genesis2_content["day_hash"],
                                                         IDENTITY_SECRET_BYTES)
 
         local_chain = [genesis1]
@@ -1403,10 +1412,10 @@ class TestInputValidation(unittest.IsolatedAsyncioTestCase):
             "entries": [],
         }
         check_data = _sort_keys({k: v for k, v in genesis2.items()
-                                 if k not in ("day_hash", "signature")})
+                                 if k not in ("day_hash", "identity_seal", "signature")})
         genesis2["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
         if IDENTITY_SECRET:
-            genesis2["signature"] = crypto.sign(genesis2["day_hash"], IDENTITY_SECRET_BYTES)
+            genesis2["identity_seal"] = crypto.mac(genesis2["day_hash"], IDENTITY_SECRET_BYTES)
 
         bad_remote = [
             genesis2,

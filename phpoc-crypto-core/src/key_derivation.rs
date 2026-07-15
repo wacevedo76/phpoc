@@ -158,6 +158,35 @@ pub fn derive_seal_key(master_key: &[u8; 32]) -> [u8; 32] {
     derive_sub_key_32(master_key, crate::SEAL_KEY_SALT)
 }
 
+/// Derive a PDK with a custom salt (per-user salt support).
+///
+/// Per PHPSPEC §2.4 (updated):
+/// `salt = SHA-256(hex_pub_key_bytes)[:16]`
+/// `PDK = PBKDF2-HMAC-SHA256(passphrase, salt, 600000, 32)`
+///
+/// # Arguments
+/// * `passphrase` - The user's passphrase.
+/// * `salt` - 16-byte per-user salt (SHA-256(identity_pub_key_hex)[:16]).
+/// * `iterations` - Iteration count (Standard=600K, Legacy=100K).
+///
+/// # Returns
+/// A 32-byte PDK.
+pub fn derive_pdk_with_salt(
+    passphrase: &str,
+    salt: &[u8; 16],
+    iterations: PdkIterations,
+) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        std::num::NonZeroU32::new(iterations.value()).unwrap(),
+        salt.as_slice(),
+        passphrase.as_bytes(),
+        &mut key,
+    );
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +214,67 @@ mod tests {
         // Different iteration counts produce different keys
         assert_ne!(standard, legacy);
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // Group F: Per-User PBKDF2 Salt — RED tests (I-05 Phase 2)
+    // ═════════════════════════════════════════════════════════════════
+
+    const PER_USER_SALT: &[u8; 16] = b"0123456789abcdef";
+
+    #[test]
+    fn test_F1_derive_pdk_with_custom_salt() {
+        // F1: derive_pdk_with_salt(passphrase, salt, iterations) accepts custom salt.
+        let pdk = derive_pdk_with_salt("test-passphrase", PER_USER_SALT, PdkIterations::Standard);
+        assert_eq!(pdk.len(), 32);
+    }
+
+    #[test]
+    fn test_F2_same_passphrase_and_salt_deterministic() {
+        // F2: Same passphrase + same salt → deterministic PDK.
+        let pdk1 = derive_pdk_with_salt("secure-pass", PER_USER_SALT, PdkIterations::Standard);
+        let pdk2 = derive_pdk_with_salt("secure-pass", PER_USER_SALT, PdkIterations::Standard);
+        assert_eq!(pdk1, pdk2);
+    }
+
+    #[test]
+    fn test_F3_same_passphrase_different_salt_different_pdk() {
+        // F3: Same passphrase + different salt → different PDK.
+        let other_salt: &[u8; 16] = b"fedcba9876543210";
+        let pdk1 = derive_pdk_with_salt("secure-pass", PER_USER_SALT, PdkIterations::Standard);
+        let pdk2 = derive_pdk_with_salt("secure-pass", other_salt, PdkIterations::Standard);
+        assert_ne!(pdk1, pdk2);
+    }
+
+    #[test]
+    fn test_F4_old_salt_session_salt_backward_compat() {
+        // F4: Old derive_pdk (no salt param) still works for backward compat.
+        // The old function uses the 12-byte PDK_SALT; the new function takes
+        // 16-byte per-user salts. Both are valid; old callers keep working.
+        let pdk_old = derive_pdk("test", PdkIterations::Standard);
+        assert_eq!(pdk_old.len(), 32);
+
+        // Verify deterministic: same function, same inputs → same output
+        let pdk_old2 = derive_pdk("test", PdkIterations::Standard);
+        assert_eq!(pdk_old, pdk_old2);
+
+        // Per-user salt must produce different PDK than old fixed salt
+        let pdk_new = derive_pdk_with_salt("test", PER_USER_SALT, PdkIterations::Standard);
+        assert_ne!(pdk_old, pdk_new,
+            "Per-user salt PDK must differ from old fixed-salt PDK");
+    }
+
+    #[test]
+    fn test_F5_legacy_iterations_with_custom_salt() {
+        // F5: Legacy iterations (100K) still work with custom salt.
+        let pdk = derive_pdk_with_salt("test", PER_USER_SALT, PdkIterations::Legacy);
+        assert_eq!(pdk.len(), 32);
+    }
+
+    // F6 is tested via WASM bindings in the web test suite (pbkdf2_salt_test.mjs).
+    // The WASM binding derive_pdk(passphrase, salt_hex, iterations) is the
+    // target API that JS/TS callers will use.
+
+    // ═════════════════════════════════════════════════════════════════
 
     #[test]
     fn test_derive_master_key() {

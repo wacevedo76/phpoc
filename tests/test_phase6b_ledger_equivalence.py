@@ -73,7 +73,7 @@ def _add_genesis(store, crypto=None, secret=None):
     if secret is None: secret = _make_identity_secret()
     genesis = {"type": "genesis", "created_at": 1700000000000, "format_version": "0.4.0"}
     genesis["day_hash"] = crypto.seal(json.dumps(genesis, sort_keys=True))
-    genesis["signature"] = crypto.sign(genesis["day_hash"], secret)
+    genesis["identity_seal"] = crypto.mac(genesis["day_hash"], secret)
     store.write_ledger([genesis])
     return crypto, secret
 

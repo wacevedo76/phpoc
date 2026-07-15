@@ -107,8 +107,8 @@ class DummyCryptoService {
   // HMAC sealing
   seal(data, mk) { return deterministicHash(data + mk); }
   verifySeal(data, seal, mk) { return this.seal(data, mk) === seal; }
-  sign(data, secret) { return deterministicHash(data + secret); }
-  verifySignature(data, sig, secret) { return this.sign(data, secret) === sig; }
+  mac(data, secret) { return deterministicHash(data + secret); }
+  verifyMac(data, mac, secret) { return this.mac(data, secret) === mac; }
 
   // SHA-256
   sha256(data) { return deterministicHash(data); }

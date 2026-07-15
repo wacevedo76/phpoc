@@ -60,7 +60,7 @@ class SummaryPolicy(ABC):
             json.dumps(summary, sort_keys=True)
         )
         if self.identity_secret:
-            summary["signature"] = self.crypto.sign(
+            summary["identity_seal"] = self.crypto.mac(
                 summary["year_hash"], self.identity_secret
             )
         return summary
@@ -79,7 +79,7 @@ class SummaryPolicy(ABC):
             json.dumps(summary, sort_keys=True)
         )
         if self.identity_secret:
-            summary["signature"] = self.crypto.sign(
+            summary["identity_seal"] = self.crypto.mac(
                 summary["month_hash"], self.identity_secret
             )
         return summary

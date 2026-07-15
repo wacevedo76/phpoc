@@ -23,7 +23,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
 | `core/sync/transport_registry.py` | HOT | `TransportProvider` dataclass, `TransportRegistry` — extensible transport discovery for onboarding |
 | `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
-| `security/auth.py` | COLD | Passphrase + Recovery authenticators |
+| `security/auth.py` | HOT | Passphrase + Recovery authenticators — per-user PBKDF2 salt, transparent upgrade |
 | `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix, migration for bare UUIDs. |
 | `domain/ledger/chain.py` | HOT | Chain building, sealing, verification |
 | `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
@@ -179,7 +179,7 @@ Key test files:
 
 ## Architecture Invariants (NEVER break these)
 
-1. **Zero external dependencies** — pure Python stdlib only. No pip installs.
+1. **Zero external dependencies** — CLI reference implementation: zero external dependencies (pure Python stdlib only, no pip installs). Web/mobile: single shared Rust crypto core (`phpoc-crypto-core` / `ring`).
 2. **Master Key** = 32 bytes from base64-decoded seed (`RecoveryManager.seed_to_key`)
 3. **Staging format** = `NoAuthCryptoManager` uses `"plain:..."` prefix. Sync converts hex-encrypted → plain: at the boundary.
 4. **Chain structure**: `Genesis → (Year Summary → Month Summary)* → Day blocks`, each sealed + signed

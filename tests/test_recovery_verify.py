@@ -115,7 +115,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         )
 
         # Re-sign genesis
-        ledger_data[0]["signature"] = self.crypto.sign(
+        ledger_data[0]["identity_seal"] = self.crypto.mac(
             ledger_data[0][genesis_hk], self.identity_secret
         )
 
@@ -137,13 +137,13 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature", "format_version")
+                if k not in (hash_key, "identity_seal", "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
             )
-            if block.get("signature") is not None:
-                block["signature"] = self.crypto.sign(
+            if block.get("identity_seal") is not None:
+                block["identity_seal"] = self.crypto.mac(
                     block[hash_key], self.identity_secret
                 )
 
@@ -193,7 +193,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
-        ledger_data[0]["signature"] = self.crypto.sign(
+        ledger_data[0]["identity_seal"] = self.crypto.mac(
             ledger_data[0][genesis_hk], self.identity_secret
         )
 
@@ -215,13 +215,13 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature", "format_version")
+                if k not in (hash_key, "identity_seal", "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
             )
-            if block.get("signature") is not None:
-                block["signature"] = self.crypto.sign(
+            if block.get("identity_seal") is not None:
+                block["identity_seal"] = self.crypto.mac(
                     block[hash_key], self.identity_secret
                 )
 
@@ -310,7 +310,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         ledger_data[0][genesis_hk] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
-        ledger_data[0]["signature"] = self.crypto.sign(
+        ledger_data[0]["identity_seal"] = self.crypto.mac(
             ledger_data[0][genesis_hk], self.identity_secret
         )
 
@@ -332,13 +332,13 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature", "format_version")
+                if k not in (hash_key, "identity_seal", "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
             )
-            if block.get("signature") is not None:
-                block["signature"] = self.crypto.sign(
+            if block.get("identity_seal") is not None:
+                block["identity_seal"] = self.crypto.mac(
                     block[hash_key], self.identity_secret
                 )
 
@@ -378,7 +378,7 @@ class TestRecoveryVerifySequence(unittest.TestCase):
         ledger_data[0][genesis_hash_key] = self.crypto.seal(
             json.dumps(check_data, sort_keys=True)
         )
-        ledger_data[0]["signature"] = self.crypto.sign(
+        ledger_data[0]["identity_seal"] = self.crypto.mac(
             ledger_data[0][genesis_hash_key], self.identity_secret
         )
 
@@ -401,13 +401,13 @@ class TestRecoveryVerifySequence(unittest.TestCase):
             )
             seal_data = {
                 k: v for k, v in block.items()
-                if k not in (hash_key, "signature", "format_version")
+                if k not in (hash_key, "identity_seal", "signature", "format_version")
             }
             block[hash_key] = self.crypto.seal(
                 json.dumps(seal_data, sort_keys=True)
             )
-            if block.get("signature") is not None:
-                block["signature"] = self.crypto.sign(
+            if block.get("identity_seal") is not None:
+                block["identity_seal"] = self.crypto.mac(
                     block[hash_key], self.identity_secret
                 )
 

@@ -73,7 +73,7 @@ def compute_seal(block: dict, master_key: bytes) -> str:
     hash_key = type_map.get(block.get("type", "day"))
 
     # Exclude the seal field and the identity signature
-    check_data = {k: v for k, v in block.items() if k not in (hash_key, "signature")}
+    check_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal", "signature")}
     data_str = json.dumps(check_data, sort_keys=True)
 
     # Derive sealing sub-key (fixed salt)
@@ -81,7 +81,7 @@ def compute_seal(block: dict, master_key: bytes) -> str:
     return hmac.new(seal_key, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def compute_signature(block_hash: str, identity_secret: bytes) -> str:
+def compute_identity_mac(block_hash: str, identity_secret: bytes) -> str:
     """Recompute HMAC-SHA256 identity signature over a block's seal."""
     return hmac.new(identity_secret, block_hash.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -204,8 +204,8 @@ def cascase_seals(ledger: list, master_key: bytes,
     if new_day_hash != old_day_hash:
         changes.append("  [0] genesis: day_hash recomputed")
 
-    if genesis.get("signature") and identity_secret:
-        genesis["signature"] = compute_signature(new_day_hash, identity_secret)
+    if genesis.get("identity_seal") and identity_secret:
+        genesis["identity_seal"] = compute_identity_mac(new_day_hash, identity_secret)
         changes.append("  [0] genesis: signature recomputed")
 
     # Cascade through remaining blocks
@@ -233,8 +233,8 @@ def cascase_seals(ledger: list, master_key: bytes,
         if new_seal != old_seal:
             changes.append(f"  [{i}] {block.get('type', 'day')}: {hash_key} recomputed")
 
-        if block.get("signature") and identity_secret:
-            block["signature"] = compute_signature(new_seal, identity_secret)
+        if block.get("identity_seal") and identity_secret:
+            block["identity_seal"] = compute_identity_mac(new_seal, identity_secret)
             changes.append(f"  [{i}] {block.get('type', 'day')}: signature recomputed")
 
         new_ledger.append(block)
@@ -276,7 +276,7 @@ def verify_chain(ledger: list, master_key: bytes,
                 errors.append(f"[{i}] prev_hash mismatch: got {block.get('prev_hash', '')[:12]}..., expected {expected_prev[:12]}...")
 
         # Check seal
-        check_data = {k: v for k, v in block.items() if k not in (hash_key, "signature")}
+        check_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal", "signature")}
         data_str = json.dumps(check_data, sort_keys=True)
         expected_seal = hmac.new(seal_key, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
         actual_seal = block.get(hash_key, "")
@@ -284,9 +284,9 @@ def verify_chain(ledger: list, master_key: bytes,
             errors.append(f"[{i}] seal mismatch")
 
         # Check signature (if available)
-        if identity_secret and block.get("signature"):
+        if identity_secret and block.get("identity_seal"):
             expected_sig = hmac.new(identity_secret, actual_seal.encode("utf-8"), hashlib.sha256).hexdigest()
-            if expected_sig != block["signature"]:
+            if expected_sig != block["identity_seal"]:
                 errors.append(f"[{i}] signature mismatch")
 
         # Check entry hashes and content hashes
@@ -412,8 +412,8 @@ def migrate_ledger_v2_to_v3(
         changes.append(f"  [0] genesis: day_hash changed")
 
     # Step 3: Recompute genesis signature
-    if genesis.get("signature") and identity_secret:
-        genesis["signature"] = compute_signature(new_day_hash, identity_secret)
+    if genesis.get("identity_seal") and identity_secret:
+        genesis["identity_seal"] = compute_identity_mac(new_day_hash, identity_secret)
         changes.append(f"  [0] genesis: signature recomputed")
 
     new_ledger = [genesis]
@@ -444,8 +444,8 @@ def migrate_ledger_v2_to_v3(
             changes.append(f"  [{i}] {block.get('type', 'day')}: {hash_key} recomputed")
 
         # Recompute signature
-        if block.get("signature") and identity_secret:
-            block["signature"] = compute_signature(new_seal, identity_secret)
+        if block.get("identity_seal") and identity_secret:
+            block["identity_seal"] = compute_identity_mac(new_seal, identity_secret)
             changes.append(f"  [{i}] {block.get('type', 'day')}: signature recomputed")
 
         new_ledger.append(block)

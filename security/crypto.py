@@ -105,9 +105,9 @@ class AbstractCryptoManager(ABC):
     @abstractmethod
     def verify_seal(self, data_str: str, signature: str) -> bool: pass
     @abstractmethod
-    def sign(self, data_str: str, identity_secret: bytes) -> str: pass
+    def mac(self, data_str: str, identity_secret: bytes) -> str: pass
     @abstractmethod
-    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool: pass
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool: pass
 
     # ── CamelCase aliases for JS-ported modules (LedgerMerge) ──────
 
@@ -115,9 +115,9 @@ class AbstractCryptoManager(ABC):
         """CamelCase alias: delegates to verify_seal, ignores master_key."""
         return self.verify_seal(data_str, signature)
 
-    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        """CamelCase alias: delegates to verify_signature."""
-        return self.verify_signature(data_str, signature, identity_secret)
+    def verifyMac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """CamelCase alias: delegates to verify_mac."""
+        return self.verify_mac(data_str, mac_tag, identity_secret)
 
 class CryptoManager(AbstractCryptoManager):
     def __init__(self, master_key: bytes):
@@ -137,25 +137,17 @@ class CryptoManager(AbstractCryptoManager):
         """
         return hmac.new(self.master_key, salt, hashlib.sha256).digest()[:length]
 
-    def sign(self, data_str: str, identity_secret: bytes) -> str:
+    def mac(self, data_str: str, identity_secret: bytes) -> str:
         """
-        Signs data using the Identity Secret. 
+        Compute an HMAC-SHA256 MAC over data using the Identity Secret.
         Uses HMAC-SHA256 as a proxy for Ed25519 to remain zero-dependency.
         """
         return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
 
-    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        """Verifies the HMAC signature."""
-        expected = self.sign(data_str, identity_secret)
-        return hmac.compare_digest(expected, signature)
-
-    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
-        """CamelCase alias: delegates to verify_seal, ignores master_key."""
-        return self.verify_seal(data_str, signature)
-
-    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        """CamelCase alias: delegates to verify_signature."""
-        return self.verify_signature(data_str, signature, identity_secret)
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """Verify an HMAC-SHA256 MAC tag."""
+        expected = self.mac(data_str, identity_secret)
+        return hmac.compare_digest(expected, mac_tag)
 
     def encrypt(self, text: str) -> str:
         salt = os.urandom(16)
@@ -175,9 +167,6 @@ class CryptoManager(AbstractCryptoManager):
         nonce = data[16:24]
         integrity_key = self._derive_sub_key(salt + b"-integrity", 32)
 
-        # Detect format by data length:
-        #   Old (no auth tag): salt(16) + nonce(8) + ciphertext
-        #   New (with auth tag): salt(16) + nonce(8) + ciphertext + tag(32)
         # Detect format by data length:
         #   Old (no auth tag): salt(16) + nonce(8) + ciphertext
         #   New (with auth tag): salt(16) + nonce(8) + ciphertext + tag(32)
@@ -209,13 +198,13 @@ class CryptoManager(AbstractCryptoManager):
         return decrypted.decode()
 
     def seal(self, data_str: str) -> str:
-        """Creates an HMAC-SHA256 signature (seal) of the data."""
+        """Creates an HMAC-SHA256 seal (integrity tag) of the data."""
         # Derive a separate integrity key
         key = self._derive_sub_key(b"integrity-key-salt", 32)
         return hmac.new(key, data_str.encode(), hashlib.sha256).hexdigest()
 
     def verify_seal(self, data_str: str, signature: str) -> bool:
-        """Verifies an HMAC-SHA256 signature."""
+        """Verifies an HMAC-SHA256 seal (integrity tag)."""
         expected = self.seal(data_str)
         return hmac.compare_digest(expected, signature)
 
@@ -230,15 +219,7 @@ class NoAuthCryptoManager(AbstractCryptoManager):
         return hashlib.sha256(data_str.encode()).hexdigest()
     def verify_seal(self, data_str: str, signature: str) -> bool:
         return self.seal(data_str) == signature
-    def sign(self, data_str: str, identity_secret: bytes) -> str:
+    def mac(self, data_str: str, identity_secret: bytes) -> str:
         return "unsigned"
-    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        return signature == "unsigned"
-
-    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
-        """CamelCase alias: delegates to verify_seal, ignores master_key."""
-        return self.verify_seal(data_str, signature)
-
-    def verifySignature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        """CamelCase alias: delegates to verify_signature."""
-        return self.verify_signature(data_str, signature, identity_secret)
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        return mac_tag == "unsigned"

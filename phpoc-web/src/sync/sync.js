@@ -618,19 +618,10 @@ export class SyncService {
     );
 
     // TTL expired or no local cookie — always force auth.
-    // But if we have a valid master key, create a cookie so the next
-    // checkAndSync can use the fast path (avoids cookie catch-22 where
-    // REAUTH_NEEDED prevents cookie creation, which prevents fast path).
+    // No cookie is created here: cookie creation only happens after
+    // explicit re-authentication via _reconcileAndClaim.  The cookie
+    // is the source of truth, not the cached crypto key.
     if (!localCookie) {
-      const mk = this._crypto.getMasterKey();
-      if (mk) {
-        try {
-          const deviceId = await this._getDeviceId() || 'unknown';
-          await DeviceCookie.create(deviceId, this._storage, this._crypto);
-        } catch {
-          // Non-critical — cookie creation failure doesn't block REAUTH_NEEDED
-        }
-      }
       return SyncResult.REAUTH_NEEDED;
     }
 

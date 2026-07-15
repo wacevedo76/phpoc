@@ -549,7 +549,7 @@ class LedgerDomain:
                 }
                 year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
                 if identity_secret:
-                    year_summary["signature"] = self.crypto.sign(year_summary["year_hash"], identity_secret)
+                    year_summary["identity_seal"] = self.crypto.mac(year_summary["year_hash"], identity_secret)
                 ledger.append(year_summary)
                 prev_record = ledger[-1]
 
@@ -562,7 +562,7 @@ class LedgerDomain:
                 }
                 month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
                 if identity_secret:
-                    month_summary["signature"] = self.crypto.sign(month_summary["month_hash"], identity_secret)
+                    month_summary["identity_seal"] = self.crypto.mac(month_summary["month_hash"], identity_secret)
                 ledger.append(month_summary)
                 prev_record = ledger[-1]
 
@@ -583,7 +583,7 @@ class LedgerDomain:
             day_json = json.dumps(day_content, sort_keys=True)
             day_content["day_hash"] = self.crypto.seal(day_json)
             if identity_secret:
-                day_content["signature"] = self.crypto.sign(day_content["day_hash"], identity_secret)
+                day_content["identity_seal"] = self.crypto.mac(day_content["day_hash"], identity_secret)
             ledger.append(day_content)
 
         self.store.write_ledger(ledger)
@@ -696,7 +696,7 @@ class LedgerDomain:
                 }
                 year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
                 if identity_secret:
-                    year_summary["signature"] = self.crypto.sign(year_summary["year_hash"], identity_secret)
+                    year_summary["identity_seal"] = self.crypto.mac(year_summary["year_hash"], identity_secret)
                 ledger.append(year_summary)
                 prev_record = ledger[-1]
 
@@ -709,7 +709,7 @@ class LedgerDomain:
                 }
                 month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
                 if identity_secret:
-                    month_summary["signature"] = self.crypto.sign(month_summary["month_hash"], identity_secret)
+                    month_summary["identity_seal"] = self.crypto.mac(month_summary["month_hash"], identity_secret)
                 ledger.append(month_summary)
                 prev_record = ledger[-1]
 
@@ -730,7 +730,7 @@ class LedgerDomain:
             day_json = json.dumps(day_content, sort_keys=True)
             day_content["day_hash"] = self.crypto.seal(day_json)
             if identity_secret:
-                day_content["signature"] = self.crypto.sign(day_content["day_hash"], identity_secret)
+                day_content["identity_seal"] = self.crypto.mac(day_content["day_hash"], identity_secret)
             ledger.append(day_content)
 
         self.store.write_ledger(ledger)

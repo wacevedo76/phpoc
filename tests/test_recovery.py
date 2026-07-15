@@ -46,8 +46,8 @@ class TestSovereignRecovery(unittest.TestCase):
         ledger_data = json.loads(self.ledger_file.read_text())
         genesis = ledger_data[0]
         self.assertIn("identity_pub_key", genesis["identity"])
-        self.assertIn("signature", genesis)
-        self.assertNotEqual(genesis["signature"], "")
+        seal_val = genesis.get("identity_seal") or genesis.get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {genesis}")
+        self.assertNotEqual(genesis["identity_seal"], "")
         
         # 4. Verify we can unlock Seed and Identity
         enc_seed = genesis["identity"]["recovery_seed_enc"]
@@ -62,7 +62,7 @@ class TestSovereignRecovery(unittest.TestCase):
         identity_secret = bytes.fromhex(decrypted_identity_hex)
         
         # Verify signature on genesis seal
-        self.assertTrue(crypto.verify_signature(genesis.get("block_hash") or genesis.get("day_hash"), genesis["signature"], identity_secret))
+        self.assertTrue(crypto.verify_mac(genesis.get("block_hash") or genesis.get("day_hash"), genesis["identity_seal"], identity_secret))
 
     def test_recovery_and_passphrase_reset(self):
         seed = LedgerFactory.initialize(self.ledger_file, self.pdk, self.username, self.email)

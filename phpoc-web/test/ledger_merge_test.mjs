@@ -67,27 +67,29 @@ function decRev(ciphertextHex, _masterKeyHex) {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /**
- * Compute content_hash the same way LedgerEngine._computeContentHash does:
- * SHA-256 over JSON.stringify with sorted keys of the content fields.
+ * Compute content_hash using the extensible algorithm.
+ * - Fields ending in _enc are decrypted
+ * - Lists are sorted
+ * - content_hash itself is excluded
+ * - Uses jsonSort for deterministic output
  */
 function computeContentHash(data) {
-  const contentObj = {
-    title: data.title || '',
-    startTime_enc: data.startTime_enc || '',
-    endTime_enc: data.endTime_enc || '',
-    duration: data.duration || 0,
-    tags: data.tags || [],
-    pauses_enc: data.pauses_enc || '',
-    metadata_enc: data.metadata_enc || '',
-    comment: data.comment || '',
-    media: data.media || [],
-  };
-  // Sort keys for deterministic output
-  const sorted = {};
-  for (const k of Object.keys(contentObj).sort()) {
-    sorted[k] = contentObj[k];
+  const content = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'content_hash') continue;
+    if (key.endsWith('_enc') && value !== null && value !== '') {
+      try {
+        content[key] = crypto.decrypt(value, MASTER_KEY);
+      } catch (_) {
+        content[key] = value;
+      }
+    } else if (Array.isArray(value)) {
+      content[key] = [...value].sort();
+    } else {
+      content[key] = value;
+    }
   }
-  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+  return crypto.sha256(jsonSort(content));
 }
 
 /**
@@ -169,7 +171,7 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
   const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
-    content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
+    content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
   }
   return content;
 }
@@ -195,7 +197,7 @@ function buildGenesisBlock() {
   const sealJson = jsonSort(content);
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
-    content.signature = crypto.sign(content.day_hash, IDENTITY_SECRET);
+    content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
   }
   return content;
 }
@@ -763,7 +765,7 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
 
       const checkData = {};
       for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature') checkData[k] = v;
+        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
       }
       const sealJson = jsonSort(checkData);
       if (!crypto.verifySeal(sealJson, block[hashKey], MASTER_KEY)) {
@@ -891,7 +893,7 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
 
       const checkData = {};
       for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature') checkData[k] = v;
+        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
       }
       const sealJson = jsonSort(checkData);
       const expectedSeal = crypto.seal(sealJson, MASTER_KEY);
@@ -1113,7 +1115,7 @@ console.log('\n=== Group I — Edge Cases ===');
   const sealJson2 = jsonSort(genesis2Content);
   genesis2Content.day_hash = crypto.seal(sealJson2, MASTER_KEY);
   if (IDENTITY_SECRET) {
-    genesis2Content.signature = crypto.sign(genesis2Content.day_hash, IDENTITY_SECRET);
+    genesis2Content.identity_seal = crypto.mac(genesis2Content.day_hash, IDENTITY_SECRET);
   }
 
   const localChain = [genesis1];
@@ -1380,7 +1382,7 @@ console.log('\n=== Group J — Input Chain Validation ===');
   };
   genesis2.day_hash = crypto.seal(jsonSort(genesis2), MASTER_KEY);
   if (IDENTITY_SECRET) {
-    genesis2.signature = crypto.sign(genesis2.day_hash, IDENTITY_SECRET);
+    genesis2.identity_seal = crypto.mac(genesis2.day_hash, IDENTITY_SECRET);
   }
   const badRemote = [genesis2, buildDayBlock([ENTRY_B], getBlockHash(genesis2), '2026-06-10', 1)];
   // Tamper the remote's day block seal (block 1)
@@ -1423,6 +1425,172 @@ console.log('\n=== Group J — Input Chain Validation ===');
   } else {
     t.assert(false, 'invalid local + genesis mismatch — SKIP: merge not implemented');
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// I-06 Group C — merge.js: content_hash format_version gating
+// ══════════════════════════════════════════════════════════════
+console.log('\n=== I-06 Group C — content_hash format_version gating (merge.js) ===');
+
+// Helper: compute content_hash for merge tests
+const chComputeContentHash = (data) => {
+  const content = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'content_hash') continue;
+    if (key.endsWith('_enc') && value !== null && value !== '') {
+      try {
+        content[key] = crypto.decrypt(value, MASTER_KEY);
+      } catch (_) {
+        content[key] = value;
+      }
+    } else if (Array.isArray(value)) {
+      content[key] = [...value].sort();
+    } else {
+      content[key] = value;
+    }
+  }
+  return crypto.sha256(jsonSort(content));
+};
+
+// Helper: build genesis with optional format_version for merge tests
+const chBuildGenesis = (formatVersion) => {
+  const g = {
+    type: 'genesis', day_index: 0, date: '2026-06-01',
+    identity: {
+      username: 'merger', email: 'merge@test.com',
+      recovery_seed_enc: 'enc:seed', identity_pub_key: 'a'.repeat(64),
+      identity_secret_enc_fallback: 'enc:secret',
+    },
+    prev_hash: '0'.repeat(64), entries: [],
+  };
+  if (formatVersion !== undefined) {
+    g.format_version = formatVersion;
+  }
+  // Exclude hash keys + identity_seal + signature + format_version from seal (I-07)
+  const sealData = { ...g };
+  delete sealData.block_hash;
+  delete sealData.day_hash;
+  delete sealData.identity_seal;
+  delete sealData.signature;
+  delete sealData.format_version;
+  g.block_hash = crypto.seal(jsonSort(sealData), MASTER_KEY);
+  g.identity_seal = crypto.mac(g.block_hash, IDENTITY_SECRET);
+  return g;
+};
+
+// Helper: make an entry data dict for merge content_hash tests
+const chEntry = (opts) => {
+  const data = {
+    title: opts.title || 'Task',
+    startTime_enc: encRev(String(opts.start_epoch || 1700000000000), MASTER_KEY),
+    endTime_enc: encRev(String((opts.start_epoch || 1700000000000) + (opts.duration || 3600000)), MASTER_KEY),
+    duration: opts.duration || 3600000,
+    tags: opts.tags || [],
+    pauses_enc: encRev('[]', MASTER_KEY),
+    metadata_enc: encRev('{}', MASTER_KEY),
+    comment: opts.comment || '',
+    media: [],
+  };
+  if (opts.includeContentHash !== false) {
+    data.content_hash = chComputeContentHash(data);
+  }
+  const hash = computeEntryHash(data);
+  return { hash, data };
+};
+
+// Helper: build a day block for merge content_hash tests
+const chDayBlock = (prevHash, entries, dateStr, dayIndex) => {
+  const d = {
+    type: 'day', day_index: dayIndex, date: dateStr,
+    prev_hash: prevHash, entries,
+  };
+  const sealData = { ...d };
+  delete sealData.day_hash;
+  delete sealData.identity_seal;
+  delete sealData.signature;
+  delete sealData.format_version;
+  d.day_hash = crypto.seal(jsonSort(sealData), MASTER_KEY);
+  d.identity_seal = crypto.mac(d.day_hash, IDENTITY_SECRET);
+  return d;
+};
+
+if (LedgerMerge && typeof LedgerMerge._verifyBlockData === 'function') {
+
+  // ── C1: Entry without content_hash at 0.4.0 → _verifyBlockData returns false
+  {
+    console.log('\n  --- C1: Missing content_hash at 0.4.0 → rejects ---');
+    const entry = chEntry({ title: 'Task', includeContentHash: false });
+    const genesis = chBuildGenesis('0.4.0');
+    const day = chDayBlock(genesis.block_hash, [entry], '2026-06-01', 1);
+    // 5th arg requireContentHash=true for format_version 0.4.0
+    t.assert(!LedgerMerge._verifyBlockData(day, crypto, MASTER_KEY, IDENTITY_SECRET, true),
+      'C1: _verifyBlockData(merge) returns false for entry without content_hash at 0.4.0');
+  }
+
+  // ── C2: Entry with valid content_hash at 0.4.0 → returns true
+  {
+    console.log('\n  --- C2: Valid content_hash at 0.4.0 → accepts ---');
+    const entry = chEntry({ title: 'Valid', includeContentHash: true });
+    const genesis = chBuildGenesis('0.4.0');
+    const day = chDayBlock(genesis.block_hash, [entry], '2026-06-01', 1);
+    t.assert(LedgerMerge._verifyBlockData(day, crypto, MASTER_KEY, IDENTITY_SECRET, true),
+      'C2: _verifyBlockData(merge) returns true for valid content_hash at 0.4.0');
+  }
+
+  // ── C3: Entry with wrong content_hash at 0.4.0 → returns false
+  {
+    console.log('\n  --- C3: Wrong content_hash at 0.4.0 → rejects ---');
+    const entry = chEntry({ title: 'Tampered', includeContentHash: true });
+    entry.data.content_hash = 'f'.repeat(64);
+    const hash = computeEntryHash(entry.data);  // recompute hash after tampering
+    const genesis = chBuildGenesis('0.4.0');
+    const day = chDayBlock(genesis.block_hash, [{ hash, data: entry.data }], '2026-06-01', 1);
+    t.assert(!LedgerMerge._verifyBlockData(day, crypto, MASTER_KEY, IDENTITY_SECRET, true),
+      'C3: _verifyBlockData(merge) returns false for wrong content_hash at 0.4.0');
+  }
+
+  // ── C4: Entry without content_hash at 0.3.0 → returns true (backward compat)
+  {
+    console.log('\n  --- C4: Missing content_hash at 0.3.0 → accepts (backward compat) ---');
+    const entry = chEntry({ includeContentHash: false });
+    const genesis = chBuildGenesis('0.3.0');
+    const day = chDayBlock(genesis.block_hash, [entry], '2026-06-01', 1);
+    t.assert(LedgerMerge._verifyBlockData(day, crypto, MASTER_KEY, IDENTITY_SECRET, false),
+      'C4: _verifyBlockData(merge) returns true for missing content_hash at 0.3.0');
+  }
+
+  // ── C5: Entry without content_hash at absent format_version → returns true
+  {
+    console.log('\n  --- C5: Missing content_hash, no format_version → accepts ---');
+    const entry = chEntry({ includeContentHash: false });
+    const genesis = chBuildGenesis(undefined);
+    const day = chDayBlock(genesis.block_hash, [entry], '2026-06-01', 1);
+    t.assert(LedgerMerge._verifyBlockData(day, crypto, MASTER_KEY, IDENTITY_SECRET, false),
+      'C5: _verifyBlockData(merge) returns true for missing content_hash with no format_version');
+  }
+
+  // ── C6: _verifyChain with 0.4.0 genesis + missing content_hash → throws
+  {
+    console.log('\n  --- C6: _verifyChain rejects 0.4.0 chain with missing content_hash ---');
+    const genesis = chBuildGenesis('0.4.0');
+    const entry = chEntry({ title: 'Bad', includeContentHash: false });
+    const day = chDayBlock(genesis.block_hash, [entry], '2026-06-01', 1);
+    const chain = [genesis, day];
+
+    let threw = false;
+    try {
+      await LedgerMerge._verifyChain('remote', chain, crypto, MASTER_KEY, IDENTITY_SECRET);
+    } catch (e) {
+      threw = e.message.includes('validation failed') || e.message.includes('content_hash');
+    }
+    t.assert(threw,
+      'C6: _verifyChain throws for chain with missing content_hash at format_version 0.4.0');
+  }
+
+} else {
+  t.skip(!LedgerMerge, 'C1-C6(merge): LedgerMerge._verifyBlockData not available');
+  t.skip(!(LedgerMerge && typeof LedgerMerge._verifyBlockData === 'function'),
+    'C1-C6(merge): LedgerMerge._verifyBlockData not a function');
 }
 
 // ── Summary ───────────────────────────────────────────────────────────

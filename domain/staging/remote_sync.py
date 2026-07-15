@@ -16,16 +16,21 @@ Remote blob format (JSON, stored as obfuscated bytes):
   }
 """
 
+import hashlib
+import hmac
 import json
+import logging
 import os
 import struct
 import time
 from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
 
-from security.crypto import AbstractCryptoManager
+from security.crypto import AbstractCryptoManager, PureAESCTR
 from security.device_identity import AbstractDeviceIdentityProvider
 from cli.trace import trace
+
+_logger = logging.getLogger(__name__)
 
 
 # Obfuscation tier sizes in bytes
@@ -121,9 +126,81 @@ class RemoteStagingSync:
         Returns:
             16-byte AES key for blob encryption.
         """
-        import hmac
-        import hashlib
         return hmac.new(master_key, BLOB_SUBKEY_PREFIX, hashlib.sha256).digest()[:16]
+
+    # -- Shared encryption helpers (used by both obfuscation paths) ---------
+
+    @staticmethod
+    def _derive_blob_encryption_keys(blob_key: bytes, salt: bytes) -> Tuple[bytes, bytes]:
+        """Derive encryption and integrity keys from blob key + salt.
+
+        Per PHPSPEC §3.3:
+          - ``enc_key = HMAC-SHA256(blob_key, salt)[:16]``
+          - ``integrity_key = HMAC-SHA256(blob_key, salt || "-integrity")[:16]``
+        """
+        enc_key = hmac.new(blob_key, salt, hashlib.sha256).digest()[:16]
+        integrity_key = hmac.new(
+            blob_key, salt + b"-integrity", hashlib.sha256
+        ).digest()[:16]
+        return enc_key, integrity_key
+
+    @staticmethod
+    def _encrypt_and_tag(
+        payload: bytes, enc_key: bytes, integrity_key: bytes, nonce: bytes
+    ) -> bytes:
+        """AES-CTR encrypt *payload* and append an HMAC-SHA256 auth tag.
+
+        Returns ``ciphertext + tag(32)`` — caller prepends salt + nonce.
+        """
+        aes = PureAESCTR(enc_key)
+        ciphertext = aes.process(payload, nonce)
+        tag = hmac.new(integrity_key, nonce + ciphertext, hashlib.sha256).digest()
+        return ciphertext + tag
+
+    @staticmethod
+    def _obfuscate_core(
+        plaintext: bytes,
+        master_key: bytes,
+        salt: bytes,
+        nonce: bytes,
+        padding_fill: Optional[int] = None,
+    ) -> bytes:
+        """Core obfuscation: pad to tier, encrypt with explicit salt/nonce.
+
+        This is the shared engine behind ``_obfuscate()`` (random salt/nonce)
+        and ``_obfuscate_deterministic()`` (explicit salt/nonce + zero-fill).
+
+        Args:
+            plaintext: Serialized blob bytes.
+            master_key: 32-byte master key.
+            salt: 16-byte salt.
+            nonce: 8-byte nonce.
+            padding_fill: Byte value for padding (None = random, 0 = zero-fill).
+        """
+        if len(salt) != 16:
+            raise ValueError(f"salt must be 16 bytes, got {len(salt)}")
+        if len(nonce) != 8:
+            raise ValueError(f"nonce must be 8 bytes, got {len(nonce)}")
+
+        tier = RemoteStagingSync._select_tier(len(plaintext))
+        padded_size = tier - 4  # Reserve 4 bytes for the original length
+
+        # Prepend original length and pad
+        padding_needed = padded_size - len(plaintext)
+        if padding_needed > 0:
+            fill = os.urandom(padding_needed) if padding_fill is None else bytes([padding_fill]) * padding_needed
+            padded = plaintext + fill
+        else:
+            padded = plaintext
+        payload = struct.pack(">I", len(plaintext)) + padded
+
+        blob_key = RemoteStagingSync._derive_blob_key(master_key)
+        enc_key, integrity_key = \
+            RemoteStagingSync._derive_blob_encryption_keys(blob_key, salt)
+        ciphertext_tag = RemoteStagingSync._encrypt_and_tag(
+            payload, enc_key, integrity_key, nonce
+        )
+        return salt + nonce + ciphertext_tag
 
     @staticmethod
     def _obfuscate(plaintext: bytes, master_key: bytes) -> bytes:
@@ -142,41 +219,40 @@ class RemoteStagingSync:
         Returns:
             Obfuscated bytes ready for transport.
         """
-        tier = RemoteStagingSync._select_tier(len(plaintext))
-        padded_size = tier - 4  # Reserve 4 bytes for the original length
+        return RemoteStagingSync._obfuscate_core(
+            plaintext, master_key,
+            salt=os.urandom(16),
+            nonce=os.urandom(8),
+        )
 
-        # Pad with random bytes
-        padding_needed = padded_size - len(plaintext)
-        if padding_needed > 0:
-            padded = plaintext + os.urandom(padding_needed)
-        else:
-            padded = plaintext
+    @staticmethod
+    def _obfuscate_deterministic(
+        plaintext: bytes, master_key: bytes, salt: bytes, nonce: bytes
+    ) -> bytes:
+        """Obfuscate with explicit salt, nonce, and deterministic padding.
 
-        # Prepend original length
-        padded_with_len = struct.pack(">I", len(plaintext)) + padded
+        Produces byte-identical output across implementations when called
+        with the same (plaintext, master_key, salt, nonce). Delegates to
+        ``_obfuscate_core()`` with zero-fill padding for reproducibility.
 
-        # Encrypt using the blob sub-key
-        blob_key = RemoteStagingSync._derive_blob_key(master_key)
+        Used for cross-platform test vector validation. Production code
+        should use ``_obfuscate()`` which uses random salt/nonce/padding.
 
-        salt = os.urandom(16)
-        nonce = os.urandom(8)
+        Args:
+            plaintext: Serialized blob bytes.
+            master_key: 32-byte master key.
+            salt: 16-byte explicit salt.
+            nonce: 8-byte explicit nonce.
 
-        # Derive the encryption key from salt using the blob sub-key
-        import hmac
-        import hashlib
-        enc_key = hmac.new(blob_key, salt, hashlib.sha256).digest()[:16]
+        Returns:
+            Obfuscated bytes (salt + nonce + ciphertext + tag).
 
-        from security.crypto import PureAESCTR
-        aes = PureAESCTR(enc_key)
-        ciphertext = aes.process(padded_with_len, nonce)
-
-        # Encrypt-then-MAC
-        integrity_key = hmac.new(
-            blob_key, salt + b"-integrity", hashlib.sha256
-        ).digest()[:16]
-        tag = hmac.new(integrity_key, nonce + ciphertext, hashlib.sha256).digest()
-
-        return salt + nonce + ciphertext + tag
+        Raises:
+            ValueError: If salt is not 16 bytes or nonce is not 8 bytes.
+        """
+        return RemoteStagingSync._obfuscate_core(
+            plaintext, master_key, salt, nonce, padding_fill=0,
+        )
 
     @staticmethod
     def _deobfuscate(obfuscated: bytes, master_key: bytes) -> Optional[bytes]:
@@ -197,26 +273,16 @@ class RemoteStagingSync:
             ciphertext = obfuscated[24:-32]
             stored_tag = obfuscated[-32:]
 
-            import hmac
-            import hashlib
-
-            integrity_key = hmac.new(
-                blob_key, salt + b"-integrity", hashlib.sha256
-            ).digest()[:16]
+            enc_key, integrity_key = \
+                RemoteStagingSync._derive_blob_encryption_keys(blob_key, salt)
             expected_tag = hmac.new(
                 integrity_key, nonce + ciphertext, hashlib.sha256
             ).digest()
 
             if not hmac.compare_digest(expected_tag, stored_tag):
-                logger = __import__("logging").getLogger(__name__)
-                logger.warning("Blob integrity check failed (tag mismatch)")
+                _logger.warning("Blob integrity check failed (tag mismatch)")
                 return None
 
-            enc_key = hmac.new(
-                blob_key, salt, hashlib.sha256
-            ).digest()[:16]
-
-            from security.crypto import PureAESCTR
             aes = PureAESCTR(enc_key)
             decrypted = aes.process(ciphertext, nonce)
 
@@ -224,8 +290,7 @@ class RemoteStagingSync:
             original_len = struct.unpack(">I", decrypted[:4])[0]
             return decrypted[4:4 + original_len]
         except Exception as exc:
-            logger = __import__("logging").getLogger(__name__)
-            logger.warning("Blob deobfuscation failed: %s", exc)
+            _logger.warning("Blob deobfuscation failed: %s", exc)
             return None
 
     # ------------------------------------------------------------------

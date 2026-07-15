@@ -320,6 +320,8 @@ class TestGenesisSealVerification(unittest.TestCase):
         del check_data[hash_key]
         if 'signature' in check_data:
             del check_data['signature']
+        if 'identity_seal' in check_data:
+            del check_data['identity_seal']
 
         # Derive master key from seed and create crypto
         mk = RecoveryManager.seed_to_key(seed)
@@ -353,7 +355,7 @@ class TestGenesisSealVerification(unittest.TestCase):
         hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
         check_data = {}
         for k, v in genesis.items():
-            if k not in (hash_key, 'signature', 'format_version'):
+            if k not in (hash_key, 'identity_seal', 'signature', 'format_version'):
                 check_data[k] = v
 
         mk = RecoveryManager.seed_to_key(seed)

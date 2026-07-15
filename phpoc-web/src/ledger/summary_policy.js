@@ -37,13 +37,13 @@ function makeYearSummary(crypto, masterKey, identitySecret, year, prevHash, date
   const json = jsonSort(summary);
   summary.year_hash = crypto.seal(json, masterKey);
   if (identitySecret) {
-    summary.signature = crypto.sign(summary.year_hash, identitySecret);
+    summary.identity_seal = crypto.mac(summary.year_hash, identitySecret);
   }
   return summary;
 }
 
 /**
- * Build a month_summary block with seal and optional identity signature.
+ * Build a month_summary block with seal and optional identity MAC.
  */
 function makeMonthSummary(crypto, masterKey, identitySecret, month, prevHash, dateStr) {
   const summary = {
@@ -55,7 +55,7 @@ function makeMonthSummary(crypto, masterKey, identitySecret, month, prevHash, da
   const json = jsonSort(summary);
   summary.month_hash = crypto.seal(json, masterKey);
   if (identitySecret) {
-    summary.signature = crypto.sign(summary.month_hash, identitySecret);
+    summary.identity_seal = crypto.mac(summary.month_hash, identitySecret);
   }
   return summary;
 }
@@ -64,7 +64,7 @@ function makeMonthSummary(crypto, masterKey, identitySecret, month, prevHash, da
 
 class SummaryPolicy {
   /**
-   * @param {object} crypto - CryptoService-like object with seal/sign methods.
+   * @param {object} crypto - CryptoService-like object with seal/mac methods.
    * @param {string} masterKey - Hex master key for sealing.
    * @param {string|null} [identitySecret=null] - Optional identity secret for signing.
    */

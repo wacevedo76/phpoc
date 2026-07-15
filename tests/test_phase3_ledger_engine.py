@@ -62,15 +62,28 @@ class _MockCrypto:
         """Verify an HMAC-SHA256 seal."""
         expected = self.seal(data_str)
         return hmac.compare_digest(expected, signature)
+
+    def verifySeal(self, data_str: str, signature: str, _master_key_hex: str = "") -> bool:
+        """CamelCase alias for verify_seal (JS compat)."""
+        return self.verify_seal(data_str, signature)
     
     def sign(self, data_str: str, identity_secret: bytes) -> str:
         """HMAC-SHA256 signature (matches real CryptoManager.sign)."""
         return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()
-    
+
+    def mac(self, data_str: str, identity_secret: bytes) -> str:
+        """HMAC-SHA256 MAC (alias for sign)."""
+        return self.sign(data_str, identity_secret)
+
     def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
         """Verify an HMAC-SHA256 signature."""
-        expected = self.sign(data_str, identity_secret)
+        expected = self.mac(data_str, identity_secret)
         return hmac.compare_digest(expected, signature)
+
+    def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """Verify an HMAC-SHA256 MAC."""
+        expected = self.mac(data_str, identity_secret)
+        return hmac.compare_digest(expected, mac_tag)
 
 
 class _MockLedgerStore:
@@ -261,25 +274,25 @@ class TestLedgerChainSealAndSign(unittest.TestCase):
         skip_unless_phase_3()
         data_str = "test-data"
         identity_secret = os.urandom(32)
-        expected = self.crypto.sign(data_str, identity_secret)
-        result = self.chain.compute_signature(data_str, identity_secret)
+        expected = self.crypto.mac(data_str, identity_secret)
+        result = self.chain.compute_identity_mac(data_str, identity_secret)
         self.assertEqual(result, expected)
     
     def test_signature_without_identity_returns_none(self):
         skip_unless_phase_3()
-        result = self.chain.compute_signature("data", None)
+        result = self.chain.compute_identity_mac("data", None)
         self.assertIsNone(result)
     
     def test_verify_signature_valid(self):
         skip_unless_phase_3()
         identity_secret = os.urandom(32)
-        sig = self.chain.compute_signature("data", identity_secret)
-        self.assertTrue(self.chain.verify_signature("data", sig, identity_secret))
+        sig = self.chain.compute_identity_mac("data", identity_secret)
+        self.assertTrue(self.chain.verify_identity_mac("data", sig, identity_secret))
     
     def test_verify_signature_wrong_key(self):
         skip_unless_phase_3()
-        sig = self.chain.compute_signature("data", b"\x01" * 32)
-        self.assertFalse(self.chain.verify_signature("data", sig, b"\x02" * 32))
+        sig = self.chain.compute_identity_mac("data", b"\x01" * 32)
+        self.assertFalse(self.chain.verify_identity_mac("data", sig, b"\x02" * 32))
 
 
 class TestLedgerChainAppendAndBuild(unittest.TestCase):
@@ -376,9 +389,9 @@ class TestLedgerChainAppendAndBuild(unittest.TestCase):
         self.chain.identity_secret = identity_secret
         entry = {"title": "Test", "start_epoch": 1700000000000, "duration": 1000}
         block = self.chain.build_day_block([entry], "2026-01-01", date_str="2026-01-01")
-        self.assertIn("signature", block)
-        expected_sig = self.crypto.sign(block["day_hash"], identity_secret)
-        self.assertEqual(block["signature"], expected_sig)
+        seal_val = block.get("identity_seal") or block.get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {block}")
+        expected_sig = self.crypto.mac(block["day_hash"], identity_secret)
+        self.assertEqual(block["identity_seal"], expected_sig)
     
     def test_build_day_block_entry_hash_format(self):
         skip_unless_phase_3()
@@ -447,7 +460,7 @@ class TestLedgerChainVerify(unittest.TestCase):
         day_json = json.dumps(block, sort_keys=True)
         block["day_hash"] = self.crypto.seal(day_json)
         if self.identity_secret:
-            block["signature"] = self.crypto.sign(block["day_hash"], self.identity_secret)
+            block["identity_seal"] = self.crypto.mac(block["day_hash"], self.identity_secret)
         return block
     
     def test_verify_empty_chain(self):
@@ -505,7 +518,7 @@ class TestLedgerChainVerify(unittest.TestCase):
         self._add_day_block("2026-01-01")
         
         ledger = self.store.read_ledger()
-        ledger[1]["signature"] = hmac.new(b"wrong-key", b"data", hashlib.sha256).hexdigest()
+        ledger[1]["identity_seal"] = hmac.new(b"wrong-key", b"data", hashlib.sha256).hexdigest()
         self.store.write_ledger(ledger)
         
         self.assertFalse(self.chain.verify())
@@ -519,8 +532,8 @@ class TestLedgerChainVerify(unittest.TestCase):
         # Second day block links to first
         dec31 = self._make_day_block("2025-12-31", [{"title": "NYE", "start_epoch": 1700000000000, "duration": 1000}])
         dec31["prev_hash"] = blocks[-1]["day_hash"]
-        dec31["day_hash"] = self.crypto.seal(json.dumps({k: v for k, v in dec31.items() if k not in ["day_hash", "signature"]}, sort_keys=True))
-        dec31["signature"] = self.crypto.sign(dec31["day_hash"], self.identity_secret)
+        dec31["day_hash"] = self.crypto.seal(json.dumps({k: v for k, v in dec31.items() if k not in ["day_hash", "identity_seal", "signature"]}, sort_keys=True))
+        dec31["identity_seal"] = self.crypto.mac(dec31["day_hash"], self.identity_secret)
         blocks.append(dec31)
         # Add year summary
         year_summary = {
@@ -528,8 +541,8 @@ class TestLedgerChainVerify(unittest.TestCase):
             "prev_hash": blocks[-1]["day_hash"],
             "date": "2026-01-01",
         }
-        year_summary["year_hash"] = self.crypto.seal(json.dumps(year_summary, sort_keys=True))
-        year_summary["signature"] = self.crypto.sign(year_summary["year_hash"], self.identity_secret)
+        year_summary["year_hash"] = self.crypto.seal(json.dumps({k: v for k, v in year_summary.items() if k not in ["year_hash", "identity_seal", "signature"]}, sort_keys=True))
+        year_summary["identity_seal"] = self.crypto.mac(year_summary["year_hash"], self.identity_secret)
         blocks.append(year_summary)
         
         # Add month summary
@@ -538,15 +551,15 @@ class TestLedgerChainVerify(unittest.TestCase):
             "prev_hash": year_summary["year_hash"],
             "date": "2026-01-01",
         }
-        month_summary["month_hash"] = self.crypto.seal(json.dumps(month_summary, sort_keys=True))
-        month_summary["signature"] = self.crypto.sign(month_summary["month_hash"], self.identity_secret)
+        month_summary["month_hash"] = self.crypto.seal(json.dumps({k: v for k, v in month_summary.items() if k not in ["month_hash", "identity_seal", "signature"]}, sort_keys=True))
+        month_summary["identity_seal"] = self.crypto.mac(month_summary["month_hash"], self.identity_secret)
         blocks.append(month_summary)
         
         # Add January day
         jan_block = self._make_day_block("2026-01-01", [{"title": "Jan Task", "start_epoch": 1700000000000, "duration": 1000}])
         jan_block["prev_hash"] = blocks[-1]["month_hash"]
-        jan_block["day_hash"] = self.crypto.seal(json.dumps({k: v for k, v in jan_block.items() if k not in ["day_hash", "signature"]}, sort_keys=True))
-        jan_block["signature"] = self.crypto.sign(jan_block["day_hash"], self.identity_secret)
+        jan_block["day_hash"] = self.crypto.seal(json.dumps({k: v for k, v in jan_block.items() if k not in ["day_hash", "identity_seal", "signature"]}, sort_keys=True))
+        jan_block["identity_seal"] = self.crypto.mac(jan_block["day_hash"], self.identity_secret)
         blocks.append(jan_block)
         
         self.chain.append_blocks(blocks)
@@ -848,7 +861,7 @@ class TestYearMonthSummaryPolicy(unittest.TestCase):
         self.assertEqual(result[0]["month"], "2026-01")
         self.assertEqual(result[0]["prev_hash"], "abc")
         self.assertIn("month_hash", result[0])
-        self.assertIn("signature", result[0])
+        seal_val = result[0].get("identity_seal") or result[0].get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {result[0]}")
 
     def test_month_boundary_seal_verifies(self):
         skip_unless_phase_3()
@@ -857,7 +870,7 @@ class TestYearMonthSummaryPolicy(unittest.TestCase):
         result = self.policy.get_summary_blocks(prev_block, curr_date)
 
         summary = result[0]
-        check_data = {k: v for k, v in summary.items() if k not in ["month_hash", "signature"]}
+        check_data = {k: v for k, v in summary.items() if k not in ["month_hash", "identity_seal", "signature"]}
         self.assertTrue(self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), summary["month_hash"]))
 
     def test_year_boundary_inserts_year_summary(self):
@@ -1069,9 +1082,9 @@ class TestLedgerEngineCommit(unittest.TestCase):
         ]
         self.engine.commit(entries)
         day_block = self.engine.get_day_blocks()[-1]
-        self.assertIn("signature", day_block)
-        expected_sig = self.crypto.sign(day_block["day_hash"], self.identity_secret)
-        self.assertEqual(day_block["signature"], expected_sig)
+        seal_val = day_block.get("identity_seal") or day_block.get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {day_block}")
+        expected_sig = self.crypto.mac(day_block["day_hash"], self.identity_secret)
+        self.assertEqual(day_block["identity_seal"], expected_sig)
 
     def test_commit_empty_entries_returns_none(self):
         skip_unless_phase_3()
@@ -1323,9 +1336,9 @@ class TestLedgerEngineEdgeCases(unittest.TestCase):
         engine = LedgerEngine(crypto=self.crypto, store=store, identity_secret=identity)
         engine.commit([{"title": "Task", "start_epoch": 1700000000000, "duration": 1000}])
         day_block = engine.get_day_blocks()[-1]
-        self.assertIn("signature", day_block)
-        expected = self.crypto.sign(day_block["day_hash"], identity)
-        self.assertEqual(day_block["signature"], expected)
+        seal_val = day_block.get("identity_seal") or day_block.get("signature"); self.assertIsNotNone(seal_val, f"Missing identity seal in {day_block}")
+        expected = self.crypto.mac(day_block["day_hash"], identity)
+        self.assertEqual(day_block["identity_seal"], expected)
 
     def test_commit_without_identity_no_signature(self):
         skip_unless_phase_3()

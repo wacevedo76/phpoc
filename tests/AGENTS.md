@@ -33,9 +33,10 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_date_filters.py` — Date filter tests
 - `test_remote_config_wiring.py` — Remote config wiring
 - `test_cross_platform_integration.py` — Cross-platform live integration tests (CLI ↔ Worker)
+- `test_pbkdf2_per_user_salt.py` — Per-user PBKDF2 salt: derivation, auth upgrade, init flow, passphrase change, integration (29 tests, I-05)
 
 ## Local Contracts
-- **32 test files, ~14,800 lines, 1554 tests passing (3 new Bug 4 tests added 2026-07-01)**
+- **33 test files, ~14,800 lines, 1583 tests passing (I-05 Phase 2 RED added 2026-07-15)**
 - Run all: `python3 -m pytest`
 - Run single file: `python3 -m pytest tests/test_<name>.py -v`
 - Run with warnings: `python3 -m pytest -W ignore::DeprecationWarning`

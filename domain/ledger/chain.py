@@ -11,10 +11,15 @@ from domain.ledger.helpers import get_block_hash
 
 import json
 import hashlib
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from security.crypto import AbstractCryptoManager
 from storage.ledger_store import AbstractLedgerStore
+
+# Default format_version when genesis has none (pre-spec, implicit 0.2.0)
+_DEFAULT_FORMAT_VERSION = (0, 2, 0)
+# Content hash is required at this version and above
+_CONTENT_HASH_REQUIRED_VERSION = (0, 4, 0)
 
 
 def _verify_entry_hash_flex(data: dict, stored_hash: str) -> bool:
@@ -41,7 +46,7 @@ class LedgerChain:
     """Block-level chain operations.
 
     Responsible for:
-      - Sealing/signing blocks (matches CryptoManager seal/sign behavior)
+      - Sealing/MAC computation (matches CryptoManager seal/mac behavior)
       - Building day blocks with correct structure
       - Appending blocks with linkage verification
       - Truncation with removed-block return
@@ -93,6 +98,8 @@ class LedgerChain:
     def _make_append_blocks_fallback(self):  # pragma: no cover
         def append_blocks(blocks):
             ledger = self.store.read_ledger()
+            if ledger is None:
+                ledger = []
             ledger.extend(blocks)
             self.store.write_ledger(ledger)
         return append_blocks
@@ -100,6 +107,8 @@ class LedgerChain:
     def _make_truncate_fallback(self):  # pragma: no cover
         def truncate(keep_count):
             ledger = self.store.read_ledger()
+            if ledger is None:
+                ledger = []
             if keep_count >= len(ledger):
                 return []
             kept = ledger[:keep_count]
@@ -129,15 +138,15 @@ class LedgerChain:
         """Verify an HMAC-SHA256 seal over a dict."""
         return self.crypto.verify_seal(json.dumps(data, sort_keys=True), signature)
 
-    def compute_signature(self, data_str: str, identity_secret: Optional[bytes]) -> Optional[str]:
-        """Compute an identity signature, or None if no secret is configured."""
+    def compute_identity_mac(self, data_str: str, identity_secret: Optional[bytes]) -> Optional[str]:
+        """Compute an identity MAC, or None if no secret is configured."""
         if identity_secret is None:
             return None
-        return self.crypto.sign(data_str, identity_secret)
+        return self.crypto.mac(data_str, identity_secret)
 
-    def verify_signature(self, data_str: str, signature: str, identity_secret: bytes) -> bool:
-        """Verify an identity signature against a given secret."""
-        return self.crypto.verify_signature(data_str, signature, identity_secret)
+    def verify_identity_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
+        """Verify an identity MAC against a given secret."""
+        return self.crypto.verify_mac(data_str, mac_tag, identity_secret)
 
     # ── Block access ─────────────────────────────────────
 
@@ -219,7 +228,7 @@ class LedgerChain:
         day_json = json.dumps(day_content, sort_keys=True)
         day_content["day_hash"] = self.crypto.seal(day_json)
         if self.identity_secret:
-            day_content["signature"] = self.crypto.sign(
+            day_content["identity_seal"] = self.crypto.mac(
                 day_content["day_hash"], self.identity_secret
             )
         return day_content
@@ -309,14 +318,21 @@ class LedgerChain:
         Checks:
           1. prev_hash linkage between consecutive blocks
           2. Block seal integrity (day_hash/month_hash/year_hash)
-          3. Identity signature (if identity_secret is available)
+          3. Identity seal (if identity_secret is available, via 'identity_seal' field)
           4. Entry hashes within day blocks (SHA256 of entry data)
-          5. Content hash verification for entries that carry one
+          5. Content hash verification — required at format_version >= 0.4.0,
+             optional (skip when absent) at lower versions
 
         Returns True if the entire chain is valid.
         """
         ledger = self.read_all()
         verify_signatures = self.identity_secret is not None
+
+        # Determine whether content_hash is required from genesis format_version
+        genesis = ledger[0] if ledger else None
+        require_content_hash = LedgerChain._is_format_version_at_least(
+            genesis, _CONTENT_HASH_REQUIRED_VERSION
+        )
 
         for i in range(1, len(ledger)):
             current = ledger[i]
@@ -329,16 +345,17 @@ class LedgerChain:
 
             # 2. Block seal
             hash_key = LedgerChain._hash_key_for_block(current)
-            check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature", "format_version")}
+            check_data = {k: v for k, v in current.items() if k not in (hash_key, "identity_seal", "signature", "format_version")}
             if not self.crypto.verify_seal(
                 json.dumps(check_data, sort_keys=True), current[hash_key]
             ):
                 return False
 
-            # 3. Identity signature (if present)
-            if verify_signatures and current.get("signature"):
-                if not self.crypto.verify_signature(
-                    current[hash_key], current["signature"], self.identity_secret
+            # 3. Identity seal (if present — supports both 'identity_seal' and legacy 'signature')
+            identity_seal = current.get("identity_seal") or current.get("signature")
+            if verify_signatures and identity_seal:
+                if not self.crypto.verify_mac(
+                    current[hash_key], identity_seal, self.identity_secret
                 ):
                     return False
 
@@ -350,11 +367,17 @@ class LedgerChain:
                         return False
 
                     # 5. Content hash verification
-                    if "content_hash" in data:
+                    has_content_hash = "content_hash" in data
+
+                    if require_content_hash and not has_content_hash:
+                        # format_version >= 0.4.0: content_hash is mandatory
+                        return False
+
+                    if has_content_hash:
                         try:
                             if not self._verify_content_hash(data, decrypt_fn=self.crypto.decrypt):
                                 return False
-                        except Exception as e:
+                        except Exception:
                             return False
 
         return True
@@ -383,13 +406,15 @@ class LedgerChain:
             return False
 
         hash_key = LedgerChain._hash_key_for_block(current)
-        check_data = {k: v for k, v in current.items() if k not in (hash_key, "signature", "format_version")}
+        check_data = {k: v for k, v in current.items() if k not in (hash_key, "identity_seal", "signature", "format_version")}
         if not self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), current[hash_key]):
             return False
 
-        if self.identity_secret and current.get("signature"):
-            if not self.crypto.verify_signature(
-                current[hash_key], current["signature"], self.identity_secret
+        # Identity seal (supports both 'identity_seal' and legacy 'signature')
+        identity_seal = current.get("identity_seal") or current.get("signature")
+        if self.identity_secret and identity_seal:
+            if not self.crypto.verify_mac(
+                current[hash_key], identity_seal, self.identity_secret
             ):
                 return False
 
@@ -421,6 +446,32 @@ class LedgerChain:
             "month_summary": "month_hash",
             "year_summary": "year_hash",
         }.get(btype, "day_hash")
+
+    @staticmethod
+    def _parse_format_version(genesis: Optional[dict]) -> Tuple[int, ...]:
+        """Parse format_version from a genesis block into a tuple of ints.
+
+        Returns (0, 2, 0) if genesis is None or has no format_version.
+        """
+        if genesis is None:
+            return _DEFAULT_FORMAT_VERSION
+        fv = genesis.get("format_version")
+        if fv is None or not isinstance(fv, str):
+            return _DEFAULT_FORMAT_VERSION
+        try:
+            return tuple(int(s) for s in fv.split("."))
+        except (ValueError, AttributeError):
+            return _DEFAULT_FORMAT_VERSION
+
+    @staticmethod
+    def _is_format_version_at_least(genesis: Optional[dict], minimum: Tuple[int, ...]) -> bool:
+        """Return True if genesis format_version >= minimum (segment-wise int comparison)."""
+        actual = LedgerChain._parse_format_version(genesis)
+        # Pad shorter tuple for comparison
+        max_len = max(len(actual), len(minimum))
+        a = actual + (0,) * (max_len - len(actual))
+        m = minimum + (0,) * (max_len - len(minimum))
+        return a >= m
 
     @staticmethod
     def _verify_content_hash(data: dict, decrypt_fn=None) -> bool:

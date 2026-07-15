@@ -369,7 +369,7 @@ class TestTagsBackwardCompat(unittest.TestCase):
         }
         day_json = json.dumps(day_block, sort_keys=True)
         day_block["day_hash"] = self.crypto.seal(day_json)
-        day_block["signature"] = self.crypto.sign(
+        day_block["identity_seal"] = self.crypto.mac(
             day_block["day_hash"], self.identity_secret
         )
         self.lf.write_text(json.dumps([genesis, day_block], indent=2))
