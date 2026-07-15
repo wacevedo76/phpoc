@@ -14,8 +14,9 @@
  *   │  🔴 ▶ Active Task       5m  │  ← Active entries (compact)
  *   │  (scrollable)               │
  *   ├──────────────────────────────┤
- *   │  [Commit Selected (N)]       │  ← Sync button
+ *   │  [Commit Selected (N)]       │
  *   │  [Commit All (N)]            │
+ *   │  [Sync Now]                  │
  *   ├──────────────────────────────┤
  *   │  Status    ● Synced          │  ← Sync status info
  *   │  Last push 2:30 PM           │
@@ -84,7 +85,8 @@ export default function SyncSettings() {
   const [editEndTimes, setEditEndTimes] = useState({});  // entry_id → end_epoch (ms)
   const [editPauses, setEditPauses] = useState({});        // entry_id → pauses[]
   const [saving, setSaving] = useState({});
-  const saveTimers = useRef({});
+  const [syncStatusCollapsed, setSyncStatusCollapsed] = useState(true);
+
 
   // ── Pause adder state (per-entry inline form) ──────────────────
   const [addingPauseFor, setAddingPauseFor] = useState(null); // entry_id or null
@@ -268,66 +270,28 @@ export default function SyncSettings() {
 
   // ── Inline editing helpers ──────────────────────────────────────
 
-  /**
-   * Save tags for an entry via sync.modify().
-   */
-  const saveTags = useCallback(async (entryId, tags) => {
-    const entry = allEntries.find((e) => e.entry_id === entryId);
-    if (!entry || entry.is_active) return;
-    setSaving((s) => ({ ...s, [entryId]: true }));
-    try {
-      await sync.modify(entry.entry_index, { tags });
-      // Update local entry state
-      setAllEntries((prev) => prev.map((e) =>
-        e.entry_id === entryId ? { ...e, tags } : e
-      ));
-    } catch (err) {
-      console.warn('Failed to save tags:', err);
-    } finally {
-      setSaving((s) => ({ ...s, [entryId]: false }));
-    }
-  }, [allEntries, sync]);
 
-  /**
-   * Save comment for an entry via sync.modify() — debounced.
-   */
-  const saveComment = useCallback(async (entryId, comment) => {
-    const entry = allEntries.find((e) => e.entry_id === entryId);
-    if (!entry || entry.is_active) return;
-    setSaving((s) => ({ ...s, [entryId]: true }));
-    try {
-      const finalComment = comment.trim() || null;
-      await sync.modify(entry.entry_index, { comment: finalComment });
-      setAllEntries((prev) => prev.map((e) =>
-        e.entry_id === entryId ? { ...e, comment: finalComment } : e
-      ));
-    } catch (err) {
-      console.warn('Failed to save comment:', err);
-    } finally {
-      setSaving((s) => ({ ...s, [entryId]: false }));
-    }
-  }, [allEntries, sync]);
 
-  // ── Tag actions ─────────────────────────────────────────────────
+  // ── Tag actions (local-only until Modify) ─────────────────────
 
   const removeTag = useCallback((entryId, tagToRemove) => {
     const current = editTags[entryId];
     if (!current) return;
     const updated = current.filter((t) => t !== tagToRemove);
     setEditTags((prev) => ({ ...prev, [entryId]: updated }));
-    saveTags(entryId, updated);
-  }, [editTags, saveTags]);
+    markDirty(entryId);
+  }, [editTags, markDirty]);
 
   const addTag = useCallback((entryId) => {
     const input = (editTagInputs[entryId] || '').trim().toLowerCase();
     if (!input) return;
     const current = editTags[entryId] || [];
-    if (current.includes(input)) return; // no duplicates
+    if (current.includes(input)) return;
     const updated = [...current, input].sort();
     setEditTags((prev) => ({ ...prev, [entryId]: updated }));
     setEditTagInputs((prev) => ({ ...prev, [entryId]: '' }));
-    saveTags(entryId, updated);
-  }, [editTagInputs, editTags, saveTags]);
+    markDirty(entryId);
+  }, [editTagInputs, editTags, markDirty]);
 
   const handleTagInputKeyDown = useCallback((e, entryId) => {
     if (e.key === 'Enter') {
@@ -361,62 +325,79 @@ export default function SyncSettings() {
   }, []);
 
   /**
-   * Save all timing changes (end time + pauses) for an entry in one
-   * sync.modify() call. Recalculates duration accounting for pauses.
-   * This is the explicit "Save Changes" action — changes are NOT
-   * auto-saved until the user clicks the button.
+   * Save all changes (tags, comment, end time, pauses) for an entry in
+   * a single sync.modify() call. Recalculates duration accounting for pauses.
    */
-  const handleSaveEntry = useCallback(async (entryId) => {
+  const handleModify = useCallback(async (entryId) => {
     const entry = allEntries.find((e) => e.entry_id === entryId);
     if (!entry || entry.is_active) return;
-
-    const newEndEpoch = editEndTimes[entryId];
-    const newPauses = editPauses[entryId];
-    if (newEndEpoch === undefined && newPauses === undefined) return;
 
     setSaving((s) => ({ ...s, [entryId]: true }));
     try {
       const fields = {};
 
-      // Compute duration accounting for pauses (use new pauses if edited, else original)
-      const pauses = newPauses !== undefined ? newPauses : (entry.pauses || []);
-      const endEpoch = newEndEpoch !== undefined ? newEndEpoch : entry.end_epoch;
-      let totalPauseMs = 0;
-      for (const p of pauses) {
-        if (p.pause_start != null && p.pause_stop != null) {
-          totalPauseMs += p.pause_stop - p.pause_start;
-        }
+      // Tags
+      const newTags = editTags[entryId];
+      if (newTags !== undefined && JSON.stringify(newTags) !== JSON.stringify(entry.tags || [])) {
+        fields.tags = newTags;
       }
 
-      if (newEndEpoch !== undefined) {
+      // Comment
+      const newComment = editComments[entryId];
+      const origComment = entry.comment || '';
+      if (newComment !== undefined && newComment.trim() !== origComment.trim()) {
+        fields.comment = newComment.trim() || null;
+      }
+
+      // End time
+      const newEndEpoch = editEndTimes[entryId];
+      if (newEndEpoch !== undefined && newEndEpoch !== entry.end_epoch) {
         fields.end_epoch = newEndEpoch;
       }
-      if (newPauses !== undefined) {
-        fields.pauses = pauses;
+
+      // Pauses
+      const newPauses = editPauses[entryId];
+      if (newPauses !== undefined && JSON.stringify(newPauses) !== JSON.stringify(entry.pauses || [])) {
+        fields.pauses = newPauses;
       }
-      if (endEpoch) {
+
+      // Duration (recompute if end time or pauses changed)
+      const pauses = newPauses !== undefined ? newPauses : (entry.pauses || []);
+      const endEpoch = newEndEpoch !== undefined ? newEndEpoch : entry.end_epoch;
+      if (endEpoch && (newEndEpoch !== undefined || newPauses !== undefined)) {
+        let totalPauseMs = 0;
+        for (const p of pauses) {
+          if (p.pause_start != null && p.pause_stop != null) {
+            totalPauseMs += p.pause_stop - p.pause_start;
+          }
+        }
         fields.duration = Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs);
       }
 
-      await sync.modify(entry.entry_index, fields);
+      // Only call modify if there are actual changes
+      if (Object.keys(fields).length > 0) {
+        await sync.modify(entry.entry_index, fields);
+      }
 
       // Update local state with saved values
       setAllEntries((prev) => prev.map((e) => {
         if (e.entry_id !== entryId) return e;
         const updates = {};
-        if (newEndEpoch !== undefined) updates.end_epoch = newEndEpoch;
-        if (newPauses !== undefined) updates.pauses = pauses;
-        if (endEpoch) updates.duration = Math.max(0, (endEpoch - entry.start_epoch) - totalPauseMs);
+        if (fields.tags !== undefined) updates.tags = fields.tags;
+        if (fields.comment !== undefined) updates.comment = fields.comment;
+        if (fields.end_epoch !== undefined) updates.end_epoch = fields.end_epoch;
+        if (fields.pauses !== undefined) updates.pauses = fields.pauses;
+        if (fields.duration !== undefined) updates.duration = fields.duration;
         return { ...e, ...updates };
       }));
 
       markClean(entryId);
     } catch (err) {
-      console.warn('Failed to save entry:', err);
+      console.warn('Failed to modify entry:', err);
     } finally {
       setSaving((s) => ({ ...s, [entryId]: false }));
     }
-  }, [allEntries, editEndTimes, editPauses, sync, markClean]);
+  }, [allEntries, editEndTimes, editPauses, editTags, editComments, sync, markClean]);
 
   /**
    * Quick-adjust end time by an offset in minutes.
@@ -600,26 +581,12 @@ export default function SyncSettings() {
     }
   }, [allEntries, sync]);
 
-  // ── Comment change (debounced save on blur) ─────────────────────
+  // ── Comment change (local-only until Modify) ──────────────────
 
   const handleCommentChange = useCallback((entryId, value) => {
     setEditComments((prev) => ({ ...prev, [entryId]: value }));
-    // Debounced auto-save after 800ms of no typing
-    if (saveTimers.current[entryId]) {
-      clearTimeout(saveTimers.current[entryId]);
-    }
-    saveTimers.current[entryId] = setTimeout(() => {
-      saveComment(entryId, value);
-    }, 800);
-  }, [saveComment]);
-
-  const handleCommentBlur = useCallback((entryId) => {
-    const value = editComments[entryId];
-    if (saveTimers.current[entryId]) {
-      clearTimeout(saveTimers.current[entryId]);
-    }
-    saveComment(entryId, value || '');
-  }, [editComments, saveComment]);
+    markDirty(entryId);
+  }, [markDirty]);
 
   // ── Commit ──────────────────────────────────────────────────────
 
@@ -1050,6 +1017,20 @@ export default function SyncSettings() {
             </span>
           </div>
 
+          {/* Modify button (collapsed) */}
+          {canCommit && (
+            <button
+              className={`btn btn-ghost btn-xs sync-pill-modify-collapsed ${dirtyIds.has(entry.entry_id) ? 'sync-pill-modify-dirty' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isExpanded) handleCardClick(entry.entry_id);
+              }}
+              title={isExpanded ? 'Scroll to Modify' : 'Expand to modify'}
+            >
+              ✏️
+            </button>
+          )}
+
           {/* Expand indicator */}
           {canCommit && (
             <span className={`sync-pill-chevron ${isExpanded ? 'sync-pill-chevron-up' : ''}`}>
@@ -1094,29 +1075,26 @@ export default function SyncSettings() {
               {isSaving && <span className="saving-spinner" />}
             </div>
 
-            {/* Comment — editable textarea */}
+            {/* Comment — editable textarea (saved on Modify) */}
             <textarea
               className="sync-pill-comment-edit"
               placeholder="Add a comment…"
               value={currentComment}
               onChange={(e) => handleCommentChange(entry.entry_id, e.target.value)}
-              onBlur={() => handleCommentBlur(entry.entry_id)}
               rows={2}
             />
 
-            {/* ── Save Changes + Delete row ────────────────────── */}
+            {/* ── Modify + Delete row ─────────────────────────── */}
             <div className="sync-pill-action-row">
-              {dirtyIds.has(entry.entry_id) && (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-xs sync-pill-save-btn"
-                  onClick={(e) => { e.stopPropagation(); handleSaveEntry(entry.entry_id); }}
-                  disabled={isSaving}
-                  title="Save end time and pause changes to staging"
-                >
-                  {isSaving ? '⋯ Saving…' : '💾 Save Changes'}
-                </button>
-              )}
+              <button
+                type="button"
+                className={`btn btn-xs sync-pill-modify-btn ${dirtyIds.has(entry.entry_id) ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={(e) => { e.stopPropagation(); handleModify(entry.entry_id); }}
+                disabled={isSaving}
+                title="Save all changes to staging"
+              >
+                {isSaving ? '⋯ Modifying…' : dirtyIds.has(entry.entry_id) ? '✏️ Modify*' : '✏️ Modify'}
+              </button>
               <button
                 type="button"
                 className="btn btn-danger btn-xs sync-pill-delete-btn"
@@ -1254,6 +1232,15 @@ export default function SyncSettings() {
               </button>
             </div>
 
+            {/* Sync Now button */}
+            <button
+              className="btn btn-primary btn-sync-now"
+              onClick={handleSyncNow}
+              disabled={syncing || !sync || !sync.isRemoteAvailable}
+            >
+              {syncing ? '↻ Syncing...' : '↻ Sync Now'}
+            </button>
+
             {/* Commit error */}
             {commitError && (
               <div className="sync-result sync-result-error">
@@ -1264,7 +1251,31 @@ export default function SyncSettings() {
         )}
 
         {/* ── Status section ───────────────────────────────────── */}
-        <div className="sync-details">
+        <div className={`sync-details${syncStatusCollapsed ? ' sync-details-collapsed' : ''}`}>
+          {syncStatusCollapsed ? (
+            <button
+              className="sync-status-expand-bar"
+              onClick={() => setSyncStatusCollapsed(false)}
+              aria-label="Expand sync status"
+            >
+              <span className="sync-status-expand-label">Sync Status</span>
+              <span className="sync-status-expand-chevron">▲</span>
+            </button>
+          ) : (
+            <>
+              <div className="sync-status-header">
+                <span className="sync-detail-label">Sync Status</span>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => setSyncStatusCollapsed(true)}
+                  aria-label="Collapse sync status"
+                  title="Collapse"
+                  style={{ opacity: 0.5, fontSize: '0.65rem' }}
+                >
+                  ▼
+                </button>
+              </div>
+
           <div className="sync-detail-row">
             <span className="sync-detail-label">Status</span>
             <SyncIndicator status={displayStatus} />
@@ -1301,15 +1312,6 @@ export default function SyncSettings() {
               }
             </span>
           </div>
-
-          {/* Sync Now button */}
-          <button
-            className="btn btn-primary btn-sync-now"
-            onClick={handleSyncNow}
-            disabled={syncing || !sync || !sync.isRemoteAvailable}
-          >
-            {syncing ? '↻ Syncing...' : '↻ Sync Now'}
-          </button>
 
           {/* Clear Remote button */}
           {sync?.isRemoteAvailable && (
@@ -1398,6 +1400,8 @@ export default function SyncSettings() {
             Syncs staging with remote, then commits completed entries to the ledger.
             Staging changes auto-sync to remote in the background.
           </p>
+            </>
+          )}
         </div>
       </div>
 

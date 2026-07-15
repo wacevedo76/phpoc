@@ -35,8 +35,10 @@ export default function Dashboard() {
   // New task form state
   const [newTitle, setNewTitle] = useState('');
   const [newTags, setNewTags] = useState('');
+  const [newComment, setNewComment] = useState('');
   const [isOneOff, setIsOneOff] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
+  const [newTaskCollapsed, setNewTaskCollapsed] = useState(true);
 
   // Handle starting a new task
   const handleStartTask = useCallback(async (e) => {
@@ -54,6 +56,7 @@ export default function Dashboard() {
           startEpoch: now,
           endEpoch: now,
           isActive: false,
+          comment: newComment.trim() || null,
           tags: newTags.split(',')
             .map(t => t.trim())
             .filter(Boolean),
@@ -63,6 +66,7 @@ export default function Dashboard() {
         await sync.capture({
           title: newTitle.trim(),
           startEpoch: now,
+          comment: newComment.trim() || null,
           tags: newTags.split(',')
             .map(t => t.trim())
             .filter(Boolean),
@@ -70,13 +74,15 @@ export default function Dashboard() {
       }
       setNewTitle('');
       setNewTags('');
+      setNewComment('');
       setIsOneOff(false);
       setStatusMsg(null);
+      setNewTaskCollapsed(true);
       await refresh();
     } catch (err) {
       setStatusMsg(`Error: ${err.message}`);
     }
-  }, [newTitle, newTags, isOneOff, sync, refresh]);
+  }, [newTitle, newTags, newComment, isOneOff, sync, refresh]);
 
   // Handle pause
   const handlePause = useCallback(async (title) => {
@@ -161,73 +167,108 @@ export default function Dashboard() {
       </div>
 
       {/* === New Task Pane (bottom / right) === */}
-      <div className="dashboard-new-task">
-        <div className="pane-header">
-          <h2 className="pane-title">Start New Task</h2>
-        </div>
-
-        <form className="new-task-form" onSubmit={handleStartTask}>
-          <div className="form-group title-row">
-            <label htmlFor="task-title" className="form-label">Title</label>
-            <div className="title-input-group">
-              <input
-                id="task-title"
-                type="text"
-                className="form-input form-input-lg"
-                placeholder="What are you working on?"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                autoFocus
-              />
-              <label className="oneoff-checkbox-label">
-                <input
-                  type="checkbox"
-                  className="oneoff-checkbox"
-                  checked={isOneOff}
-                  onChange={(e) => setIsOneOff(e.target.checked)}
-                />
-                <span className="oneoff-text">one-off</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="task-tags" className="form-label">
-              Tags <span className="form-label-hint">(comma-separated)</span>
-            </label>
-            <input
-              id="task-tags"
-              type="text"
-              className="form-input"
-              placeholder="e.g. coding, work, project-x"
-              value={newTags}
-              onChange={(e) => setNewTags(e.target.value)}
-            />
-          </div>
-
-          {statusMsg && (
-            <p className={`form-status ${statusMsg.startsWith('Error') ? 'form-status-error' : ''}`}>
-              {statusMsg}
-            </p>
-          )}
-
+      <div className={`dashboard-new-task${newTaskCollapsed ? ' dashboard-new-task-collapsed' : ''}`}>
+        {newTaskCollapsed ? (
           <button
-            type="submit"
-            className="btn btn-primary btn-start"
-            disabled={!newTitle.trim()}
+            className="new-task-expand-bar"
+            onClick={() => setNewTaskCollapsed(false)}
+            aria-label="Expand new task form"
           >
-            {isOneOff ? (
-              <><Icons.check size={16} /> Log</>
-            ) : (
-              <><Icons.play size={16} /> Start</>
-            )}
+            <span className="new-task-expand-label">Start New Task</span>
+            <span className="new-task-expand-chevron">▲</span>
           </button>
-        </form>
+        ) : (
+          <>
+            <div className="pane-header new-task-pane-header">
+              <h2 className="pane-title">Start New Task</h2>
+              <button
+                className="btn btn-ghost btn-xs new-task-collapse-btn"
+                onClick={() => setNewTaskCollapsed(true)}
+                aria-label="Collapse new task form"
+                title="Collapse"
+              >
+                ▼
+              </button>
+            </div>
 
-        {isDev && (
-          <div className="dev-mode-indicator">
-            <Icons.devMode size={16} /> DEV MODE — Data is in-memory only
-          </div>
+            <form className="new-task-form" onSubmit={handleStartTask}>
+              <div className="form-group title-row">
+                <label htmlFor="task-title" className="form-label">Title</label>
+                <div className="title-input-group">
+                  <input
+                    id="task-title"
+                    type="text"
+                    className="form-input form-input-lg"
+                    placeholder="What are you working on?"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    autoFocus
+                  />
+                  <label className="oneoff-checkbox-label">
+                    <input
+                      type="checkbox"
+                      className="oneoff-checkbox"
+                      checked={isOneOff}
+                      onChange={(e) => setIsOneOff(e.target.checked)}
+                    />
+                    <span className="oneoff-text">one-off</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="task-tags" className="form-label">
+                  Tags <span className="form-label-hint">(comma-separated)</span>
+                </label>
+                <input
+                  id="task-tags"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. coding, work, project-x"
+                  value={newTags}
+                  onChange={(e) => setNewTags(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="task-comment" className="form-label">
+                  Comment <span className="form-label-hint">(optional)</span>
+                </label>
+                <textarea
+                  id="task-comment"
+                  className="form-input form-textarea"
+                  rows={2}
+                  placeholder="Add a note..."
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                />
+              </div>
+
+              {statusMsg && (
+                <p className={`form-status ${statusMsg.startsWith('Error') ? 'form-status-error' : ''}`}>
+                  {statusMsg}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                className="btn btn-primary btn-start"
+                disabled={!newTitle.trim()}
+              >
+                {isOneOff ? (
+                  <><Icons.check size={16} /> Log</>
+                ) : (
+                  <><Icons.play size={16} /> Start</>
+                )}
+              </button>
+            </form>
+
+            {isDev && (
+              <div className="dev-mode-indicator">
+                <Icons.devMode size={16} /> DEV MODE — Data is in-memory only
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

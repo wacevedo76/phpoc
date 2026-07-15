@@ -21,7 +21,6 @@ export default function AppLayout({ currentScreen, onNavigate, children, onLogou
   const tabs = [
     { id: 'dashboard',   label: 'Home',     icon: Icons.dashboard },
     { id: 'history',     label: 'History',  icon: Icons.history },
-    { id: 'new-task',    label: 'New',      icon: Icons['new-task'] },
     { id: 'tags',        label: 'Tags',     icon: Icons.tags },
     { id: 'profile',     label: 'Profile',  icon: Icons.profile },
     { id: 'sync',        label: 'Sync',     icon: Icons.sync },

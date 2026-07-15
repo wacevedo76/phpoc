@@ -544,6 +544,65 @@ a { color: var(--accent-blue); text-decoration: none; }
   overflow-y: auto;
 }
 
+/* Collapsed state — shrink to a thin clickable bar */
+.dashboard-new-task-collapsed {
+  flex: 0 0 auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+.new-task-expand-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background: var(--bg-secondary);
+  border: none;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.new-task-expand-bar:hover {
+  background: var(--bg-hover);
+}
+
+.new-task-expand-label {
+  flex: 1;
+}
+
+.new-task-expand-chevron {
+  font-size: 0.65rem;
+  opacity: 0.5;
+  transition: transform 0.2s;
+}
+
+/* Pane header with collapse button */
+.new-task-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.new-task-collapse-btn {
+  font-size: 0.65rem;
+  opacity: 0.5;
+  padding: 0.15rem 0.4rem !important;
+}
+
+.new-task-collapse-btn:hover {
+  opacity: 1;
+}
+
 /* Pane headers */
 .pane-header {
   padding: 0.75rem 1rem;
@@ -2057,12 +2116,15 @@ a { color: var(--accent-blue); text-decoration: none; }
   flex-wrap: wrap;
 }
 
-.sync-pill-save-btn {
+.sync-pill-modify-btn {
   font-size: 0.75rem !important;
   padding: 0.25rem 0.75rem !important;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+.sync-pill-modify-btn.btn-primary {
   animation: pulse-save-btn 0.4s ease-out;
 }
 
@@ -2070,6 +2132,26 @@ a { color: var(--accent-blue); text-decoration: none; }
   0% { transform: scale(0.92); opacity: 0.6; }
   60% { transform: scale(1.04); }
   100% { transform: scale(1); opacity: 1; }
+}
+
+/* Modify button on collapsed card row */
+.sync-pill-modify-collapsed {
+  font-size: 0.85rem !important;
+  padding: 0.15rem 0.4rem !important;
+  line-height: 1;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.sync-pill-modify-collapsed:hover {
+  opacity: 1;
+}
+
+.sync-pill-modify-dirty {
+  opacity: 1;
+  color: var(--color-accent, #fe59c2);
 }
 
 .sync-pill-delete-row {
@@ -2158,6 +2240,50 @@ a { color: var(--accent-blue); text-decoration: none; }
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+/* Collapsed state */
+.sync-details-collapsed {
+  padding: 0;
+  gap: 0;
+}
+
+.sync-status-expand-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background: var(--bg-secondary);
+  border: none;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sync-status-expand-bar:hover {
+  background: var(--bg-hover);
+}
+
+.sync-status-expand-chevron {
+  font-size: 0.65rem;
+  opacity: 0.5;
+}
+
+.sync-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .sync-detail-row {

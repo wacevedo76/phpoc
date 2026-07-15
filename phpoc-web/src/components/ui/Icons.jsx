@@ -10,7 +10,6 @@
 import {
   Home,
   Clock,
-  Plus,
   Tags,
   User,
   RefreshCw,
@@ -48,7 +47,6 @@ export const Icons = {
   dashboard: Home,
   clock: Clock,
   history: Clock,
-  'new-task': Plus,
   tags: Tags,
   profile: User,
   sync: RefreshCw,

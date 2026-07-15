@@ -9,7 +9,6 @@ import Tags from './components/screens/Tags.jsx';
 import Settings from './components/screens/Settings.jsx';
 import SyncSettings from './components/screens/SyncSettings.jsx';
 import LedgerSync from './components/screens/LedgerSync.jsx';
-import NewTask from './components/screens/NewTask.jsx';
 import UserProfile from './components/screens/UserProfile.jsx';
 import Configuration from './components/screens/Configuration.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
@@ -228,8 +227,6 @@ function AppInner() {
     switch (currentScreen) {
       case 'dashboard':
         return <Dashboard />;
-      case 'new-task':
-        return <NewTask />;
       case 'history':
         return <History />;
       case 'tags':
