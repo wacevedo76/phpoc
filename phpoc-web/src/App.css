@@ -1241,9 +1241,17 @@ a { color: var(--accent-blue); text-decoration: none; }
 
 .history-entry {
   background: var(--bg-card);
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-color);
   border-radius: var(--border-radius-sm);
   padding: 0.6rem 0.75rem;
+}
+
+.history-entry-staging {
+  border-color: var(--accent-yellow);
+}
+
+.history-entry-committed {
+  border-color: var(--accent-green);
 }
 
 .history-entry-main {
@@ -1407,6 +1415,9 @@ a { color: var(--accent-blue); text-decoration: none; }
   transition: background 0.15s, border-color 0.15s;
 }
 .history-entry:hover {
+  background: var(--bg-hover);
+}
+.history-entry-staging:hover {
   background: var(--bg-hover);
 }
 .history-entry .history-entry-details {

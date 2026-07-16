@@ -505,7 +505,7 @@ export default function History() {
                   <div
                     key={entry.entry_id}
                     className={`history-entry${
-                      entry.committed ? '' : ' history-entry-staging'
+                      entry.committed ? ' history-entry-committed' : ' history-entry-staging'
                     }${
                       isExpanded ? ' history-entry-expanded' : ''
                     }`}
@@ -519,27 +519,9 @@ export default function History() {
                       }
                     }}
                   >
-                    {/* Status badge */}
-                    <div className="history-entry-status">
-                      {entry.committed ? (
-                        <span className="badge-committed" title={`Committed in block ${entry.block_index}`}>
-                          <Icons.syncReady size={14} /> Committed
-                        </span>
-                      ) : (
-                        <span className="badge-staging">
-                          <Icons.history size={14} /> Not Committed
-                          {isExpanded && (
-                            <span className="badge-selected-indicator"> ✓</span>
-                          )}
-                          {isSaving && (
-                            <span className="saving-spinner" />
-                          )}
-                        </span>
-                      )}
-                    </div>
-
                     <div className="history-entry-main">
                       <span className="history-entry-title">{entry.title}</span>
+                      {isSaving && <span className="saving-spinner" />}
                       <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
                     </div>
 
