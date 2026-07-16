@@ -29,8 +29,7 @@ export default function History() {
   const [editTags, setEditTags] = useState({});
   const [editTagInputs, setEditTagInputs] = useState({});
   const [editComments, setEditComments] = useState({});
-  const [saving, setSaving] = useState({});
-  const saveTimers = useRef({});
+  const [calendarCollapsed, setCalendarCollapsed] = useState(true);
 
   // ── Data loading ──────────────────────────────────────────────────
 
@@ -356,6 +355,8 @@ export default function History() {
 
   // ── Render ────────────────────────────────────────────────────────
 
+  const calendarIsToday = filterDate === today;
+
   return (
     <div className="screen">
       <div className="screen-header">
@@ -369,84 +370,129 @@ export default function History() {
 
       {/* Calendar + Tag Filter */}
       <div className="history-filters">
-        <div className="history-calendar">
-          {/* Month/Year navigation */}
-          <div className="calendar-nav">
-            <button className="calendar-nav-btn" onClick={() => navigateYear(-1)} title="Previous year">
-              ◀◀
-            </button>
-            <button className="calendar-nav-btn" onClick={() => navigateMonth(-1)} title="Previous month">
-              ◀
-            </button>
-            <span
-              className="calendar-month-label"
-              onClick={() => { setFilterDate(''); }}
-              title="Click to show all entries"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') setFilterDate(''); }}
+        {/* Collapsible calendar */}
+        <div className={`history-calendar-wrap${calendarCollapsed ? ' history-calendar-wrap-collapsed' : ''}`}>
+          {calendarCollapsed ? (
+            <button
+              className="history-calendar-expand-bar"
+              onClick={() => setCalendarCollapsed(false)}
+              aria-label="Expand calendar"
             >
-              {monthLabel}
-            </span>
-            <button className="calendar-nav-btn" onClick={() => navigateMonth(1)} title="Next month">
-              ▶
+              <span className="history-calendar-expand-label">
+                {monthLabel}
+                {filterDate && !calendarIsToday && (
+                  <span className="history-calendar-selected"> • {formatDateLabel(filterDate)}</span>
+                )}
+                {calendarIsToday && (
+                  <span className="history-calendar-selected"> • Today</span>
+                )}
+              </span>
+              <span className="history-calendar-expand-chevron">▼</span>
             </button>
-            <button className="calendar-nav-btn" onClick={() => navigateYear(1)} title="Next year">
-              ▶▶
-            </button>
-          </div>
-
-          {/* Day-of-week headers */}
-          <div className="calendar-dow">
-            {dayHeaders.map((d) => (
-              <span key={d} className="calendar-dow-cell">{d}</span>
-            ))}
-          </div>
-
-          {/* Day grid */}
-          <div className="calendar-grid">
-            {calendarDays.map((week, wi) => (
-              <div key={wi} className="calendar-week">
-                {week.map((cell, ci) => {
-                  if (!cell) {
-                    return <span key={`e-${wi}-${ci}`} className="calendar-day calendar-day-empty" />;
-                  }
-                  const { day, dateStr, hasEntries } = cell;
-                  const isToday = dateStr === today;
-                  const isSelected = dateStr === filterDate;
-                  return (
-                    <button
-                      key={dateStr}
-                      className={`calendar-day${
-                        isToday ? ' calendar-day-today' : ''
-                      }${
-                        isSelected ? ' calendar-day-selected' : ''
-                      }${
-                        hasEntries ? ' calendar-day-has-entries' : ''
-                      }`}
-                      onClick={() => setFilterDate(isSelected ? '' : dateStr)}
-                      title={hasEntries ? `${day} — has entries` : String(day)}
-                    >
-                      <span className="calendar-day-num">{day}</span>
-                      {hasEntries && <span className="calendar-day-dot" />}
-                    </button>
-                  );
-                })}
+          ) : (
+            <>
+              <div className="history-calendar-header">
+                <span
+                  className="calendar-month-label"
+                  onClick={() => { setFilterDate(''); }}
+                  title="Click to show all entries"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setFilterDate(''); }}
+                >
+                  {monthLabel}
+                </span>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => setCalendarCollapsed(true)}
+                  aria-label="Collapse calendar"
+                  title="Collapse"
+                  style={{ opacity: 0.5, fontSize: '0.65rem' }}
+                >
+                  ▲
+                </button>
               </div>
-            ))}
-          </div>
+              <div className="history-calendar">
+                {/* Month/Year navigation */}
+                <div className="calendar-nav">
+                  <button className="calendar-nav-btn" onClick={() => navigateYear(-1)} title="Previous year">
+                    ◀◀
+                  </button>
+                  <button className="calendar-nav-btn" onClick={() => navigateMonth(-1)} title="Previous month">
+                    ◀
+                  </button>
+                  <span
+                    className="calendar-month-label"
+                    onClick={() => { setFilterDate(''); }}
+                    title="Click to show all entries"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setFilterDate(''); }}
+                  >
+                    {monthLabel}
+                  </span>
+                  <button className="calendar-nav-btn" onClick={() => navigateMonth(1)} title="Next month">
+                    ▶
+                  </button>
+                  <button className="calendar-nav-btn" onClick={() => navigateYear(1)} title="Next year">
+                    ▶▶
+                  </button>
+                </div>
 
-          {/* Today + clear shortcuts */}
-          <div className="calendar-actions">
-            <button className="btn btn-ghost btn-sm" onClick={goToToday}>
-              Today
-            </button>
-            {filterDate && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setFilterDate('')}>
-                Clear date
-              </button>
-            )}
-          </div>
+                {/* Day-of-week headers */}
+                <div className="calendar-dow">
+                  {dayHeaders.map((d) => (
+                    <span key={d} className="calendar-dow-cell">{d}</span>
+                  ))}
+                </div>
+
+                {/* Day grid */}
+                <div className="calendar-grid">
+                  {calendarDays.map((week, wi) => (
+                    <div key={wi} className="calendar-week">
+                      {week.map((cell, ci) => {
+                        if (!cell) {
+                          return <span key={`e-${wi}-${ci}`} className="calendar-day calendar-day-empty" />;
+                        }
+                        const { day, dateStr, hasEntries } = cell;
+                        const isToday = dateStr === today;
+                        const isSelected = dateStr === filterDate;
+                        return (
+                          <button
+                            key={dateStr}
+                            className={`calendar-day${
+                              isToday ? ' calendar-day-today' : ''
+                            }${
+                              isSelected ? ' calendar-day-selected' : ''
+                            }${
+                              hasEntries ? ' calendar-day-has-entries' : ''
+                            }`}
+                            onClick={() => setFilterDate(isSelected ? '' : dateStr)}
+                            title={hasEntries ? `${day} — has entries` : String(day)}
+                          >
+                            <span className="calendar-day-num">{day}</span>
+                            {hasEntries && <span className="calendar-day-dot" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Today + clear shortcuts */}
+                <div className="calendar-actions">
+                  <button className="btn btn-ghost btn-sm" onClick={goToToday}>
+                    Today
+                  </button>
+                  {filterDate && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setFilterDate('')}>
+                      Clear date
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Tag filter */}
