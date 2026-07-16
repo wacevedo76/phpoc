@@ -176,7 +176,7 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **🟡 Follow-up: JS `_fieldToken()` uses SHA-256 without MK (see §I-02a below)**
 
-### I-02a 🟡: JS `_fieldToken()` — use MK-derived HMAC for field-name tokens
+### I-02a ✅: JS `_fieldToken()` — use MK-derived HMAC for field-name tokens
 
 **Why:** `phpoc-web/src/sync/local_cache.js` `_fieldToken()` uses `SHA256("phpoc-staging-keys-v1" + fieldName)` instead of `HMAC-SHA256(derive_field_key(MK), fieldName)`. This means field-name tokens are the same for every user — an attacker who reads IndexedDB and knows the PHPOC source can trivially map tokens back to field names (`de31e1f1cf5d6fa6` → `startTime_enc`).
 

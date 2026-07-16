@@ -11,7 +11,7 @@
 ## Current State
 - **Branch:** `Staging_migration`
 - **Last commit:** `cb3b0af` — promote E2E-05 seal/hash mismatch to top of task queue
-- **CLI:** 1974 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 595 JS tests pass  |  **I-03:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web GREEN  |  **I-02:** ✅ Phase 1-4 complete — 103/103 PY (33 index + 18 staging keys + 52 staging at-rest) + 67/67 JS (32 index + 35 staging keys) all GREEN. Phase 4: 6 improvements (modularity ×2, clarity ×1, security ×1, conciseness ×2)
+- **CLI:** 1974 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)  |  **I-03:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web GREEN  |  **I-02:** ✅ Phase 1-4 complete — 103/103 PY + 67/67 JS all GREEN  |  **I-02a:** ✅ Phase 1-4 complete — 28/28 field token WASM + 35/35 staging keys + 32/32 index encryption all GREEN; 3 Phase-4 improvements: extracted `_applyFieldsToData()`, clarified `_encrypt()` guard + `_fieldTokenCache` lifetime
 
 ## C5 File Upload Limitation — RESOLVED (2026-07-16)
 - React 18 native event delegation picks up `new Event('change', {bubbles: true})`
@@ -34,16 +34,15 @@
 |-----|-------|-----------|
 | 1 | 🟢 Phase 1b | E2E-03✅, E2E-07✅, E2E-05✅ — all complete |
 | 2 | ⬜ Phase 2 | I-04✅ I-05✅ I-06✅ I-11✅ — all complete |
-| 3 | 🟠 Phase 3 | I-03✅✅ staging encryption (Phases 1-4 done), I-02🟡 blind index encryption (Phase 2 RED done, Phase 3 next) |
+| 3 | 🟠 Phase 3 | I-03✅✅ staging encryption (Phases 1-4 done), I-02a✅ blind index field-name encryption (Phases 1-4 done) |
 | 4 | 🔴 Phase 4 | I-01🔴 key rotation, I-09🟡 device attribution, I-12🟡 arch doc |
 | 5 | 🔵 Phase 5 | CLI polish: P5 unlock latency, P4 UX kinks |
 
 ## Immediate Next Steps 🎯
-1. **I-02a 🟡 JS `_fieldToken()` WASM fix** — Add `hmac_hex` + `derive_field_key` WASM bindings, update JS `_fieldToken()` to use MK-derived HMAC instead of SHA-256 constant. ~1 hour. Rust side already implemented.
-2. **I-01 key rotation** (🔴 Critical) — after I-02a
+1. **I-01 key rotation** (🔴 Critical) — next priority
 
 ## Known Issues
-- **I-02a 🟡 JS `_fieldToken()` uses SHA-256 without MK** (`phpoc-web/src/sync/local_cache.js`): Field-name tokens are trivially reversible (same mapping for every user). Impact: schema obfuscation weakened, VALUES still AES-CTR encrypted. Fix: add WASM bindings for `hmac_hex` + `derive_field_key` (Rust side already implemented). ~1 hour. Filed in BACKLOG.md.
+- **I-02a ✅ Phase 1-4 complete** — 95/95 tests GREEN. Phase 4 improvements: extracted `_applyFieldsToData()` to eliminate duplication in `update()`, clarified `_encrypt()` mock-compat guard comment, documented `_fieldTokenCache` lifetime (tied to MK, recreated per session).
 - **E2E-05 seal mismatch:** ✅ Phases 1-4 complete. 763 ledger tests pass. 7 improvements.
 - **I-03 staging encryption:** ✅ Phases 1-4 complete. 5 Phase-4 improvements: docstring fixes (×2 `local_cache.py`), extracted `_find_active_entry()` in `service.py`, extracted `_safeRefreshHashIndex()` in `local_cache.js`, simplified JS `_encrypt()`. All tests GREEN.
 - **20 PY tests fail** with Worker HTTP 403 (pre-existing, unrelated)

@@ -11,7 +11,7 @@
  *   node phpoc-web/test/i02_staging_keys.test.mjs
  */
 
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 
@@ -57,6 +57,16 @@ class MockCryptoForKeys {
   }
 
   encryptWithCachedKey(plaintext) { return this.encrypt(plaintext); }
+
+  // I-02a: deriveFieldKey + hmacHex for _fieldToken()
+  hmacHex(keyHex, data) {
+    return createHmac('sha256', Buffer.from(keyHex, 'hex')).update(data).digest('hex');
+  }
+
+  deriveFieldKey(mkHex) {
+    return createHmac('sha256', Buffer.from(mkHex, 'hex'))
+      .update('phpoc-staging-keys-v1').digest('hex').slice(0, 32);
+  }
 
   decrypt(ciphertextHex) {
     try {

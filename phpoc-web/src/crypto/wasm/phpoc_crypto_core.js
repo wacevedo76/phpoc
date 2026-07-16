@@ -135,6 +135,37 @@ export function derive_blob_key(master_key_hex) {
 }
 
 /**
+ * Derive the field-level encryption key for blind index field-name tokens.
+ *
+ * * `master_key_hex` — 64-char hex-encoded 32-byte master key.
+ *
+ * Returns 32-char hex (first 16 bytes of HMAC-SHA256(MK, "phpoc-staging-keys-v1")).
+ * Used by I-02a for encrypting field names in the staging storage layer.
+ * @param {string} master_key_hex
+ * @returns {string}
+ */
+export function derive_field_key(master_key_hex) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(master_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_field_key(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Derive the 32-byte Master Key from a base64-encoded recovery seed.
  *
  * Returns hex-encoded 64-character master key, or throws an error.
@@ -185,6 +216,43 @@ export function derive_pdk(passphrase, iterations) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Derive a PDK with a custom per-user salt.
+ *
+ * * `passphrase` — user's passphrase.
+ * * `salt_hex` — 32-char hex-encoded 16-byte per-user salt
+ *   (SHA-256(identity_pub_key_hex)[:16]).
+ * * `iterations` — 600000 (standard) or 100000 (legacy).
+ *
+ * Returns hex-encoded 32-byte PDK.
+ * @param {string} passphrase
+ * @param {string} salt_hex
+ * @param {number} iterations
+ * @returns {string}
+ */
+export function derive_pdk_with_salt(passphrase, salt_hex, iterations) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(salt_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_pdk_with_salt(ptr0, len0, ptr1, len1, iterations);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -355,6 +423,40 @@ export function get_device_id(master_key_hex) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Compute an HMAC-SHA256 over data with an arbitrary hex-encoded key.
+ *
+ * * `key_hex` — hex-encoded HMAC key (any length).
+ * * `data` — UTF-8 string to authenticate.
+ *
+ * Returns 64-char lowercase hex HMAC-SHA256.
+ * @param {string} key_hex
+ * @param {string} data
+ * @returns {string}
+ */
+export function hmac_hex(key_hex, data) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(data, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.hmac_hex(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 

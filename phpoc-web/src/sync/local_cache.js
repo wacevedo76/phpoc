@@ -96,11 +96,20 @@ export class LocalCache {
   /**
    * Encrypt a value for storage. Delegates to crypto (AES-CTR hex) when
    * MK is available, falls back to plain: prefix when not.
+   *
+   * The guard checks both that the hasMasterKey *method* exists (mock
+   * crypto may lack it) AND that it reports a cached key.  The first
+   * check is a no-op for the real CryptoService (method always present)
+   * but keeps mocks working without requiring them to implement it.
+   *
    * @param {*} value
    * @returns {string}
    * @private
    */
   _encrypt(value) {
+    if (!this._crypto.hasMasterKey || !this._crypto.hasMasterKey()) {
+      return 'plain:' + String(value);
+    }
     return this._crypto.encryptWithCachedKey(String(value));
   }
 
@@ -139,7 +148,13 @@ export class LocalCache {
   // Field-name encryption (I-02)
   // ------------------------------------------------------------------
 
-  /** @type {Map<string, string>} */
+  /**
+   * Field-name → hex-token cache.  Tied to the current master key —
+   * the LocalCache instance (and therefore this cache) is recreated
+   * on login/logout, so stale tokens after key rotation are not a
+   * concern in normal operation.
+   * @type {Map<string, string>}
+   */
   _fieldTokenCache = new Map();
 
   /**
@@ -152,20 +167,15 @@ export class LocalCache {
   ];
 
   /**
-   * Compute a deterministic token for a field name.
-   * Same field name → same token (based on domain separator + field name).
-   * Falls back to plaintext field name when no master key is available.
+   * Compute a deterministic, per-user token for a field name.
    *
-   * NOTE: Currently uses SHA-256(constant + fieldName) without involving
-   * the master key. This produces the same tokens for every user — an
-   * attacker who knows the scheme can trivially reverse field names.
+   * Uses HMAC-SHA256(fieldKey, fieldName), where fieldKey is derived from
+   * the master key via domain-separated HMAC. Same user → same tokens;
+   * different users → different tokens (field names are not reversible
+   * without the master key).
    *
-   * TODO: Replace with HMAC-SHA256(fieldKey, fieldName) once the WASM
-   * module exposes hmac_hex (already implemented in hmac_utils.rs, just
-   * needs a WASM binding). The Python side already does this correctly.
-   *
-   * The field VALUES are still AES-CTR encrypted with the master key,
-   * so this only affects schema obfuscation, not data confidentiality.
+   * Falls back to plaintext field names when no master key is available
+   * (no-auth fallback).
    *
    * @param {string} fieldName
    * @returns {string}
@@ -179,9 +189,15 @@ export class LocalCache {
     if (this._fieldTokenCache.has(fieldName)) {
       return this._fieldTokenCache.get(fieldName);
     }
-    // TODO: Replace with HMAC-SHA256(derive_field_key(MK), fieldName)
-    // once WASM hmac_hex binding is available.
-    const token = this._crypto.sha256('phpoc-staging-keys-v1' + fieldName).slice(0, 16);
+    // Use deriveFieldKey + hmacHex when available (I-02a MK-dependent tokens).
+    // Fall back to SHA-256 for test mocks that predate these methods.
+    let token;
+    if (typeof this._crypto.deriveFieldKey === 'function' && typeof this._crypto.hmacHex === 'function') {
+      const fieldKey = this._crypto.deriveFieldKey(this._crypto.getMasterKey());
+      token = this._crypto.hmacHex(fieldKey, fieldName).slice(0, 16);
+    } else {
+      token = this._crypto.sha256('phpoc-staging-keys-v1' + fieldName).slice(0, 16);
+    }
     this._fieldTokenCache.set(fieldName, token);
     return token;
   }
@@ -440,27 +456,7 @@ export class LocalCache {
     const data = this._decodeDataKeys(rawData);
 
     // Apply field updates, mapping DTO field names to _enc field names
-    for (const [key, value] of Object.entries(fields)) {
-      const encKey = _dtoKeyToEncKey(key);
-      if (encKey) {
-        if (encKey === 'pauses_enc') {
-          data.pauses_enc = this._encrypt(JSON.stringify(value || []));
-        } else if (encKey === 'metadata_enc') {
-          data.metadata_enc = this._encrypt(JSON.stringify(value || {}));
-        } else if (encKey === 'startTime_enc' || encKey === 'endTime_enc' ||
-                   encKey === 'device_uuid_enc' || encKey === 'end_device_uuid_enc') {
-          data[encKey] = this._encrypt(value ?? '');
-        } else {
-          data[encKey] = value;
-        }
-      } else if (key === 'tags') {
-        data.tags = _normalizeTags(value);
-      } else if (key === 'is_active' || key === 'is_paused' ||
-                 key === 'duration' || key === 'title' || key === 'comment' ||
-                 key === 'media') {
-        data[key] = value;
-      }
-    }
+    this._applyFieldsToData(data, fields);
 
     // Re-read from storage right before writing to detect races
     const fresh = (await this._storage.get(ENTRIES_KEY)) || [];
@@ -482,28 +478,7 @@ export class LocalCache {
     }
 
     // Apply the same field updates to the fresh entry
-    for (const [key, value] of Object.entries(fields)) {
-      const encKey = _dtoKeyToEncKey(key);
-      const fd = freshData;
-      if (encKey) {
-        if (encKey === 'pauses_enc') {
-          fd.pauses_enc = this._encrypt(JSON.stringify(value || []));
-        } else if (encKey === 'metadata_enc') {
-          fd.metadata_enc = this._encrypt(JSON.stringify(value || {}));
-        } else if (encKey === 'startTime_enc' || encKey === 'endTime_enc' ||
-                   encKey === 'device_uuid_enc' || encKey === 'end_device_uuid_enc') {
-          fd[encKey] = this._encrypt(value ?? '');
-        } else {
-          fd[encKey] = value;
-        }
-      } else if (key === 'tags') {
-        fd.tags = _normalizeTags(value);
-      } else if (key === 'is_active' || key === 'is_paused' ||
-                 key === 'duration' || key === 'title' || key === 'comment' ||
-                 key === 'media') {
-        fd[key] = value;
-      }
-    }
+    this._applyFieldsToData(freshData, fields);
 
     // Encode field key names before writing
     freshRaw.data = this._encodeDataKeys(freshData);
@@ -575,6 +550,39 @@ export class LocalCache {
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
     await this._safeRefreshHashIndex();
+  }
+
+  /**
+   * Apply a fields dict ({dtoKey: value}) to an already-decoded data
+   * object in-place.  Handles DTO→_enc key mapping, tag normalization,
+   * and encryption of sensitive values.
+   *
+   * @param {object} data - Decoded data dict (standard _enc keys).
+   * @param {object} fields - Fields to apply ({dtoKey: value}).
+   * @private
+   */
+  _applyFieldsToData(data, fields) {
+    for (const [key, value] of Object.entries(fields)) {
+      const encKey = _dtoKeyToEncKey(key);
+      if (encKey) {
+        if (encKey === 'pauses_enc') {
+          data.pauses_enc = this._encrypt(JSON.stringify(value || []));
+        } else if (encKey === 'metadata_enc') {
+          data.metadata_enc = this._encrypt(JSON.stringify(value || {}));
+        } else if (encKey === 'startTime_enc' || encKey === 'endTime_enc' ||
+                   encKey === 'device_uuid_enc' || encKey === 'end_device_uuid_enc') {
+          data[encKey] = this._encrypt(value ?? '');
+        } else {
+          data[encKey] = value;
+        }
+      } else if (key === 'tags') {
+        data.tags = _normalizeTags(value);
+      } else if (key === 'is_active' || key === 'is_paused' ||
+                 key === 'duration' || key === 'title' || key === 'comment' ||
+                 key === 'media') {
+        data[key] = value;
+      }
+    }
   }
 
   // ------------------------------------------------------------------

@@ -417,6 +417,33 @@ export class CryptoService {
   }
 
   // -----------------------------------------------------------------------
+  // Generic HMAC-SHA256 + field-key derivation (I-02a)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Compute HMAC-SHA256 with an arbitrary hex-encoded key.
+   * @param {string} keyHex - Hex-encoded HMAC key.
+   * @param {string} data - Data string to authenticate.
+   * @returns {string} 64-char lowercase hex HMAC-SHA256.
+   */
+  hmacHex(keyHex, data) {
+    return this.#call2('hmac_hex', keyHex, data);
+  }
+
+  /**
+   * Derive the field-level encryption key for blind index field-name tokens.
+   *
+   * HMAC-SHA256(MK, "phpoc-staging-keys-v1")[:16] — returns 32 hex chars.
+   * Used by LocalCache._fieldToken() to produce MK-dependent field tokens.
+   *
+   * @param {string} masterKeyHex - 64-char hex master key.
+   * @returns {string} 32-char hex field key.
+   */
+  deriveFieldKey(masterKeyHex) {
+    return this.#call1('derive_field_key', masterKeyHex);
+  }
+
+  // -----------------------------------------------------------------------
   // Blob obfuscation (2)
   // -----------------------------------------------------------------------
 

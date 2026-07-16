@@ -320,3 +320,34 @@ pub fn derive_seal_key(master_key_hex: &str) -> Result<String, JsValue> {
     let sk = key_derivation::derive_seal_key(&mk);
     Ok(hex::encode(sk))
 }
+
+// ---------------------------------------------------------------------------
+// Generic HMAC-SHA256 + field-key derivation (I-02a)
+// ---------------------------------------------------------------------------
+
+/// Compute an HMAC-SHA256 over data with an arbitrary hex-encoded key.
+///
+/// * `key_hex` — hex-encoded HMAC key (any length).
+/// * `data` — UTF-8 string to authenticate.
+///
+/// Returns 64-char lowercase hex HMAC-SHA256.
+#[wasm_bindgen]
+pub fn hmac_hex(key_hex: &str, data: &str) -> Result<String, JsValue> {
+    let key_bytes = hex::decode(key_hex).map_err(|e| {
+        JsValue::from_str(&format!("invalid hex key: {}", e))
+    })?;
+    Ok(hmac_utils::hmac_hex(&key_bytes, data.as_bytes()))
+}
+
+/// Derive the field-level encryption key for blind index field-name tokens.
+///
+/// * `master_key_hex` — 64-char hex-encoded 32-byte master key.
+///
+/// Returns 32-char hex (first 16 bytes of HMAC-SHA256(MK, "phpoc-staging-keys-v1")).
+/// Used by I-02a for encrypting field names in the staging storage layer.
+#[wasm_bindgen]
+pub fn derive_field_key(master_key_hex: &str) -> Result<String, JsValue> {
+    let mk = decode_hex_32(master_key_hex)?;
+    let field_key = key_derivation::derive_sub_key_16(&mk, b"phpoc-staging-keys-v1");
+    Ok(hex::encode(field_key))
+}

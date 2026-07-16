@@ -83,6 +83,15 @@ class MockCryptoWithEncryption {
   decryptWithCachedKey(ciphertextHex) {
     return this.decrypt(ciphertextHex);
   }
+
+  // I-02a: deriveFieldKey + hmacHex for _fieldToken()
+  hmacHex(keyHex, data) {
+    return createHash('sha256').update('hmac:' + keyHex + ':' + data).digest('hex');
+  }
+
+  deriveFieldKey(mkHex) {
+    return createHash('sha256').update('field-key:' + mkHex).digest('hex').slice(0, 32);
+  }
 }
 
 class MockCryptoNoEncryption {
@@ -100,6 +109,8 @@ class MockCryptoNoEncryption {
   }
 
   // No master key — encrypt is plain: (NoAuthCryptoManager equivalent)
+  hasMasterKey() { return false; }
+
   encrypt(plaintext, _mk) {
     return `plain:${plaintext}`;
   }

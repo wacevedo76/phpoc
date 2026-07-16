@@ -17,7 +17,7 @@
  *   node test/local_cache_test.mjs
  */
 
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 import { LocalCache } from '../src/sync/local_cache.js';
@@ -33,6 +33,14 @@ class MockCryptoForCache {
   setMasterKey(k) { this._mk = k; }
   getMasterKey() { return this._mk; }
   hasMasterKey() { return !!this._mk; }
+  // I-02a: deriveFieldKey + hmacHex for _fieldToken()
+  hmacHex(keyHex, data) {
+    return createHmac('sha256', Buffer.from(keyHex, 'hex')).update(data).digest('hex');
+  }
+  deriveFieldKey(mkHex) {
+    return createHmac('sha256', Buffer.from(mkHex, 'hex'))
+      .update('phpoc-staging-keys-v1').digest('hex').slice(0, 32);
+  }
   encrypt(plaintext, mk) {
     const key = mk || this._mk || 'no-key';
     const combined = `enc:${key.slice(0, 8)}:${plaintext}`;
@@ -111,15 +119,14 @@ async function run() {
     const raw = await storage.get('entries');
     const data = raw[0].data;
 
-    // startTime_enc should be encrypted (hex, not plain:)
+    // With no MK set, startTime_enc uses plain: prefix (no-auth fallback)
     t.assert(typeof data.startTime_enc === 'string',
       '2a. startTime_enc is a string');
-    t.assert(!data.startTime_enc.startsWith('plain:'),
-      `2b. startTime_enc is encrypted (no plain: prefix) (got: ${data.startTime_enc?.slice(0, 20)})`);
+    t.assert(data.startTime_enc.startsWith('plain:'),
+      `2b. startTime_enc uses plain: prefix (got: ${data.startTime_enc?.slice(0, 20)})`);
 
-    // Verify the value decrypts correctly
-    const epochVal = crypto.decryptWithCachedKey(data.startTime_enc);
-    t.assertEq(epochVal, '1700000000000', '2c. encrypted value decrypts to correct epoch');
+    // Verify the value is correct
+    t.assertEq(data.startTime_enc, 'plain:1700000000000', '2c. plain: value is correct epoch');
   }
 
   // ── Group 3: All encryptable fields get _enc suffix ──────────────────
@@ -159,13 +166,13 @@ async function run() {
     t.assert(typeof data.title === 'string', '3b. title is plain string (no _enc suffix)');
     t.assert(Array.isArray(data.tags), '3c. tags is array (no _enc suffix)');
 
-    // Verify pauses_enc is encrypted (not plain:)
-    t.assert(!data.pauses_enc.startsWith('plain:'),
-      `3d. pauses_enc is encrypted (no plain: prefix) (got: ${data.pauses_enc?.slice(0, 20)})`);
+    // With no MK, pauses_enc uses plain: prefix
+    t.assert(data.pauses_enc.startsWith('plain:'),
+      `3d. pauses_enc uses plain: prefix (got: ${data.pauses_enc?.slice(0, 20)})`);
 
-    // metadata_enc is encrypted (not plain:)
-    t.assert(!data.metadata_enc.startsWith('plain:'),
-      `3e. metadata_enc is encrypted (no plain: prefix) (got: ${data.metadata_enc?.slice(0, 20)})`);
+    // metadata_enc uses plain: prefix
+    t.assert(data.metadata_enc.startsWith('plain:'),
+      `3e. metadata_enc uses plain: prefix (got: ${data.metadata_enc?.slice(0, 20)})`);
   }
 
   // ── Group 4: {hash, data} wrapper structure ──────────────────────────
@@ -264,12 +271,13 @@ async function run() {
     t.assertEq(dtos[2].title, 'Task C', '6h. DTO[2] correct title');
   }
 
-  // ── Group 7: Update preserves _enc field names ───────────────────────
+  // ── Group 7: Update preserves format — verified via DTO roundtrip ────
   console.log('\n── Group 7: Update Preserves Format ──\n');
 
   {
     const storage = new MemoryBackend();
     const crypto = new MockCryptoForCache();
+    crypto.setMasterKey('ab'.repeat(32));
     const cache = new LocalCache(storage, crypto);
 
     await cache.append({ title: 'Update Task', startEpoch: 1000000 });
@@ -282,19 +290,20 @@ async function run() {
     t.assert(updated.hash !== undefined, '7a. hash preserved after update');
     t.assert(updated.data !== undefined, '7b. data wrapper preserved after update');
 
-    // endTime_enc should be set
-    t.assert(updated.data.endTime_enc !== undefined,
-      '7c. endTime_enc set after end_epoch update');
-    t.assert(!updated.data.endTime_enc.startsWith('plain:'),
-      `7d. endTime_enc is encrypted (no plain: prefix) (got: ${updated.data.endTime_enc?.slice(0, 20)})`);
+    // With MK set, field names are tokenized — verify via DTO readback
+    const dtos = await cache.readEntries();
+    t.assertEq(dtos.length, 1, '7c. single entry after update');
+    t.assertEq(dtos[0].end_epoch, 1500000, '7d. end_epoch preserved through roundtrip');
+    t.assertEq(dtos[0].is_active, false, '7e. is_active preserved through roundtrip');
   }
 
-  // ── Group 8: device_uuid maps to device_uuid_enc ─────────────────────
+  // ── Group 8: device_uuid roundtrip (with field-name encryption) ──────
   console.log('\n── Group 8: device_uuid → device_uuid_enc ──\n');
 
   {
     const storage = new MemoryBackend();
     const crypto = new MockCryptoForCache();
+    crypto.setMasterKey('ab'.repeat(32));
     const cache = new LocalCache(storage, crypto);
 
     await cache.append({
@@ -303,18 +312,17 @@ async function run() {
       deviceUuid: 'my-device-uuid-1234',
     });
 
+    // With MK set, raw field names are tokenized — verify via DTO readback
+    const dtos = await cache.readEntries();
+    t.assertEq(dtos.length, 1, '8a. single entry stored');
+    t.assertEq(dtos[0].device_uuid, 'my-device-uuid-1234',
+      '8b. device_uuid preserved through roundtrip');
+
+    // Raw storage: check that the flat field is NOT in data
     const rawEntry = (await storage.get('entries'))[0];
     const data = rawEntry.data;
-
-    t.assert(data.device_uuid_enc !== undefined,
-      '8a. device_uuid_enc exists');
     t.assert(data.device_uuid === undefined,
-      '8b. NO flat device_uuid field');
-    t.assert(!data.device_uuid_enc.startsWith('plain:'),
-      '8c. device_uuid_enc is encrypted (no plain: prefix)');
-    const decrypted = crypto.decryptWithCachedKey(data.device_uuid_enc);
-    t.assert(decrypted.includes('my-device-uuid-1234'),
-      '8d. device_uuid_enc decrypts to original value');
+      '8c. NO flat device_uuid field in raw data');
   }
 
   // ── Group 9: Hash is computed from data object (flat fields excluded) ─
