@@ -44,25 +44,14 @@ import { jsonSort } from '../ledger/utils.js';
  *         or masterKey is missing/empty.
  */
 export async function exportLedger(entries, crypto, masterKey) {
-  // ── Validation ──────────────────────────────────────────────────
-  if (!Array.isArray(entries)) {
-    throw new Error('exportLedger: entries must be an array');
-  }
-
-  if (typeof crypto.seal !== 'function') {
-    throw new Error('exportLedger: crypto must provide seal()');
-  }
-
-  if (!masterKey) {
-    throw new Error('exportLedger: masterKey is required');
-  }
+  _validateExportInputs('exportLedger', entries, crypto, masterKey);
 
   // ── Recompute entry hashes ─────────────────────────────────────
-  // Real entries from LocalCache.append() may have fields (committed,
-  // block_index, entry_index, end_device_uuid) added AFTER the original
-  // hash was computed. Recompute each hash to cover ALL fields except
-  // `hash` so the import hash validation passes.
-  const recomputedEntries = entries.map(entry => {
+  // LocalCache.append() may add committed, block_index, entry_index,
+  // and end_device_uuid AFTER the original hash was computed. Recompute
+  // each hash to cover ALL current fields except `hash` so the import
+  // hash validation passes.
+  const entriesWithFreshHashes = entries.map(entry => {
     const { hash: _, ...hashData } = entry;
     return { ...entry, hash: crypto.sha256(jsonSort(hashData)) };
   });
@@ -71,12 +60,12 @@ export async function exportLedger(entries, crypto, masterKey) {
   const payload = {
     format_version: '1',
     exported_at: new Date().toISOString(),
-    entries: recomputedEntries,
+    entries: entriesWithFreshHashes,
     seal: '', // placeholder, computed below
   };
 
-  // Seal covers jsonSort(recomputedEntries) — NOT the wrapper metadata
-  const entriesJson = jsonSort(recomputedEntries);
+  // Seal covers jsonSort(entriesWithFreshHashes) — NOT the wrapper metadata
+  const entriesJson = jsonSort(entriesWithFreshHashes);
   payload.seal = crypto.seal(entriesJson, masterKey);
 
   // ── Serialize and return Blob ───────────────────────────────────
@@ -101,18 +90,7 @@ export async function exportLedger(entries, crypto, masterKey) {
  *         or masterKey is missing/empty.
  */
 export async function exportLedgerFull(blocks, crypto, masterKey, staging = null) {
-  // ── Validation ──────────────────────────────────────────────────
-  if (!Array.isArray(blocks)) {
-    throw new Error('exportLedgerFull: blocks must be an array');
-  }
-
-  if (typeof crypto.seal !== 'function') {
-    throw new Error('exportLedgerFull: crypto must provide seal()');
-  }
-
-  if (!masterKey) {
-    throw new Error('exportLedgerFull: masterKey is required');
-  }
+  _validateExportInputs('exportLedgerFull', blocks, crypto, masterKey);
 
   // ── Build the export payload ────────────────────────────────────
   const payload = {
@@ -133,4 +111,26 @@ export async function exportLedgerFull(blocks, crypto, masterKey, staging = null
   // ── Serialize and return Blob ───────────────────────────────────
   const json = JSON.stringify(payload, null, 2);
   return new Blob([json], { type: 'application/json' });
+}
+
+// ── Shared helpers ────────────────────────────────────────────────
+
+/**
+ * Validate inputs common to all export functions.
+ * @param {string} fnName — caller name for error messages.
+ * @param {Array} data — the data array to export (entries or blocks).
+ * @param {object} crypto — CryptoService with seal().
+ * @param {string} masterKey — 64-char hex master key.
+ */
+function _validateExportInputs(fnName, data, crypto, masterKey) {
+  const label = fnName === 'exportLedger' ? 'entries' : 'blocks';
+  if (!Array.isArray(data)) {
+    throw new Error(`${fnName}: ${label} must be an array`);
+  }
+  if (typeof crypto.seal !== 'function') {
+    throw new Error(`${fnName}: crypto must provide seal()`);
+  }
+  if (!masterKey) {
+    throw new Error(`${fnName}: masterKey is required`);
+  }
 }

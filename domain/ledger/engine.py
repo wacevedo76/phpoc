@@ -79,7 +79,7 @@ class LedgerEngine:
             self.staging_store = store  # type: ignore
 
         self.chain = LedgerChain(crypto, store, identity_secret)
-        self.index = IndexManager(self.index_store)
+        self.index = IndexManager(self.index_store, crypto=crypto)
         self.summary_policy = summary_policy or YearMonthSummaryPolicy(
             crypto, identity_secret=identity_secret
         )

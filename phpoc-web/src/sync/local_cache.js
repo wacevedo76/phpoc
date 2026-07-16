@@ -90,6 +90,204 @@ export class LocalCache {
   }
 
   // ------------------------------------------------------------------
+  // Internal: encrypt/decrypt helpers (plain: → hex via crypto)
+  // ------------------------------------------------------------------
+
+  /**
+   * Encrypt a value for storage. Delegates to crypto (AES-CTR hex) when
+   * MK is available, falls back to plain: prefix when not.
+   * @param {*} value
+   * @returns {string}
+   * @private
+   */
+  _encrypt(value) {
+    return this._crypto.encryptWithCachedKey(String(value));
+  }
+
+  /**
+   * Decrypt a field value from storage. Handles both plain: (legacy) and
+   * hex ciphertext (post I-03).
+   * @param {string|null|undefined} value
+   * @returns {string|null}
+   * @private
+   */
+  _decrypt(value) {
+    if (value == null) return null;
+    if (typeof value !== 'string') return String(value);
+    if (value.startsWith('plain:')) return value.slice(6);
+    try {
+      return this._crypto.decryptWithCachedKey(value);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Decrypt and parse as integer.
+   * @param {string|null|undefined} value
+   * @returns {number|null}
+   * @private
+   */
+  _decryptInt(value) {
+    const decrypted = this._decrypt(value);
+    if (decrypted == null) return null;
+    const n = parseInt(decrypted, 10);
+    return isNaN(n) ? null : n;
+  }
+
+  // ------------------------------------------------------------------
+  // Field-name encryption (I-02)
+  // ------------------------------------------------------------------
+
+  /** @type {Map<string, string>} */
+  _fieldTokenCache = new Map();
+
+  /**
+   * Encryptable field names that get tokenized in storage.
+   * @private
+   */
+  _ENCRYPTABLE_FIELDS = [
+    'startTime_enc', 'endTime_enc', 'pauses_enc',
+    'metadata_enc', 'device_uuid_enc', 'end_device_uuid_enc',
+  ];
+
+  /**
+   * Compute a deterministic token for a field name.
+   * Same field name → same token (based on domain separator + field name).
+   * Falls back to plaintext field name when no master key is available.
+   *
+   * NOTE: Currently uses SHA-256(constant + fieldName) without involving
+   * the master key. This produces the same tokens for every user — an
+   * attacker who knows the scheme can trivially reverse field names.
+   *
+   * TODO: Replace with HMAC-SHA256(fieldKey, fieldName) once the WASM
+   * module exposes hmac_hex (already implemented in hmac_utils.rs, just
+   * needs a WASM binding). The Python side already does this correctly.
+   *
+   * The field VALUES are still AES-CTR encrypted with the master key,
+   * so this only affects schema obfuscation, not data confidentiality.
+   *
+   * @param {string} fieldName
+   * @returns {string}
+   * @private
+   */
+  _fieldToken(fieldName) {
+    // No master key → use plaintext field names (no-auth fallback)
+    if (!this._crypto.hasMasterKey || !this._crypto.hasMasterKey()) {
+      return fieldName;
+    }
+    if (this._fieldTokenCache.has(fieldName)) {
+      return this._fieldTokenCache.get(fieldName);
+    }
+    // TODO: Replace with HMAC-SHA256(derive_field_key(MK), fieldName)
+    // once WASM hmac_hex binding is available.
+    const token = this._crypto.sha256('phpoc-staging-keys-v1' + fieldName).slice(0, 16);
+    this._fieldTokenCache.set(fieldName, token);
+    return token;
+  }
+
+  /**
+   * Build reverse map from tokens → field names.
+   * @returns {Map<string, string>}
+   * @private
+   */
+  _buildFieldTokenMap() {
+    const map = new Map();
+    for (const name of this._ENCRYPTABLE_FIELDS) {
+      const token = this._fieldToken(name);
+      map.set(token, name);
+    }
+    return map;
+  }
+
+  /**
+   * Check if raw data uses legacy plaintext _enc key names.
+   * @param {object} data
+   * @returns {boolean}
+   * @private
+   */
+  static _isLegacyData(data) {
+    if (!data || typeof data !== 'object') return false;
+    return Object.keys(data).some(k => k.endsWith('_enc'));
+  }
+
+  /**
+   * Decode encrypted field-name tokens → standard _enc key names.
+   * Legacy _enc keys pass through as-is.
+   * @param {object} data
+   * @returns {object}
+   * @private
+   */
+  _decodeDataKeys(data) {
+    if (!data || typeof data !== 'object') return {};
+    // Legacy format: pass through
+    if (LocalCache._isLegacyData(data)) return { ...data };
+
+    const tokenMap = this._buildFieldTokenMap();
+    const decoded = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (tokenMap.has(key)) {
+        decoded[tokenMap.get(key)] = value;
+      } else {
+        decoded[key] = value;
+      }
+    }
+    return decoded;
+  }
+
+  /**
+   * Encode standard _enc key names → encrypted tokens.
+   * Non-encryptable fields pass through as-is.
+   * @param {object} data
+   * @returns {object}
+   * @private
+   */
+  _encodeDataKeys(data) {
+    if (!data || typeof data !== 'object') return {};
+    // No master key → keep plaintext keys
+    if (!this._crypto.hasMasterKey || !this._crypto.hasMasterKey()) {
+      return { ...data };
+    }
+    const encoded = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (this._ENCRYPTABLE_FIELDS.includes(key)) {
+        const token = this._fieldToken(key);
+        encoded[token] = value;
+      } else {
+        encoded[key] = value;
+      }
+    }
+    return encoded;
+  }
+
+  /**
+   * Compute deterministic entry hash from plaintext DTO fields.
+   * Independent of encryption nonces so same data always produces same hash.
+   * @param {object} dto
+   * @returns {Promise<string>} 64-char hex hash
+   * @private
+   */
+  async _computeEntryHash(dto) {
+    const fields = {
+      title: dto.title || '',
+      start_epoch: dto.start_epoch ?? 0,
+      end_epoch: dto.end_epoch ?? null,
+      duration: dto.duration || 0,
+      is_active: dto.is_active ?? true,
+      is_paused: dto.is_paused ?? false,
+      pauses: dto.pauses || [],
+      tags: dto.tags || [],
+      media: dto.media || [],
+      entry_id: dto.entry_id || '',
+      metadata: dto.metadata || {},
+      device_uuid: dto.device_uuid || '',
+      end_device_uuid: dto.end_device_uuid || '',
+    };
+    if (dto.comment != null) fields.comment = dto.comment;
+    return this._crypto.sha256(JSON.stringify(jsonSort(fields)));
+  }
+
+  // ------------------------------------------------------------------
   // Read / Write (full list)
   // ------------------------------------------------------------------
 
@@ -161,18 +359,33 @@ export class LocalCache {
       duration: endEpoch ? (endEpoch - startEpoch) : 0,
       is_active: isActive,
       is_paused: false,
-      startTime_enc: `plain:${startEpoch}`,
-      endTime_enc: endEpoch != null ? `plain:${endEpoch}` : undefined,
-      pauses_enc: 'plain:[]',
+      startTime_enc: this._encrypt(startEpoch),
+      endTime_enc: endEpoch != null ? this._encrypt(endEpoch) : undefined,
+      pauses_enc: this._encrypt('[]'),
       tags: normalizedTags,
       media: media || [],
-      device_uuid_enc: `plain:${deviceUuid || ''}`,
-      end_device_uuid_enc: 'plain:',
-      metadata_enc: 'plain:{}',
+      device_uuid_enc: this._encrypt(deviceUuid || ''),
+      end_device_uuid_enc: this._encrypt(''),
+      metadata_enc: this._encrypt('{}'),
     };
     if (comment != null) data.comment = comment;
 
-    const hash = await this._hashData(data);
+    const hash = await this._computeEntryHash({
+      title,
+      start_epoch: startEpoch,
+      end_epoch: endEpoch ?? null,
+      duration: endEpoch ? (endEpoch - startEpoch) : 0,
+      is_active: isActive,
+      is_paused: false,
+      pauses: [],
+      tags: normalizedTags,
+      media: media || [],
+      entry_id: entryId,
+      metadata: {},
+      device_uuid: deviceUuid || '',
+      end_device_uuid: '',
+      comment: comment ?? undefined,
+    });
 
     // Remove undefined fields before storing
     const cleanData = {};
@@ -180,9 +393,12 @@ export class LocalCache {
       if (v !== undefined) cleanData[k] = v;
     }
 
+    // Encrypt field key names (I-02)
+    const encodedData = this._encodeDataKeys(cleanData);
+
     const rawEntry = {
       hash,
-      data: cleanData,
+      data: encodedData,
       committed: false,
       block_index: null,
     };
@@ -190,12 +406,7 @@ export class LocalCache {
     entries.push(rawEntry);
     await this._storage.set(ENTRIES_KEY, entries);
 
-    // Update staging hash index after append
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — index always rebuildable
-    }
+    await this._safeRefreshHashIndex();
 
     return hash.slice(0, 10);
   }
@@ -224,19 +435,21 @@ export class LocalCache {
       return;
     }
 
-    const data = raw.data || {};
+    const rawData = raw.data || {};
+    // Decode encrypted field-name tokens → standard _enc keys
+    const data = this._decodeDataKeys(rawData);
 
     // Apply field updates, mapping DTO field names to _enc field names
     for (const [key, value] of Object.entries(fields)) {
       const encKey = _dtoKeyToEncKey(key);
       if (encKey) {
         if (encKey === 'pauses_enc') {
-          data.pauses_enc = `plain:${JSON.stringify(value || [])}`;
+          data.pauses_enc = this._encrypt(JSON.stringify(value || []));
         } else if (encKey === 'metadata_enc') {
-          data.metadata_enc = `plain:${JSON.stringify(value || {})}`;
+          data.metadata_enc = this._encrypt(JSON.stringify(value || {}));
         } else if (encKey === 'startTime_enc' || encKey === 'endTime_enc' ||
                    encKey === 'device_uuid_enc' || encKey === 'end_device_uuid_enc') {
-          data[encKey] = `plain:${value ?? ''}`;
+          data[encKey] = this._encrypt(value ?? '');
         } else {
           data[encKey] = value;
         }
@@ -257,8 +470,11 @@ export class LocalCache {
     const freshRaw = fresh[index];
     if (!freshRaw.data) return;
 
+    // Decode fresh data keys
+    const freshData = this._decodeDataKeys(freshRaw.data);
+
     // Check: did another operation commit or replace this entry?
-    if (freshRaw.data.entry_id !== data.entry_id) {
+    if (freshData.entry_id !== data.entry_id) {
       return; // A different entry is now at this index
     }
     if (freshRaw.committed) {
@@ -268,15 +484,15 @@ export class LocalCache {
     // Apply the same field updates to the fresh entry
     for (const [key, value] of Object.entries(fields)) {
       const encKey = _dtoKeyToEncKey(key);
-      const fd = freshRaw.data;
+      const fd = freshData;
       if (encKey) {
         if (encKey === 'pauses_enc') {
-          fd.pauses_enc = `plain:${JSON.stringify(value || [])}`;
+          fd.pauses_enc = this._encrypt(JSON.stringify(value || []));
         } else if (encKey === 'metadata_enc') {
-          fd.metadata_enc = `plain:${JSON.stringify(value || {})}`;
+          fd.metadata_enc = this._encrypt(JSON.stringify(value || {}));
         } else if (encKey === 'startTime_enc' || encKey === 'endTime_enc' ||
                    encKey === 'device_uuid_enc' || encKey === 'end_device_uuid_enc') {
-          fd[encKey] = `plain:${value ?? ''}`;
+          fd[encKey] = this._encrypt(value ?? '');
         } else {
           fd[encKey] = value;
         }
@@ -289,17 +505,15 @@ export class LocalCache {
       }
     }
 
-    // Recompute hash from final data
-    freshRaw.hash = await this._hashData(freshRaw.data);
+    // Encode field key names before writing
+    freshRaw.data = this._encodeDataKeys(freshData);
+
+    // Recompute hash from plaintext DTO fields
+    freshRaw.hash = await this._computeEntryHash(this._rawToDto(freshRaw, index));
     fresh[index] = freshRaw;
     await this._storage.set(ENTRIES_KEY, fresh);
 
-    // Update staging hash index after mutation
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — index always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   /**
@@ -323,12 +537,7 @@ export class LocalCache {
       await this._storage.set(ENTRIES_KEY, rawEntries);
     }
 
-    // Update staging hash index after markCommitted
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — index always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   /**
@@ -345,12 +554,7 @@ export class LocalCache {
     rawEntries.splice(index, 1);
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
-    // Update staging hash index after delete
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — hash index is always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   /**
@@ -370,12 +574,7 @@ export class LocalCache {
     }
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
-    // Update staging hash index after batch removal
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — hash index is always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   // ------------------------------------------------------------------
@@ -397,13 +596,18 @@ export class LocalCache {
     }
 
     const raw = rawEntries[index];
-    const data = raw.data || {};
+    const rawData = raw.data || {};
+    // Decode encrypted field-name tokens
+    const data = this._decodeDataKeys(rawData);
 
     // Parse existing pauses
     let pauses = [];
-    const pausesRaw = data.pauses_enc || 'plain:[]';
-    if (pausesRaw.startsWith('plain:')) {
-      try { pauses = JSON.parse(pausesRaw.slice(6)); } catch { pauses = []; }
+    const pausesRaw = data.pauses_enc;
+    if (pausesRaw) {
+      const decrypted = this._decrypt(pausesRaw);
+      if (decrypted) {
+        try { pauses = JSON.parse(decrypted); } catch { pauses = []; }
+      }
     }
 
     const pauseRecord = {
@@ -414,20 +618,18 @@ export class LocalCache {
     if (comment != null) pauseRecord.comment = comment;
 
     pauses.push(pauseRecord);
-    data.pauses_enc = `plain:${JSON.stringify(pauses)}`;
+    data.pauses_enc = this._encrypt(JSON.stringify(pauses));
     data.is_paused = true;
 
-    // Recompute hash
-    raw.hash = await this._hashData(data);
+    // Re-encode field key names
+    raw.data = this._encodeDataKeys(data);
+
+    // Recompute hash from plaintext DTO fields
+    raw.hash = await this._computeEntryHash(this._rawToDto(raw, index));
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
-    // Update staging hash index after addPause
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — hash index is always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   /**
@@ -445,13 +647,18 @@ export class LocalCache {
     }
 
     const raw = rawEntries[index];
-    const data = raw.data || {};
+    const rawData = raw.data || {};
+    // Decode encrypted field-name tokens
+    const data = this._decodeDataKeys(rawData);
 
     // Parse existing pauses
     let pauses = [];
-    const pausesRaw = data.pauses_enc || 'plain:[]';
-    if (pausesRaw.startsWith('plain:')) {
-      try { pauses = JSON.parse(pausesRaw.slice(6)); } catch { pauses = []; }
+    const pausesRaw = data.pauses_enc;
+    if (pausesRaw) {
+      const decrypted = this._decrypt(pausesRaw);
+      if (decrypted) {
+        try { pauses = JSON.parse(decrypted); } catch { pauses = []; }
+      }
     }
 
     if (pauses.length > 0 && pauses[pauses.length - 1].pause_stop === null) {
@@ -461,20 +668,18 @@ export class LocalCache {
       }
     }
 
-    data.pauses_enc = `plain:${JSON.stringify(pauses)}`;
+    data.pauses_enc = this._encrypt(JSON.stringify(pauses));
     data.is_paused = false;
 
-    // Recompute hash
-    raw.hash = await this._hashData(data);
+    // Re-encode field key names
+    raw.data = this._encodeDataKeys(data);
+
+    // Recompute hash from plaintext DTO fields
+    raw.hash = await this._computeEntryHash(this._rawToDto(raw, index));
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
-    // Update staging hash index after closePause
-    try {
-      await this._refreshHashIndex();
-    } catch {
-      // Non-critical — hash index is always rebuildable
-    }
+    await this._safeRefreshHashIndex();
   }
 
   // ------------------------------------------------------------------
@@ -505,11 +710,22 @@ export class LocalCache {
   // ------------------------------------------------------------------
 
   /**
-   * Rebuild the staging hash index from current entries and persist.
+   * Refresh the hash index, silently ignoring failures.
    *
-   * Called automatically after every mutation (append, update, delete,
-   * addPause, closePause, removeMultiple). Non-fatal — failures are
-   * silently caught (index is always rebuildable from entries).
+   * Index is always rebuildable from entries — this is a best-effort cache.
+   *
+   * @private
+   */
+  async _safeRefreshHashIndex() {
+    try {
+      await this._refreshHashIndex();
+    } catch {
+      // Non-critical — index always rebuildable
+    }
+  }
+
+  /**
+   * Rebuild the staging hash index from current entries and persist.
    *
    * @private
    */
@@ -555,35 +771,39 @@ export class LocalCache {
    * @private
    */
   _rawToDto(raw, idx) {
-    const data = raw.data || {};
+    const rawData = raw.data || {};
+    // Decode encrypted field-name tokens → standard _enc keys
+    const data = this._decodeDataKeys(rawData);
 
     const startEpochStr = data.startTime_enc || '';
-    const startEpoch = parsePlainInt(startEpochStr);
+    const startEpoch = this._decryptInt(startEpochStr);
 
     const endEpochStr = data.endTime_enc;
-    const endEpoch = endEpochStr ? parsePlainInt(endEpochStr) : null;
+    const endEpoch = endEpochStr ? this._decryptInt(endEpochStr) : null;
 
-    const pausesRaw = data.pauses_enc || 'plain:[]';
+    const pausesRaw = data.pauses_enc;
     let pauses = [];
-    if (pausesRaw.startsWith('plain:')) {
-      try { pauses = JSON.parse(pausesRaw.slice(6)); } catch { /* ignore */ }
+    if (pausesRaw) {
+      const decrypted = this._decrypt(pausesRaw);
+      if (decrypted) {
+        try { pauses = JSON.parse(decrypted); } catch { /* ignore */ }
+      }
     }
 
-    const metadataRaw = data.metadata_enc || 'plain:{}';
+    const metadataRaw = data.metadata_enc;
     let metadata = {};
-    if (metadataRaw.startsWith('plain:')) {
-      try { metadata = JSON.parse(metadataRaw.slice(6)); } catch { /* ignore */ }
+    if (metadataRaw) {
+      const decrypted = this._decrypt(metadataRaw);
+      if (decrypted) {
+        try { metadata = JSON.parse(decrypted); } catch { /* ignore */ }
+      }
     }
 
     const deviceUuidRaw = data.device_uuid_enc || '';
-    const device_uuid = deviceUuidRaw.startsWith('plain:')
-      ? deviceUuidRaw.slice(6)
-      : deviceUuidRaw;
+    const device_uuid = this._decrypt(deviceUuidRaw) || '';
 
     const endDeviceUuidRaw = data.end_device_uuid_enc || '';
-    const end_device_uuid = endDeviceUuidRaw.startsWith('plain:')
-      ? endDeviceUuidRaw.slice(6)
-      : endDeviceUuidRaw;
+    const end_device_uuid = this._decrypt(endDeviceUuidRaw) || '';
 
     return {
       activity_id: data.activity_id || '',
@@ -621,17 +841,17 @@ export class LocalCache {
       activity_id: activityId || undefined,
       entry_id: dto.entry_id || '',
       title: dto.title || '',
-      startTime_enc: `plain:${dto.start_epoch ?? 0}`,
-      endTime_enc: dto.end_epoch != null ? `plain:${dto.end_epoch}` : undefined,
+      startTime_enc: this._encrypt(dto.start_epoch ?? 0),
+      endTime_enc: dto.end_epoch != null ? this._encrypt(dto.end_epoch) : undefined,
       duration: dto.duration || 0,
       is_active: dto.is_active ?? true,
       is_paused: dto.is_paused ?? false,
-      pauses_enc: `plain:${JSON.stringify(dto.pauses || [])}`,
+      pauses_enc: this._encrypt(JSON.stringify(dto.pauses || [])),
       tags: dto.tags || [],
       media: dto.media || [],
-      device_uuid_enc: `plain:${dto.device_uuid || ''}`,
-      end_device_uuid_enc: `plain:${dto.end_device_uuid || ''}`,
-      metadata_enc: `plain:${JSON.stringify(dto.metadata || {})}`,
+      device_uuid_enc: this._encrypt(dto.device_uuid || ''),
+      end_device_uuid_enc: this._encrypt(dto.end_device_uuid || ''),
+      metadata_enc: this._encrypt(JSON.stringify(dto.metadata || {})),
     };
     if (dto.comment != null) data.comment = dto.comment;
 
@@ -641,9 +861,12 @@ export class LocalCache {
       if (v !== undefined) cleanData[k] = v;
     }
 
+    // Encrypt field key names (I-02)
+    const encodedData = this._encodeDataKeys(cleanData);
+
     return {
       hash: dto.hash || '',
-      data: cleanData,
+      data: encodedData,
       committed: dto.committed || false,
       block_index: dto.block_index ?? null,
     };

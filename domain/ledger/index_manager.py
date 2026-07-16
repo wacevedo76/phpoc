@@ -4,6 +4,7 @@ A lightweight key-value cache mapping dates to title-to-duration maps.
 Derived from the ledger chain and can be fully rebuilt if lost.
 """
 
+import json
 from typing import Dict, Any, Optional
 
 from storage.index_store import AbstractIndexStore
@@ -17,24 +18,59 @@ class IndexManager:
 
     The index is purely derived data — it can be fully rebuilt from
     the ledger chain using rebuild_from_chain().
+
+    When *crypto* is provided, the index is encrypted at rest using
+    AES-128-CTR. Legacy plaintext indices are auto-detected and
+    upgraded on next write.
     """
 
-    def __init__(self, store: AbstractIndexStore):
+    def __init__(self, store: AbstractIndexStore, crypto=None):
         self.store = store
+        self._crypto = crypto
         self._cache: Dict[str, Any] = {}
         self._load()
 
     def _load(self):
-        """Load index from store into memory cache."""
+        """Load index from store into memory cache.
+
+        Detects encrypted vs legacy plaintext format automatically:
+        - Dict with ``_enc`` key → decrypt
+        - Plain dict → legacy, use as-is
+        - Empty/falsy → start with empty cache
+        """
         stored = self.store.read_index()
-        if stored:
+        if not stored:
+            self._cache = {}
+            return
+        if isinstance(stored, dict) and "_enc" in stored:
+            # Encrypted format
+            if self._crypto is not None:
+                try:
+                    plain = self._crypto.decrypt(stored["_enc"])
+                    self._cache = json.loads(plain)
+                except Exception:
+                    self._cache = {}
+            else:
+                self._cache = {}
+        elif isinstance(stored, dict):
+            # Legacy plaintext format
             self._cache = dict(stored)
         else:
             self._cache = {}
 
     def _flush(self):
-        """Write in-memory cache back to store."""
-        self.store.write_index(dict(self._cache))
+        """Write in-memory cache back to store.
+
+        Encrypts the full index dict as JSON when crypto is available.
+        Uses ``{"_enc": "<hex_ciphertext>"}`` wrapper format so
+        legacy plaintext readers can skip encrypted blobs cleanly.
+        """
+        if self._crypto is not None:
+            plain = json.dumps(self._cache, sort_keys=True)
+            encrypted = self._crypto.encrypt(plain)
+            self.store.write_index({"_enc": encrypted})
+        else:
+            self.store.write_index(dict(self._cache))
 
     def reload(self):
         """Reload cache from the underlying store.

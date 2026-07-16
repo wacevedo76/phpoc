@@ -99,11 +99,19 @@ class MockCrypto {
     return `enc:${value}`;
   }
 
+  encryptWithCachedKey(plaintext) {
+    return this.encrypt(plaintext);
+  }
+
   decrypt(value, mk) {
     if (typeof value === 'string' && value.startsWith('enc:')) {
       return value.slice(4);
     }
     return value;
+  }
+
+  decryptWithCachedKey(ciphertext) {
+    return this.decrypt(ciphertext);
   }
 
   sha256(data) {

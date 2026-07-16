@@ -80,9 +80,8 @@ export async function importLedger(file, crypto, masterKey) {
 
   const formatVersion = parsed.format_version;
 
-  // ── Determine entries and seal payload based on format ──────────
+  // ── Determine entries and metadata based on format ──────────────
   let entries;
-  let sealPayload; // The data the seal covers
   let genesisHash = null;
   let ledger = null;
 
@@ -106,8 +105,6 @@ export async function importLedger(file, crypto, masterKey) {
     // v2 entries = staging entries from old exports, or empty for new exports
     entries = Array.isArray(parsed.staging) ? parsed.staging : [];
     ledger = parsed.ledger;
-    // Seal: new v2 covers ledger only; old v2 covered {ledger, staging}
-    sealPayload = JSON.stringify(parsed.ledger);
   } else {
     // v1 (and any future unrecognized version): staging-only
     if (!Array.isArray(parsed.entries)) {
@@ -120,60 +117,15 @@ export async function importLedger(file, crypto, masterKey) {
     }
 
     entries = parsed.entries;
-    sealPayload = jsonSort(entries);
     // v1: no genesis info — genesisHash stays null
   }
 
   // ── Seal verification ───────────────────────────────────────────
-  // Try new seal first; if it fails and file has staging, try old seal (backward compat)
-  let sealValid = crypto.verifySeal(sealPayload, parsed.seal, masterKey);
-  if (!sealValid && formatVersion === '2' && Array.isArray(parsed.staging)) {
-    const oldSealPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
-    sealValid = crypto.verifySeal(oldSealPayload, parsed.seal, masterKey);
-  }
-
-  if (!sealValid) {
-    throw new Error(
-      'importLedger: seal verification failed — file may be tampered ' +
-      'or opened with the wrong passphrase'
-    );
-  }
+  _verifyExportSeal(parsed, formatVersion, crypto, masterKey);
 
   // ── Entry hash re-validation ────────────────────────────────────
   for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-
-    // Build the canonical data (all fields except hash, sorted keys)
-    const hashData = {};
-    for (const key of Object.keys(entry).sort()) {
-      if (key !== 'hash') {
-        hashData[key] = entry[key];
-      }
-    }
-
-    // Try current format first: jsonSort (canonical, new exports)
-    const jsonSortHash = crypto.sha256(jsonSort(hashData));
-    if (entry.hash !== jsonSortHash) {
-      // Backward-compat fallback 1: JSON.stringify(all fields) — old stopped entries
-      const jsStringifyAll = crypto.sha256(JSON.stringify(hashData));
-      if (entry.hash !== jsStringifyAll) {
-        // Backward-compat fallback 2: canonical core fields only
-        // — old active entries (stale hashes from LocalCache)
-        const coreData = {};
-        for (const key of Object.keys(entry).sort()) {
-          if (key !== 'hash' && key !== 'committed' && key !== 'block_index' && key !== 'entry_index') {
-            coreData[key] = entry[key];
-          }
-        }
-        const jsonSortCoreHash = crypto.sha256(jsonSort(coreData));
-        if (entry.hash !== jsonSortCoreHash) {
-          throw new Error(
-            `importLedger: entry hash mismatch at index ${i} ` +
-            `("${entry.title || 'untitled'}") — file may be corrupted`
-          );
-        }
-      }
-    }
+    _validateEntryHash(entries[i], i, crypto);
   }
 
   // ── Success ─────────────────────────────────────────────────────
@@ -186,6 +138,88 @@ export async function importLedger(file, crypto, masterKey) {
   };
 }
 
+// ── Entry hash validation helpers ─────────────────────────────────
+
+/**
+ * Validate a staging entry's hash using a three-tier backward-compatible fallback.
+ *
+ * Strategy order:
+ *   1. jsonSort(all fields except hash) — current canonical format
+ *   2. JSON.stringify(all fields) — old stopped entries (pre-canonical)
+ *   3. jsonSort(core fields only) — old active entries (stale hashes from LocalCache,
+ *      which added committed/block_index/entry_index after hashing)
+ *
+ * All strategies must fail to trigger rejection. No partial acceptance.
+ */
+function _validateEntryHash(entry, index, crypto) {
+  // All fields except hash, sorted keys
+  const hashData = _stripKey(entry, 'hash');
+
+  // Strategy 1: jsonSort (canonical, new exports)
+  if (entry.hash === crypto.sha256(jsonSort(hashData))) return;
+
+  // Strategy 2: JSON.stringify (old stopped entries)
+  if (entry.hash === crypto.sha256(JSON.stringify(hashData))) return;
+
+  // Strategy 3: jsonSort of core fields only (old active entries)
+  const coreData = _stripKeys(hashData, ['committed', 'block_index', 'entry_index']);
+  if (entry.hash === crypto.sha256(jsonSort(coreData))) return;
+
+  throw new Error(
+    `importLedger: entry hash mismatch at index ${index} ` +
+    `("${entry.title || 'untitled'}") — file may be corrupted`
+  );
+}
+
+/** Return a new object with the named key removed. */
+function _stripKey(obj, key) {
+  const result = {};
+  for (const k of Object.keys(obj).sort()) {
+    if (k !== key) result[k] = obj[k];
+  }
+  return result;
+}
+
+/** Return a new object with the named keys removed. */
+function _stripKeys(obj, keys) {
+  const result = {};
+  for (const k of Object.keys(obj).sort()) {
+    if (!keys.includes(k)) result[k] = obj[k];
+  }
+  return result;
+}
+
+/**
+ * Verify export file seal with backward-compatible fallback.
+ *
+ * For v2: tries JSON.stringify(ledger) first, then falls back to
+ * old-format jsonSort({ledger, staging}) when staging is present.
+ * For v1: seal over jsonSort(entries) — no fallback.
+ * Throws on any failure.
+ */
+function _verifyExportSeal(parsed, formatVersion, crypto, masterKey) {
+  const seal = parsed.seal;
+
+  if (formatVersion === '2') {
+    // Current format: seal over JSON.stringify(ledger) only
+    if (crypto.verifySeal(JSON.stringify(parsed.ledger), seal, masterKey)) return;
+
+    // Backward compat: old v2 sealed {ledger, staging} with jsonSort
+    if (Array.isArray(parsed.staging)) {
+      const oldPayload = jsonSort({ ledger: parsed.ledger, staging: parsed.staging });
+      if (crypto.verifySeal(oldPayload, seal, masterKey)) return;
+    }
+  } else {
+    // v1: seal over jsonSort(entries)
+    if (crypto.verifySeal(jsonSort(parsed.entries), seal, masterKey)) return;
+  }
+
+  throw new Error(
+    'importLedger: seal verification failed — file may be tampered ' +
+    'or opened with the wrong passphrase'
+  );
+}
+
 // ── Block seal field names per block type ──────────────────────────
 // I-17: genesis uses block_hash (not day_hash).
 const BLOCK_HASH_FIELD = {
@@ -194,6 +228,18 @@ const BLOCK_HASH_FIELD = {
   month_summary: 'month_hash',
   day: 'day_hash',
 };
+
+/**
+ * Return the hash field name for a block, with I-17 backward compat:
+ * genesis may use block_hash (new) or day_hash (old).
+ */
+function _getHashField(block, blockType) {
+  let field = BLOCK_HASH_FIELD[blockType];
+  if (blockType === 'genesis' && !block[field] && block['day_hash']) {
+    field = 'day_hash';
+  }
+  return field;
+}
 
 /**
  * Import a raw ledger chain (CLI ledger.json format — JSON array of blocks).
@@ -229,12 +275,7 @@ function _importRawChain(blocks, crypto, masterKey) {
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     const blockType = block.type || 'day';
-    let hashField = BLOCK_HASH_FIELD[blockType];
-
-    // I-17 backward compat: genesis may use block_hash (new) or day_hash (old)
-    if (blockType === 'genesis' && !block[hashField] && block['day_hash']) {
-      hashField = 'day_hash';
-    }
+    const hashField = _getHashField(block, blockType);
 
     if (!hashField) {
       throw new Error(
@@ -251,14 +292,13 @@ function _importRawChain(blocks, crypto, masterKey) {
 
     // Verify per-block seal: HMAC of block content (excluding hash + signature + format_version)
     // I-07: format_version excluded from seal computation.
-    // Uses the same seal key as the export format (derived from masterKey).
     const checkData = {};
     for (const key of Object.keys(block).sort()) {
       if (key !== hashField && key !== 'signature' && key !== 'format_version') {
         checkData[key] = block[key];
       }
     }
-    const sealPayload = jsonSort(checkData); // Python-compatible via utils.js
+    const sealPayload = jsonSort(checkData);
     const sealValid = crypto.verifySeal(sealPayload, blockHash, masterKey);
 
     if (!sealValid) {
@@ -273,11 +313,7 @@ function _importRawChain(blocks, crypto, masterKey) {
     if (i > 0) {
       const prevBlock = blocks[i - 1];
       const prevType = prevBlock.type || 'day';
-      let prevHashField = BLOCK_HASH_FIELD[prevType];
-      // I-17 backward compat: genesis may use block_hash (new) or day_hash (old)
-      if (prevType === 'genesis' && !prevBlock[prevHashField] && prevBlock['day_hash']) {
-        prevHashField = 'day_hash';
-      }
+      const prevHashField = _getHashField(prevBlock, prevType);
       const expectedPrevHash = prevBlock[prevHashField];
 
       if (block.prev_hash !== expectedPrevHash) {

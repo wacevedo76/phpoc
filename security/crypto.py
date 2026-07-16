@@ -208,6 +208,58 @@ class CryptoManager(AbstractCryptoManager):
         expected = self.seal(data_str)
         return hmac.compare_digest(expected, signature)
 
+# ── Key Derivation ────────────────────────────────────────────────
+
+def derive_index_key(master_key: bytes) -> bytes:
+    """Derive a 16-byte index encryption key from the master key.
+
+    Uses HMAC-SHA256 with domain separator 'phpoc-blind-index-v1'
+    for domain separation. The 16-byte output is suitable for AES-128.
+    """
+    return hmac.new(master_key, b"phpoc-blind-index-v1", hashlib.sha256).digest()[:16]
+
+
+def derive_field_key(master_key: bytes) -> bytes:
+    """Derive a 16-byte staging field-key encryption key from the master key.
+
+    Uses HMAC-SHA256 with domain separator 'phpoc-staging-keys-v1'
+    for domain separation. The 16-byte output is used for deterministic
+    field-name token computation.
+    """
+    return hmac.new(master_key, b"phpoc-staging-keys-v1", hashlib.sha256).digest()[:16]
+
+
+# Canonical list of staging field names whose keys are encrypted at rest.
+# Shared by LocalStagingCache and StagingService._raw_entry_to_dto().
+STAGING_ENCRYPTABLE_FIELDS = [
+    "startTime_enc", "endTime_enc", "pauses_enc", "metadata_enc",
+    "device_uuid_enc", "end_device_uuid_enc",
+]
+
+
+def build_field_token_map(master_key: bytes, field_names=None):
+    """Build a reverse mapping from encrypted tokens → plaintext field names.
+
+    Uses HMAC-SHA256 with a derived field key so token values depend on the
+    master key — different ledgers produce different token mappings.
+
+    Args:
+        master_key: 32-byte master key.
+        field_names: Optional list of field names. Defaults to
+            STAGING_ENCRYPTABLE_FIELDS.
+
+    Returns:
+        Dict mapping hex token strings (24 chars) → field name strings.
+    """
+    if field_names is None:
+        field_names = STAGING_ENCRYPTABLE_FIELDS
+    fk = derive_field_key(master_key)
+    return {
+        hmac.new(fk, name.encode(), hashlib.sha256).hexdigest()[:24]: name
+        for name in field_names
+    }
+
+
 class NoAuthCryptoManager(AbstractCryptoManager):
     """Fallback crypto manager for when no passphrase is provided (Staging only)."""
     def encrypt(self, text: str) -> str:

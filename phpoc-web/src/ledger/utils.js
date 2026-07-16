@@ -21,6 +21,10 @@ export function jsonSort(data) {
 }
 
 function _jsonDumps(obj) {
+  // Top-level undefined → 'null' (matches JSON.stringify(undefined) behavior).
+  // Object-valued keys with undefined values are silently skipped — this is
+  // intentional: JS objects with absent keys (structured clone artifacts) must
+  // produce identical output to objects where the key is present-but-undefined.
   if (obj === null || obj === undefined) return 'null';
   if (typeof obj === 'boolean') return obj ? 'true' : 'false';
   if (typeof obj === 'number') return String(obj);

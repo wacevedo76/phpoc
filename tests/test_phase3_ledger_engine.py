@@ -1060,7 +1060,8 @@ class TestLedgerEngineCommit(unittest.TestCase):
             {"title": "Coding", "start_epoch": 1699959600000, "duration": 1800000},
         ]
         self.engine.commit(entries)
-        index_data = self.store.read_index()
+        # After I-02: index is encrypted at rest. Use get_all() for decrypted view.
+        index_data = self.engine.index.get_all()
         # 1699952400000 ms = 2023-11-14
         date_str = time.strftime("%Y-%m-%d", time.gmtime(1699952400000 // 1000))
         self.assertIn(date_str, index_data)
@@ -1218,7 +1219,8 @@ class TestLedgerEngineRevert(unittest.TestCase):
         skip_unless_phase_3()
         self._commit([("Coding", 1700000000000, 3600000)])
         self.engine.revert(1)
-        index_data = self.store.read_index()
+        # After I-02: index is encrypted. Use get_all() for decrypted view.
+        index_data = self.engine.index.get_all()
         self.assertEqual(index_data, {})
 
     def test_revert_two_blocks(self):
@@ -1249,7 +1251,8 @@ class TestLedgerEngineRevert(unittest.TestCase):
         self._commit([("Keep", 1700000000000, 3600000)])  # day 1
         self._commit([("Remove", 1700086400000, 7200000)])  # day 2
         self.engine.revert(1)
-        index_data = self.store.read_index()
+        # After I-02: index is encrypted. Use get_all() for decrypted view.
+        index_data = self.engine.index.get_all()
         # Day 1's entry should still be in index
         kept_date = time.strftime("%Y-%m-%d", time.gmtime(1700000000000 // 1000))
         self.assertIn(kept_date, index_data)

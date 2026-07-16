@@ -20,6 +20,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `STAGING_HASH_INDEX_WORKFLOW.md` — Workflow specification: full data flow contract for staging activity_id + hash index across push, pull, merge, and transport. Defines checkAndSync() integration, Tier 1/2/3 cascade, worker endpoint contract, backward compat, and LocalCache API surface needed. Single source of truth for mock transport + remaining test categories E–J. (2026-07-07)
 - `ROW_LEVEL_STAGING_SYNC_PLAN.md` — Implementation plan for row-level staging sync: 8-scenario LWW resolution table, sync cycle contract, Worker endpoint spec, per-row obfuscation format, migration strategy, and phased test catalog. Companion to ADR-025. (2026-07-08)
 - `CLI_COMMAND_TIMING_FIXES.md` — Investigation report + 4-fix plan for `ph view` latency (16 HTTP round-trips, ~5–26s). F1: duplicate check_and_sync, F2: ledger block cache, F3: skip unchanged push, F4: HTTP pooling. Execution order F1→F4 with 4-phase TDD per fix. (2026-07-14)
+- `I02_PHASE1.md` — Phase 1 test exploration for I-02 (blind index encryption + staging field key encryption). 74 assertions across 9 groups (A–I). (2026-07-16)
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)

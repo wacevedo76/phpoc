@@ -231,6 +231,14 @@ class MockCrypto {
     // Fallback: return as-is (numbers-as-strings pass through)
     return ciphertextHex;
   }
+
+  encrypt(plaintext, _masterKey) {
+    return `enc:${plaintext}`;
+  }
+
+  encryptWithCachedKey(plaintext) {
+    return `enc:${plaintext}`;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════

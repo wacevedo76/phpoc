@@ -32,7 +32,7 @@ export class LedgerEngine {
     this.identitySecret = identitySecret;
 
     this.chain = new LedgerChain(crypto, store, masterKey, identitySecret);
-    this.index = new IndexManager(store);
+    this.index = new IndexManager(store, crypto);
     this.summaryPolicy = summaryPolicy || new YearMonthSummaryPolicy(crypto, masterKey, identitySecret);
   }
 

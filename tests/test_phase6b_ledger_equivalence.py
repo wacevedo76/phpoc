@@ -443,9 +443,11 @@ class TestLedgerIndexConsistency(unittest.TestCase):
         ])
         idx_before = self.old_store.read_index()
         self.old_ledger.revert_entries(1)
-        idx_after = self.old_store.read_index()
+        # After I-02: index is encrypted at rest via IndexManager.
+        # Use the decrypted view instead of raw store access.
+        idx_after = self.old_ledger._engine.index.get_all()
         # Index should be cleaned up after reverting all entries
-        self.assertNotEqual(len(idx_before), len(idx_after))
+        self.assertEqual(idx_after, {})
 
     def test_get_block_count(self):
         """Both return the same block count."""

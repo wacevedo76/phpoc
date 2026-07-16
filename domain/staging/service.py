@@ -48,9 +48,54 @@ from domain.staging.remote_sync import RemoteStagingSync, BLOB_KEY_MISMATCH
 from security.crypto import (
     AbstractCryptoManager,
     NoAuthCryptoManager,
+    build_field_token_map,
+    STAGING_ENCRYPTABLE_FIELDS,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_field_names(data: dict, crypto=None) -> dict:
+    """Decode encrypted field-name tokens back to standard _enc keys.
+
+    When crypto has a master key, builds a reverse token map and
+    translates HMAC tokens to standard field names. Legacy _enc
+    keys pass through as-is.
+
+    Delegates token-map building to security.crypto.build_field_token_map()
+    so the HMAC computation logic is defined in one place.
+
+    Args:
+        data: Raw entry data dict (may have token keys or _enc keys).
+        crypto: Optional CryptoManager with master_key for deriving
+                the field key.
+
+    Returns:
+        Dict with standard field names (startTime_enc, endTime_enc, etc.).
+    """
+    if not data:
+        return {}
+
+    # If any key ends with _enc, it's legacy format — pass through
+    if any(k.endswith("_enc") for k in data):
+        return dict(data)
+
+    # No master key → can't decode tokens
+    mk = getattr(crypto, "master_key", None) if crypto is not None else None
+    if not isinstance(mk, bytes) or len(mk) != 32:
+        return dict(data)
+
+    try:
+        token_map = build_field_token_map(mk, STAGING_ENCRYPTABLE_FIELDS)
+        decoded = {}
+        for key, value in data.items():
+            if key in token_map:
+                decoded[token_map[key]] = value
+            else:
+                decoded[key] = value
+        return decoded
+    except Exception:
+        return dict(data)
 
 
 class SyncCheckResult:
@@ -156,23 +201,30 @@ class StagingService:
         self._local.append(title, epoch_ms, end_epoch=resolved_end, is_active=is_active, tags=tags or [], comment=comment, metadata=metadata, media=media, device_uuid=device_uuid)
         self._touch_local_cookie()
 
-    def end(self, title, end_epoch, comment=None):
-        """End an active task. Local-only write."""
+    def _find_active_entry(self, title: str) -> Dict[str, Any]:
+        """Find an active entry by title and return its metadata.
+
+        Returns a dict with keys: ``entry_id``, ``index``, ``start_epoch``,
+        ``is_paused``. Raises ValueError if no active entry matches.
+        """
         entries = self._local.read_entries()
-        found_entry_id = None
-        found_index = None
-        found_start_epoch = None
-        found_is_paused = False
         for i, entry in enumerate(entries):
             if entry["title"] == title and entry.get("is_active"):
-                found_entry_id = entry.get("entry_id", "") or None
-                found_index = i
-                found_start_epoch = entry["start_epoch"]
-                found_is_paused = entry.get("is_paused", False)
-                break
+                return {
+                    "entry_id": entry.get("entry_id", "") or None,
+                    "index": i,
+                    "start_epoch": entry.get("start_epoch"),
+                    "is_paused": entry.get("is_paused", False),
+                }
+        raise ValueError(f"No active task found for: {title}")
 
-        if found_index is None:
-            raise ValueError(f"No active task found for: {title}")
+    def end(self, title, end_epoch, comment=None):
+        """End an active task. Local-only write."""
+        found = self._find_active_entry(title)
+        found_entry_id = found["entry_id"]
+        found_index = found["index"]
+        found_start_epoch = found["start_epoch"]
+        found_is_paused = found["is_paused"]
 
         # Choose stable entry_id path or legacy index path
         if found_entry_id:
@@ -239,17 +291,9 @@ class StagingService:
 
     def pause(self, title, pause_epoch):
         """Pause an active task (mark is_paused). Local-only."""
-        entries = self._local.read_entries()
-        found_entry_id = None
-        found_index = None
-        for i, entry in enumerate(entries):
-            if entry["title"] == title and entry.get("is_active"):
-                found_entry_id = entry.get("entry_id", "") or None
-                found_index = i
-                break
-
-        if found_index is None:
-            raise ValueError(f"No active task found for: {title}")
+        found = self._find_active_entry(title)
+        found_entry_id = found["entry_id"]
+        found_index = found["index"]
 
         if found_entry_id:
             self._local.add_pause_by_entry_id(found_entry_id, pause_epoch)
@@ -259,17 +303,9 @@ class StagingService:
 
     def unpause(self, title, unpause_epoch):
         """Unpause a paused task (resume). Local-only."""
-        entries = self._local.read_entries()
-        found_entry_id = None
-        found_index = None
-        for i, entry in enumerate(entries):
-            if entry["title"] == title and entry.get("is_active"):
-                found_entry_id = entry.get("entry_id", "") or None
-                found_index = i
-                break
-
-        if found_index is None:
-            raise ValueError(f"No active task found for: {title}")
+        found = self._find_active_entry(title)
+        found_entry_id = found["entry_id"]
+        found_index = found["index"]
 
         if found_entry_id:
             self._local.close_pause_by_entry_id(found_entry_id, unpause_epoch)
@@ -496,7 +532,7 @@ class StagingService:
                 local_entries = self._local.read_entries()
                 remote_dtos = []
                 for raw_entry in remote_blob.get("entries", []):
-                    dto = self._raw_entry_to_dto(raw_entry)
+                    dto = self._raw_entry_to_dto(raw_entry, crypto=self._crypto)
                     if dto is not None:
                         remote_dtos.append(dto)
                 merged = self._merge.merge(
@@ -669,15 +705,23 @@ class StagingService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _raw_entry_to_dto(raw_entry: dict) -> Optional[dict]:
+    def _raw_entry_to_dto(raw_entry: dict, crypto=None) -> Optional[dict]:
         """Convert a single raw staging entry (from blob) to a decrypted DTO.
 
         Remote blob entries are stored in raw format with encrypted fields
         (``startTime_enc``, ``endTime_enc``, etc.) and a ``data`` wrapper.
         This converts them to the DTO format expected by the MergeEngine.
 
+        Handles both legacy ``plain:`` prefixed entries (backward compat)
+        and AES-CTR hex ciphertext entries (post I-03).
+
+        Also handles encrypted field names (HMAC tokens, post I-02).
+
         Args:
             raw_entry: A raw entry dict with ``data``, ``hash``, ``start_epoch``.
+            crypto: Optional CryptoManager for decrypting hex ciphertext fields
+                    and reversing field-name tokens. If None, only ``plain:``
+                    entries are decoded.
 
         Returns:
             Decrypted DTO dict, or None if the entry is corrupt.
@@ -685,59 +729,69 @@ class StagingService:
         try:
             data = raw_entry.get("data", {})
 
-            # Decrypt plain: prefixed fields
-            start_epoch_str = data.get("startTime_enc", "")
-            if isinstance(start_epoch_str, str) and start_epoch_str.startswith("plain:"):
-                start_epoch = int(start_epoch_str[6:])
-            else:
+            # Helper: decrypt a field, falling back from hex → plain: → raw
+            def _decrypt(value, crypto):
+                if value is None:
+                    return None
+                if not isinstance(value, str):
+                    return str(value)
+                if value.startswith("plain:"):
+                    return value[6:]
+                if crypto is not None:
+                    try:
+                        return crypto.decrypt(value)
+                    except Exception:
+                        return None
                 return None
 
-            end_epoch = None
-            end_epoch_str = data.get("endTime_enc")
-            if isinstance(end_epoch_str, str) and end_epoch_str.startswith("plain:"):
-                end_epoch = int(end_epoch_str[6:])
+            def _decrypt_int(value, crypto):
+                decrypted = _decrypt(value, crypto)
+                if decrypted is None:
+                    return None
+                try:
+                    return int(decrypted)
+                except (ValueError, TypeError):
+                    return None
 
-            pauses_raw = data.get("pauses_enc", "plain:[]")
-            if isinstance(pauses_raw, str) and pauses_raw.startswith("plain:"):
-                pauses = json.loads(pauses_raw[6:])
-            else:
-                pauses = []
+            def _decrypt_json(value, crypto, default):
+                decrypted = _decrypt(value, crypto)
+                if decrypted is None:
+                    return default
+                try:
+                    return json.loads(decrypted)
+                except (json.JSONDecodeError, TypeError):
+                    return default
 
-            metadata_raw = data.get("metadata_enc", "plain:{}")
-            if isinstance(metadata_raw, str) and metadata_raw.startswith("plain:"):
-                metadata = json.loads(metadata_raw[6:])
-            else:
-                metadata = {}
+            # Decode encrypted field names (HMAC tokens → _enc keys)
+            decoded = _decode_field_names(data, crypto)
+
+            # Decrypt start_epoch (required)
+            start_epoch = _decrypt_int(decoded.get("startTime_enc", ""), crypto)
+            if start_epoch is None:
+                return None
+
+            end_epoch = _decrypt_int(decoded.get("endTime_enc"), crypto)
+            pauses = _decrypt_json(decoded.get("pauses_enc"), crypto, [])
+            metadata = _decrypt_json(decoded.get("metadata_enc"), crypto, {})
+            device_uuid = _decrypt(decoded.get("device_uuid_enc", ""), crypto) or ""
+            end_device_uuid = _decrypt(decoded.get("end_device_uuid_enc"), crypto) or ""
 
             date_str = time.strftime(
                 "%Y-%m-%d", time.gmtime(start_epoch // 1000)
             )
 
-            # Decrypt device provenance fields
-            device_uuid_raw = data.get("device_uuid_enc", "")
-            if isinstance(device_uuid_raw, str) and device_uuid_raw.startswith("plain:"):
-                device_uuid = device_uuid_raw[6:]
-            else:
-                device_uuid = ""
-
-            end_device_uuid_raw = data.get("end_device_uuid_enc")
-            if isinstance(end_device_uuid_raw, str) and end_device_uuid_raw.startswith("plain:"):
-                end_device_uuid = end_device_uuid_raw[6:]
-            else:
-                end_device_uuid = ""
-
             return {
-                "entry_id": data.get("entry_id", ""),
-                "title": data.get("title", ""),
+                "entry_id": decoded.get("entry_id", ""),
+                "title": decoded.get("title", ""),
                 "start_epoch": start_epoch,
                 "end_epoch": end_epoch,
-                "duration": data.get("duration", 0),
-                "is_active": data.get("is_active", False),
-                "is_paused": data.get("is_paused", False),
+                "duration": decoded.get("duration", 0),
+                "is_active": decoded.get("is_active", False),
+                "is_paused": decoded.get("is_paused", False),
                 "pauses": pauses,
-                "tags": data.get("tags", []),
-                "comment": data.get("comment"),
-                "media": data.get("media", []),
+                "tags": decoded.get("tags", []),
+                "comment": decoded.get("comment"),
+                "media": decoded.get("media", []),
                 "metadata": metadata,
                 "date": date_str,
                 "source": "remote",
@@ -745,6 +799,7 @@ class StagingService:
                 "hash": raw_entry.get("hash", ""),
                 "device_uuid": device_uuid,
                 "end_device_uuid": end_device_uuid,
+                "block_index": raw_entry.get("block_index"),
             }
         except Exception:
             return None
@@ -817,7 +872,7 @@ class StagingService:
                 # Convert remote raw entries to DTOs before merge
                 remote_dtos = []
                 for raw_entry in remote_blob.get("entries", []):
-                    dto = self._raw_entry_to_dto(raw_entry)
+                    dto = self._raw_entry_to_dto(raw_entry, crypto=self._crypto)
                     if dto is not None:
                         remote_dtos.append(dto)
                 merged = self._merge.merge(

@@ -90,6 +90,22 @@ class MockCrypto {
       throw new Error('deobfuscation failed');
     }
   }
+  encrypt(plaintext, _masterKey) {
+    return `enc:${plaintext}`;
+  }
+  encryptWithCachedKey(plaintext) {
+    return `enc:${plaintext}`;
+  }
+  decrypt(ciphertextHex, _masterKey) {
+    if (ciphertextHex && typeof ciphertextHex === 'string') {
+      if (ciphertextHex.startsWith('enc:')) return ciphertextHex.slice(4);
+      if (ciphertextHex.startsWith('plain:')) return ciphertextHex.slice(6);
+    }
+    return ciphertextHex;
+  }
+  decryptWithCachedKey(ciphertextHex) {
+    return this.decrypt(ciphertextHex);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════

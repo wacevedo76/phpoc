@@ -160,10 +160,15 @@ class MockCrypto {
     }
     return ciphertextHex;
   }
-}
 
-// ══════════════════════════════════════════════════════════════════════
-// Constants
+  encrypt(plaintext, _masterKey) {
+    return `enc:${plaintext}`;
+  }
+
+  encryptWithCachedKey(plaintext) {
+    return `enc:${plaintext}`;
+  }
+}
 // ══════════════════════════════════════════════════════════════════════
 
 const BLOB_PATH = 'staging/blobs/current.json';

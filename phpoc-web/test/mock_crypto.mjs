@@ -74,12 +74,17 @@ export class MockCrypto {
   }
 
   encrypt(plaintext, masterKeyHex) {
-    return 'enc:' + deterministicHash(plaintext + masterKeyHex);
+    const mk = masterKeyHex || this._mk || 'no-key';
+    // Prefix with key fingerprint + plaintext for reversible mock encryption
+    const fingerprint = deterministicHash(mk).slice(0, 8);
+    return `enc:${fingerprint}:${plaintext}`;
   }
 
   decrypt(ciphertextHex, _masterKeyHex) {
     if (ciphertextHex && ciphertextHex.startsWith('enc:')) {
-      return ciphertextHex.slice(4);
+      // Format: enc:<fingerprint>:<plaintext>
+      const parts = ciphertextHex.split(':');
+      return parts.slice(2).join(':') || ciphertextHex.slice(4);
     }
     return ciphertextHex;
   }
@@ -111,6 +116,20 @@ export class MockCrypto {
    */
   decryptWithCachedKey(ciphertextHex) {
     return this.decrypt(ciphertextHex);
+  }
+
+  /**
+   * Encrypt with the cached master key (single-arg version).
+   */
+  encryptWithCachedKey(plaintext) {
+    return this.encrypt(plaintext);
+  }
+
+  /**
+   * Check if a master key is set.
+   */
+  hasMasterKey() {
+    return !!this._mk;
   }
 
   generateSeed() {

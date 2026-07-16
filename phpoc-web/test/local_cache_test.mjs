@@ -27,9 +27,29 @@ import { LocalCache } from '../src/sync/local_cache.js';
 // ══════════════════════════════════════════════════════════════════════
 
 class MockCryptoForCache {
-  constructor() { this._uuidCounter = 0; }
+  constructor() { this._uuidCounter = 0; this._mk = null; }
   sha256(data) { return createHash('sha256').update(data, 'utf-8').digest('hex'); }
   generateUuid() { this._uuidCounter++; return `00000000-0000-0000-0000-${String(this._uuidCounter).padStart(12, '0')}`; }
+  setMasterKey(k) { this._mk = k; }
+  getMasterKey() { return this._mk; }
+  hasMasterKey() { return !!this._mk; }
+  encrypt(plaintext, mk) {
+    const key = mk || this._mk || 'no-key';
+    const combined = `enc:${key.slice(0, 8)}:${plaintext}`;
+    return Buffer.from(combined, 'utf-8').toString('hex');
+  }
+  encryptWithCachedKey(plaintext) { return this.encrypt(plaintext); }
+  decrypt(ciphertextHex) {
+    try {
+      const decoded = Buffer.from(ciphertextHex, 'hex').toString('utf-8');
+      if (decoded.startsWith('enc:')) {
+        const parts = decoded.split(':');
+        return parts.slice(2).join(':');
+      }
+      return null;
+    } catch { return null; }
+  }
+  decryptWithCachedKey(ciphertextHex) { return this.decrypt(ciphertextHex); }
 }
 
 const t = new TestHelpers();
@@ -91,15 +111,15 @@ async function run() {
     const raw = await storage.get('entries');
     const data = raw[0].data;
 
-    // startTime_enc should be "plain:1700000000000"
+    // startTime_enc should be encrypted (hex, not plain:)
     t.assert(typeof data.startTime_enc === 'string',
       '2a. startTime_enc is a string');
-    t.assert(data.startTime_enc.startsWith('plain:'),
-      `2b. startTime_enc has plain: prefix (got: ${data.startTime_enc?.slice(0, 20)})`);
+    t.assert(!data.startTime_enc.startsWith('plain:'),
+      `2b. startTime_enc is encrypted (no plain: prefix) (got: ${data.startTime_enc?.slice(0, 20)})`);
 
-    // Verify the value after prefix is correct
-    const epochVal = data.startTime_enc.replace('plain:', '');
-    t.assertEq(epochVal, '1700000000000', '2c. plain: prefix wraps correct epoch value');
+    // Verify the value decrypts correctly
+    const epochVal = crypto.decryptWithCachedKey(data.startTime_enc);
+    t.assertEq(epochVal, '1700000000000', '2c. encrypted value decrypts to correct epoch');
   }
 
   // ── Group 3: All encryptable fields get _enc suffix ──────────────────
@@ -139,13 +159,13 @@ async function run() {
     t.assert(typeof data.title === 'string', '3b. title is plain string (no _enc suffix)');
     t.assert(Array.isArray(data.tags), '3c. tags is array (no _enc suffix)');
 
-    // Verify pauses_enc has plain: prefix even for empty
-    t.assert(data.pauses_enc.startsWith('plain:'),
-      `3d. pauses_enc has plain: prefix (got: ${data.pauses_enc?.slice(0, 20)})`);
+    // Verify pauses_enc is encrypted (not plain:)
+    t.assert(!data.pauses_enc.startsWith('plain:'),
+      `3d. pauses_enc is encrypted (no plain: prefix) (got: ${data.pauses_enc?.slice(0, 20)})`);
 
-    // metadata_enc has plain: prefix
-    t.assert(data.metadata_enc.startsWith('plain:'),
-      `3e. metadata_enc has plain: prefix (got: ${data.metadata_enc?.slice(0, 20)})`);
+    // metadata_enc is encrypted (not plain:)
+    t.assert(!data.metadata_enc.startsWith('plain:'),
+      `3e. metadata_enc is encrypted (no plain: prefix) (got: ${data.metadata_enc?.slice(0, 20)})`);
   }
 
   // ── Group 4: {hash, data} wrapper structure ──────────────────────────
@@ -265,8 +285,8 @@ async function run() {
     // endTime_enc should be set
     t.assert(updated.data.endTime_enc !== undefined,
       '7c. endTime_enc set after end_epoch update');
-    t.assert(updated.data.endTime_enc.startsWith('plain:'),
-      `7d. endTime_enc has plain: prefix (got: ${updated.data.endTime_enc?.slice(0, 20)})`);
+    t.assert(!updated.data.endTime_enc.startsWith('plain:'),
+      `7d. endTime_enc is encrypted (no plain: prefix) (got: ${updated.data.endTime_enc?.slice(0, 20)})`);
   }
 
   // ── Group 8: device_uuid maps to device_uuid_enc ─────────────────────
@@ -290,10 +310,11 @@ async function run() {
       '8a. device_uuid_enc exists');
     t.assert(data.device_uuid === undefined,
       '8b. NO flat device_uuid field');
-    t.assert(data.device_uuid_enc.startsWith('plain:'),
-      '8c. device_uuid_enc has plain: prefix');
-    t.assert(data.device_uuid_enc.includes('my-device-uuid-1234'),
-      '8d. device_uuid_enc contains original value');
+    t.assert(!data.device_uuid_enc.startsWith('plain:'),
+      '8c. device_uuid_enc is encrypted (no plain: prefix)');
+    const decrypted = crypto.decryptWithCachedKey(data.device_uuid_enc);
+    t.assert(decrypted.includes('my-device-uuid-1234'),
+      '8d. device_uuid_enc decrypts to original value');
   }
 
   // ── Group 9: Hash is computed from data object (flat fields excluded) ─
@@ -313,17 +334,12 @@ async function run() {
     // Read raw to verify hash matches
     const rawEntry = (await storage.get('entries'))[0];
 
-    // Recompute expected hash from data object
-    const dataForHash = { ...rawEntry.data };
-    // Sort keys for deterministic JSON
-    const sorted = {};
-    for (const k of Object.keys(dataForHash).sort()) {
-      sorted[k] = dataForHash[k];
-    }
-    const expectedHash = crypto.sha256(JSON.stringify(sorted));
+    // Recompute expected hash using the same algorithm LocalCache uses (plaintext fields)
+    const dto = cache._rawToDto(rawEntry, 0);
+    const expectedHash = await cache._computeEntryHash(dto);
 
     t.assertEq(rawEntry.hash, expectedHash,
-      '9a. stored hash matches recomputed hash from data.* fields');
+      '9a. stored hash matches recomputed hash from plaintext DTO fields');
   }
 
   // ── Results ───────────────────────────────────────────────────────

@@ -6,9 +6,13 @@
  *
  * Uses StorageBackend key convention "ledger:index".
  *
+ * When *crypto* is provided, the index is encrypted at rest using
+ * AES-128-CTR. Legacy plaintext indices are auto-detected and
+ * upgraded on next write.
+ *
  * Usage:
  *   import { IndexManager } from './index_manager.js';
- *   const index = new IndexManager(store);
+ *   const index = new IndexManager(store, crypto);
  *   index.update('2026-01-15', 'Morning Run', 3600000);
  *   const result = index.query('2026-01-01', '2026-01-31');
  */
@@ -18,34 +22,58 @@ const INDEX_KEY = 'ledger:index';
 export class IndexManager {
   /**
    * @param {import('../sync/storage.js').StorageBackend} store - StorageBackend instance.
+   * @param {object} [crypto] - Optional crypto service with encryptWithCachedKey/decryptWithCachedKey.
    */
-  constructor(store) {
+  constructor(store, crypto) {
     this.store = store;
+    this._crypto = crypto || null;
     /** @type {object} Internal cache: {date: {title: total_duration_ms}} */
     this._cache = {};
   }
 
   /**
    * Write in-memory cache back to store.
+   * Encrypts when crypto is available.
    * @returns {Promise<void>}
    */
   _flush() {
+    if (this._crypto) {
+      const plain = JSON.stringify(this._cache);
+      const encrypted = this._crypto.encryptWithCachedKey(plain);
+      return this.store.set(INDEX_KEY, { _enc: encrypted });
+    }
     return this.store.set(INDEX_KEY, JSON.parse(JSON.stringify(this._cache)));
   }
 
   /**
    * Reload cache from the underlying store.
    *
-   * Call this when an external component may have written to the
-   * store directly (e.g., legacy code paths). Uses the StorageBackend
-   * interface uniformly — no direct _store access.
+   * Auto-detects encrypted vs legacy plaintext format:
+   * - Object with _enc key → decrypt
+   * - Plain object → legacy, use as-is
+   * - Empty/falsy → start with empty cache
    *
    * @returns {Promise<void>}
    */
   async reload() {
     this._cache = {};
     const stored = await this.store.get(INDEX_KEY);
-    if (stored && typeof stored === 'object') {
+    if (!stored) return;
+
+    if (typeof stored === 'object' && !Array.isArray(stored) && stored._enc) {
+      // Encrypted format
+      if (this._crypto) {
+        try {
+          const plain = this._crypto.decryptWithCachedKey(stored._enc);
+          if (plain) {
+            this._cache = JSON.parse(plain);
+          }
+        } catch {
+          this._cache = {};
+        }
+      }
+    } else if (typeof stored === 'object' && !Array.isArray(stored)) {
+      // Legacy plaintext format
       this._cache = JSON.parse(JSON.stringify(stored));
     }
   }

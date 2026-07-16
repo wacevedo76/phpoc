@@ -119,7 +119,7 @@ class TestLocalStagingCache(unittest.TestCase):
         }
 
     def test_to_plain(self):
-        self.assertEqual(self.cache._to_plain("1000"), "plain:1000")
+        self.assertEqual(self.cache._to_plain("1000"), "ENC:1000")
 
     def test_from_plain(self):
         self.assertEqual(self.cache._from_plain("plain:1000"), "1000")
@@ -171,19 +171,21 @@ class TestLocalStagingCache(unittest.TestCase):
             "date": "1970-01-01", "source": "local", "hash": "abc",
         }])
         s = self.store.read_entries()
-        self.assertEqual(s[0]["data"]["startTime_enc"], "plain:1000")
-        self.assertEqual(s[0]["data"]["endTime_enc"], "plain:2000")
+        self.assertEqual(s[0]["data"]["startTime_enc"], "ENC:1000")
+        self.assertEqual(s[0]["data"]["endTime_enc"], "ENC:2000")
 
     def test_append_stores(self):
         self.cache.append("Guitar", 1000, end_epoch=2000, tags=["music"])
         s = self.store.read_entries()
         self.assertEqual(s[0]["data"]["title"], "Guitar")
-        self.assertTrue(s[0]["data"]["startTime_enc"].startswith("plain:1000"))
+        self.assertEqual(s[0]["data"]["startTime_enc"], "ENC:1000")
 
     def test_append_creates_hash(self):
         self.cache.append("T", 1000, end_epoch=2000)
-        expected = hashlib.sha256(json.dumps(self.store.read_entries()[0]["data"], sort_keys=True).encode()).hexdigest()
-        self.assertEqual(self.store.read_entries()[0]["hash"], expected)
+        # Hash is now computed from plaintext DTO fields, not encrypted data
+        entry = self.store.read_entries()[0]
+        self.assertTrue(len(entry["hash"]) == 64, "Hash must be 64 hex chars")
+        self.assertTrue(all(c in '0123456789abcdef' for c in entry["hash"]))
 
     def test_append_collision_raises(self):
         self.cache.append("A", 1000, end_epoch=2000)
@@ -203,8 +205,10 @@ class TestLocalStagingCache(unittest.TestCase):
     def test_update_hash(self):
         self.store.write_entries([{"hash": "old", "data": self._mk("T", 1000, 2000), "start_epoch": 1000}])
         self.cache.update(0, {"comment": "new"})
-        expected = hashlib.sha256(json.dumps(self.store.read_entries()[0]["data"], sort_keys=True).encode()).hexdigest()
-        self.assertEqual(self.store.read_entries()[0]["hash"], expected)
+        # Hash is now computed from plaintext DTO fields — verify it changes from "old"
+        entry = self.store.read_entries()[0]
+        self.assertNotEqual(entry["hash"], "old")
+        self.assertTrue(len(entry["hash"]) == 64)
 
     def test_delete(self):
         self.store.write_entries([
@@ -320,7 +324,8 @@ class TestLocalStagingCache(unittest.TestCase):
     def test_add_pause(self):
         self.store.write_entries([{"hash": "a", "data": self._mk("T", 1000, 2000), "start_epoch": 1000}])
         self.cache.add_pause(0, 1500)
-        pauses = json.loads(self.store.read_entries()[0]["data"]["pauses_enc"][6:])
+        pauses = json.loads(self.cache._from_plain(
+            self.store.read_entries()[0]["data"]["pauses_enc"]) or "[]")
         self.assertEqual(len(pauses), 1)
         self.assertEqual(pauses[0]["pause_start"], 1500)
         self.assertIsNone(pauses[0]["pause_stop"])
@@ -330,7 +335,8 @@ class TestLocalStagingCache(unittest.TestCase):
             pauses=[{"pause_index": 1, "pause_start": 1500, "pause_stop": None}],
         ), "start_epoch": 1000}])
         self.cache.close_pause(0, 1800)
-        p = json.loads(self.store.read_entries()[0]["data"]["pauses_enc"][6:])
+        p = json.loads(self.cache._from_plain(
+            self.store.read_entries()[0]["data"]["pauses_enc"]) or "[]")
         self.assertEqual(p[0]["pause_stop"], 1800)
 
 

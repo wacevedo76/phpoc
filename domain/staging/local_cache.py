@@ -12,12 +12,24 @@ This is a critical boundary in the architecture:
 
 import json
 import hashlib
+import hmac
 import time
 import uuid
 from typing import Optional, List, Dict, Any, Tuple
 
-from security.crypto import AbstractCryptoManager
+from security.crypto import (
+    AbstractCryptoManager,
+    derive_field_key,
+    build_field_token_map,
+    STAGING_ENCRYPTABLE_FIELDS,
+)
 from storage.staging_store import AbstractStagingStore
+
+
+# ── Field-name encryption constants ────────────────────────────────
+
+# Re-exported from crypto.py for backward compatibility.
+_ENCRYPTABLE_FIELDS = STAGING_ENCRYPTABLE_FIELDS
 
 
 class LocalStagingCache:
@@ -34,20 +46,115 @@ class LocalStagingCache:
     def __init__(self, crypto: AbstractCryptoManager, staging_store: AbstractStagingStore):
         self._crypto = crypto
         self._store = staging_store
+        self._field_token_map_cache: Optional[Dict[str, str]] = None
 
     # ------------------------------------------------------------------
     # Internal: plain: encoding/decoding
     # ------------------------------------------------------------------
 
+    @property
+    def _field_key(self) -> Optional[bytes]:
+        """Lazily derive the field-name encryption key from the master key.
+
+        Returns None when using NoAuthCryptoManager (no master key).
+        """
+        mk = getattr(self._crypto, "master_key", None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            return None
+        return derive_field_key(mk)
+
+    def _field_name_token(self, field_name: str) -> str:
+        """Compute a deterministic HMAC token for a field name.
+
+        Same field name always produces the same token for the same
+        master key. Uses HMAC-SHA256 with the derived field key.
+
+        Returns the plaintext field name unchanged when no field key
+        is available (no-auth mode).
+        """
+        fk = self._field_key
+        if fk is None:
+            return field_name
+        return hmac.new(fk, field_name.encode(), hashlib.sha256).hexdigest()[:24]
+
+    def _build_field_token_map(self) -> Dict[str, str]:
+        """Build a reverse map from encrypted tokens → plaintext field names.
+
+        Used by read_entries to decode which encrypted token maps to
+        which field (e.g., token 'a1b2c3...' → 'startTime_enc').
+
+        The result is cached on the instance — the token map is fixed
+        for the lifetime of a given master key.
+        """
+        if self._field_token_map_cache is not None:
+            return self._field_token_map_cache
+        mk = getattr(self._crypto, "master_key", None)
+        if not isinstance(mk, bytes) or len(mk) != 32:
+            self._field_token_map_cache = {}
+            return {}
+        self._field_token_map_cache = build_field_token_map(
+            mk, _ENCRYPTABLE_FIELDS
+        )
+        return self._field_token_map_cache
+
+    @staticmethod
+    def _is_legacy_entry_data(data: dict) -> bool:
+        """Check if raw entry data uses legacy plaintext ``_enc`` keys."""
+        return any(k.endswith("_enc") for k in data)
+
+    def _decode_data_keys(self, data: dict, token_map: Dict[str, str]) -> Dict[str, Any]:
+        """Decode raw entry data keys from encrypted tokens or legacy _enc.
+
+        Returns a dict with standard plaintext keys (startTime_enc,
+        endTime_enc, etc.) that downstream code can process.
+
+        Legacy _enc keys are passed through as-is.
+        """
+        if not data:
+            return {}
+        # If any key ends with _enc, it's legacy format
+        if self._is_legacy_entry_data(data):
+            return dict(data)
+        # New format: reverse-map tokens to field names
+        decoded: Dict[str, Any] = {}
+        for key, value in data.items():
+            if key in token_map:
+                decoded[token_map[key]] = value
+            else:
+                # Non-encryptable field: pass through as-is
+                decoded[key] = value
+        return decoded
+
+    def _encode_data_keys(self, dto: dict) -> dict:
+        """Encode standard field names to encrypted tokens for storage.
+
+        Non-encryptable fields (title, duration, etc.) pass through as-is.
+        Falls back to plaintext _enc keys when no master key is available.
+        """
+        encoded: Dict[str, Any] = {}
+        for key, value in dto.items():
+            if key in _ENCRYPTABLE_FIELDS:
+                token = self._field_name_token(key)
+                encoded[token] = value
+            else:
+                encoded[key] = value
+        return encoded
+
     def _to_plain(self, field_value: str) -> str:
-        """Internal: store as ``plain:`` prefix (no real encryption)."""
-        return f"plain:{field_value}"
+        """Internal: encrypt a field value for storage.
+
+        Delegates to CryptoManager.encrypt() which produces:
+        - AES-CTR hex ciphertext when a master key is available
+        - ``plain:{value}`` fallback when using NoAuthCryptoManager (no MK)
+        """
+        return self._crypto.encrypt(field_value)
 
     def _from_plain(self, field_value: Optional[str]) -> Optional[str]:
-        """Internal: strip ``plain:`` prefix (no real decryption).
+        """Internal: decrypt a field value from storage.
 
-        Returns None if input is None, otherwise strips the ``plain:`` prefix.
-        If the value uses real encryption (``ENC:...``), delegates to crypto.
+        Handles both legacy ``plain:`` prefixed values (backward compat)
+        and AES-CTR hex ciphertext. Returns None if input is None or
+        decryption fails (corrupt entry).
         """
         if field_value is None:
             return None
@@ -72,6 +179,34 @@ class LocalStagingCache:
         """Encrypt a field value for storage (uses plain: prefix internally)."""
         return self._to_plain(str(value))
 
+    @staticmethod
+    def _compute_entry_hash(entry_dto: dict) -> str:
+        """Compute deterministic entry hash from plaintext DTO fields.
+
+        Uses canonical plaintext fields (not encrypted storage fields) so the
+        hash is independent of encryption nonces — same DTO always produces
+        the same hash across clients.
+        """
+        fields = {
+            "title": entry_dto.get("title", ""),
+            "start_epoch": entry_dto.get("start_epoch", 0),
+            "end_epoch": entry_dto.get("end_epoch"),
+            "duration": entry_dto.get("duration", 0),
+            "is_active": entry_dto.get("is_active", False),
+            "is_paused": entry_dto.get("is_paused", False),
+            "pauses": entry_dto.get("pauses", []),
+            "tags": entry_dto.get("tags", []),
+            "media": entry_dto.get("media", []),
+            "entry_id": entry_dto.get("entry_id", ""),
+            "metadata": entry_dto.get("metadata", {}),
+            "device_uuid": entry_dto.get("device_uuid", ""),
+            "end_device_uuid": entry_dto.get("end_device_uuid", ""),
+        }
+        comment = entry_dto.get("comment")
+        if comment is not None:
+            fields["comment"] = comment
+        return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+
     # ------------------------------------------------------------------
     # Reading / Writing (full list)
     # ------------------------------------------------------------------
@@ -88,44 +223,47 @@ class LocalStagingCache:
         """
         raw = self._store.read_entries()
         result = []
+        token_map = self._build_field_token_map()
         for idx, entry in enumerate(raw):
             try:
                 data = entry.get("data", {})
+                # Decode encrypted key names → standard _enc keys
+                decoded = self._decode_data_keys(data, token_map)
 
                 # Decrypt fields
-                start_epoch = self._from_plain_int(data.get("startTime_enc"))
+                start_epoch = self._from_plain_int(decoded.get("startTime_enc"))
                 if start_epoch is None:
                     # Corrupt entry — skip
                     continue
 
-                end_epoch = self._from_plain_int(data.get("endTime_enc"))
+                end_epoch = self._from_plain_int(decoded.get("endTime_enc"))
 
-                pauses_raw = self._from_plain(data.get("pauses_enc"))
+                pauses_raw = self._from_plain(decoded.get("pauses_enc"))
                 pauses = json.loads(pauses_raw) if pauses_raw else []
 
-                metadata_raw = self._from_plain(data.get("metadata_enc"))
+                metadata_raw = self._from_plain(decoded.get("metadata_enc"))
                 metadata = json.loads(metadata_raw) if metadata_raw else {}
 
                 date_str = time.strftime(
                     "%Y-%m-%d", time.gmtime(start_epoch // 1000)
                 )
 
-                device_uuid = self._from_plain(data.get("device_uuid_enc"))
-                end_device_uuid = self._from_plain(data.get("end_device_uuid_enc"))
+                device_uuid = self._from_plain(decoded.get("device_uuid_enc"))
+                end_device_uuid = self._from_plain(decoded.get("end_device_uuid_enc"))
 
                 dto = {
                     "entry_index": idx,
-                    "title": data.get("title", ""),
+                    "title": decoded.get("title", ""),
                     "start_epoch": start_epoch,
                     "end_epoch": end_epoch,
-                    "duration": data.get("duration", 0),
-                    "is_active": data.get("is_active", False),
-                    "is_paused": data.get("is_paused", False),
+                    "duration": decoded.get("duration", 0),
+                    "is_active": decoded.get("is_active", False),
+                    "is_paused": decoded.get("is_paused", False),
                     "pauses": pauses,
-                    "tags": data.get("tags", []),
-                    "comment": data.get("comment"),
-                    "media": data.get("media", []),
-                    "entry_id": data.get("entry_id", ""),
+                    "tags": decoded.get("tags", []),
+                    "comment": decoded.get("comment"),
+                    "media": decoded.get("media", []),
+                    "entry_id": decoded.get("entry_id", ""),
                     "metadata": metadata,
                     "date": date_str,
                     "source": "local",
@@ -140,7 +278,7 @@ class LocalStagingCache:
         return result
 
     def write_entries(self, entries: List[Dict[str, Any]]):
-        """Write a list of DTOs back to storage (encrypting fields to ``plain:``).
+        """Write a list of DTOs back to storage (encrypting fields and key names).
 
         Args:
             entries: List of DTOs (as returned by ``read_entries``).
@@ -166,12 +304,13 @@ class LocalStagingCache:
             if entry.get("comment") is not None:
                 data["comment"] = entry["comment"]
 
-            entry_hash = hashlib.sha256(
-                json.dumps(data, sort_keys=True).encode()
-            ).hexdigest()
+            # Encrypt field key names
+            data = self._encode_data_keys(data)
+
+            entry_hash = entry.get("hash") or self._compute_entry_hash(entry)
 
             raw.append({
-                "hash": entry.get("hash", entry_hash),
+                "hash": entry_hash,
                 "data": data,
                 "start_epoch": entry.get("start_epoch", 0),
             })
@@ -226,9 +365,25 @@ class LocalStagingCache:
         if comment is not None:
             data["comment"] = comment
 
-        entry_hash = hashlib.sha256(
-            json.dumps(data, sort_keys=True).encode()
-        ).hexdigest()
+        # Encrypt field key names
+        data = self._encode_data_keys(data)
+
+        entry_hash = self._compute_entry_hash({
+            "title": title,
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "duration": (end_epoch - start_epoch) if end_epoch else 0,
+            "is_active": is_active,
+            "is_paused": False,
+            "pauses": [],
+            "tags": normalized_tags,
+            "media": media if media is not None else [],
+            "entry_id": data["entry_id"],
+            "metadata": metadata or {},
+            "device_uuid": device_uuid or "",
+            "end_device_uuid": "",
+            "comment": comment,
+        })
 
         raw.append({
             "hash": entry_hash,
@@ -256,6 +411,10 @@ class LocalStagingCache:
             raise IndexError(f"No staged entry at index {index}.")
 
         data = raw[index]["data"]
+        token_map = self._build_field_token_map()
+
+        # Decode encrypted key names for reading (handles both legacy _enc and new tokens)
+        decoded = self._decode_data_keys(data, token_map)
 
         # Map epoch fields to encrypted storage fields
         field_mapping = {
@@ -268,25 +427,59 @@ class LocalStagingCache:
             if field_key in field_mapping:
                 storage_key = field_mapping[field_key]
                 if field_value is not None:
-                    data[storage_key] = self._encrypt_field(field_value)
+                    decoded[storage_key] = self._encrypt_field(field_value)
                 else:
-                    data[storage_key] = None
+                    decoded[storage_key] = None
             elif field_key == "pauses":
-                data["pauses_enc"] = self._encrypt_field(json.dumps(field_value))
+                decoded["pauses_enc"] = self._encrypt_field(json.dumps(field_value))
             elif field_key == "metadata":
-                data["metadata_enc"] = self._encrypt_field(json.dumps(field_value))
+                decoded["metadata_enc"] = self._encrypt_field(json.dumps(field_value))
             elif field_key == "tags":
-                data["tags"] = self._normalize_tags(field_value)
+                decoded["tags"] = self._normalize_tags(field_value)
             else:
                 # Direct update for simple fields (adds new keys if needed)
-                data[field_key] = field_value
+                decoded[field_key] = field_value
 
-        # Recompute hash
-        raw[index]["hash"] = hashlib.sha256(
-            json.dumps(data, sort_keys=True).encode()
-        ).hexdigest()
+        # Re-encode key names (upgrades legacy _enc keys to encrypted tokens)
+        data.clear()
+        data.update(self._encode_data_keys(decoded))
+
+        # Recompute hash from current plaintext values
+        raw[index]["hash"] = self._compute_entry_hash(self._raw_entry_to_dto_inline(decoded))
 
         self._store.write_entries(raw)
+
+    def _raw_entry_to_dto_inline(self, data: dict) -> dict:
+        """Build a partial DTO from a decoded data dict for hash computation.
+
+        *data* is expected to be already decoded to standard field names
+        (startTime_enc, endTime_enc, etc.), either because it came from
+        _decode_data_keys or because it was legacy format.
+        """
+        start_epoch = self._from_plain_int(data.get("startTime_enc")) or 0
+        end_epoch = self._from_plain_int(data.get("endTime_enc"))
+        pauses_raw = self._from_plain(data.get("pauses_enc"))
+        pauses = json.loads(pauses_raw) if pauses_raw else []
+        metadata_raw = self._from_plain(data.get("metadata_enc"))
+        metadata = json.loads(metadata_raw) if metadata_raw else {}
+        device_uuid = self._from_plain(data.get("device_uuid_enc")) or ""
+        end_device_uuid = self._from_plain(data.get("end_device_uuid_enc")) or ""
+        return {
+            "title": data.get("title", ""),
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "duration": data.get("duration", 0),
+            "is_active": data.get("is_active", False),
+            "is_paused": data.get("is_paused", False),
+            "pauses": pauses,
+            "tags": data.get("tags", []),
+            "media": data.get("media", []),
+            "entry_id": data.get("entry_id", ""),
+            "metadata": metadata,
+            "device_uuid": device_uuid,
+            "end_device_uuid": end_device_uuid,
+            "comment": data.get("comment"),
+        }
 
     def delete(self, index: int):
         """Remove entry at *index*.
@@ -325,7 +518,10 @@ class LocalStagingCache:
             raise IndexError(f"No staged entry at index {index}.")
 
         data = raw[index]["data"]
-        pauses_enc = data.get("pauses_enc", self._encrypt_field(json.dumps([])))
+        token_map = self._build_field_token_map()
+        decoded = self._decode_data_keys(data, token_map)
+
+        pauses_enc = decoded.get("pauses_enc", self._encrypt_field(json.dumps([])))
         pauses = json.loads(self._from_plain(pauses_enc) or "[]")
 
         next_index = len(pauses) + 1
@@ -338,13 +534,15 @@ class LocalStagingCache:
             pause_record["comment"] = comment
         pauses.append(pause_record)
 
-        data["pauses_enc"] = self._encrypt_field(json.dumps(pauses))
-        data["is_paused"] = True
+        decoded["pauses_enc"] = self._encrypt_field(json.dumps(pauses))
+        decoded["is_paused"] = True
 
-        # Recompute hash
-        raw[index]["hash"] = hashlib.sha256(
-            json.dumps(data, sort_keys=True).encode()
-        ).hexdigest()
+        # Re-encode key names
+        data.clear()
+        data.update(self._encode_data_keys(decoded))
+
+        # Recompute hash from plaintext values
+        raw[index]["hash"] = self._compute_entry_hash(self._raw_entry_to_dto_inline(decoded))
         self._store.write_entries(raw)
 
     def close_pause(self, index: int, stop_epoch: int, comment: Optional[str] = None):
@@ -358,7 +556,10 @@ class LocalStagingCache:
             raise IndexError(f"No staged entry at index {index}.")
 
         data = raw[index]["data"]
-        pauses_enc = data.get("pauses_enc", self._encrypt_field(json.dumps([])))
+        token_map = self._build_field_token_map()
+        decoded = self._decode_data_keys(data, token_map)
+
+        pauses_enc = decoded.get("pauses_enc", self._encrypt_field(json.dumps([])))
         pauses = json.loads(self._from_plain(pauses_enc) or "[]")
 
         if pauses and pauses[-1].get("pause_stop") is None:
@@ -366,13 +567,15 @@ class LocalStagingCache:
             if comment is not None:
                 pauses[-1]["comment"] = comment
 
-        data["pauses_enc"] = self._encrypt_field(json.dumps(pauses))
-        data["is_paused"] = False
+        decoded["pauses_enc"] = self._encrypt_field(json.dumps(pauses))
+        decoded["is_paused"] = False
 
-        # Recompute hash
-        raw[index]["hash"] = hashlib.sha256(
-            json.dumps(data, sort_keys=True).encode()
-        ).hexdigest()
+        # Re-encode key names
+        data.clear()
+        data.update(self._encode_data_keys(decoded))
+
+        # Recompute hash from plaintext values
+        raw[index]["hash"] = self._compute_entry_hash(self._raw_entry_to_dto_inline(decoded))
         self._store.write_entries(raw)
 
     # ------------------------------------------------------------------

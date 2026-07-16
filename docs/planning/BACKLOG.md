@@ -68,9 +68,9 @@
 |------|------|
 | E2E-03 | Import file upload + same-genesis rejection, auth errors |
 | E2E-04 | Import with wrong passphrase/seed → error display |
-| E2E-05 | Full roundtrip: export → clear → import → verify |
+| E2E-05 ✅ | Full roundtrip: export → clear → import → verify (Phases 1-4 done) |
 | E2E-06 | Export with wrong passphrase → error display |
-| E2E-07 | Onboarding import flow |
+| E2E-07 ✅ | Onboarding import flow |
 
 **Next action:** After Phase 1a completes.
 
@@ -144,10 +144,11 @@ Ordered per flaw-doc recommended attack sequence: naming → salt → integrity 
 *After Phase 1. Real security holes that need closing.
 Both rated Critical in the flaw documents — they undermine the protocol's core privacy promises.*
 
-### I-03 🔴: Encrypt staging at rest
+### I-03 ✅: Encrypt staging at rest
 
 **Why:** `staging.json` uses `plain:` prefix — on-disk staging is unencrypted, contradicting the protocol's first design principle.
 **Flaw doc severity:** Critical. The most recent, most sensitive data is the least protected.
+**Status:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web tests pass. AES-CTR encryption on all staging fields (startTime, endTime, pauses, metadata, device UUIDs) with backward compatibility for legacy `plain:` entries.
 
 | File | Change |
 |------|--------|
@@ -160,21 +161,35 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **Next action:** After Phase 1a, implement encrypted staging write/read in `service.py` first.
 
-### I-02 🔴: Encrypt blind index
+### I-02 ✅: Encrypt blind index + staging field key encryption
 
-**Why:** `index.json` stores `{date: {activity_title: total_duration_ms}}` in plain JSON next to the encrypted ledger.
-**Flaw doc severity:** Critical. The index reveals exactly what activities a user does and for how long — undermines the entire privacy model at the most exposed point.
+**Why:** `index.json` stored `{date: {activity_title: total_duration_ms}}` in plain JSON next to the encrypted ledger. Staging field key names (`startTime_enc`, etc.) were also plaintext, revealing schema structure.
+**Status:** ✅ Phase 1-4 complete (2026-07-16). 74 assertions blueprinted, 103 PY + 67 JS tests GREEN. 6 Phase-4 refactors.
 
-| File | Change |
-|------|--------|
-| `domain/ledger/index.py` | Encrypt/decrypt index with MK |
-| `cli/commands.py` | Decrypt before display in `ph rep` |
-| `phpoc-web/src/sync/sync.js` | Encrypt/decrypt hash index |
-| `docs/spec/PHPSPEC.md` §7 | Document encryption |
+**Files changed:**
+- `security/crypto.py`: `derive_index_key()`, `derive_field_key()`, `build_field_token_map()`, `STAGING_ENCRYPTABLE_FIELDS`
+- `domain/ledger/index_manager.py`: `_load()` / `_flush()` encrypt/decrypt via `_enc` wrapper
+- `domain/staging/local_cache.py`: field-name HMAC tokenization, backward compat for legacy `_enc` keys
+- `domain/staging/service.py`: `_raw_entry_to_dto()` decodes encrypted field-name tokens from remote blobs
+- `phpoc-web/src/ledger/index_manager.js`: `_flush()` / `reload()` encrypt/decrypt via AES-CTR
+- `phpoc-web/src/sync/local_cache.js`: `_fieldToken()`, `_encodeDataKeys()`, `_decodeDataKeys()`
 
-**Effort:** ~1 week. **Depends on:** nothing (independent of staging).
+**🟡 Follow-up: JS `_fieldToken()` uses SHA-256 without MK (see §I-02a below)**
 
-**Next action:** Encrypt `build_index()` output with MK; decrypt on read.
+### I-02a 🟡: JS `_fieldToken()` — use MK-derived HMAC for field-name tokens
+
+**Why:** `phpoc-web/src/sync/local_cache.js` `_fieldToken()` uses `SHA256("phpoc-staging-keys-v1" + fieldName)` instead of `HMAC-SHA256(derive_field_key(MK), fieldName)`. This means field-name tokens are the same for every user — an attacker who reads IndexedDB and knows the PHPOC source can trivially map tokens back to field names (`de31e1f1cf5d6fa6` → `startTime_enc`).
+
+**Impact:** Schema obfuscation is weakened — the structure of staging entries is revealed (which fields exist), but the actual field VALUES remain AES-CTR encrypted with the master key. This is defense-in-depth, not a primary encryption failure. The tokens are local-only (IndexedDB), never pushed to remote.
+
+**Fix:** Add `hmac_hex` WASM binding (Rust `hmac_utils.rs` already has the function), add JS wrapper in `crypto/index.js`, then update `_fieldToken()` to use it. Also need `derive_field_key` WASM binding.
+
+**Files:**
+- `phpoc-crypto-core/src/wasm.rs` — add `hmac_hex` + `derive_field_key` WASM exports
+- `phpoc-web/src/crypto/index.js` — add `hmacHex()` + `deriveFieldKey()` wrappers
+- `phpoc-web/src/sync/local_cache.js` — update `_fieldToken()`
+
+**Effort:** ~1 hour. **Depends on:** nothing. **Next action:** Add WASM bindings for `hmac_hex` and `derive_field_key`.
 
 ---
 
@@ -274,13 +289,13 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 |-------|-------|----------|------|--------|-----|
 | **0** — Doc fixes ✅ | I-08, I-10, I-13, I-14, I-15, I-16 (6) — complete 2026-07-15 | 0 | 0 | 0 | 0 |
 | **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
-| **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅ | 0 | 0 | 0 | 0 |
-| **3** — Encryption gaps | I-03, I-02 (2) | 2 | 0 | 0 | 0 |
+| **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅, I-02a (5) | 0 | 0 | 1 | 0 |
+| **3** — Encryption gaps | I-03✅, I-02✅ (2 done) | 0 | 0 | 0 | 0 |
 | **4** — Architectural | I-01, I-09, I-12 (3) | 1 | 0 | 2 | 0 |
 | **5** — CLI polish | P5, P4 (2) | — | — | — | — |
 | **6** — Cross-client | P1, indent=2 (2) | — | — | — | — |
 | **7** — Remote sync | P3 (1) | — | — | — | — |
-| **Totals** | **21 open** | **3** | **3** | **4** | **2** |
+| **Totals** | **21 open** | **2** | **3** | **5** | **2** |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅ — Canonical Ledger Format, 2026-07-03.
 

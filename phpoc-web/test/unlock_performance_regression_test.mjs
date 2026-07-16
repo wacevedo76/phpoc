@@ -187,6 +187,14 @@ class MockCrypto {
     }
     return ciphertextHex;
   }
+
+  encrypt(plaintext, _masterKey) {
+    return `enc:${plaintext}`;
+  }
+
+  encryptWithCachedKey(plaintext) {
+    return `enc:${plaintext}`;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════

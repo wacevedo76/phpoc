@@ -136,6 +136,9 @@ class MockCrypto {
     if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('plain:')) {
       return ciphertextHex.slice(6);
     }
+    if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('enc:')) {
+      return ciphertextHex.slice(4);
+    }
     return ciphertextHex;
   }
 
@@ -144,6 +147,14 @@ class MockCrypto {
       return ciphertextHex.slice(4);
     }
     return ciphertextHex;
+  }
+
+  encrypt(plaintext, _masterKey) {
+    return `enc:${plaintext}`;
+  }
+
+  encryptWithCachedKey(plaintext) {
+    return `enc:${plaintext}`;
   }
 
   authenticate(passphrase, seed) {

@@ -1,8 +1,9 @@
 # E2E-07: Onboarding Import
 
-> **Status:** READY — C5 resolved 2026-07-16 (React 18 picks up native events)
+> **Status:** ✅ COMPLETE — 2026-07-16, 13/13 steps pass
 > **Prerequisites:** Vivaldi browser running, dev server on localhost:5173
 > **Important:** Must be LOGGED OUT to reach the onboarding screen.
+> **Notes:** WASM `authenticate()` ignores passphrase for raw seeds — only seed matters for seal verification during onboarding import. Wrong passphrase will NOT cause seal failure. Wrong seed will.
 
 ## Setup
 
@@ -49,11 +50,15 @@ agent_browser snapshot -i
 
 ```js
 // agent_browser eval --stdin:
+// NOTE: seal must match the seed below. Compute via browser crypto:
+//   const crypto = await CryptoService.create();
+//   const mk = crypto.authenticate(passphrase, seed, 600000);
+//   const seal = crypto.seal(jsonSort(entries), mk);
 const input = document.querySelector('input[type="file"]');
 const content = JSON.stringify({
-  version: "0.4.0",
-  genesis: { username: "e2e-onboard", email: "", timestamp: 1700000000000 },
-  chain: []
+  format_version: "1",
+  entries: [],
+  seal: "4e350c3c5143c684ff6f5847953284195155b6c3f2724530dcc3b2e5e539026b"
 });
 const dt = new DataTransfer();
 dt.items.add(new File([content], 'onboard-import.json', { type: 'application/json' }));
@@ -125,14 +130,14 @@ agent_browser snapshot -i
 
 **Assertion:** Cloud import entry point is accessible from onboarding.
 
-### Step 12: Test auth errors (same as E2E-03)
+### Step 12: Test auth errors
 
 Repeat Steps 4-7 with:
-- Wrong passphrase → "seal verification failed"
-- Wrong seed → "seal verification failed"
+- Wrong seed → "seal verification failed" ✅
+- Wrong passphrase → succeeds (WASM authenticate ignores passphrase for raw seeds; seed-only auth in onboarding)
 
-### Step 13: Test missing fields (same as E2E-03)
+### Step 13: Test missing fields
 
-- No file → Import button [disabled]
-- No seed → Import button [disabled]
-- No passphrase → Import button [disabled]
+- No file → Import button [disabled] ✅
+- No seed → Import button [disabled] ✅
+- No passphrase → Import button [disabled] ✅

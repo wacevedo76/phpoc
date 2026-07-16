@@ -31,6 +31,7 @@ try {
 // ── Constants ────────────────────────────────────────────────────────
 const MASTER_KEY = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 const crypto = new MockCrypto();
+crypto.setMasterKey(MASTER_KEY);
 
 const ZERO_HASH_64 = '0'.repeat(64);
 
