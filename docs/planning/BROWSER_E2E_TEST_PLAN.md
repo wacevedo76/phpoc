@@ -46,7 +46,18 @@
 | 4 | Cancel → dialog closes | Modal dismisses | ✅ |
 | 5 | Re-open, upload file (via eval) + seed + passphrase | Import enabled | ✅ |
 
-### E2E-03: Import File Upload ⚠️ PARTIAL
+### E2E-03: Import File Upload ⚠️ PARTIAL (C5 resolved 2026-07-16)
+
+**C5 Resolution:** React 18 uses native event delegation. Setting `input.files` via `DataTransfer` and dispatching `new Event('change', {bubbles: true})` correctly triggers React's `onChange` handler. The `importFile` state updates and the UI reflects the selected filename.
+
+**Working eval pattern:**
+```js
+const dt = new DataTransfer();
+dt.items.add(new File([content], 'filename.json', {type: 'application/json'}));
+input.files = dt.files;
+input.dispatchEvent(new Event('change', {bubbles: true}));
+input.dispatchEvent(new Event('input', {bubbles: true}));
+```
 
 | Step | Action | Expected | Result |
 |------|--------|----------|--------|
@@ -102,6 +113,7 @@ Onboarding import flow UI works correctly; blocked by same seal/hash mismatch as
 
 ## Known Limitations
 
-- **C5 (from handoff):** agent_browser `fill` sets DOM `.value` but doesn't trigger React `onChange` for file inputs. Workaround: use `eval` to set `input.files` via `DataTransfer` + dispatch `input`/`change` events. This updates the file list on the DOM element but the React `importFile` state remains stale because React's synthetic event system isn't triggered.
+- **C5 (resolved 2026-07-16):** React 18 picks up native `change`/`input` events with `{bubbles: true}`. Use `DataTransfer` to create a `File`, set `input.files`, then dispatch native events. React's `onChange` handler fires and state updates correctly.
+- **Blob downloads:** `wait --download` doesn't capture programmatic blob URL downloads (`a.click()` on `URL.createObjectURL`). Workaround: use `eval` to call export functions directly and capture blob data.
 - **Blob downloads:** `wait --download` doesn't capture programmatic blob URL downloads (`a.click()` on `URL.createObjectURL`). Workaround: use `eval` to call export functions directly and capture blob data.
 - **Export passphrase bypass (E2E-06):** E2E-06 Phase 3 fix ensures `authenticate()` is always called (no cached MK bypass). **However,** the WASM `authenticate()` ignores the passphrase entirely — the seed IS the master key (`derive_master_key(seed)` = base64 decode). The passphrase is never validated. Root fix requires: (1) encrypt seed with PBKDF2-derived PDK before storage, (2) WASM `authenticate()` decrypts seed with PDK, returns MK. Tracked as Phase 6 backlog item P1 (cross-client format unification).
