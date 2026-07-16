@@ -5,6 +5,8 @@
 > For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — D1–D10 are the binding principles.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
+> **TDD plan:** `docs/planning/tmp/E2E_05_TEST_REQUIREMENTS.md` (38 assertions, 7 groups — Phase 1-2 done)
+> **Test file:** `phpoc-web/test/ledger_roundtrip_test.mjs` (empty — RED tests need to be written)
 
 ## Current State
 - **Branch:** `Staging_migration`
@@ -36,9 +38,11 @@
 | 4 | 🔴 Phase 4 | I-01🔴 key rotation, I-09🟡 device attribution, I-12🟡 arch doc |
 | 5 | 🔵 Phase 5 | CLI polish: P5 unlock latency, P4 UX kinks |
 
-## Immediate Next Steps
-1. Fix E2E-05 seal/hash mismatch to unblock E2E-03/E2E-07
-2. Or pivot to Phase 3 encryption gaps (I-03 / I-02)
+## Immediate Next Steps 🎯
+1. **E2E-05 seal/hash mismatch** — 4-Phase TDD: write RED tests → fix → refactor
+   - TDD plan: `docs/planning/tmp/E2E_05_TEST_REQUIREMENTS.md` (38 assertions ready)
+   - Test file: `phpoc-web/test/ledger_roundtrip_test.mjs` (needs Phase 2 RED tests)
+   - Unblocks: E2E-03, E2E-07 (import file upload flows)
 
 ## Known Issues
 - **E2E-05 seal mismatch:** Export seal over raw JS; import reads parsed JSON. Needs fix.
