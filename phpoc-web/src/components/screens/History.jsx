@@ -29,6 +29,8 @@ export default function History() {
   const [editTags, setEditTags] = useState({});
   const [editTagInputs, setEditTagInputs] = useState({});
   const [editComments, setEditComments] = useState({});
+  const [saving, setSaving] = useState({});
+  const saveTimers = useRef({});
   const [calendarCollapsed, setCalendarCollapsed] = useState(true);
 
   // ── Data loading ──────────────────────────────────────────────────
