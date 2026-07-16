@@ -1232,21 +1232,25 @@ export default function SyncSettings() {
               </button>
             </div>
 
-            {/* Sync Now button */}
-            <button
-              className="btn btn-primary btn-sync-now"
-              onClick={handleSyncNow}
-              disabled={syncing || !sync || !sync.isRemoteAvailable}
-            >
-              {syncing ? '↻ Syncing...' : '↻ Sync Now'}
-            </button>
-
             {/* Commit error */}
             {commitError && (
               <div className="sync-result sync-result-error">
                 ⚠ {commitError}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Sync Now button — always visible when remote is available */}
+        {sync && sync.isRemoteAvailable && (
+          <div className="sync-commit-bar">
+            <button
+              className="btn btn-primary btn-sync-now"
+              onClick={handleSyncNow}
+              disabled={syncing}
+            >
+              {syncing ? '↻ Syncing...' : '↻ Sync Now'}
+            </button>
           </div>
         )}
 
