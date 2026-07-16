@@ -19,7 +19,10 @@ export default function History() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedIds, setExpandedIds] = useState(new Set());
-  const [filterDate, setFilterDate] = useState('');
+  const [filterDate, setFilterDate] = useState(() => {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  });
   const [filterTag, setFilterTag] = useState('');
 
   // Inline editing state (staging entries only, keyed by entry_id)
