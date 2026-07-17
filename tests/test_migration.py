@@ -1095,6 +1095,325 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Group I — Cross-Client Canonical Serialization: ph migrate entry hash recomputation
+# ═════════════════════════════════════════════════════════════════════════════
+
+HAS_MIGRATE_ENTRY_HASH_FN = False
+try:
+    from cli.migrate import migrate_chain  # will recompute entry hashes in Phase 3
+    HAS_MIGRATE_ENTRY_HASH_FN = True
+except ImportError:
+    pass
+
+
+class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
+    """Group D: Migration recomputes entry hashes to canonical sort+indent2.
+
+    D1: Migration recomputes entry hashes to sort+indent2 format
+    D2: Migration preserves all entry data fields unchanged
+    D3: Block seals are recomputed after entry hash changes
+    D4: Chain prev_hash linkage remains valid after migration
+    D5: Migrated chain passes full verify()
+    D6: Migration is idempotent — running twice produces same result
+    D7: Migration handles entries already in canonical format (no-op)
+    D8: Migration handles chain with nosort+indent2 entries
+    D9: Content hashes remain valid after migration
+    D10: Backup file created before migration
+    """
+
+    def setUp(self):
+        self.crypto = _MockCrypto()
+
+    def _build_chain_with_legacy_entries(self, hash_format="nosort_indent2"):
+        """Build a chain where entry hashes use a legacy format.
+
+        Args:
+            hash_format: "nosort_indent2" (current web) or "sort_compact" (old CLI).
+        """
+        # Build entries with old-format hashes
+        entries_data = [
+            {"title": "Task 1", "startTime_enc": "enc:0", "endTime_enc": "enc:3600",
+             "duration": 3600000, "tags": ["test"], "pauses_enc": "enc:[]",
+             "metadata_enc": "enc:{}", "comment": "", "media": []},
+            {"title": "Task 2", "startTime_enc": "enc:7200", "endTime_enc": "enc:10800",
+             "duration": 3600000, "tags": ["dev"], "pauses_enc": "enc:[]",
+             "metadata_enc": "enc:{}", "comment": "", "media": [],
+             "content_hash": "c" * 64},
+        ]
+
+        # Compute hashes in legacy format
+        legacy_entries = []
+        for data in entries_data:
+            if hash_format == "nosort_indent2":
+                # Current web: no sort_keys, indent=2
+                eh = hashlib.sha256(
+                    json.dumps(data, indent=2).encode()
+                ).hexdigest()
+            else:
+                # Legacy CLI: sort_keys, no indent
+                eh = hashlib.sha256(
+                    json.dumps(data, sort_keys=True).encode()
+                ).hexdigest()
+            legacy_entries.append({"hash": eh, "data": data})
+
+        # Build genesis
+        genesis = build_minimal_genesis(
+            self.crypto, include_format_version=True, include_block_hash=False)
+
+        # Build day block with legacy entries
+        from tests.test_migration import build_day_block
+        day1 = build_day_block(
+            self.crypto, genesis["day_hash"], legacy_entries,
+            day_index=1, date_str="2026-07-10")
+
+        # Manually inject legacy hashes (build_day_block recomputes with sort+indent2)
+        day1["entries"] = legacy_entries
+        # Re-seal with the legacy hash still in entries
+        check_data = {k: v for k, v in day1.items() if k != "day_hash"}
+        day1["day_hash"] = self.crypto.seal(json.dumps(check_data, sort_keys=True))
+
+        return [genesis, day1]
+
+    # ── D1: Migration recomputes entry hashes to sort+indent2 ──────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d1_migration_recomputes_entry_hashes_to_canonical(self):
+        """D1: Migration recomputes entry hashes to sort+indent2 format."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+        old_entry_hashes = [e["hash"] for e in chain[1]["entries"]]
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        new_entry_hashes = [e["hash"] for e in migrated[1]["entries"]]
+
+        # Entry hashes must have changed (from nosort+indent2 to sort+indent2)
+        self.assertNotEqual(
+            old_entry_hashes, new_entry_hashes,
+            "Migration must recompute entry hashes to canonical format"
+        )
+
+        # New hashes must match the canonical format
+        for entry in migrated[1]["entries"]:
+            canonical_hash = hashlib.sha256(
+                json.dumps(entry["data"], sort_keys=True, indent=2).encode()
+            ).hexdigest()
+            self.assertEqual(
+                entry["hash"], canonical_hash,
+                f"Migrated entry hash must be sort+indent2 format"
+            )
+
+    # ── D2: Migration preserves all entry data fields ─────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d2_migration_preserves_entry_data(self):
+        """D2: Migration preserves all entry data fields unchanged."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+        original_entries = [e["data"] for e in chain[1]["entries"]]
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        migrated_entries = [e["data"] for e in migrated[1]["entries"]]
+
+        for i, (orig, mig) in enumerate(zip(original_entries, migrated_entries)):
+            self.assertEqual(
+                orig, mig,
+                f"Entry {i} data must be preserved unchanged; only hash changes"
+            )
+
+    # ── D3: Block seals are recomputed after entry hash changes ────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d3_block_seals_recomputed_after_entry_hash_change(self):
+        """D3: Block seals are recomputed after entry hash changes."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+        old_day_hash = chain[1]["day_hash"]
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        new_day_hash = migrated[1]["day_hash"]
+
+        self.assertNotEqual(
+            old_day_hash, new_day_hash,
+            "Block seal must be recomputed after entry hash changes"
+        )
+
+    # ── D4: Chain prev_hash linkage remains valid ─────────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d4_chain_prev_hash_linkage_valid_after_migration(self):
+        """D4: Chain prev_hash linkage remains valid after migration."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        from cli.migrate import migrate_chain, get_block_hash
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        for i in range(1, len(migrated)):
+            prev_block_hash = get_block_hash(migrated[i - 1])
+            current_prev = migrated[i].get("prev_hash")
+            self.assertEqual(
+                prev_block_hash, current_prev,
+                f"Block {i} prev_hash must point to block {i - 1} hash"
+            )
+
+    # ── D5: Migrated chain passes full verify() ───────────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN and HAS_CHAIN,
+                         "migrate_chain or LedgerChain not available")
+    def test_d5_migrated_chain_passes_full_verify(self):
+        """D5: Migrated chain passes full verify()."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        # Build LedgerChain and verify — use _MockLedgerStore defined above
+        store = _MockLedgerStore()
+        store.write_ledger(migrated)
+        lc = LedgerChain(self.crypto, store)
+
+        self.assertTrue(
+            lc.verify(),
+            "Migrated chain must pass full verification"
+        )
+
+    # ── D6: Migration is idempotent ───────────────────────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d6_migration_is_idempotent(self):
+        """D6: Migration is idempotent — running twice produces same result."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        from cli.migrate import migrate_chain
+        first = migrate_chain(chain, MASTER_KEY_HEX)
+        second = migrate_chain(first, MASTER_KEY_HEX)
+
+        self.assertEqual(
+            first, second,
+            "Running migration twice on same chain must produce identical result"
+        )
+
+    # ── D7: Migration handles already-canonical entries ───────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d7_migration_handles_already_canonical_entries(self):
+        """D7: Migration handles entries already in canonical format (no-op for them)."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        # First migration converts to canonical
+        from cli.migrate import migrate_chain
+        first = migrate_chain(chain, MASTER_KEY_HEX)
+
+        # Second migration should not change canonical entries
+        second = migrate_chain(first, MASTER_KEY_HEX)
+
+        for block in second:
+            if block.get("type") == "day":
+                for entry in block.get("entries", []):
+                    canonical_hash = hashlib.sha256(
+                        json.dumps(entry["data"], sort_keys=True, indent=2).encode()
+                    ).hexdigest()
+                    self.assertEqual(
+                        entry["hash"], canonical_hash,
+                        "Already-canonical entries must stay canonical"
+                    )
+
+    # ── D8: Migration handles nosort+indent2 entries ──────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d8_migration_handles_nosort_indent2_entries(self):
+        """D8: Migration handles chain with nosort+indent2 entries (user's format)."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        # All entry hashes must now be canonical
+        for block in migrated:
+            if block.get("type") == "day":
+                for entry in block.get("entries", []):
+                    canonical_hash = hashlib.sha256(
+                        json.dumps(entry["data"], sort_keys=True, indent=2).encode()
+                    ).hexdigest()
+                    self.assertEqual(
+                        entry["hash"], canonical_hash,
+                        "nosort+indent2 entries must be converted to canonical"
+                    )
+
+    # ── D9: Content hashes remain valid after migration ───────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d9_content_hashes_remain_valid_after_migration(self):
+        """D9: Content hashes remain valid after migration."""
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        # Record original content_hashes
+        original_content_hashes = []
+        for block in chain:
+            if block.get("type") == "day":
+                for entry in block.get("entries", []):
+                    ch = entry["data"].get("content_hash")
+                    if ch:
+                        original_content_hashes.append(ch)
+
+        from cli.migrate import migrate_chain
+        migrated = migrate_chain(chain, MASTER_KEY_HEX)
+
+        # Verify content hashes are preserved
+        migrated_content_hashes = []
+        for block in migrated:
+            if block.get("type") == "day":
+                for entry in block.get("entries", []):
+                    ch = entry["data"].get("content_hash")
+                    if ch:
+                        migrated_content_hashes.append(ch)
+
+        self.assertEqual(
+            original_content_hashes, migrated_content_hashes,
+            "Content hashes must be preserved through migration"
+        )
+
+    # ── D10: Backup file created before migration ─────────────────────
+
+    @unittest.skipUnless(HAS_MIGRATE_ENTRY_HASH_FN,
+                         "migrate_chain not available")
+    def test_d10_backup_file_created_before_migration(self):
+        """D10: Backup file created before migration."""
+        import tempfile
+        import shutil
+        from pathlib import Path
+
+        chain = self._build_chain_with_legacy_entries("nosort_indent2")
+
+        # Write chain to temp file
+        tmpdir = Path(tempfile.mkdtemp())
+        ledger_path = tmpdir / "ledger.json"
+        try:
+            ledger_path.write_text(json.dumps(chain, indent=2))
+
+            from cli.migrate import migrate_chain
+            migrate_chain(chain, MASTER_KEY_HEX, ledger_path=str(ledger_path))
+
+            backup_path = tmpdir / "ledger.json.bak"
+            self.assertTrue(
+                backup_path.exists(),
+                "Backup file ledger.json.bak must be created before migration"
+            )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Run
 # ═════════════════════════════════════════════════════════════════════════════
 

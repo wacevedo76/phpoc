@@ -43,7 +43,7 @@ import { DeviceCookie } from './cookie.js';
 import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
-import { getOrCreateDeviceUuid } from './device_uuid.js';
+import { getOrCreateDeviceUuid, getOrCreateDeviceSecret, deriveDeviceId } from './device_uuid.js';
 import {
   GenesisGate,
   GenesisMismatchError,
@@ -132,11 +132,13 @@ export class SyncService {
   // ------------------------------------------------------------------
 
   /**
-   * Resolve the local device UUID.
+   * Resolve the local device UUID via I-09 device_local_secret.
    *
-   * First checks storage for a per-device UUID (persisted via
-   * getOrCreateDeviceUuid). If found and not WASM-derived, returns it.
-   * Falls back to WASM getDeviceId(MK) only as last resort (legacy).
+   * Derives device_id from MK + device_local_secret (HMAC-SHA256).
+   * The secret is a UUID4 persisted in storage, generated on first use.
+   * No WASM getDeviceId(MK) fallback — the secret must exist.
+   *
+   * Returns null when MK is unavailable (pre-auth state).
    *
    * @returns {Promise<string|null>}
    * @private
@@ -144,22 +146,35 @@ export class SyncService {
   async _getDeviceId() {
     if (this._deviceId) return this._deviceId;
 
-    // Preferred path: per-device UUID from storage (survives logout/re-login)
+    // Get or create the per-device secret (UUID4, persisted)
+    let secret;
     try {
-      const storedUuid = await getOrCreateDeviceUuid(this._storage);
-      this._deviceId = storedUuid;
-      return storedUuid;
+      secret = await getOrCreateDeviceSecret(this._storage);
     } catch {
-      // Storage read failed — fall through to WASM path
+      // Storage read/write failed — try legacy device_uuid as fallback
+      try {
+        secret = await getOrCreateDeviceUuid(this._storage);
+        // If legacy returned a suffixed UUID, strip the suffix for derivation
+        if (secret && typeof secret === 'string' && secret.includes('-web')) {
+          secret = secret.replace(/-web$/, '');
+        }
+      } catch {
+        return null;
+      }
     }
 
-    // Fallback: WASM-derived UUID (HMAC from master key)
+    if (!secret) return null;
+
+    // Require MK for derivation
     const mk = this._crypto.getMasterKey();
     if (!mk) return null;
+
     try {
-      const wasmId = this._crypto.getDeviceId(mk);
-      this._deviceId = wasmId;
-      return wasmId;
+      const coreId = await deriveDeviceId(mk, secret);
+      // Append client-type suffix (Bug 3a fix)
+      const deviceId = `${coreId}-web`;
+      this._deviceId = deviceId;
+      return deviceId;
     } catch {
       return null;
     }

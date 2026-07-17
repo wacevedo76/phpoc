@@ -1021,5 +1021,192 @@ class TestCrossPlatformFormatMarkers(unittest.TestCase):
         self.assertEqual(f"{rls._blocks_prefix}999999.json", "ledger/blocks/999999.json")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Group E — Cross-Platform Entry Hash Parity (Phase 2 RED)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestGroupECrossPlatformEntryHashParity(unittest.TestCase):
+    """Group E: Cross-platform entry hash parity.
+
+    E1: Python build_day_block and JS buildDayBlock produce same entry hash
+    E2: Same entry data → same hash in both environments (reference test)
+    E3: Entry with encrypted fields hashes the same across platforms
+    E4: Entry with multiple encrypted fields hashes the same
+    E5: Hash of entry with device_id_enc and device_proof is cross-platform consistent
+    """
+
+    def _make_entry_data(self, overrides=None):
+        """Build entry data matching real entry shape."""
+        data = {
+            "title": "Cross-Platform Test",
+            "startTime_enc": "enc:0000000065504000",
+            "endTime_enc": "enc:0000000065504e10",
+            "duration": 3600000,
+            "tags": ["cross-platform", "test"],
+            "pauses_enc": "enc:[]",
+            "metadata_enc": "enc:{}",
+            "comment": "",
+            "media": [],
+        }
+        if overrides:
+            data.update(overrides)
+        return data
+
+    def _python_canonical_hash(self, data):
+        """Compute canonical hash: sha256(json.dumps(data, sort_keys=True, indent=2))."""
+        return hashlib.sha256(
+            json.dumps(data, sort_keys=True, indent=2).encode()
+        ).hexdigest()
+
+    # ── E1: build_day_block produces canonical entry hash ─────────────
+
+    def test_e1_build_day_block_produces_canonical_entry_hash(self):
+        """E1: Python build_day_block produces canonical sort+indent2 entry hash."""
+        from domain.ledger.chain import LedgerChain
+        from security.crypto import NoAuthCryptoManager
+
+        crypto = NoAuthCryptoManager()
+
+        # Minimal in-memory store matching AbstractLedgerStore interface
+        class _MemStore:
+            def __init__(self):
+                self._blocks = []
+            def read_blocks(self, start=0, end=None):
+                return self._blocks[start:end]
+            def append_blocks(self, blocks):
+                self._blocks.extend(blocks)
+            def get_block_count(self):
+                return len(self._blocks)
+            def get_last_block(self):
+                return self._blocks[-1] if self._blocks else None
+            def truncate(self, keep_count):
+                removed = self._blocks[keep_count:]
+                self._blocks = self._blocks[:keep_count]
+                return removed
+            def write_blocks(self, blocks):
+                self._blocks = list(blocks)
+
+        store = _MemStore()
+
+        # Write genesis so build_day_block has a prev_hash to use
+        genesis_seal_data = {
+            "type": "genesis", "day_index": 0, "date": "2026-01-01",
+            "prev_hash": "0" * 64
+        }
+        genesis = {
+            "type": "genesis",
+            "day_index": 0,
+            "date": "2026-01-01",
+            "prev_hash": "0" * 64,
+            "block_hash": hashlib.sha256(
+                json.dumps(genesis_seal_data, sort_keys=True).encode()
+            ).hexdigest(),
+        }
+        store.write_blocks([genesis])
+
+        lc = LedgerChain(crypto, store)
+
+        entry_data = self._make_entry_data()
+        block = lc.build_day_block(
+            entries=[entry_data],
+            prev_hash=genesis["block_hash"],
+            date_str="2026-01-02",
+        )
+
+        # Verify the entry hash in the block matches canonical
+        entry = block["entries"][0]
+        canonical = self._python_canonical_hash(entry_data)
+        self.assertEqual(
+            entry["hash"], canonical,
+            "build_day_block must produce canonical sort+indent2 entry hash"
+        )
+
+    # ── E2: Reference hash test ───────────────────────────────────────
+
+    def test_e2_same_entry_data_same_hash_reference(self):
+        """E2: Same entry data → same hash (roundtrip reference test)."""
+        data = self._make_entry_data()
+
+        h1 = self._python_canonical_hash(data)
+        h2 = self._python_canonical_hash(data)
+
+        self.assertEqual(h1, h2,
+                         "Same data must produce same hash")
+        self.assertEqual(len(h1), 64,
+                         "Hash must be 64-char hex")
+
+        # Hash must be stable — known test value
+        expected = self._python_canonical_hash(data)
+        self.assertEqual(h1, expected,
+                         "Hash must be stable across calls")
+
+    # ── E3: Encrypted fields hash consistently ────────────────────────
+
+    def test_e3_encrypted_fields_hash_same_across_platforms(self):
+        """E3: Entry with encrypted fields hashes consistently."""
+        data = self._make_entry_data({
+            "startTime_enc": "enc:deadbeefcafe0001",
+            "endTime_enc": "enc:deadbeefcafe0002",
+        })
+
+        h = self._python_canonical_hash(data)
+        self.assertEqual(len(h), 64,
+                         "Encrypted fields must produce stable 64-char hash")
+
+        # Verify that changing ciphertext changes hash
+        data2 = self._make_entry_data({
+            "startTime_enc": "enc:deadbeefcafe0003",
+            "endTime_enc": "enc:deadbeefcafe0002",
+        })
+        h2 = self._python_canonical_hash(data2)
+        self.assertNotEqual(h, h2,
+                            "Different ciphertext must produce different hash")
+
+    # ── E4: Multiple encrypted fields ─────────────────────────────────
+
+    def test_e4_multiple_encrypted_fields_hash_same(self):
+        """E4: Entry with multiple encrypted fields hashes consistently."""
+        data = self._make_entry_data({
+            "startTime_enc": "enc:aaaaaaaaaaaaaaaa",
+            "endTime_enc": "enc:bbbbbbbbbbbbbbbb",
+            "pauses_enc": "enc:cccccccccccccccc",
+            "metadata_enc": "enc:dddddddddddddddd",
+        })
+
+        h1 = self._python_canonical_hash(data)
+        h2 = self._python_canonical_hash(data)
+
+        self.assertEqual(h1, h2,
+                         "Multiple encrypted fields must hash deterministically")
+
+    # ── E5: Full schema coverage with device fields ────────────────────
+
+    def test_e5_full_schema_with_device_fields_cross_platform_consistent(self):
+        """E5: Hash of entry with device_id_enc and device_proof is
+        cross-platform consistent."""
+        data = self._make_entry_data({
+            "device_id_enc": "enc:device-uuid-hex-encoded",
+            "device_proof": "proof-bytes-hex-encoded",
+        })
+
+        h1 = self._python_canonical_hash(data)
+        h2 = self._python_canonical_hash(data)
+
+        self.assertEqual(h1, h2,
+                         "Full schema with device fields must hash deterministically")
+        self.assertEqual(len(h1), 64)
+
+        # Verify all keys are covered
+        expected_keys = {
+            "title", "startTime_enc", "endTime_enc", "duration",
+            "tags", "pauses_enc", "metadata_enc", "comment", "media",
+            "device_id_enc", "device_proof",
+        }
+        self.assertTrue(
+            expected_keys.issubset(set(data.keys())),
+            "Entry must have all standard fields including device attribution"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

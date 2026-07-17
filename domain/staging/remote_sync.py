@@ -298,7 +298,7 @@ class RemoteStagingSync:
     # ------------------------------------------------------------------
 
     @trace
-    def pull(self, master_key: Optional[bytes] = None) -> Optional[Dict[str, Any]]:
+    def pull(self, master_key: Optional[bytes] = None, timeout_ms: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Pull remote blob, deobfuscate, return parsed dict.
 
         If the blob is obfuscated (non-JSON), requires *master_key* to
@@ -309,6 +309,8 @@ class RemoteStagingSync:
             master_key: 32-byte master key for blob decryption.
                         If None, falls back to ``self._crypto.master_key``
                         if available (authenticated session).
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
 
         Returns:
             Parsed blob dict with ``entries``, ``device_id``, etc.,
@@ -316,7 +318,7 @@ class RemoteStagingSync:
             or ``BLOB_KEY_MISMATCH`` if a blob exists but cannot be
             decrypted (wrong master key or corrupted data).
         """
-        raw_bytes = self._transport.pull(self._blob_path)
+        raw_bytes = self._transport.pull(self._blob_path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(self._blob_path)
         if raw_bytes is None:
             return None
 
@@ -326,12 +328,12 @@ class RemoteStagingSync:
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
 
-        # Resolve effective key: passed key > self._master_key > crypto's key
-        effective_key = master_key
-        if effective_key is None:
-            effective_key = getattr(self._crypto, "master_key", None)
-        if effective_key is None:
-            effective_key = self._master_key
+        # Resolve effective key: explicit arg > crypto.master_key > stored key
+        effective_key = (
+            master_key
+            or getattr(self._crypto, "master_key", None)
+            or self._master_key
+        )
 
         # Try deobfuscation if we have a key
         if isinstance(effective_key, bytes) and len(effective_key) == 32:
@@ -346,7 +348,7 @@ class RemoteStagingSync:
         return BLOB_KEY_MISMATCH
 
     @trace
-    def push(self, entries: List[Dict[str, Any]], device_id: str, master_key: Optional[bytes] = None):
+    def push(self, entries: List[Dict[str, Any]], device_id: str, master_key: Optional[bytes] = None, timeout_ms: Optional[int] = None):
         """Encrypt entries into blob format, obfuscate, and push via transport.
 
         Obfuscation happens when a *master_key* is available (either passed
@@ -358,6 +360,8 @@ class RemoteStagingSync:
             device_id: This device's UUID for the blob header.
             master_key: 32-byte master key for blob obfuscation.
                         Falls back to ``self._master_key`` if not provided.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
         """
         blob = {
             "device_id": device_id,
@@ -371,7 +375,7 @@ class RemoteStagingSync:
         if effective_key is not None and len(effective_key) == 32:
             blob_bytes = self._obfuscate(blob_bytes, effective_key)
 
-        self._transport.push(self._blob_path, blob_bytes)
+        self._transport.push(self._blob_path, blob_bytes, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.push(self._blob_path, blob_bytes)
 
     @trace
     def check_device(self, master_key: Optional[bytes] = None) -> bool:
@@ -408,26 +412,32 @@ class RemoteStagingSync:
         return blob.get("device_id")
 
     @trace
-    def pull_cookie(self) -> Optional[bytes]:
+    def pull_cookie(self, timeout_ms: Optional[int] = None) -> Optional[bytes]:
         """Pull only the device cookie file from remote.
 
         The cookie is a small JSON blob (device_specifier + device_uuid).
         This is orders of magnitude faster than pulling + decrypting the
         full staging blob (~64KB+).
 
+        Args:
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
+
         Returns:
             Raw cookie bytes (JSON), or None if no cookie exists on remote.
         """
-        return self._transport.pull(REMOTE_COOKIE_PATH)
+        return self._transport.pull(REMOTE_COOKIE_PATH, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(REMOTE_COOKIE_PATH)
 
     @trace
-    def push_cookie(self, cookie_bytes: bytes):
+    def push_cookie(self, cookie_bytes: bytes, timeout_ms: Optional[int] = None):
         """Push the device cookie to remote.
 
         Args:
             cookie_bytes: JSON bytes of {"device_uuid": ..., "device_specifier": ...}.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
         """
-        self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes)
+        self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes)
 
     def check_remote_available(self, timeout_ms: int = 500) -> bool:
         """Quick reachability check on the transport.
@@ -444,7 +454,7 @@ class RemoteStagingSync:
         import time as _time
         start = _time.monotonic()
         try:
-            result = self._transport.pull(self._blob_path)
+            result = self._transport.pull(self._blob_path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(self._blob_path)
             elapsed_ms = (_time.monotonic() - start) * 1000
             if elapsed_ms > timeout_ms:
                 return False

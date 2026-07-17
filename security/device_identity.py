@@ -14,7 +14,40 @@ import hmac
 import hashlib
 import socket
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Tuple
+
+# ── I-09: device ID derivation constants ─────────────────────────
+
+DEVICE_ID_PREFIX = "phpoc:device:"
+
+
+def derive_device_id(master_key: bytes, device_local_secret: str) -> str:
+    """Derive a device ID from MK + per-device secret (I-09).
+
+    ``device_id = HMAC-SHA256(MK, "phpoc:device:" + device_local_secret)``
+
+    Binds the device ID to both the MK and a per-device random secret,
+    ensuring different devices with the same passphrase get different IDs.
+
+    Args:
+        master_key: 32-byte master key.
+        device_local_secret: Per-device UUID4 secret string.
+
+    Returns:
+        64-char hex string device identifier.
+
+    Raises:
+        ValueError: If master_key is empty/None/short, or secret is empty/None.
+    """
+    if not master_key or len(master_key) < 32:
+        raise ValueError("master_key must be at least 32 bytes")
+    if not device_local_secret:
+        raise ValueError("device_local_secret must not be empty")
+    return hmac.new(
+        master_key,
+        f"{DEVICE_ID_PREFIX}{device_local_secret}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 class DeviceIdentity:
@@ -98,7 +131,7 @@ class RandomUUIDDeviceIdentityProvider(AbstractDeviceIdentityProvider):
     - Kotlin: UUID.randomUUID()
     """
 
-    PROOF_PREFIX = "phpoc:device:"
+    PROOF_PREFIX = DEVICE_ID_PREFIX
     CLIENT_TYPE = "cli"  # Bug 3a fix: client suffix for cross-client identity
 
     def __init__(self, config_manager):
@@ -112,31 +145,42 @@ class RandomUUIDDeviceIdentityProvider(AbstractDeviceIdentityProvider):
         self._config = config_manager
         self._cached_identity: Optional[DeviceIdentity] = None
 
+    def _resolve_device_id(
+        self, master_key: bytes, config: dict
+    ) -> str:
+        """Resolve the device_id from config, preferring I-09 derivation.
+
+        I-09 main path: derive from MK + device_local_secret via HMAC.
+        Legacy fallback: reuse or generate a bare UUID4 from config.
+        """
+        device_local_secret = config.get("device_local_secret", "")
+
+        if device_local_secret:
+            core_id = derive_device_id(master_key, device_local_secret)
+            return f"{core_id}-{self.CLIENT_TYPE}"
+
+        # Legacy fallback: old config without device_local_secret
+        current_id = config.get("device_id", "")
+        if not current_id:
+            return f"{uuid.uuid4()}-{self.CLIENT_TYPE}"
+        if not current_id.endswith(f"-{self.CLIENT_TYPE}"):
+            return f"{current_id}-{self.CLIENT_TYPE}"
+        return current_id
+
     def get_device_identity(self, master_key: bytes) -> DeviceIdentity:
         if self._cached_identity is not None:
             return self._cached_identity
 
         config = self._config.read()
+        device_id = self._resolve_device_id(master_key, config)
 
-        current_id = config.get("device_id", "")
-
-        # Bug 3a fix: Ensure device_id has -cli suffix for cross-client identity.
-        # Migration: bare UUIDs get -cli appended. Already-suffixed UUIDs
-        # stay as-is. New installations get fresh uuid4-cli.
-        if not current_id:
-            current_id = f"{uuid.uuid4()}-{self.CLIENT_TYPE}"
-        elif not current_id.endswith(f"-{self.CLIENT_TYPE}"):
-            # Append suffix to existing bare UUID (migration)
-            current_id = f"{current_id}-{self.CLIENT_TYPE}"
-
-        if current_id != config.get("device_id"):
-            config["device_id"] = current_id
+        if device_id != config.get("device_id"):
+            config["device_id"] = device_id
             config["device_label"] = config.get(
                 "device_label", socket.gethostname()
             )
             self._config.write(config)
 
-        device_id = config["device_id"]
         device_label = config.get("device_label", device_id[:8])
 
         # Proof = HMAC(mk, "phpoc:device:" + device_id)

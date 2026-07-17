@@ -7,6 +7,7 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `ARCHITECTURAL_DECISIONS.md` — ADR log (ADR-001 through ADR-020)
 - `CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` — Cross-platform architecture decisions
 - `DESIGN_GOALS.md` — Architectural mandates and design goals
+- `SYSTEM_ARCHITECTURE.md` — Comprehensive system architecture: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core, web app, CLI (synthesizes ADRs + directives + design goals)
 - `DESIGN_MULTI_DEVICE_SESSION.md` — Multi-device session architecture
 - `ARCHITECTURAL_MIGRATION_STRATEGY.md` — Historical 7-phase migration record (complete)
 - `workflows/` — User-facing and system workflow specifications (cli/ and web/)

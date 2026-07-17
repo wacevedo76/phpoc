@@ -46,15 +46,53 @@ function _jsonDumps(obj) {
 }
 
 /**
- * Compute SHA-256 hex digest of pretty-printed JSON.
- * Matches the test convention (2-space indentation).
+ * Deterministic JSON serialization with sorted keys and 2-space indent,
+ * matching Python's json.dumps(obj, sort_keys=True, indent=2) exactly.
+ *
+ * This is the canonical format for entry hashing across all clients.
+ *
+ * @param {*} data - Any JSON-serializable value.
+ * @returns {string} Python-compatible pretty-printed JSON string.
+ */
+export function jsonSortIndent2(data) {
+  return _jsonDumpsIndent(data, 0);
+}
+
+function _jsonDumpsIndent(obj, depth) {
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  const indent = '  '.repeat(depth + 1);
+  const outerIndent = depth > 0 ? '  '.repeat(depth) : '';
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    const items = obj.map(v => indent + _jsonDumpsIndent(v, depth + 1));
+    return '[\n' + items.join(',\n') + '\n' + outerIndent + ']';
+  }
+  // Object: sort keys recursively, skip undefined values
+  const keys = Object.keys(obj).sort();
+  const pairs = [];
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined) {
+      pairs.push(indent + JSON.stringify(k) + ': ' + _jsonDumpsIndent(v, depth + 1));
+    }
+  }
+  if (pairs.length === 0) return '{}';
+  return '{\n' + pairs.join(',\n') + '\n' + outerIndent + '}';
+}
+
+/**
+ * Compute SHA-256 hex digest using canonical sorted + indented JSON.
+ * Matches Python's sha256(json.dumps(data, sort_keys=True, indent=2)).
  *
  * @param {object} data - Data to hash.
  * @param {object} crypto - CryptoService with a sha256() method.
  * @returns {string} 64-character hex SHA-256.
  */
 export function computeEntryHash(data, crypto) {
-  return crypto.sha256(JSON.stringify(data, null, 2));
+  return crypto.sha256(jsonSortIndent2(data));
 }
 
 /**

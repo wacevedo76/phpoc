@@ -68,6 +68,7 @@ class RemoteLedgerSync:
         force: bool = False,
         existing_indices: Optional[set] = None,
         overwrite_indices: Optional[set] = None,
+        timeout_ms: Optional[int] = None,
     ) -> int:
         """Push blocks that don't exist on remote yet (or overwrite if force=True).
 
@@ -91,12 +92,14 @@ class RemoteLedgerSync:
                                exist on remote. Independent of ``force`` — only the
                                given indices are overwritten. Must be provided with
                                ``existing_indices`` to know which are stale.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
 
         Returns:
             Number of blocks pushed.
         """
         existing = existing_indices if existing_indices is not None else (
-            self._list_remote_block_indices() if not force else set()
+            self._list_remote_block_indices(timeout_ms=timeout_ms) if not force else set()
         )
         pushed = 0
 
@@ -110,7 +113,10 @@ class RemoteLedgerSync:
                     continue
 
             obfuscated = self._obfuscate_block(block)
-            self._transport.push(path, obfuscated)
+            if timeout_ms is not None:
+                self._transport.push(path, obfuscated, timeout_ms=timeout_ms)
+            else:
+                self._transport.push(path, obfuscated)
             pushed += 1
             logger.info("Pushed block %s to remote", filename)
 
@@ -131,6 +137,7 @@ class RemoteLedgerSync:
         self,
         local_blocks: Optional[List[Dict[str, Any]]] = None,
         existing_indices: Optional[set] = None,
+        timeout_ms: Optional[int] = None,
     ) -> Tuple[Optional[List[Dict[str, Any]]], int]:
         """Pull missing blocks from remote.
 
@@ -144,6 +151,8 @@ class RemoteLedgerSync:
                               avoids a redundant ``list_files()`` call. If omitted,
                               fetches fresh. Used by ``SyncOrchestrator._sync_ledger_blocks()``
                               to share one ``list_files()`` between pull and push.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
 
         Returns:
             Tuple of (new_blocks_list, total_remote_block_count).
@@ -151,7 +160,7 @@ class RemoteLedgerSync:
             total_remote_block_count is the number of blocks on remote.
         """
         existing = existing_indices if existing_indices is not None else (
-            self._list_remote_block_indices()
+            self._list_remote_block_indices(timeout_ms=timeout_ms)
         )
         if not existing:
             return None, 0
@@ -175,7 +184,7 @@ class RemoteLedgerSync:
         for idx in indices_needed:
             filename = f"{idx:06d}.json"
             path = self._blocks_prefix + filename
-            raw = self._transport.pull(path)
+            raw = self._transport.pull(path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(path)
             if raw is None:
                 raise FileNotFoundError(
                     f"Remote block {filename} expected but not found"
@@ -215,13 +224,17 @@ class RemoteLedgerSync:
 
         return new_blocks, max_remote + 1
 
-    def pull_index(self) -> Optional[Dict[str, Any]]:
+    def pull_index(self, timeout_ms: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Pull the remote index file.
+
+        Args:
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
 
         Returns:
             Parsed index dict, or None if no index exists on remote.
         """
-        raw = self._transport.pull(self._index_path)
+        raw = self._transport.pull(self._index_path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(self._index_path)
         if raw is None:
             return None
         plaintext = RemoteStagingSync._deobfuscate(raw, self._master_key)
@@ -296,7 +309,7 @@ class RemoteLedgerSync:
     # Hash Index (fast sync detection)
     # ═══════════════════════════════════════════════════════════
 
-    def push_hash_index(self, chain: List[Dict[str, Any]]) -> None:
+    def push_hash_index(self, chain: List[Dict[str, Any]], timeout_ms: Optional[int] = None) -> None:
         """Build and push hash index files to remote.
 
         The hash index is a plaintext array of block seals (day_hash,
@@ -309,14 +322,22 @@ class RemoteLedgerSync:
 
         Args:
             chain: Full ledger chain (list of block dicts).
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
         """
         hashes = [get_block_hash(b) for b in chain]
         hi_json = json.dumps(hashes).encode("utf-8")
         hi_sha256 = hashlib.sha256(hi_json).hexdigest()
-        self._transport.push(self.REMOTE_HASH_INDEX, hi_json)
-        self._transport.push(
-            self.REMOTE_HASH_INDEX_SHA256, hi_sha256.encode("utf-8")
-        )
+        if timeout_ms is not None:
+            self._transport.push(self.REMOTE_HASH_INDEX, hi_json, timeout_ms=timeout_ms)
+            self._transport.push(
+                self.REMOTE_HASH_INDEX_SHA256, hi_sha256.encode("utf-8"), timeout_ms=timeout_ms
+            )
+        else:
+            self._transport.push(self.REMOTE_HASH_INDEX, hi_json)
+            self._transport.push(
+                self.REMOTE_HASH_INDEX_SHA256, hi_sha256.encode("utf-8")
+            )
         logger.info("Pushed hash index to remote (%d blocks)", len(hashes))
 
     def pull_hash_index(self) -> Optional[Dict[str, Any]]:
@@ -413,7 +434,7 @@ class RemoteLedgerSync:
         Returns:
             Obfuscated bytes ready for transport.
         """
-        plaintext = json.dumps(block).encode("utf-8")
+        plaintext = json.dumps(block, sort_keys=True).encode("utf-8")
         return RemoteStagingSync._obfuscate(plaintext, self._master_key)
 
     def _deobfuscate_block(self, raw: bytes) -> Dict[str, Any]:
@@ -436,13 +457,17 @@ class RemoteLedgerSync:
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError(f"Failed to parse deobfuscated block: {exc}") from exc
 
-    def _list_remote_block_indices(self) -> set:
+    def _list_remote_block_indices(self, timeout_ms: Optional[int] = None) -> set:
         """List all block file indices currently on remote.
+
+        Args:
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
 
         Returns:
             Set of integers (block sequence numbers).
         """
-        files = self._transport.list_files(self._blocks_prefix)
+        files = self._transport.list_files(self._blocks_prefix, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.list_files(self._blocks_prefix)
         indices: set = set()
         for fname in files:
             # Filenames are like "000000.json"

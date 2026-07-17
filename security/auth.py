@@ -1,11 +1,22 @@
 import json
 import getpass
 import hashlib
+import logging
+import uuid
+import re
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Tuple
 from pathlib import Path
 
 from security.crypto import CryptoManager
+
+_logger = logging.getLogger(__name__)
+
+# UUID4 regex for validation
+_UUID4_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    re.IGNORECASE
+)
 
 
 def derive_pdk_salt(identity_pub_key: Optional[str]) -> bytes:
@@ -82,6 +93,114 @@ class AbstractAuthenticator(ABC):
         pass
 
 from security.recovery import RecoveryManager
+
+
+def _generate_fresh_secret(config: dict) -> Tuple[str, bool]:
+    """Generate a fresh UUID4 and persist it in config.
+
+    Best-effort: if config write fails, an ephemeral UUID4 is returned
+    so auth doesn't crash.
+    """
+    new_secret = str(uuid.uuid4())
+    try:
+        config["device_local_secret"] = new_secret
+    except Exception as e:
+        _logger.warning(
+            "Failed to persist device_local_secret: %s, using ephemeral UUID4", e
+        )
+    return new_secret, True
+
+
+def _migrate_device_id_to_secret(config: dict) -> Optional[Tuple[str, bool]]:
+    """Try to extract a UUID4 secret from a legacy device_id config key.
+
+    I-09 migration: existing bare UUID4, suffixed UUID (uuid4-cli/web),
+    or WASM-derived hex in config["device_id"] is migrated to
+    config["device_local_secret"]. Returns (secret, is_new) on success,
+    or None if no migration was possible.
+    """
+    old_device_id = config.get("device_id", "")
+    if not old_device_id:
+        return None
+
+    # Suffixed UUID regex: UUID4 followed by -<client_type>
+    _SUFFIXED_UUID_RE = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]+-[a-z]+$',
+        re.IGNORECASE
+    )
+
+    # Suffixed UUID (Bug 3a format: uuid4-cli or uuid4-web)
+    if _SUFFIXED_UUID_RE.match(old_device_id):
+        core_uuid = "-".join(old_device_id.split("-")[:5])
+        if _UUID4_RE.match(core_uuid):
+            config["device_local_secret"] = core_uuid
+            return core_uuid, False
+
+    # Bare UUID4 — repurpose as secret
+    if _UUID4_RE.match(old_device_id):
+        config["device_local_secret"] = old_device_id
+        return old_device_id, False
+
+    # WASM-derived hex (64 hex chars, may be hyphenated)
+    stripped = old_device_id.replace("-", "")
+    if re.match(r'^[0-9a-f]{64}$', stripped, re.IGNORECASE):
+        _logger.info("Migrating from WASM-derived device_id to UUID4 secret")
+        new_secret = str(uuid.uuid4())
+        config["device_local_secret"] = new_secret
+        return new_secret, True
+
+    return None
+
+
+def _ensure_device_local_secret(config: dict) -> Tuple[str, bool]:
+    """Get or create the per-device local secret for device ID derivation.
+
+    I-09: The device_local_secret is a UUID4 generated on first auth and
+    persisted in config. It binds the device ID to both the MK and a
+    per-device random secret, ensuring different devices with the same
+    passphrase produce different device IDs.
+
+    Migration: Existing bare UUID4 (or suffixed UUID) in config["device_id"]
+    is migrated to config["device_local_secret"] and the bare UUID is
+    extracted. WASM-derived hex strings are replaced with fresh UUID4s.
+
+    Args:
+        config: Mutable config dict (read/write).
+
+    Returns:
+        Tuple of (secret: str, is_new: bool).
+        is_new is True when a fresh secret was generated.
+    """
+    try:
+        # Check for existing device_local_secret
+        existing = config.get("device_local_secret", "")
+        if existing and isinstance(existing, str):
+            if _UUID4_RE.match(existing):
+                return existing, False
+
+            # Corrupted/invalid secret — regenerate
+            _logger.warning(
+                "device_local_secret is not a valid UUID4 (%s), regenerating",
+                existing[:20]
+            )
+            return _generate_fresh_secret(config)
+
+        # Migration path: try legacy device_id config key
+        migrated = _migrate_device_id_to_secret(config)
+        if migrated is not None:
+            return migrated
+
+        # Fresh install
+        return _generate_fresh_secret(config)
+
+    except Exception as e:
+        # Config read/write failure — return a non-persisted secret
+        # so auth doesn't crash (best-effort resilience)
+        _logger.warning(
+            "Failed to ensure device_local_secret: %s, using ephemeral UUID4", e
+        )
+        return str(uuid.uuid4()), True
+
 
 class PassphraseAuthenticator(AbstractAuthenticator):
     """Authenticator that uses a passphrase to unlock the Sovereign Seed from the ledger."""

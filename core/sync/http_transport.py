@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Seconds to wait before giving up on a single HTTP request.
 # Used as the default when no explicit timeout is provided.
-_DEFAULT_TIMEOUT_S = 60.0
+_DEFAULT_TIMEOUT_S = 5.0
 
 # Custom header names
 _API_KEY_HEADER = "X-Api-Key"
@@ -113,6 +113,15 @@ class HttpStagingTransport(AbstractStagingTransport):
     # Public interface (AbstractStagingTransport)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _timeout_s(timeout_ms: Optional[int]) -> float:
+        """Convert optional millisecond timeout to seconds.
+
+        Returns the transport default when *timeout_ms* is None,
+        otherwise converts milliseconds to fractional seconds.
+        """
+        return _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+
     def pull(self, path: str, timeout_ms: Optional[int] = None) -> Optional[bytes]:
         """Fetch blob from remote via HTTP GET.
 
@@ -129,7 +138,7 @@ class HttpStagingTransport(AbstractStagingTransport):
             RuntimeError: On network errors, timeouts, non-404 4xx, or 5xx.
         """
         url_path = self._build_path(path)
-        timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+        timeout_s = self._timeout_s(timeout_ms)
 
         # Build headers
         headers = {}
@@ -195,7 +204,7 @@ class HttpStagingTransport(AbstractStagingTransport):
             RuntimeError: On network errors, timeouts, or non-2xx responses.
         """
         url_path = self._build_path(path)
-        timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+        timeout_s = self._timeout_s(timeout_ms)
 
         headers = {
             "Content-Type": _CONTENT_TYPE,
@@ -239,7 +248,7 @@ class HttpStagingTransport(AbstractStagingTransport):
             RuntimeError: On network errors, timeouts, or non-2xx/404 responses.
         """
         url_path = self._build_path(path)
-        timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+        timeout_s = self._timeout_s(timeout_ms)
 
         headers = {}
         self._add_api_key(headers)
@@ -285,7 +294,7 @@ class HttpStagingTransport(AbstractStagingTransport):
         """
         params = urlencode({"prefix": prefix})
         url_path = f"/?{params}"
-        timeout_s = _DEFAULT_TIMEOUT_S if timeout_ms is None else (timeout_ms / 1000.0)
+        timeout_s = self._timeout_s(timeout_ms)
 
         headers = {}
         self._add_api_key(headers)

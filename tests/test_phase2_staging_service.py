@@ -793,14 +793,25 @@ class TestStagingService(unittest.TestCase):
         self.assertEqual(result, SyncCheckResult.READY)
 
     def test_check_and_sync_returns_offline_on_timeout(self):
-        """With transport that raises, check_and_sync returns OFFLINE."""
-        failing_transport = MagicMock()
-        failing_transport.pull.side_effect = ConnectionError("No route to host")
-        svc2 = StagingService(mock_crypto(), mock_staging_store(),
-                              transport=failing_transport,
-                              device_id_provider=MagicMock())
-        result = svc2.check_and_sync(timeout_ms=500)
-        self.assertEqual(result, SyncCheckResult.OFFLINE)
+        """With transport that raises, check_and_sync returns OFFLINE.
+
+        Uses an isolated temp dir to avoid pollution from the user's
+        real data directory. Sets master_key on crypto so the P5
+        auto-reconcile path attempts the network call and surfaces
+        the OFFLINE result.
+        """
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            crypto = mock_crypto()
+            crypto.master_key = b"\x01" * 32  # Valid key for auto-reconcile path
+            failing_transport = MagicMock()
+            failing_transport.pull.side_effect = ConnectionError("No route to host")
+            svc2 = StagingService(crypto, mock_staging_store(),
+                                  transport=failing_transport,
+                                  device_id_provider=MagicMock(),
+                                  data_dir=tmp)
+            result = svc2.check_and_sync(timeout_ms=500)
+            self.assertEqual(result, SyncCheckResult.OFFLINE)
 
 
 # =============================================================================

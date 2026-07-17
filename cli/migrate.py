@@ -51,7 +51,7 @@ def _hash_key_for_block_type(block: dict) -> str:
         return "day_hash"
 
 
-from domain.ledger.helpers import get_block_hash
+from domain.ledger.helpers import get_block_hash, compute_entry_hash
 
 
 def _verify_migrated_chain(migrated: List[dict], integrity_key: bytes) -> None:
@@ -98,7 +98,8 @@ def _verify_migrated_chain(migrated: List[dict], integrity_key: bytes) -> None:
                 f"Verification failed: block {i} missing {hash_key}"
             )
         check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "signature", "format_version")}
+                      if k not in (hash_key, "identity_seal",
+                                   "signature", "format_version", "key_version")}
         expected = _seal(json.dumps(check_data, sort_keys=True), integrity_key)
         if expected != stored_hash:
             raise ValueError(
@@ -162,6 +163,15 @@ def migrate_chain(
     for block in migrated:
         block.pop("format_version", None)
 
+    # ── 3a. Recompute entry hashes to canonical sort+indent2 ─────────
+    # Cross-client canonical serialization: all entry hashes must use
+    # sha256(json.dumps(data, sort_keys=True, indent=2)).
+    for block in migrated:
+        if block.get("type") == "day":
+            for entry in block.get("entries", []):
+                data = entry.get("data", {})
+                entry["hash"] = compute_entry_hash(data)
+
     # ── 4. Rename genesis hash field (I-17) ──────────────────────────
     genesis = migrated[0]
     if "day_hash" in genesis:
@@ -170,7 +180,8 @@ def migrate_chain(
     # ── 5. Recompute genesis seal (no prev_hash dependency) ──────────
     genesis_hash_key = _hash_key_for_block_type(genesis)
     genesis_check_data = {k: v for k, v in genesis.items()
-                          if k not in (genesis_hash_key, "signature", "format_version")}
+                          if k not in (genesis_hash_key, "identity_seal",
+                                       "signature", "format_version", "key_version")}
     genesis[genesis_hash_key] = _seal(json.dumps(genesis_check_data, sort_keys=True), integrity_key)
 
     # ── 6. Process remaining blocks: fix prev_hash → recompute seal ───
@@ -181,7 +192,8 @@ def migrate_chain(
         # Recompute seal with correct prev_hash
         hash_key = _hash_key_for_block_type(block)
         check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "signature", "format_version")}
+                      if k not in (hash_key, "identity_seal",
+                                   "signature", "format_version", "key_version")}
         block[hash_key] = _seal(json.dumps(check_data, sort_keys=True), integrity_key)
 
     # ── 7. Self-verification ────────────────────────────────────────

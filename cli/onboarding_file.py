@@ -21,7 +21,8 @@ from security.recovery import RecoveryManager
 from security.auth import PassphraseAuthenticator
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
-from domain.ledger.helpers import get_block_hash
+from domain.ledger.helpers import get_block_hash, verify_entry_hash_two_way
+from domain.ledger.chain import _verify_entry_hash_flex
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,13 @@ def _verify_entry_hash(entry: dict) -> bool:
     Matches the web app's ``LocalCache.append()`` hash computation:
     SHA-256 over jsonSort of the core staging DTO fields only
     (not metadata like committed, block_index, entry_index, comment).
+
+    Delegates to ``verify_entry_hash_two_way`` which tries sort+indent2
+    (canonical) then sort+compact (legacy CLI).
     """
+    stored_hash = entry.get("hash")
+    if not stored_hash:
+        return False
     hash_data = {
         k: entry.get(k)
         for k in (
@@ -77,50 +84,39 @@ def _verify_entry_hash(entry: dict) -> bool:
             "device_uuid", "metadata",
         )
     }
-    expected = hashlib.sha256(_json_sort(hash_data).encode()).hexdigest()
-    return entry.get("hash") == expected
+    return verify_entry_hash_two_way(hash_data, stored_hash)
 
 
 def _verify_ledger_entry_hash(entry: dict) -> bool:
     """Verify a ledger-block entry's hash.
 
-    Tries both serialization formats:
-      - No indent (Python CLI: domain/ledger/engine.py, chain.py)
-      - 2-space indent (Web app: utils.js computeEntryHash)
-
-    Both formats are valid; the hash in the block determines which
-    format was used at commit time.
+    Delegates to _verify_entry_hash_flex which tries all three serialization
+    formats (sort+indent2, sort+compact, nosort+indent2). The hash in the
+    block determines which format was used at commit time.
     """
     if "data" not in entry:
         return False
-    data = entry["data"]
     stored_hash = entry.get("hash")
     if not stored_hash:
         return False
-
-    # Try CLI format first (no indent, most common for imported chains)
-    expected_no_indent = hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode()
-    ).hexdigest()
-    if expected_no_indent == stored_hash:
-        return True
-
-    # Try web app format (2-space indent)
-    expected_indent2 = hashlib.sha256(
-        json.dumps(data, sort_keys=True, indent=2).encode()
-    ).hexdigest()
-    return expected_indent2 == stored_hash
+    return _verify_entry_hash_flex(entry["data"], stored_hash)
 
 
 def _verify_entry_hash_updated(entry: dict) -> bool:
     """Verify an entry hash as computed by ``updateByEntryId()``
-    (all fields minus ``hash`` and ``entry_index``)."""
+    (all fields minus ``hash`` and ``entry_index``).
+
+    Delegates to ``verify_entry_hash_two_way`` which tries sort+indent2
+    (canonical) then sort+compact (legacy CLI).
+    """
+    stored_hash = entry.get("hash")
+    if not stored_hash:
+        return False
     hash_data = {
         k: v for k, v in entry.items()
         if k not in ("hash", "entry_index")
     }
-    expected = hashlib.sha256(_json_sort(hash_data).encode()).hexdigest()
-    return entry.get("hash") == expected
+    return verify_entry_hash_two_way(hash_data, stored_hash)
 
 
 # ── Format-specific import paths ────────────────────────────────────────────

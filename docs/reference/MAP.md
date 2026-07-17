@@ -24,8 +24,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `core/sync/transport_registry.py` | HOT | `TransportProvider` dataclass, `TransportRegistry` — extensible transport discovery for onboarding |
 | `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | HOT | Passphrase + Recovery authenticators — per-user PBKDF2 salt, transparent upgrade |
-| `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix, migration for bare UUIDs. |
-| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification |
+| `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix. I-09: `derive_device_id()` from MK + device_local_secret. |
+| `domain/ledger/helpers.py` | HOT | `get_block_hash()`, `compute_entry_hash()`, `verify_entry_hash_two_way()` — canonical hash extraction + cross-client entry hash + 2-way hash verifier (used by onboarding + chain flex) |
+| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification — uses `compute_entry_hash` from helpers |
 | `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
 | `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
 | `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
@@ -64,7 +65,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
 | `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Chain integrity: `onboardFromRemote` verifies full prev_hash linkage (2026-07-05).
-| `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()` — Python-compatible JSON serialization (2026-06-20) |
+| `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()`, `jsonSortIndent2()`, `computeEntryHash()` — Python-compatible JSON serialization + canonical entry hashing (2026-07-16) |
 | `phpoc-web/src/ledger/chain.js` | HOT | `LedgerChain` — block storage, append/appendBlocks (prev_hash verification in `append()` added 2026-07-05) |
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
@@ -120,11 +121,13 @@ Key test files:
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories
 - `tests/test_cross_platform_integration.py` — 🔜 Cross-platform live integration tests (CLI ↔ Worker), blob/cookie/ledger round-trips, full 8-step workflow
 - `tests/test_cross_platform_crypto.py` — 🔜 Python ↔ WASM obfuscation compatibility verification
+- `tests/test_i09_device_attribution.py` — 🟢 GREEN **NEW (Phase 3)** — 27 tests for I-09 device attribution (Groups A, B, C, D, I): device_local_secret generation, HMAC-derived device_id, migration, cookie integration, edge cases
 - `worker/test/index.test.ts` — 🟢 GREEN — 49 Worker blob store integration tests (auth, CORS, GET/PUT/DELETE, list, error handling)
 - `worker/test/row_level_endpoints.test.ts` — 🟢 GREEN **NEW (Phase 3)** — 55 row-level staging endpoint tests (manifest, row CRUD, push guard, auth/cors, edge cases)
 - `phpoc-web/test/row_staging_store_test.mjs` — 🔴 RED **NEW (Phase 2)** — 49 assertions, Group S (S1–S25): RowStagingStore IndexedDB CRUD with activity_id key path
 - `phpoc-web/test/row_sync_test.mjs` — 🔴 RED **NEW (Phase 2)** — 134 assertions, Groups D (D1–D35: buildDiff 8-scenario resolution) + W (W1–W30: RowSync HTTP integration)
 - `phpoc-web/test/row_integration_test.mjs` — 🔴 RED **NEW (Phase 2)** — 70 assertions, Groups M (M1–M12: blob→rows migration) + I (I1–I18: full sync integration)
+- `phpoc-web/test/i09_device_attribution.test.mjs` — 🟢 GREEN **NEW (Phase 3)** — 17 tests for I-09 device attribution (Groups E, F, G): device_local_secret, deriveDeviceId, migration, sync.js integration
 
 ### Active docs
 
@@ -151,7 +154,8 @@ Key test files:
 | `../planning/CLI_COMMAND_TIMING_F2_PHASE1.md` | 🔜 **NEW** — F2 Phase 1 blueprint: persistent cache for remote ledger blocks. 23 assertions across 6 groups (A–F). (2026-07-14) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
-| `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-020) |
+| `../design/SYSTEM_ARCHITECTURE.md` | 🟢 **NEW** — Comprehensive system architecture document: key hierarchy, chain, staging, transport, multi-device sync, cross-platform, crypto core, web, CLI, invariants |
+| `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-026) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
 | `../design/workflows/cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
 | `../design/workflows/cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |

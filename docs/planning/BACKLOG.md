@@ -216,12 +216,12 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **Next action:** See I-01a below.
 
-### I-01a 🔴: RotateKeysCommand execution
+### I-01a ✅: RotateKeysCommand execution
 
 **Why:** I-01 built the crypto primitives (versioned MK derivation, multi-version chain
 verification) but the actual rotation command is still a skeleton. Without this, the MK
 cannot actually be rotated — it's all infrastructure and no action.
-**Status:** 🔜 Not started. **Depends on:** I-01 (crypto foundation) ✅.
+**Status:** ✅ Phases 1-4 complete (141/141 PY). **Depends on:** I-01 (crypto foundation) ✅.
 **Blocks:** I-09 (device attribution needs rotation to re-derive device IDs).
 
 **Soft rotation deliverables:**
@@ -244,8 +244,9 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Effort:** Medium. **Next action:** Phase 1 (test blueprint) → Phase 2-4 TDD.
 
-### I-09 🟡: Hardware-bound device attribution
+### I-09 🟡: Hardware-bound device attribution — 🔜 Phase 3 GREEN complete
 
+**Plan:** `docs/planning/I09_DEVICE_ATTRIBUTION_PHASE1.md` (49 assertions, 9 groups)
 **Why:** Device IDs are derived from MK. Any device with the MK can impersonate any other device.
 **Flaw doc severity:** Medium — "device attribution is theater."
 
@@ -257,50 +258,49 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Effort:** Medium. **Depends on:** nothing. **Next action:** Generate device-local UUID4 secret, use in HMAC derivation.
 
-### I-12 🟡: System architecture document
+### I-12 ✅: System architecture document (Complete 2026-07-17)
 
-**Why:** The spec is narrow (format only). DESIGN_GOALS is broad (aspirations). No single document describes the full system.
-**Flaw doc observation:** #16 — the spec is the narrowest document but claims to be authoritative.
-
-**Deliverable:** New `docs/design/SYSTEM_ARCHITECTURE.md` covering: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core.
-
-**Effort:** ~2 days. **Next action:** Create outline from existing ADRs + CROSS_PLATFORM + DESIGN_GOALS.
+**Deliverable:** `docs/design/SYSTEM_ARCHITECTURE.md` — 11-section comprehensive architecture document synthesizing all 11 directives (D1–D11), 26 ADRs, cross-platform strategy, and reference implementations. Covers: system overview, key hierarchy (seed→MK→sub-keys, versioned MKs, rotation), chain structure (hierarchical lock chain, block types, content hash, verification), staging pipeline (staging vs ledger, entry lifecycle, encryption, blind index), transport layer (Worker, R2 layout, blob obfuscation, device cookie), multi-device sync (lifecycle, hash index fast path, device identity, merge engine, row-level staging), cross-platform strategy (Rust→WASM/.a/.so), crypto core (phpoc-crypto-core structure + ring dependency), web application (React + IndexedDB + WASM architecture), CLI reference implementation (package map), and 25 architectural invariants. Includes cross-reference table to all source documents.
 
 ---
 
-## 🔵 Phase 5 — CLI Polish
+## 🔵 Phase 5 — Cross-Client Format Unification
 
-*Existing backlog items. After architectural work stabilizes.*
-
-### P5: CLI unlock latency
-
-**3 remaining root causes:**
-
-| # | Action | File |
-|---|--------|------|
-| B | Pre-check remote reachability before cookie/blob pulls | `domain/staging/service.py` |
-| A | Fix timeout plumbing (60s → 5s default) | `core/sync/http_transport.py` + `service.py` + `remote_sync.py` |
-| C | Skip network calls for read-only commands | `main.py` read-command dispatch |
-
-**Next action:** Fix timeout plumbing first (largest impact per line of code).
-
-### P4: CLI kinks & UX polish
-
-**Next action:** Audit `ph view`/`ph list`/`ph tags` for specifier-mismatch blocking.
-
----
-
-## 🔵 Phase 6 — Cross-Client Format Unification
+*After architectural work stabilizes. Cross-client format unification may change serialization paths, so it should land before CLI polish.*
 
 ### P1: Canonical cross-client serialization
 
 **Problem:** 3 incompatible serializations exist (raw chain, v2 envelope, per-block R2).
 
-**Next action:** Hold format decision discussion. Record as ADR.
+**Decision:** Option A1 — Unified canonical JSON serialization (`sort_keys=True`) across all three contexts. 4-phase TDD in progress.
 
-### Entry hash indent=2 consolidation
+**Phase 1 blueprint:** `docs/planning/CROSS_CLIENT_SERIALIZATION_PHASE1.md` (43 assertions, 6 groups).
 
-**Next action:** When all chains are indent=2 only, remove `_verify_entry_hash_flex()` dual-format shims from `chain.py` and `onboarding_file.py`.
+### Entry hash indent=2 consolidation — ✅ Phase 1-4 complete
+
+**Plan:** `docs/planning/ENTRY_HASH_CONSOLIDATION_PHASE1.md` (17 assertions, 4 groups)
+
+**Completed:** 2026-07-18 — Full 4-phase TDD.
+- Phase 1: 17 assertions across 4 groups (A–D)
+- Phase 2: 17 RED tests in `tests/test_entry_hash_consolidation.py`
+- Phase 3: 4 functions updated — `_verify_ledger_entry_hash` (→ 3-way flex), `_verify_entry_hash` (→ 2-way), `_verify_entry_hash_updated` (→ 2-way)
+- Phase 4: 3 improvements — extracted `verify_entry_hash_two_way()` to `helpers.py` (shared by all 3 verifiers), simplified `_verify_entry_hash_flex()` (chain.py), reduced ~30 lines of duplicated hash logic across 3 call sites
+
+---
+
+## 🔵 Phase 6 — CLI Polish
+
+*After cross-client format unification. Polish and performance fixes for the CLI reference implementation.*
+
+### P5: CLI unlock latency — ✅ Phase 1-4 complete
+
+**Plan:** `docs/planning/P5_CLI_UNLOCK_LATENCY_PHASE1.md` (32 assertions, 6 groups)
+
+**Phase 4 improvements:** Extracted `_timeout_s()` in HttpStagingTransport, simplified `effective_key` in RemoteStagingSync.pull(), updated 23 tests for P5 read-only fast path.
+
+### P4: CLI kinks & UX polish
+
+**Next action:** Audit `ph view`/`ph list`/`ph tags` for specifier-mismatch blocking.
 
 ---
 
@@ -320,13 +320,13 @@ cannot actually be rotated — it's all infrastructure and no action.
 | **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
 | **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅, I-02a (5) | 0 | 0 | 1 | 0 |
 | **3** — Encryption gaps | I-03✅, I-02✅ (2 done) | 0 | 0 | 0 | 0 |
-| **4** — Architectural | I-01✅, I-01a, I-09, I-12 (4) | 2 | 0 | 2 | 0 |
-| **5** — CLI polish | P5, P4 (2) | — | — | — | — |
-| **6** — Cross-client | P1, indent=2 (2) | — | — | — | — |
+| **4** — Architectural | I-01✅, I-01a✅, I-09🟢, I-12✅ (4) | 0 | 0 | 1 | 0 |
+| **5** — Cross-client | P1, indent=2 (2) | — | — | — | — |
+| **6** — CLI polish | P5, P4 (2) | — | — | — | — |
 | **7** — Remote sync | P3 (1) | — | — | — | — |
-| **Totals** | **21 open** | **2** | **3** | **5** | **2** |
+| **Totals** | **22 open** | **2** | **3** | **5** | **3** |
 
-**Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅ — Canonical Ledger Format, 2026-07-03.
+**Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅, I-12 (system architecture doc) ✅ — Canonical Ledger Format, 2026-07-17.
 
 ---
 
@@ -339,3 +339,28 @@ cannot actually be rotated — it's all infrastructure and no action.
 **What:** `scripts/archive_handoff.py` — parses `SESSION_HANDOFF.md`, finds sections with `✅` / `🟢` status markers, moves them to a dated archive file (`docs/planning/archive/SESSION_HISTORY_YYYY-MM-DD.md`), and writes back the trimmed handoff. Invoked by the agent at session closeout.
 
 **Effort:** ~30 min. **Trigger:** When manual archiving friction becomes real. **Next action:** N/A — pick up when needed.
+
+### B-02 🟢: Cross-ledger entry migration
+
+**Why:** A user with two separate ledgers (old and new, different seeds, non-overlapping
+activity periods) may want to retire the newer one and consolidate all entries into the
+older ledger. Two seeds = two cryptographic domains — chains can't be spliced — but
+entries can be decrypted from one, re-encrypted under the other, and committed as new
+day blocks.
+
+**Constraints:** All entries in the newer ledger must be chronologically after the older
+ledger's last entry (no overlaps). The newer ledger is retired after migration.
+
+The protocol has all the building blocks (two seeds → two `CryptoManager`s, versioned MK
+derivation, export/import formats) but no packaged command.
+
+**Deliverable:** `cli/migrate_ledger.py` — `ph migrate-ledger --from-seed <seed>` command:
+1. Auth with both seeds → two `CryptoManager` instances
+2. Decrypt all entries from new ledger's day blocks
+3. Re-encrypt with old ledger's MK and commit as new day blocks (preserving dates)
+4. Rebuild index, archive/retire new ledger
+5. Verify chain integrity post-migration
+
+**Effort:** Medium (~1 day). **Depends on:** I-01 (versioned MK) ✅, I-01a (rotation execution) ✅ —
+not a hard dependency but rotation should land first. **Priority:** 🟢 Low — useful but not
+protocol-critical; workaround exists via manual export→import→commit.

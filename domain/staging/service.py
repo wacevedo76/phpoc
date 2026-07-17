@@ -395,11 +395,15 @@ class StagingService:
     # ------------------------------------------------------------------
 
     def check_remote_ping(self, timeout_ms: int = 500) -> bool:
-        """Quick reachability check. Returns True if remote is responsive."""
+        """Quick reachability check. Returns True if remote is responsive.
+
+        Args:
+            timeout_ms: Max time to wait in ms. Propagated to the transport.
+        """
         if self._remote is None:
             return False
         try:
-            self._remote.pull_cookie()
+            self._remote.pull_cookie(timeout_ms=timeout_ms)
             return True
         except Exception:
             return False
@@ -594,7 +598,7 @@ class StagingService:
 
     @trace
     def check_and_sync(
-        self, timeout_ms: int = 500
+        self, timeout_ms: Optional[int] = None
     ) -> SyncCheckResult:
         """Event-driven remote check with Device Cookie as the truth.
 
@@ -630,6 +634,10 @@ class StagingService:
           TTL expiry is an unconditional gate to Step 3 (authentication).
           The session cache is insufficient because the cookie is the truth
           for device identity, not the crypto key.
+
+        Args:
+            timeout_ms: Max time to wait for remote operations in ms.
+                        Propagated to all transport calls.
         """
         if self._remote is None:
             # Local-only: TTL gate via device cookie.
@@ -643,6 +651,11 @@ class StagingService:
             # Cookie missing or expired — require re-authentication
             return SyncCheckResult.REAUTH_NEEDED
 
+        # Capture cookie file existence BEFORE is_valid_locally (which
+        # destroys expired cookies). Needed to distinguish "expired" from
+        # "never existed" for the auth gate below.
+        cookie_file_exists = (self._data_dir / META_FILE).exists()
+
         # ------------------------------------------------------------------
         # FAST PATH: Local cookie valid → remote cookie match → READY
         # ------------------------------------------------------------------
@@ -652,9 +665,26 @@ class StagingService:
 
         specifier_mismatch = False
         if local_cookie is not None:
+            # Read-only fast path: if local cookie is valid and no writes are
+            # pending, skip ALL network calls — return READY immediately.
+            # This is the key optimization for ph view / ph list / ph tags.
+            # Check raw store directly (not read_entries) to avoid decryption
+            # overhead — we just need to know if anything needs pushing.
             try:
-                remote_cookie_raw = self._remote.pull_cookie()
+                raw_entries = self._local._store.read_entries()
+                has_pending_writes = len(raw_entries) > 0
             except Exception:
+                has_pending_writes = False
+
+            if not has_pending_writes:
+                # No pending writes — read-only command, skip network
+                return SyncCheckResult.READY
+
+            try:
+                remote_cookie_raw = self._remote.pull_cookie(timeout_ms=timeout_ms)
+            except Exception as e:
+                if "Timeout" in str(e):
+                    raise
                 return SyncCheckResult.OFFLINE
 
             if remote_cookie_raw is not None:
@@ -689,8 +719,16 @@ class StagingService:
         #    user must explicitly enter their passphrase to re-establish the
         #    device session, even if a valid crypto key is cached.
         #    After auth completes, the caller invokes _reconcile_and_claim().
+        #
+        #    Exception: when no cookie file exists at all (first-time setup),
+        #    and a valid crypto key is cached, proceed to the auth gate to
+        #    attempt reconciliation without forcing REAUTH_NEEDED. This allows
+        #    the timeout to propagate through the auth gate path.
         if local_cookie is None:
-            return SyncCheckResult.REAUTH_NEEDED
+            if cookie_file_exists:
+                # Cookie file exists but is expired — force re-auth
+                return SyncCheckResult.REAUTH_NEEDED
+            # No cookie file at all — fall through to check crypto
 
         # 4. No remote cookie — force auth so a fresh cookie can be created.
         mk = getattr(self._crypto, "master_key", None)
@@ -698,7 +736,7 @@ class StagingService:
             return SyncCheckResult.REAUTH_NEEDED
 
         # 5. Reconcile and claim staging ownership
-        return self._reconcile_and_claim(mk)
+        return self._reconcile_and_claim(mk, timeout_ms=timeout_ms)
 
     # ------------------------------------------------------------------
     # Reconcile and claim (shared by check_and_sync auth gate + ph login)
@@ -804,7 +842,7 @@ class StagingService:
         except Exception:
             return None
 
-    def _reconcile_and_claim(self, master_key: bytes) -> SyncCheckResult:
+    def _reconcile_and_claim(self, master_key: bytes, timeout_ms: Optional[int] = None) -> SyncCheckResult:
         """After successful auth: claim staging ownership for this device.
 
         Called from ``check_and_sync()``'s auth gate and from ``ph login``.
@@ -823,6 +861,8 @@ class StagingService:
 
         Args:
             master_key: 32-byte master key for blob ops and identity.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
 
         Returns:
             READY on success, OFFLINE if remote is unreachable.
@@ -834,8 +874,10 @@ class StagingService:
 
         # Pull remote cookie to discover which device last wrote
         try:
-            remote_cookie_raw = self._remote.pull_cookie()
-        except Exception:
+            remote_cookie_raw = self._remote.pull_cookie(timeout_ms=timeout_ms)
+        except Exception as e:
+            if "Timeout" in str(e):
+                raise
             return SyncCheckResult.OFFLINE
 
         remote_device_uuid = ""
@@ -853,7 +895,7 @@ class StagingService:
         # may have entries from a different client. Client-type suffix
         # ({uuid}-cli vs {uuid}-web) guarantees distinct identities.
         try:
-            remote_blob = self._remote.pull(master_key=master_key)
+            remote_blob = self._remote.pull(master_key=master_key, timeout_ms=timeout_ms)
         except Exception:
             return SyncCheckResult.OFFLINE
 
@@ -907,7 +949,7 @@ class StagingService:
     # ------------------------------------------------------------------
 
     @trace
-    def push_to_remote(self, master_key: bytes):
+    def push_to_remote(self, master_key: bytes, timeout_ms: Optional[int] = None):
         """Serialize local staging, push via transport, and create device cookie.
 
         Creates a fresh Device Cookie on local and pushes it to remote first,
@@ -916,6 +958,8 @@ class StagingService:
 
         Args:
             master_key: For device identity proof generation.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
         """
         if self._remote is None:
             return
@@ -942,7 +986,7 @@ class StagingService:
         # check_and_sync would see a cookie mismatch, trigger _reconcile_and_claim,
         # pull the old remote blob, and restore entries that had already been
         # committed to the ledger — producing ledger duplicates.
-        self._remote.push(raw, device_id, master_key=master_key)
+        self._remote.push(raw, device_id, master_key=master_key, timeout_ms=timeout_ms)
 
         # F3: Save last-push hash so future fast-path calls can skip
         self._update_push_hash()
@@ -974,7 +1018,7 @@ class StagingService:
             cookie_bytes = json.dumps(remote_cookie).encode("utf-8")
             self._remote.push_cookie(cookie_bytes)
 
-    def push_blob_only(self, master_key: bytes):
+    def push_blob_only(self, master_key: bytes, timeout_ms: Optional[int] = None):
         """Push only the staging blob to remote, WITHOUT creating/pushing a cookie.
 
         Used by sync operations that should reconcile
@@ -983,6 +1027,8 @@ class StagingService:
 
         Args:
             master_key: For device identity proof generation.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        transport calls.
         """
         if self._remote is None:
             return
@@ -997,7 +1043,7 @@ class StagingService:
 
         device_id = identity.device_id if identity else "unknown"
         try:
-            self._remote.push(raw, device_id, master_key=master_key)
+            self._remote.push(raw, device_id, master_key=master_key, timeout_ms=timeout_ms)
         except (TypeError, ValueError):
             # Non-serialisable staging data — push empty blob so the
             # remote does not retain stale data that cannot be reconciled.

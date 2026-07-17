@@ -7,7 +7,9 @@ Every method is a thin wrapper over crypto + store operations, producing
 output that is byte-identical to the original core/ledger.py.
 """
 
-from domain.ledger.helpers import get_block_hash
+from domain.ledger.helpers import (
+    get_block_hash, compute_entry_hash, verify_entry_hash_two_way
+)
 
 import json
 import hashlib
@@ -23,23 +25,21 @@ _CONTENT_HASH_REQUIRED_VERSION = (0, 4, 0)
 
 
 def _verify_entry_hash_flex(data: dict, stored_hash: str) -> bool:
-    """Verify an entry hash, trying both serialization formats.
+    """Verify an entry hash, trying all three serialization formats.
 
     Tries:
-      1. 2-space indent (current: web app utils.js, domain/ledger/engine.py)
-      2. No indent (legacy: pre-v0.4 Python CLI)
+      1. sort+indent2 + sort+compact (via verify_entry_hash_two_way)
+      2. nosort+indent2 (legacy: old CLI + current web before Phase 3)
 
-    Returns True if stored_hash matches either format.
+    Returns True if stored_hash matches any format.
     """
-    expected_indent2 = hashlib.sha256(
-        json.dumps(data, sort_keys=True, indent=2).encode()
-    ).hexdigest()
-    if expected_indent2 == stored_hash:
+    if verify_entry_hash_two_way(data, stored_hash):
         return True
-    expected_no_indent = hashlib.sha256(
-        json.dumps(data, sort_keys=True).encode()
+    # Legacy: nosort+indent2
+    expected_nosort_indent2 = hashlib.sha256(
+        json.dumps(data, indent=2).encode()
     ).hexdigest()
-    return expected_no_indent == stored_hash
+    return expected_nosort_indent2 == stored_hash
 
 
 class LedgerChain:
@@ -213,9 +213,7 @@ class LedgerChain:
                 data = e["data"]
             else:
                 data = dict(e)
-            entry_hash = hashlib.sha256(
-                json.dumps(data, sort_keys=True, indent=2).encode()
-            ).hexdigest()
+            entry_hash = compute_entry_hash(data)
             normalized_entries.append({"hash": entry_hash, "data": data})
 
         day_content = {
@@ -382,7 +380,16 @@ class LedgerChain:
 
     def _verify_single_block(self, block: dict, get_mk_for_version=None,
                              require_content_hash: bool = False) -> bool:
-        """Verify a single block's seal with optional per-version MK lookup.
+        """Verify a single block's seal and internal data integrity.
+
+        Checks:
+          1. Block seal (HMAC) — with optional per-version MK lookup
+          2. Entry hashes within day blocks (via _verify_entry_hash_flex)
+          3. Content hash — required at format_version >= 0.4.0,
+             optional when absent at lower versions
+
+        Does NOT check identity_seal/signature — that is handled by the
+        caller (verify() or verify_block()).
 
         Args:
             block: The block to verify.
@@ -486,10 +493,22 @@ class LedgerChain:
         different key version, recomputes the hash using the current block's
         key version. This allows day blocks created before rotation to still
         link to the genesis hash as it was at their version.
+
+        After soft rotation, the genesis identity fields are re-encrypted
+        with the new MK, so the seal data has changed. The old hash is
+        stored as ``prev_block_hash_v{N}`` where N is the old key_version.
+        When present and matching the queried key_version, that stored
+        hash is returned directly.
         """
         stored = get_block_hash(block)
         if (key_version is not None and get_mk_for_version is not None
                 and block.get("type") == "genesis"):
+            # Check for stored previous hash from soft rotation
+            prev_hash_key = f"prev_block_hash_v{key_version}"
+            prev_stored = block.get(prev_hash_key)
+            if prev_stored is not None:
+                return prev_stored
+
             version_crypto = get_mk_for_version(key_version)
             if version_crypto is not None:
                 hash_key = LedgerChain._hash_key_for_block(block)

@@ -372,13 +372,10 @@ class TestCrossDeviceEntryLifecycle(unittest.TestCase):
         # Mock the remote blob from A's push
         transport_b._blob = transport_a._blob
 
-        # B checks_and_syncs — no local cookie in B's dir → REAUTH_NEEDED
+        # B checks_and_syncs — no local cookie in B's dir, but valid crypto
+        # session exists → auto-reconcile returns READY (P5 behavior)
         result = svc_b.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
-
-        # Simulate post-auth reconciliation (same path as main.py after login)
-        result2 = svc_b._reconcile_and_claim(TEST_MASTER_KEY)
-        self.assertEqual(result2, SyncCheckResult.READY)
+        self.assertEqual(result, SyncCheckResult.READY)
 
         # B should now have A's "Coding" active
         entries_b = svc_b.get_entries()
@@ -578,6 +575,9 @@ class TestFreshnessBasedPull(unittest.TestCase):
         svc_b._last_auth_time = time.time()  # Fresh auth cache
         transport_b._blob = transport_a._blob
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc_b.capture("BTask", 500, stop_epoch=800)
         # Device B should pull and merge (different device, auth fresh)
         result = svc_b.check_and_sync()
         self.assertEqual(result, SyncCheckResult.READY)
@@ -607,16 +607,20 @@ class TestFreshnessBasedPull(unittest.TestCase):
         # Make the remote blob available (as if second terminal pulls from same git repo)
         transport_2._blob = transport_1._blob
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc_2.capture("Terminal2Task", 500, stop_epoch=800)
         # Terminal 2's last_push_at is old (never pushed), remote updated_at is newer
         svc_2._last_push_at = 500  # Old
 
         result = svc_2.check_and_sync()
         self.assertEqual(result, SyncCheckResult.READY)
 
-        # Terminal 2 should now have the entry
+        # Terminal 2 should now have the entry from Terminal 1
         entries_2 = svc_2.get_entries()
         self.assertGreaterEqual(len(entries_2), 1)
-        self.assertEqual(entries_2[0]["title"], "Terminal1Task")
+        titles = {e["title"] for e in entries_2}
+        self.assertIn("Terminal1Task", titles)
 
 
 # =============================================================================
@@ -860,6 +864,10 @@ class TestAuthCacheInteraction(unittest.TestCase):
         store = _make_staging_store()
         svc, transport = self._make_service(store)
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("MismatchExpired", 1000, stop_epoch=2000)
+
         # Remote cookie has DIFFERENT specifier
         from tests.conftest import make_remote_cookie_bytes
         transport._cookie = make_remote_cookie_bytes(specifier="different-spec", device_uuid=DEVICE_B_UUID)
@@ -876,6 +884,10 @@ class TestAuthCacheInteraction(unittest.TestCase):
         """
         store = _make_staging_store()
         svc, transport = self._make_service(store)
+
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("MismatchFresh", 1000, stop_epoch=2000)
 
         # Remote cookie has DIFFERENT specifier
         from tests.conftest import make_remote_cookie_bytes
@@ -905,9 +917,9 @@ class TestRemoteOffline(unittest.TestCase):
     def test_remote_offline_returns_offline(self):
         """Transport pull raises → check_and_sync returns OFFLINE.
 
-        With no local cookie, the new workflow returns REAUTH_NEEDED first
-        (because the auth gate is entered before any remote call). The
-        caller handles REAUTH_NEEDED by prompting for authentication.
+        With no local cookie but valid crypto, the P5 behavior falls
+        through to _reconcile_and_claim which attempts the remote and
+        returns OFFLINE when unreachable.
         """
         store = _make_staging_store()
 
@@ -920,8 +932,8 @@ class TestRemoteOffline(unittest.TestCase):
                              data_dir=str(self._data_dir))
 
         result = svc.check_and_sync()
-        # No local cookie → REAUTH_NEEDED (auth gate before remote call)
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+        # No cookie + valid crypto → reconcile attempt → offline
+        self.assertEqual(result, SyncCheckResult.OFFLINE)
 
     def test_offline_then_capture_succeeds(self):
         """When remote is offline, capture still works (local-only mode)."""
@@ -936,8 +948,8 @@ class TestRemoteOffline(unittest.TestCase):
                              data_dir=str(self._data_dir))
 
         result = svc.check_and_sync()
-        # No local cookie → REAUTH_NEEDED
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+        # No cookie + valid crypto → reconcile attempt → offline
+        self.assertEqual(result, SyncCheckResult.OFFLINE)
 
         # Local operation should still work
         svc.capture("OfflineTask", 1000, stop_epoch=2000)
@@ -962,14 +974,10 @@ class TestRemoteOffline(unittest.TestCase):
         # Simulate offline: no blob available
         transport._blob = None
         result_offline = svc.check_and_sync()
-        # No remote cookie → local_cookie missing (no local cookie set up) →
-        # returns REAUTH_NEEDED (per new workflow). This test was written for
-        # the old model.
-        # After auth, _reconcile_and_claim would handle the sync.
-        self.assertEqual(result_offline, SyncCheckResult.REAUTH_NEEDED)
+        # No cookie + valid crypto → auto-reconcile succeeds (empty remote)
+        self.assertEqual(result_offline, SyncCheckResult.READY)
 
-        # Now online: blob becomes available — but with local TTL expired/no cookie,
-        # auth is still required per workflow
+        # Now online: blob becomes available — auto-reconcile pulls and merges
         transport._blob = json.dumps({
             "device_id": DEVICE_A_ID,
             "device_proof": "",
@@ -977,9 +985,8 @@ class TestRemoteOffline(unittest.TestCase):
             "updated_at": int(_time.time() * 1000),
         }).encode("utf-8")
 
-        # Still REAUTH_NEEDED without a valid local cookie
         result_online = svc.check_and_sync()
-        self.assertEqual(result_online, SyncCheckResult.REAUTH_NEEDED)
+        self.assertEqual(result_online, SyncCheckResult.READY)
 
 
 # =============================================================================
@@ -1296,6 +1303,9 @@ class TestFastPathUnconditionalCookieTouch:
         make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("TouchTest", 1000, stop_epoch=2000)
         svc.check_and_sync()
 
         meta_path = cookie_dir / META_FILE
@@ -1316,6 +1326,9 @@ class TestFastPathUnconditionalCookieTouch:
         make_local_cookie(cookie_dir, specifier=specifier, creation_time_epoch_ms=created_ms)
         spy.set_cookie(make_remote_cookie_bytes(specifier=specifier, device_uuid=DEVICE_A_UUID))
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("OldTouchTest", 1000, stop_epoch=2000)
         svc.check_and_sync()
 
         meta_path = cookie_dir / META_FILE
@@ -1725,6 +1738,9 @@ class TestSpecifierMismatchCaseB:
         # Remote cookie has specifier B (different device wrote)
         spy.set_cookie(make_remote_cookie_bytes(specifier="spec-b", device_uuid=DEVICE_B_UUID))
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("SpecMismatch", 1000, stop_epoch=2000)
         result = svc.check_and_sync()
 
         assert result == SyncCheckResult.REAUTH_NEEDED, \
@@ -1746,6 +1762,9 @@ class TestSpecifierMismatchCaseB:
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("CaseBEntry", 500, stop_epoch=800)
         # First call returns REAUTH_NEEDED → simulate auth by calling
         # reconcile_and_claim directly, which is what ph login does
         result = svc.check_and_sync()
@@ -2217,6 +2236,9 @@ class TestCookieTouchBoundary:
             data_dir=str(cookie_dir),
         )
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("TouchBoundary", 1000, stop_epoch=2000)
         svc.check_and_sync()
 
         meta_path = cookie_dir / META_FILE
@@ -2279,6 +2301,9 @@ class TestCookieTTLConfig:
             data_dir=str(cookie_dir),
         )
 
+        # Add a pending entry so the fast path enters the network sync
+        # path (P5 read-only fast path skips network when no writes)
+        svc.capture("TTLTouch", 1000, stop_epoch=2000)
         svc.check_and_sync()
 
         meta_path = cookie_dir / META_FILE
@@ -2491,32 +2516,23 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         self.assertTrue(meta_path_a.exists())
 
         # ==============================================================
-        # STEP 2: Device B arrives — no local cookie → REAUTH_NEEDED
+        # STEP 2: Device B arrives — no local cookie, valid crypto →
+        #         auto-reconcile returns READY (P5 behavior)
         # ==============================================================
         svc_b, spy_b, store_b = self._make_service(DEVICE_B_UUID, data_dir_b)
 
         # Wire B's transport to point at A's remote (shared transport data)
         spy_b._blobs = dict(spy_a._blobs)  # Copy all remote data (blob + cookie)
 
-        # B checks without any local cookie
+        # B checks without any local cookie — P5 auto-reconciles when
+        # valid crypto is available and no cookie file exists
         result = svc_b.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED,
-                         "No local cookie → must re-auth")
-
-        # No local cookie → check_and_sync returns REAUTH_NEEDED
-        # immediately without pulling remote cookie (by design — wasted
-        # network call when auth is required anyway). The blob is also
-        # never pulled before auth.
-        self.assertEqual(spy_b.pull_cookie_calls, 0,
-                         "No local cookie → no remote cookie pull")
-        self.assertEqual(spy_b.pull_blob_calls, 0,
-                         "B must NOT pull blob before auth")
+        self.assertEqual(result, SyncCheckResult.READY,
+                         "Valid crypto + no cookie → auto-reconcile → READY")
 
         # ==============================================================
-        # STEP 3: Device B authenticates → reconcile_and_claim
+        # STEP 3: B should already have A's entries from auto-reconcile
         # ==============================================================
-        result = self._simulate_reconcile(svc_b)
-        self.assertEqual(result, SyncCheckResult.READY)
 
         # B should now have A's entries merged in
         entries_b = svc_b.get_entries()
@@ -2539,18 +2555,20 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
                                 "B must push blob after adding entry")
 
         # ==============================================================
-        # STEP 4: Device A returns — stale cookie → specifier mismatch
+        # STEP 4: Device A returns — stale cookie, no pending writes →
+        #         P5 fast path returns READY; reconcile pulls merged blob
         # ==============================================================
         svc_a2, spy_a2, store_a2 = self._make_service(DEVICE_A_UUID, data_dir_a)
 
         # Point A2's transport at B's remote state
         spy_a2._blobs = dict(spy_b._blobs)
 
-        # A's local cookie still exists (from step 1) but the remote cookie
-        # now has B's specifier → mismatch → REAUTH_NEEDED
+        # A's local cookie still exists but no pending writes in
+        # staging → P5 read-only fast path returns READY.
+        # Reconcile directly to pull merged blob from remote.
         result = svc_a2.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED,
-                         "Specifier mismatch must trigger re-auth")
+        self.assertEqual(result, SyncCheckResult.READY,
+                         "Valid cookie + no writes → READY (P5 fast path)")
 
         # ==============================================================
         # STEP 5: Device A authenticates → pulls merged blob
@@ -2621,12 +2639,8 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         svc_b, spy_b, _ = self._make_service(DEVICE_B_UUID, data_dir_b)
         spy_b._blobs = dict(spy_a._blobs)
 
-        # B has no local cookie → REAUTH_NEEDED
+        # B has no local cookie — P5 auto-reconciles with valid crypto
         result = svc_b.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
-
-        # B authenticates
-        result = self._simulate_reconcile(svc_b)
         self.assertEqual(result, SyncCheckResult.READY)
 
         # B should see A's active task
@@ -2650,11 +2664,11 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         svc_a2, spy_a2, _ = self._make_service(DEVICE_A_UUID, data_dir_a)
         spy_a2._blobs = dict(spy_b._blobs)
 
-        # A has stale cookie → mismatch → REAUTH_NEEDED
+        # A has stale cookie, no pending writes → P5 fast path READY
         result = svc_a2.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+        self.assertEqual(result, SyncCheckResult.READY)
 
-        # A authenticates
+        # Pull merged blob from remote via reconcile
         result = self._simulate_reconcile(svc_a2)
         self.assertEqual(result, SyncCheckResult.READY)
 
@@ -2689,12 +2703,12 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         svc_a.capture("A1", 1_000_000, stop_epoch=2_000_000)
         svc_a.push_to_remote(TEST_MASTER_KEY)
 
-        # --- Phase 2: B auths, pulls A1, adds B1+B2, pushes ---
+        # --- Phase 2: B auths (P5 auto-reconcile), pulls A1, adds B1+B2, pushes ---
         svc_b, spy_b, _ = self._make_service(DEVICE_B_UUID, data_dir_b)
         spy_b._blobs = dict(spy_a._blobs)
 
-        svc_b.check_and_sync()  # REAUTH_NEEDED
-        self._simulate_reconcile(svc_b)
+        svc_b.check_and_sync()  # P5 auto-reconcile → READY
+        # B should have A1 from auto-reconcile
 
         # B adds two entries independently
         svc_b.capture("B1", 3_000_000, stop_epoch=4_000_000)
@@ -2715,6 +2729,7 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         # Point A at B's remote (which has A1+B1+B2, but NOT A2)
         spy_a._blobs = dict(spy_b._blobs)
 
+        # A has entries → network path detects specifier mismatch
         result = svc_a.check_and_sync()
         self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
 
@@ -2742,10 +2757,10 @@ class TestCrossDeviceHandoffFullRoundTrip(unittest.TestCase):
         svc_b2._remote._transport = spy_b2
 
         # B has its own local cookie from phase 2 (now stale because
-        # A overwrote remote cookie). But B's local TTL might still be
-        # valid. The specifier won't match → REAUTH_NEEDED.
+        # A overwrote remote cookie). With no pending writes, P5 fast
+        # path returns READY; reconcile picks up A's merged blob.
         result = svc_b2.check_and_sync()
-        self.assertEqual(result, SyncCheckResult.REAUTH_NEEDED)
+        self.assertEqual(result, SyncCheckResult.READY)
 
         result = self._simulate_reconcile(svc_b2)
         self.assertEqual(result, SyncCheckResult.READY)
