@@ -11,7 +11,7 @@
 ## Current State
 - **Branch:** `Staging_migration`
 - **Last commit:** `cb3b0af` — promote E2E-05 seal/hash mismatch to top of task queue
-- **CLI:** 1974 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)  |  **I-03:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web GREEN  |  **I-02:** ✅ Phase 1-4 complete — 103/103 PY + 67/67 JS all GREEN  |  **I-02a:** ✅ Phase 1-4 complete — 28/28 field token WASM + 35/35 staging keys + 32/32 index encryption all GREEN; 3 Phase-4 improvements: extracted `_applyFieldsToData()`, clarified `_encrypt()` guard + `_fieldTokenCache` lifetime
+- **CLI:** 1974 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)  |  **I-03:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web GREEN  |  **I-02:** ✅ Phase 1-4 complete — 103/103 PY + 67/67 JS all GREEN  |  **I-02a:** ✅ Phase 1-4 complete — 28/28 field token WASM + 35/35 staging keys + 32/32 index encryption all GREEN; 3 Phase-4 improvements: extracted `_applyFieldsToData()`, clarified `_encrypt()` guard + `_fieldTokenCache` lifetime  |  **I-01:** ✅ Phase 1-4 complete — 95/95 PY + 13/13 JS all GREEN; 5 Phase-4 improvements: hoisted `genesis_kv` in chain `verify()`, simplified redundant `require_content_hash` check, clarified `CryptoManager.__init__` docstring + `_keys` comment + JS `deriveMk` section header
 
 ## C5 File Upload Limitation — RESOLVED (2026-07-16)
 - React 18 native event delegation picks up `new Event('change', {bubbles: true})`
@@ -35,13 +35,15 @@
 | 1 | 🟢 Phase 1b | E2E-03✅, E2E-07✅, E2E-05✅ — all complete |
 | 2 | ⬜ Phase 2 | I-04✅ I-05✅ I-06✅ I-11✅ — all complete |
 | 3 | 🟠 Phase 3 | I-03✅✅ staging encryption (Phases 1-4 done), I-02a✅ blind index field-name encryption (Phases 1-4 done) |
-| 4 | 🔴 Phase 4 | I-01🔴 key rotation, I-09🟡 device attribution, I-12🟡 arch doc |
+| 4 | 🔴 Phase 4 | I-01a🔴 RotateKeysCommand execution, I-09🟡 device attribution, I-12🟡 arch doc |
 | 5 | 🔵 Phase 5 | CLI polish: P5 unlock latency, P4 UX kinks |
 
 ## Immediate Next Steps 🎯
-1. **I-01 key rotation** (🔴 Critical) — next priority
+1. **I-01a RotateKeysCommand** (🔴 Critical) — Implement `soft_rotate()`/`hard_rotate()` execution: re-encrypt identity_secret, staging, index, cookie; re-seal genesis; hard rotation adds full chain rewrite + backup. Blocks: I-09 (needs rotation to re-derive device IDs).
+   - **TDD:** Single 4-phase cycle with split GREEN (3a → soft, 3b → hard). Hard rotation subsumes soft — no need for two cycles.
 
 ## Known Issues
+- **I-01 ✅ Phase 1-4 complete** — 95/95 PY + 13/13 JS all GREEN. Phase 4 improvements: hoisted `genesis_kv` out of loop in chain `verify()`, simplified redundant `require_content_hash` check in `_verify_single_block()`, clarified `CryptoManager.__init__` docstring (`key_version`), added comment about `_keys` dict population during rotation, fixed misleading "Pure-JS" comment on JS `deriveMk`. **Post-Phase-4 fix:** `deriveMk` rewritten from Node `crypto.createHmac` → Web Crypto API (`crypto.subtle`) for browser compatibility; Vite no longer throws "Module externalized" error.
 - **I-02a ✅ Phase 1-4 complete** — 95/95 tests GREEN. Phase 4 improvements: extracted `_applyFieldsToData()` to eliminate duplication in `update()`, clarified `_encrypt()` mock-compat guard comment, documented `_fieldTokenCache` lifetime (tied to MK, recreated per session).
 - **E2E-05 seal mismatch:** ✅ Phases 1-4 complete. 763 ledger tests pass. 7 improvements.
 - **I-03 staging encryption:** ✅ Phases 1-4 complete. 5 Phase-4 improvements: docstring fixes (×2 `local_cache.py`), extracted `_find_active_entry()` in `service.py`, extracted `_safeRefreshHashIndex()` in `local_cache.js`, simplified JS `_encrypt()`. All tests GREEN.

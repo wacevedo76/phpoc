@@ -201,19 +201,48 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **Why:** One MK protects everything forever. Compromise = permanent, catastrophic, no remediation path.
 **Flaw doc severity:** Critical — the single biggest architectural gap in the protocol.
+**Status:** ✅ Phases 1-4 complete (2026-07-17). ADR-026 implemented: `derive_mk()` + versioned `CryptoManager` in crypto.py, multi-version `verify()`/`verify_block()` with `get_mk_for_version` in chain.py, `get_mk()`/`key_version`/`_keys` in auth.py, `RotateKeysCommand` skeleton in cli/rotate_keys.py, JS `deriveMk()` + `CryptoManager` in phpoc-web. 95/95 PY + 13/13 JS GREEN. 5 Phase-4 improvements.
 
 **Required:** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
 
 | Deliverable | What |
 |-------------|------|
-| ADR | Design the rotation protocol |
+| ~~ADR~~ | ✅ ADR-026: versioned MKs, per-block key_version, soft+hard rotation |
 | `domain/ledger/engine.py` | Key version field + multi-version verification |
 | `security/crypto.py` | Re-encrypt entry with new MK |
 | Migration | Re-encrypt existing chain under new key |
 
-**Effort:** High (weeks). **Depends on:** I-04 (naming), I-06 (content_hash required).
+**Effort:** High (weeks). **Depends on:** I-04 (naming) ✅, I-06 (content_hash required) ✅.
 
-**Next action:** Write ADR. No code until design is reviewed.
+**Next action:** See I-01a below.
+
+### I-01a 🔴: RotateKeysCommand execution
+
+**Why:** I-01 built the crypto primitives (versioned MK derivation, multi-version chain
+verification) but the actual rotation command is still a skeleton. Without this, the MK
+cannot actually be rotated — it's all infrastructure and no action.
+**Status:** 🔜 Not started. **Depends on:** I-01 (crypto foundation) ✅.
+**Blocks:** I-09 (device attribution needs rotation to re-derive device IDs).
+
+**Soft rotation deliverables:**
+- Re-authenticate and verify chain integrity
+- Derive new MK (key_version = current + 1)
+- Re-encrypt `identity_secret_enc_fallback` with new MK
+- Re-encrypt all staging entries with new MK
+- Rebuild and re-encrypt blind index with new index key
+- Re-derive device cookie with new MK
+- Re-seal genesis with new MK (increment `key_version`)
+
+**Hard rotation (`--full`) adds:**
+- Create backup of current chain
+- Re-encrypt every entry in every day block
+- Update `key_version` on all blocks
+- Recompute all seals, MACs, and `prev_hash` links
+
+**Files:** `cli/rotate_keys.py` (main), `security/auth.py` (`_keys` population),
+`domain/ledger/chain.py` (re-seal helpers), `storage/` (backup).
+
+**Effort:** Medium. **Next action:** Phase 1 (test blueprint) → Phase 2-4 TDD.
 
 ### I-09 🟡: Hardware-bound device attribution
 
@@ -291,7 +320,7 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 | **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
 | **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅, I-02a (5) | 0 | 0 | 1 | 0 |
 | **3** — Encryption gaps | I-03✅, I-02✅ (2 done) | 0 | 0 | 0 | 0 |
-| **4** — Architectural | I-01, I-09, I-12 (3) | 1 | 0 | 2 | 0 |
+| **4** — Architectural | I-01✅, I-01a, I-09, I-12 (4) | 2 | 0 | 2 | 0 |
 | **5** — CLI polish | P5, P4 (2) | — | — | — | — |
 | **6** — Cross-client | P1, indent=2 (2) | — | — | — | — |
 | **7** — Remote sync | P3 (1) | — | — | — | — |
