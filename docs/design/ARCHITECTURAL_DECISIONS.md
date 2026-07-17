@@ -499,7 +499,7 @@ Random filler bytes pad to class ceiling before encryption. User-configurable. B
 
 | Layer | ADRs |
 |-------|------|
-| **Key Management** | ADR-001 (Sovereign Key), ADR-004 (PBKDF2 600K) |
+| **Key Management** | ADR-001 (Sovereign Key), ADR-004 (PBKDF2 600K), ADR-026 (Key Rotation) |
 | **Encryption** | ADR-002 (Encrypt-then-MAC), ADR-013 (`_enc` suffix) |
 | **Identity** | ADR-003 (Ed25519 Proxy) |
 | **Chain Structure** | ADR-007 (Hierarchical Lock Chain), ADR-012 (Chain Splitting) |
@@ -813,7 +813,7 @@ Three complementary changes:
 
 | Layer | ADRs |
 |-------|------|
-| **Key Management** | ADR-001 (Sovereign Key), ADR-004 (PBKDF2 600K) |
+| **Key Management** | ADR-001 (Sovereign Key), ADR-004 (PBKDF2 600K), ADR-026 (Key Rotation) |
 | **Encryption** | ADR-002 (Encrypt-then-MAC), ADR-013 (`_enc` suffix) |
 | **Identity** | ADR-003 (Ed25519 Proxy) |
 | **Chain Structure** | ADR-007 (Hierarchical Lock Chain), ADR-012 (Chain Splitting) |
@@ -1530,3 +1530,342 @@ Detailed implementation rules and step-by-step phases are defined in:
 - `docs/planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` — Phase 3
   activity_id + staging hash index work that this design supersedes (staging hash index
   becomes redundant)
+
+---
+
+## ADR-026: Key Rotation — Versioned Master Keys
+
+**Date:** 2026-07-17
+**Status:** 🔮 Design direction — I-01 Phase 1
+**Depends on:** I-04 ✅ (seal naming), I-06 ✅ (content_hash required)
+
+### Context
+
+The current architecture has a single Master Key (MK) that protects every entry,
+block seal, index file, staging entry, and device cookie for the entire lifetime
+of the ledger (ADR-001). The Seed _is_ the MK — 32 raw bytes. There is no
+mechanism to rotate keys.
+
+This is the single largest architectural gap in the protocol (BACKLOG §I-01,
+🔴 Critical). If the MK is ever compromised — via memory dump, session cache
+extraction, brute-forced passphrase, or lost/stolen device — all historical
+_and_ future data is permanently exposed with no remediation path.
+
+Key rotation must satisfy every top-level directive:
+
+| Directive | Requirement |
+|-----------|-------------|
+| D2 (Zero-Knowledge) | Old data must still be decryptable by the authorized user after rotation |
+| D4 (Chain of Trust) | Block seals and identity MACs must verify across key versions |
+| D5 (Append-Only) | Historical blocks are never modified (soft rotation); hard rotation is an explicit migration with backup |
+| D8 (Recoverability) | The Recovery Seed must still recover the entire ledger, including data under rotated keys |
+| D9 (Backward Compat) | Existing ledgers must continue to work — rotation is opt-in |
+
+### Decision
+
+**Three-part design: versioned MK derivation, per-block key_version, and dual
+rotation modes (soft/hard).**
+
+#### 1. Versioned Master Key Derivation
+
+Instead of seed = MK, the seed now derives versioned master keys via HMAC:
+
+```python
+# Seed is the root — still 32 raw bytes from base64 decode
+seed = base64.b64decode(seed_string)
+
+# Versioned master keys — domain-separated, deterministic
+def derive_mk(seed: bytes, version: int) -> bytes:
+    return hmac.new(seed, f"phpoc:mk:v{version}".encode(), hashlib.sha256).digest()
+
+MK_v1 = derive_mk(seed, 1)  # 32 bytes
+MK_v2 = derive_mk(seed, 2)  # 32 bytes — after first rotation
+MK_vN = derive_mk(seed, N)  # 32 bytes — after N-1 rotations
+```
+
+**Backward compatibility:** The existing seed = MK behavior is equivalent to
+`key_version = 1`. An existing ledger has `MK = seed` (the raw seed bytes).
+After adopting this ADR, `MK_v1 = HMAC(seed, "phpoc:mk:v1")` — a different
+value. This means **the first rotation is also a key change from the
+original seed-as-MK to the derived MK_v1.**
+
+This is the correct behavior: the original seed-as-MK design is `key_version = 0`
+(implicit). The first explicit rotation moves to `key_version = 1` with a proper
+derived MK. The seed still recovers everything — it just goes through the HMAC
+step.
+
+**Why HMAC over SHA-256?** HMAC-SHA256 with the seed as key and a versioned
+message provides domain separation that SHA-256 alone does not. It prevents
+an attacker who knows MK_v2 from computing MK_v1 or MK_v3 — the HMAC is
+non-invertible without the seed.
+
+#### 2. key_version Field
+
+**Genesis block** carries the _current active_ key version:
+
+```json
+{
+  "type": "genesis",
+  "format_version": "0.5.0",
+  "key_version": 2,
+  ...
+}
+```
+
+**Day blocks** carry the key version used to encrypt their entries:
+
+```json
+{
+  "type": "day",
+  "day_index": 42,
+  "key_version": 1,
+  "entries": [ ... ],
+  ...
+}
+```
+
+- If a day block has no `key_version` field, it defaults to the genesis
+  `key_version` (backward compatibility with pre-rotation ledgers).
+- Genesis `key_version` is always the highest (most recent) version.
+- New blocks always use genesis `key_version`.
+- Summary blocks (year/month) also carry `key_version` for consistency
+  (their seals use the versioned MK, same as day blocks).
+
+**Identity secret is version-independent.** The identity secret is a random
+32-byte value, not derived from the MK. It is encrypted with the _current_
+MK for storage in genesis (`identity_secret_enc_fallback`). On rotation,
+this encrypted envelope is re-encrypted with the new MK. The identity
+secret itself never changes — old block identity MACs remain valid.
+
+#### 3. Per-Version Sub-Key Derivation
+
+All sub-keys are derived from the versioned MK:
+
+```python
+# encryption sub-key (per operation)
+enc_key = HMAC(MK_vN, random_16_byte_salt, sha256)[:16]
+
+# integrity sub-key (per operation)
+integrity_key = HMAC(MK_vN, random_16_byte_salt + b"-integrity", sha256)[:32]
+
+# block sealing sub-key (fixed salt — per version)
+seal_key = HMAC(MK_vN, b"integrity-key-salt", sha256)[:32]
+
+# index encryption key
+index_key = HMAC(MK_vN, b"phpoc-blind-index-v1", sha256)[:16]
+
+# field token key
+field_key = HMAC(MK_vN, b"phpoc-staging-keys-v1", sha256)[:16]
+
+# device cookie key
+cookie_key = HMAC(MK_vN, b"phpoc:cookie-key", sha256)[:32]
+```
+
+This means **every derived key changes with version.** Block seals computed
+under MK_v1 will not verify with MK_v2. The system must select the correct
+MK version per block.
+
+#### 4. Session Key Material
+
+On authentication, the system derives **all MKs from v1 through the current
+genesis key_version** and caches them:
+
+```python
+mks = {}
+for v in range(1, genesis_key_version + 1):
+    mks[v] = derive_mk(seed, v)
+```
+
+This is cheap: each derivation is one HMAC-SHA256 (~microseconds). For a
+ledger with 3 key versions, it's 3 HMACs. The cache lives in the session
+RAM cache (ADR-014) and is cleared on logout/reboot.
+
+**Sub-key caches per version** may also be pre-derived for the hot path
+(encryption, sealing, index ops all use the current MK version). Old
+versions are derived on-demand during verification or when reading old
+blocks.
+
+#### 5. Dual Rotation Modes
+
+##### Soft Rotation (Lazy — `ph rotate-keys`)
+
+1. Increment genesis `key_version` from N to N+1
+2. Derive MK_(N+1) from seed
+3. Re-encrypt `identity_secret_enc_fallback` with MK_(N+1)
+4. Re-encrypt staging entries (if any) with MK_(N+1)
+5. Rebuild and re-encrypt blind index with MK_(N+1)
+6. Recompute device cookie with MK_(N+1)
+7. Re-seal genesis with MK_(N+1) sealing sub-key
+8. Recompute identity MAC on genesis
+
+**Existing blocks are NOT touched.** They remain under their original
+key_version. New blocks will use `key_version: N+1`.
+
+**Pros:** Fast (O(1) — only genesis + staging + index). Non-destructive.
+Old blocks can be archived later to naturally phase out old keys.
+
+**Cons:** Old MKs must be retained for as long as old blocks exist.
+Compromise of an old MK still exposes data from that key version's era.
+
+##### Hard Rotation (Full — `ph rotate-keys --full`)
+
+1. Perform soft rotation steps 1–7
+2. For every day block in the chain:
+   a. Decrypt all entry fields with the block's current MK version
+   b. Re-encrypt all entry fields with MK_(N+1)
+   c. Update `key_version` to N+1
+   d. Recompute entry hashes
+3. Re-seal every block with MK_(N+1) sealing sub-key (changes day_hash)
+4. Re-link the chain (all prev_hash values change — cascading rewrite)
+5. Recompute identity MACs on every block
+6. Backup the old chain before overwriting
+
+**Pros:** Old MKs can be securely discarded. Full cryptographic hygiene.
+Every byte of ciphertext is protected by the new key.
+
+**Cons:** O(entries) — re-encrypts every entry. Changes every block hash.
+Requires full chain rewrite. Only practical for ledgers with < ~100K entries.
+
+#### 6. Recovery Flow
+
+Recovery (`ph recover`) with the seed:
+
+1. Prompt for new passphrase
+2. Derive new PDK from new passphrase
+3. Re-encrypt seed with new PDK → update `recovery_seed_enc` in genesis
+4. Derive ALL MK versions from the seed (up to genesis `key_version`)
+   — unchanged because the seed is unchanged
+5. Re-seal genesis with current MK version
+6. Cache all MKs in session
+
+**No entry data changes during recovery.** The seed is the root — all
+MK versions derive from it deterministically.
+
+#### 7. Verify Across Versions
+
+`verify()` must handle multi-version chains:
+
+```python
+def verify(self):
+    # ...
+    for block in ledger:
+        kv = block.get("key_version", genesis_key_version)
+        mk = self._get_mk(kv)  # from session cache
+        seal_key = derive_seal_key(mk)
+
+        # Verify block seal uses versioned key
+        if not verify_seal_with_key(block, seal_key):
+            return False
+
+        # For day blocks: decrypt entries with versioned MK
+        if block["type"] == "day":
+            for entry in block["entries"]:
+                if not verify_entry(entry, mk):
+                    return False
+
+    return True
+```
+
+**Backward compatibility:** Existing ledgers have no `key_version` field.
+`verify()` defaults missing `key_version` to the genesis value. For pre-ADR
+ledgers where seed = MK, the system treats them as `key_version = 0` and
+uses the seed directly as MK (the current behavior). After the first
+rotation, `key_version = 1` with the HMAC-derived MK.
+
+### Rationale
+
+**Why versioned derivation instead of new random keys?**
+Deterministic derivation from the seed means the seed still recovers
+everything (D8). If we generated independent random keys per rotation,
+we'd need to encrypt each old key under the new key and store them all —
+a key tree that grows linearly with versions and is fragile (lose the
+latest envelope, lose everything). The seed is the single secret a user
+must safeguard (ADR-001) — keeping it as the root preserves simplicity.
+
+**Why HMAC over SHA-256?**
+HMAC-SHA256(seed, message) is a PRF (pseudorandom function) when the key
+is uniform random. SHA-256 alone without keying is not — an attacker who
+knows SHA-256(seed || "v2") might have an advantage in computing
+SHA-256(seed || "v1") via length-extension or structure. HMAC eliminates
+this class of attack. The seed is the HMAC key; the version tag is the
+message. Non-invertibility is guaranteed by the PRF property.
+
+**Why soft rotation as default?**
+Soft rotation is the practical default: fast, safe, non-destructive. Most
+users will do soft rotations periodically (e.g., yearly) and old blocks
+will naturally age out through archiving (ADR-012, split at year
+boundaries). Hard rotation is for the "I think my key was compromised"
+scenario, where re-encrypting everything is worth the cost.
+
+**Why not per-entry key_version?**
+Entries within a day block all share the same key version (the block's
+version). Per-entry versioning would add complexity without benefit: all
+entries in a block are sealed together at the same time. If we ever need
+mixed-version entries (e.g., partial re-encryption), we can add it later
+without breaking the format — `key_version` on the entry would override
+the block default.
+
+**Why sub-keys change with MK version?**
+The sub-key derivation salt (`b"integrity-key-salt"`, etc.) is fixed.
+If the MK doesn't change, sub-keys don't change — same as today. But if
+sub-keys _didn't_ change with MK version, key rotation would be
+meaningless: an attacker who knows the old MK could derive the same
+sub-keys and decrypt new data. Making sub-keys version-dependent ensures
+that MK_v1 cannot derive the keys used by MK_v2.
+
+### Consequences
+
+- **Positive:**
+  - Single largest architectural gap closed — key rotation is now possible
+  - Seed still recovers everything (D8 preserved)
+  - Existing ledgers work unchanged (D9 preserved)
+  - Soft rotation is near-instant (O(1) blocks touched)
+  - Hard rotation provides full cryptographic hygiene when needed
+  - Identity secret is version-independent — old block signatures stay valid
+  - Content hashes are unaffected (they're over plaintext, not ciphertext)
+
+- **Negative:**
+  - First rotation changes the MK (from raw seed to HMAC-derived MK_v1) —
+    a subtle but necessary one-time shift
+  - All sub-keys change per version — block seals, index encryption, staging
+    encryption, device cookies must all be re-derived
+  - verify() must select the correct MK per block (adds a dict lookup)
+  - Hard rotation rewrites the entire chain (backup required; D5 requires
+    explicit migration with backup, not in-place destruction)
+  - `format_version` bump required for `key_version` field support
+  - `identity_secret_enc_fallback` must be re-encrypted on every rotation
+
+- **Open questions:**
+  - Staging entries under old key versions after soft rotation: should they
+    be re-encrypted eagerly or lazily? Proposal: eagerly on soft rotation
+    (staging is mutable, small, and a re-encrypt is cheap).
+  - Maximum key versions? Proposal: no hard limit. A personal ledger might
+    see 5–10 versions over its lifetime. Derivation cost is negligible.
+  - User interface for `ph rotate-keys`: require passphrase re-entry for
+    safety (like `ph sync remote_ledger` forces re-auth).
+
+### Implementation Scope
+
+| Layer | File | Change |
+|-------|------|--------|
+| **Spec** | `PHPSPEC.md` §2, §4, §5 | Document `key_version` field, versioned MK derivation, dual rotation modes |
+| **Crypto** | `security/crypto.py` | `derive_mk(seed, version)` function; `CryptoManager` accepts optional `key_version` |
+| **Key mgmt** | `security/auth.py` | On auth: derive all MKs v1..N, cache in session |
+| **Chain** | `domain/ledger/chain.py` | `key_version` on block build; per-block MK selection in `verify()` |
+| **Engine** | `domain/ledger/engine.py` | `key_version` passthrough from genesis to block build |
+| **Rotation** | `cli/rotate_keys.py` (new) | `ph rotate-keys` command: soft + hard modes |
+| **Index** | `domain/ledger/index_manager.py` | Rebuild index with versioned index key on rotation |
+| **Staging** | `domain/staging/service.py` | Re-encrypt staging with new MK on rotation |
+| **Cookie** | `domain/cookie/device_cookie.py` | Re-derive cookie with new MK on rotation |
+| **Web** | `phpoc-web/src/` | JS equivalents: `deriveMk()`, `keyVersion` in blocks, multi-MK cache |
+| **Migration** | `scripts/migrate_key_version.py` (new) | Add `key_version: 1` to existing genesis, derive MK_v1, re-seal |
+
+### Related
+
+- ADR-001 (Sovereign Key Model) — seed as root; this ADR extends it with versioned derivation
+- ADR-005 (Content Hash) — content_hash survives re-encryption; key to hard rotation
+- ADR-007 (Hierarchical Lock Chain) — block linkage via prev_hash; hard rotation rewrites chain
+- ADR-011 (Format Versioning) — `format_version` bump required for `key_version` field
+- I-04 (seal naming) ✅ — prerequisite; `identity_seal` field name cleared for this work
+- I-06 (content_hash required) ✅ — prerequisite; hard rotation relies on verifiable content_hash
+- BACKLOG §I-01 — the issue this ADR addresses

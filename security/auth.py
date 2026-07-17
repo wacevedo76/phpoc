@@ -94,6 +94,10 @@ class PassphraseAuthenticator(AbstractAuthenticator):
     def __init__(self, ledger_path: Path):
         self.ledger_path = ledger_path
         self._key: Optional[bytes] = None
+        # version -> CryptoManager for multi-MK support.
+        # Populated during key rotation (RotateKeysCommand) and used by
+        # chain verification to select the correct MK per block.
+        self._keys: dict = {}
 
     def _derive_pbkdf2(self, passphrase: str, salt: bytes, iterations: int) -> bytes:
         """Derive a PDK via PBKDF2-HMAC-SHA256."""
@@ -225,6 +229,30 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             self._key = self.SESSION_FILE.read_bytes()
         return self._key
 
+    def get_mk(self, version: int) -> Optional[bytes]:
+        """Return the MK for a specific key version.
+
+        Args:
+            version: Key version (1-based).
+
+        Returns:
+            32-byte MK, or None if the version is not available.
+        """
+        cm = self._keys.get(version)
+        if cm is not None:
+            return cm.master_key
+        # If only a single key is cached, return it for version 1
+        if version == 1 and self._key is not None:
+            return self._key
+        return None
+
+    @property
+    def key_version(self) -> int:
+        """The highest (most recent) key version available."""
+        if self._keys:
+            return max(self._keys.keys())
+        return 1
+
     def login(self) -> bool:
         """Force re-authentication regardless of cached session.
 
@@ -258,6 +286,7 @@ class PassphraseAuthenticator(AbstractAuthenticator):
 
     def clear_session(self):
         self._key = None
+        self._keys = {}
         if self.SESSION_FILE.exists():
             self.SESSION_FILE.unlink()
 

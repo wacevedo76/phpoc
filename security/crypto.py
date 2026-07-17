@@ -3,6 +3,7 @@ import hmac
 import os
 import struct
 from abc import ABC, abstractmethod
+from typing import Optional
 
 # --- Pure Python AES Implementation (Simplified for POC) ---
 # Based on public domain/MIT implementations for portability
@@ -120,15 +121,23 @@ class AbstractCryptoManager(ABC):
         return self.verify_mac(data_str, mac_tag, identity_secret)
 
 class CryptoManager(AbstractCryptoManager):
-    def __init__(self, master_key: bytes):
+    def __init__(self, master_key: bytes, key_version: int = 0):
         """
         Initialize with a 32-byte master key.
         This key should be derived from a passphrase using a strong KDF (like PBKDF2)
         by the Authenticator.
+
+        Args:
+            master_key: 32-byte master key.
+            key_version: Key version this manager was created for.
+                Default 0 means pre-ADR (seed == MK). Version 1+ means
+                HMAC-derived key. Stored for sub-key derivation context
+                and chain verification.
         """
         if len(master_key) != 32:
             raise ValueError("Master key must be 32 bytes.")
         self.master_key = master_key
+        self.key_version = key_version
 
     def _derive_sub_key(self, salt: bytes, length: int = 16) -> bytes:
         """
@@ -209,6 +218,34 @@ class CryptoManager(AbstractCryptoManager):
         return hmac.compare_digest(expected, signature)
 
 # ── Key Derivation ────────────────────────────────────────────────
+
+def derive_mk(seed: bytes, version: int) -> bytes:
+    """Derive a versioned Master Key (MK) from the Recovery Seed.
+
+    Per ADR-026:
+      - version=0 returns the raw seed (pre-ADR backward compat).
+      - version>=1 uses HMAC-SHA256(seed, "phpoc:mk:v{N}") for domain-separated,
+        non-invertible versioned derivation.
+
+    Args:
+        seed: 32-byte recovery seed.
+        version: Key version (0 = raw seed, 1+ = HMAC-derived).
+
+    Returns:
+        32-byte versioned master key.
+
+    Raises:
+        ValueError: if seed is not 32 bytes.
+        TypeError: if version is not an int.
+    """
+    if len(seed) != 32:
+        raise ValueError("Seed must be 32 bytes.")
+    if not isinstance(version, int):
+        raise TypeError(f"version must be an int, got {type(version).__name__}")
+    if version == 0:
+        return seed
+    return hmac.new(seed, f"phpoc:mk:v{version}".encode(), hashlib.sha256).digest()
+
 
 def derive_index_key(master_key: bytes) -> bytes:
     """Derive a 16-byte index encryption key from the master key.

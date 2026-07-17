@@ -181,6 +181,7 @@ class LedgerChain:
         entries: List[Dict[str, Any]],
         prev_hash: str,
         date_str: str,
+        key_version: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Build a day block with proper sealing and optional identity signature.
 
@@ -224,8 +225,13 @@ class LedgerChain:
             "prev_hash": prev_hash,
             "entries": normalized_entries,
         }
+        if key_version is not None:
+            day_content["key_version"] = key_version
 
-        day_json = json.dumps(day_content, sort_keys=True)
+        # Exclude key_version from seal (metadata like format_version)
+        seal_data = {k: v for k, v in day_content.items()
+                     if k not in ("key_version",)}
+        day_json = json.dumps(seal_data, sort_keys=True)
         day_content["day_hash"] = self.crypto.seal(day_json)
         if self.identity_secret:
             day_content["identity_seal"] = self.crypto.mac(
@@ -312,7 +318,7 @@ class LedgerChain:
 
     # ── Verification ─────────────────────────────────────
 
-    def verify(self) -> bool:
+    def verify(self, get_mk_for_version=None) -> bool:
         """Full chain verification.
 
         Checks:
@@ -323,9 +329,16 @@ class LedgerChain:
           5. Content hash verification — required at format_version >= 0.4.0,
              optional (skip when absent) at lower versions
 
+        Args:
+            get_mk_for_version: Optional callable(version) -> CryptoManager for
+                per-block MK selection. When None, self.crypto is used for all blocks.
+
         Returns True if the entire chain is valid.
         """
         ledger = self.read_all()
+        if not ledger:
+            return True
+
         verify_signatures = self.identity_secret is not None
 
         # Determine whether content_hash is required from genesis format_version
@@ -333,25 +346,26 @@ class LedgerChain:
         require_content_hash = LedgerChain._is_format_version_at_least(
             genesis, _CONTENT_HASH_REQUIRED_VERSION
         )
+        genesis_kv = genesis.get("key_version") if genesis else None
 
         for i in range(1, len(ledger)):
             current = ledger[i]
             prev = ledger[i - 1]
 
-            # 1. prev_hash linkage
-            prev_hash = get_block_hash(prev)
+            # 1. prev_hash linkage — use per-version hash if available
+            prev_hash = self._get_block_hash_for_version(
+                prev, current.get("key_version"), get_mk_for_version
+            )
             if current["prev_hash"] != prev_hash:
                 return False
 
-            # 2. Block seal
-            hash_key = LedgerChain._hash_key_for_block(current)
-            check_data = {k: v for k, v in current.items() if k not in (hash_key, "identity_seal", "signature", "format_version")}
-            if not self.crypto.verify_seal(
-                json.dumps(check_data, sort_keys=True), current[hash_key]
-            ):
+            # 2. Block seal (with per-version MK selection)
+            if not self._verify_single_block(current, get_mk_for_version,
+                                             require_content_hash=require_content_hash):
                 return False
 
             # 3. Identity seal (if present — supports both 'identity_seal' and legacy 'signature')
+            hash_key = LedgerChain._hash_key_for_block(current)
             identity_seal = current.get("identity_seal") or current.get("signature")
             if verify_signatures and identity_seal:
                 if not self.crypto.verify_mac(
@@ -359,58 +373,99 @@ class LedgerChain:
                 ):
                     return False
 
-            # 4. Entry hashes in day blocks
-            if current.get("type", "day") == "day":
-                for entry in current["entries"]:
-                    data = entry["data"]
-                    if not _verify_entry_hash_flex(data, entry["hash"]):
-                        return False
-
-                    # 5. Content hash verification
-                    has_content_hash = "content_hash" in data
-
-                    if require_content_hash and not has_content_hash:
-                        # format_version >= 0.4.0: content_hash is mandatory
-                        return False
-
-                    if has_content_hash:
-                        try:
-                            if not self._verify_content_hash(data, decrypt_fn=self.crypto.decrypt):
-                                return False
-                        except Exception:
-                            return False
+            # Check key_version invariant: day block key_version must not exceed genesis
+            block_kv = current.get("key_version")
+            if genesis_kv is not None and block_kv is not None and block_kv > genesis_kv:
+                return False
 
         return True
 
-    def verify_block(self, index: int) -> bool:
+    def _verify_single_block(self, block: dict, get_mk_for_version=None,
+                             require_content_hash: bool = False) -> bool:
+        """Verify a single block's seal with optional per-version MK lookup.
+
+        Args:
+            block: The block to verify.
+            get_mk_for_version: Optional callable returning a crypto-like object
+                for the given version.
+            require_content_hash: Whether content_hash is mandatory.
+
+        Returns:
+            True if valid.
+        """
+        # Determine which crypto to use for this block's seal
+        crypto = self.crypto
+        block_kv = block.get("key_version")
+        if block_kv is not None and get_mk_for_version is not None:
+            version_crypto = get_mk_for_version(block_kv)
+            if version_crypto is None:
+                return False
+            crypto = version_crypto
+
+        hash_key = LedgerChain._hash_key_for_block(block)
+        check_data = {k: v for k, v in block.items()
+                      if k not in (hash_key, "identity_seal", "signature", "format_version", "key_version")}
+        if not crypto.verify_seal(
+            json.dumps(check_data, sort_keys=True), block[hash_key]
+        ):
+            return False
+
+        # Entry hashes in day blocks
+        if block.get("type", "day") == "day":
+            for entry in block.get("entries", []):
+                data = entry["data"]
+                if not _verify_entry_hash_flex(data, entry["hash"]):
+                    return False
+
+                has_content_hash = "content_hash" in data
+                if require_content_hash and not has_content_hash:
+                    return False
+
+                if require_content_hash:
+                    try:
+                        if not self._verify_content_hash(data, decrypt_fn=crypto.decrypt):
+                            return False
+                    except Exception:
+                        return False
+
+        return True
+
+    def verify_block(self, index: int, get_mk_for_version=None) -> bool:
         """Verify a single block by index.
 
-        For block 0 (genesis), checks only that its type is valid.
-        For subsequent blocks, checks prev_hash linkage against the
-        preceding block, plus seal + signature + entry hashes.
+        For block 0 (genesis), checks type + seal. For subsequent blocks,
+        checks prev_hash linkage against the preceding block, plus seal +
+        signature + entry hashes.
+
+        Args:
+            index: Block index.
+            get_mk_for_version: Optional callable for per-block MK selection.
         """
         block = self.get_block(index)
         if block is None:
             return False
 
         if index == 0:
-            return block.get("type") in ("genesis", "day", "month_summary", "year_summary")
+            if block.get("type") not in ("genesis", "day", "month_summary", "year_summary"):
+                return False
+            return self._verify_single_block(block, get_mk_for_version)
 
         prev = self.get_block(index - 1)
         if prev is None:
             return False
 
         current = block
-        prev_hash = get_block_hash(prev)
+        prev_hash = self._get_block_hash_for_version(
+            prev, current.get("key_version"), get_mk_for_version
+        )
         if current["prev_hash"] != prev_hash:
             return False
 
-        hash_key = LedgerChain._hash_key_for_block(current)
-        check_data = {k: v for k, v in current.items() if k not in (hash_key, "identity_seal", "signature", "format_version")}
-        if not self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), current[hash_key]):
+        if not self._verify_single_block(current, get_mk_for_version):
             return False
 
         # Identity seal (supports both 'identity_seal' and legacy 'signature')
+        hash_key = LedgerChain._hash_key_for_block(current)
         identity_seal = current.get("identity_seal") or current.get("signature")
         if self.identity_secret and identity_seal:
             if not self.crypto.verify_mac(
@@ -418,15 +473,35 @@ class LedgerChain:
             ):
                 return False
 
-        if current.get("type", "day") == "day":
-            for entry in current["entries"]:
-                data = entry["data"]
-                if not _verify_entry_hash_flex(data, entry["hash"]):
-                    return False
-
         return True
 
     # ── Internal helpers ─────────────────────────────────
+
+    @staticmethod
+    def _get_block_hash_for_version(block: dict, key_version=None,
+                                    get_mk_for_version=None) -> str:
+        """Get a block's hash for prev_hash linkage checking.
+
+        When the block is a genesis that may have been re-sealed with a
+        different key version, recomputes the hash using the current block's
+        key version. This allows day blocks created before rotation to still
+        link to the genesis hash as it was at their version.
+        """
+        stored = get_block_hash(block)
+        if (key_version is not None and get_mk_for_version is not None
+                and block.get("type") == "genesis"):
+            version_crypto = get_mk_for_version(key_version)
+            if version_crypto is not None:
+                hash_key = LedgerChain._hash_key_for_block(block)
+                check_data = {k: v for k, v in block.items()
+                              if k not in (hash_key, "identity_seal", "signature",
+                                           "format_version", "key_version")}
+                recomputed = version_crypto.seal(
+                    json.dumps(check_data, sort_keys=True)
+                )
+                if recomputed != stored:
+                    return recomputed
+        return stored
 
     @staticmethod
     def _hash_key_for_block(block: dict) -> str:

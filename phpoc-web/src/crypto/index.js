@@ -580,3 +580,54 @@ export class CryptoService {
     return this.#call3('authenticate', passphrase, seed, iterations);
   }
 }
+
+// ── ADR-026: versioned key derivation (Web Crypto API) ────────────
+
+/**
+ * Derive a versioned Master Key from the Recovery Seed (ADR-026).
+ *
+ * Uses Web Crypto API (crypto.subtle) for browser/Node.js portability.
+ * - version=0 returns the raw seed (pre-ADR backward compat)
+ * - version>=1 uses HMAC-SHA256(seed, "phpoc:mk:v{N}")
+ *
+ * @param {Uint8Array} seed - 32-byte recovery seed.
+ * @param {number} version - Key version (0 = raw seed, 1+ = HMAC-derived).
+ * @returns {Promise<Uint8Array>} 32-byte versioned master key.
+ */
+export async function deriveMk(seed, version) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) {
+    throw new Error('Seed must be a 32-byte Uint8Array');
+  }
+  if (typeof version !== 'number' || !Number.isInteger(version)) {
+    throw new TypeError(`version must be an int, got ${typeof version}`);
+  }
+  if (version === 0) {
+    return seed;
+  }
+  const key = await crypto.subtle.importKey(
+    'raw', seed,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign']
+  );
+  const data = new TextEncoder().encode(`phpoc:mk:v${version}`);
+  const sig = await crypto.subtle.sign('HMAC', key, data);
+  return new Uint8Array(sig);
+}
+
+/**
+ * CryptoManager — lightweight JS crypto manager for key version tracking.
+ *
+ * Mirrors the Python CryptoManager's key_version attribute for
+ * sub-key derivation context. Used by chain verification and
+ * session cache.
+ */
+export class CryptoManager {
+  /**
+   * @param {string} masterKeyHex - 64-char hex-encoded master key.
+   * @param {number} [keyVersion=0] - Key version for tracking.
+   */
+  constructor(masterKeyHex, keyVersion = 0) {
+    this.masterKey = masterKeyHex;
+    this.keyVersion = keyVersion;
+  }
+}
