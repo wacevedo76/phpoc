@@ -42,7 +42,7 @@
  *   committed, block_index
  */
 
-import { jsonSort } from '../ledger/utils.js';
+import { jsonSortIndent2 } from '../ledger/utils.js';
 import { parsePlainInt, parsePlainJSON } from './entry_dto.js';
 import { generateActivityId } from './activity_id.js';
 import { buildStagingHashIndex } from './staging_hash_index.js';
@@ -300,7 +300,7 @@ export class LocalCache {
       end_device_uuid: dto.end_device_uuid || '',
     };
     if (dto.comment != null) fields.comment = dto.comment;
-    return this._crypto.sha256(JSON.stringify(jsonSort(fields)));
+    return this._crypto.sha256(jsonSortIndent2(fields));
   }
 
   // ------------------------------------------------------------------

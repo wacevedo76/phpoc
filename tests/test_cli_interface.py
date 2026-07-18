@@ -81,18 +81,18 @@ class TestGroupA_NormalPaths(unittest.TestCase):
 
 
 # ============================================================================
-# Group B: _sync_before_command — REAUTH Auto-Handle (require_auth=False)
+# Group B: _sync_before_command — REAUTH Non-Blocking (require_auth=False)
 # ============================================================================
-# These are the CORE FIX — the new behavior that replaces the duplicate
-# check_and_sync + re-auth blocks in main.py.
+# P4 CLI UX Polish: Read commands no longer auto-handle re-auth.
+# Instead, they show a non-blocking notification and proceed with local data.
 #
-# 7 tests test the auto-handle path: login → rebuild StagingService →
-# reconcile_and_claim → sync_remote_ledger → return.
-# All must be RED (fail with AssertionError, not ImportError).
+# 7 tests verify: notification shown, not duplicated, no auth.login() call,
+# no component rebuild, return True.
 
 class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
     """B1–B7: When check_and_sync returns REAUTH_NEEDED and
-    require_auth=False, _sync_before_command auto-handles re-auth."""
+    require_auth=False, _sync_before_command shows a non-blocking
+    notification and returns True without prompting for passphrase."""
 
     def setUp(self):
         self.mock_staging = MagicMock()
@@ -106,11 +106,11 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         self.mock_staging.check_and_sync.return_value = \
             SyncCheckResult.REAUTH_NEEDED
 
-    # -- B1: REAUTH_NEEDED → auth.login() succeeds, returns True ------------
+    # -- B1: REAUTH_NEEDED → returns True without calling auth.login() ------
 
     def test_B1_REAUTH_calls_auth_login_returns_true(self):
-        """B1: Auto-handles re-auth for read commands. Main behavior
-        change — replaces the main.py re-auth block."""
+        """B1: Non-blocking read path — returns True without prompting.
+        P4 change: read commands show local data instantly."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mock_auth.get_key.return_value = b'\x01' * 32
@@ -119,160 +119,112 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         result = self.cli._sync_before_command(require_auth=False)
 
         self.assertTrue(result)
-        mock_auth.login.assert_called_once()
+        # P4: auth.login() must NOT be called — read commands are non-blocking
+        mock_auth.login.assert_not_called()
 
-    # -- B2: REAUTH_NEEDED with failed login → returns False -----------------
+    # -- B2: REAUTH_NEEDED without auth → still returns True ----------------
 
     def test_B2_REAUTH_failed_login_returns_false(self):
-        """B2: Aborts when user cancels auth. Preserves the existing abort
-        path from main.py."""
-        mock_auth = MagicMock()
-        mock_auth.login.return_value = False
-        self.cli._auth = mock_auth
-
+        """B2: Even without a cached auth, read commands proceed with
+        local data. No passphrase prompt, no abort."""
+        # No _auth set — simulates NoAuthCryptoManager scenario
         result = self.cli._sync_before_command(require_auth=False)
 
-        self.assertFalse(result)
-        mock_auth.login.assert_called_once()
+        self.assertTrue(result)
 
-    # -- B3: After re-auth, StagingService rebuilt with fresh crypto ---------
+    # -- B3: No component rebuild in non-blocking path -----------------------
 
     def test_B3_rebuilds_staging_service_with_fresh_crypto(self):
-        """B3: Re-auth invalidates old staging service. Matches main.py
-        pattern: StagingService(crypto=fresh_crypto, …)."""
+        """B3: P4 change — non-blocking path does NOT rebuild components.
+        StagingService and LedgerEngine remain unchanged."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mk = b'\x02' * 32
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
+        original_staging = self.cli._staging
+        original_ledger = self.cli._ledger_engine
 
         with patch('cli.interface.CryptoManager', create=True) as mock_cm, \
              patch('cli.interface.StagingService', create=True) as mock_ss, \
              patch('cli.interface.LedgerEngine', create=True) as mock_le:
-            mock_cm_instance = MagicMock()
-            mock_cm.return_value = mock_cm_instance
-            mock_ss_instance = MagicMock()
-            mock_ss.return_value = mock_ss_instance
-            mock_ss_instance._reconcile_and_claim.return_value = \
-                SyncCheckResult.READY
-            mock_le_instance = MagicMock()
-            mock_le.return_value = mock_le_instance
-
             self.cli._sync_before_command(require_auth=False)
 
-        # Fresh CryptoManager created with the new master key
-        mock_cm.assert_called_once_with(mk)
-        # New StagingService created with fresh crypto
-        mock_ss.assert_called_once()
-        _, kwargs = mock_ss.call_args
-        self.assertIs(kwargs.get('crypto'), mock_cm_instance)
-        # CLIInterface._staging replaced with the new StagingService
-        self.assertIs(self.cli._staging, mock_ss_instance)
+        # No new CryptoManager, StagingService, or LedgerEngine created
+        mock_cm.assert_not_called()
+        mock_ss.assert_not_called()
+        mock_le.assert_not_called()
+        # Original components preserved
+        self.assertIs(self.cli._staging, original_staging)
+        self.assertIs(self.cli._ledger_engine, original_ledger)
 
-    # -- B4: After re-auth, _reconcile_and_claim() is called ----------------
+    # -- B4: _reconcile_and_claim is NOT called -----------------------------
 
     def test_B4_calls_reconcile_and_claim_after_reauth(self):
-        """B4: Claims remote staging for this device after re-auth.
-        Cookie pull/push cycle after re-auth."""
+        """B4: P4 change — non-blocking path does NOT call
+        _reconcile_and_claim. No cookie pull/push cycle."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mk = b'\x03' * 32
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
+        original_staging = self.cli._staging
 
-        with patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True):
-            mock_ss_instance = MagicMock()
-            mock_ss_instance._reconcile_and_claim.return_value = \
-                SyncCheckResult.READY
-            mock_ss.return_value = mock_ss_instance
+        self.cli._sync_before_command(require_auth=False)
 
-            self.cli._sync_before_command(require_auth=False)
+        # _reconcile_and_claim must NOT be called on the staging service
+        original_staging._reconcile_and_claim.assert_not_called()
 
-        mock_ss_instance._reconcile_and_claim.assert_called_once_with(mk)
-
-    # -- B5: After re-auth, _sync_remote_ledger_and_dedup() is called --------
+    # -- B5: _sync_remote_ledger_and_dedup is NOT called --------------------
 
     def test_B5_calls_sync_remote_ledger_after_reauth(self):
-        """B5: Syncs ledger blocks after staging sync. READY path calls
-        this; re-auth path should too."""
+        """B5: P4 change — non-blocking path does NOT sync remote
+        ledger. Remote operations are deferred to 'ph login'."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mk = b'\x04' * 32
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
 
-        with patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
-             patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            mock_ss_instance = MagicMock()
-            mock_ss_instance._reconcile_and_claim.return_value = \
-                SyncCheckResult.READY
-            mock_ss.return_value = mock_ss_instance
-
+        with patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
             self.cli._sync_before_command(require_auth=False)
 
-        mock_dedup.assert_called_once()
+        mock_dedup.assert_not_called()
 
-    # -- B6: When _reconcile_and_claim returns OFFLINE → returns True --------
+    # -- B6: Still returns True (non-blocking always succeeds) --------------
 
     def test_B6_OFFLINE_after_reauth_returns_true(self):
-        """B6: Continues with local data if remote unreachable post-re-auth.
-        Resilient: network failure after re-auth doesn't block command."""
+        """B6: Non-blocking path always returns True. The read command
+        proceeds with local data regardless of remote state."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mk = b'\x05' * 32
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
 
-        with patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
-             patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            mock_ss_instance = MagicMock()
-            mock_ss_instance._reconcile_and_claim.return_value = \
-                SyncCheckResult.OFFLINE
-            mock_ss.return_value = mock_ss_instance
-
-            result = self.cli._sync_before_command(require_auth=False)
+        result = self.cli._sync_before_command(require_auth=False)
 
         self.assertTrue(result)
-        # Even though reconcile failed, dedup still fires (best-effort)
-        mock_dedup.assert_called_once()
 
-    # -- B7: REAUTH_NEEDED prints a message about re-authentication ----------
+    # -- B7: REAUTH_NEEDED prints a non-blocking notification ---------------
 
     def test_B7_prints_reauth_message_during_auto_handle(self):
-        """B7: User gets feedback during auto-handle. UX: user knows why
-        they're being prompted. The message must come from the auto-handle
-        path (not the current 'held by different device' message)."""
+        """B7: User gets a non-blocking notification about stale session.
+        The message guides them to run 'ph login' to sync, without
+        blocking or prompting for passphrase."""
         mock_auth = MagicMock()
         mock_auth.login.return_value = True
         mk = b'\x06' * 32
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
 
-        with patch('sys.stdout', new_callable=StringIO) as mock_stdout, \
-             patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
-             patch.object(self.cli, '_sync_remote_ledger_and_dedup'):
-            mock_ss_instance = MagicMock()
-            mock_ss_instance._reconcile_and_claim.return_value = \
-                SyncCheckResult.READY
-            mock_ss.return_value = mock_ss_instance
-
+        with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli._sync_before_command(require_auth=False)
 
         output = mock_stdout.getvalue()
-        # The auto-handle path prints a message about re-authentication.
-        # The OLD message says "held by a different device" — the new path
-        # should say something different (about re-authenticating).
-        self.assertIn("re-authenticate", output.lower())
-        # After Phase 3, the old "held by a different device" message
-        # should NOT appear when require_auth=False (auto-handle).
+        # P4: non-blocking notification about showing local data
+        self.assertIn("showing local data", output.lower())
+        # The old blocking message must NOT appear
         self.assertNotIn("held by a different device", output)
 
 

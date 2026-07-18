@@ -102,6 +102,7 @@ class CLIInterface:
         self._staging = staging_service
         self._ledger_engine = ledger_engine
         self._crypto = crypto
+        self._reauth_notified = False
 
     def _sync_before_command(self, require_auth: bool = False) -> bool:
         """Sync staging with remote before executing a command.
@@ -153,27 +154,13 @@ class CLIInterface:
                 print("Please re-authenticate to access remote staging.")
                 return False
 
-            # Auto-handle re-auth for read commands (require_auth=False).
-            # Replaces the duplicate check_and_sync + re-auth blocks that
-            # were previously in main.py for view/list handlers.
-            print("\nRemote session expired — please re-authenticate.")
-            auth = getattr(self, '_auth', None)
-            if auth is None or not auth.login():
-                return False
-
-            mk = auth.get_key()
-            if not isinstance(mk, bytes) or len(mk) != 32:
-                return False
-
-            self._rebuild_after_reauth(mk)
-
-            # Claim remote staging + sync remote ledger (best effort)
-            try:
-                self._staging._reconcile_and_claim(mk)
-            except Exception:
-                pass  # Best effort — continue with local data
-            self._sync_remote_ledger_and_dedup()
-
+            # Read commands (require_auth=False): show a non-blocking
+            # notification and proceed with local data.  No passphrase
+            # prompt — the user sees their cached data instantly.
+            if not self._reauth_notified:
+                print("\nRemote session expired — showing local data. "
+                      "Run 'ph login' to sync.")
+                self._reauth_notified = True
             return True
 
         return True
@@ -1094,6 +1081,37 @@ class CLIInterface:
             return (None, None)
 
         return (from_str, to_str)
+
+    def list_tags(self):
+        """Collect and print all unique tags from staging, local ledger,
+        and remote ledger cache."""
+        all_tags = set()
+
+        # From staging
+        staging = self._staging._local._store.read_entries()
+        for entry in staging:
+            all_tags.update(entry["data"].get("tags", []))
+
+        # From local synced ledger
+        ledger_data = self._ledger_engine.get_day_blocks()
+        for day in (ledger_data or []):
+            if day.get("type") != "day":
+                continue
+            for entry in day.get("entries", []):
+                all_tags.update(entry["data"].get("tags", []))
+
+        # From remote ledger cache (entries committed by other clients)
+        if self._remote_ledger_cache:
+            for (_date_str, _title), data in self._remote_ledger_cache.items():
+                all_tags.update(data.get("tags", []))
+
+        sorted_tags = sorted(all_tags)
+        if sorted_tags:
+            print("\n--- Tags ---")
+            for t in sorted_tags:
+                print(f"  @{t}")
+        else:
+            print("No tags found.")
 
     def _print_entry(self, entry_data, show_comments=False, show_tags=False):
         """Helper method to print an entry (synced or staged)."""

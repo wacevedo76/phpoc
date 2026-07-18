@@ -15,7 +15,7 @@ import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, jsonSortIndent2 } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -90,7 +90,7 @@ function makeEmptyStore() {
 }
 
 function entryHash(data) {
-  return createHash('sha256').update(JSON.stringify(data, null, 2), 'utf-8').digest('hex');
+  return createHash('sha256').update(jsonSortIndent2(data), 'utf-8').digest('hex');
 }
 
 // ─────────────────────────────────────────────────────────────────────

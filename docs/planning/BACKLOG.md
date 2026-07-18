@@ -244,7 +244,7 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Effort:** Medium. **Next action:** Phase 1 (test blueprint) → Phase 2-4 TDD.
 
-### I-09 🟡: Hardware-bound device attribution — 🔜 Phase 3 GREEN complete
+### I-09 ✅: Hardware-bound device attribution — Phases 1-4 complete
 
 **Plan:** `docs/planning/I09_DEVICE_ATTRIBUTION_PHASE1.md` (49 assertions, 9 groups)
 **Why:** Device IDs are derived from MK. Any device with the MK can impersonate any other device.
@@ -256,7 +256,9 @@ cannot actually be rotated — it's all infrastructure and no action.
 | `security/auth.py` | Generate and store per-device secret on first run |
 | `phpoc-web/src/sync/sync.js` | Use IndexedDB-stored device secret |
 
-**Effort:** Medium. **Depends on:** nothing. **Next action:** Generate device-local UUID4 secret, use in HMAC derivation.
+**Effort:** Medium. **Depends on:** nothing.
+
+**Completed:** 2026-07-17 — 49 assertions, Phases 1-4. `_ensure_device_local_secret()` in `security/auth.py`, `derive_device_id(mk, device_local_secret)` in `security/device_identity.py`. Device IDs now use UUID4 device-local secret + MK derivation, not MK alone.
 
 ### I-12 ✅: System architecture document (Complete 2026-07-17)
 
@@ -298,9 +300,9 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Phase 4 improvements:** Extracted `_timeout_s()` in HttpStagingTransport, simplified `effective_key` in RemoteStagingSync.pull(), updated 23 tests for P5 read-only fast path.
 
-### P4: CLI kinks & UX polish
+### P4: CLI kinks & UX polish ✅
 
-**Next action:** Audit `ph view`/`ph list`/`ph tags` for specifier-mismatch blocking.
+**Status:** Phases 1-4 complete (24 assertions). Phase 4 refactor: extracted `_reauth_staging()` helper (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
 
 ---
 
@@ -308,23 +310,47 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 ### P3: Remote sync (git-based)
 
+**Status:** Deferred. Infrastructure exists (`GitStagingTransport` implemented, 37 tests pass, blob obfuscation done). Remaining: `init --git-create` (GitHub API PAT → create private repo).
+
 **Next action:** After browser client reaches parity with CLI sync features.
+
+---
+
+## 🔵 Phase 8 — Per-Activity Field Encryption
+
+*Allow users to encrypt title, tags, comment, and duration on a per-activity basis. Default is plaintext (current behavior). Encrypted entries show `[encrypted]` placeholder until user reveals via auth.*
+
+### P6: Encrypt all entry fields — Web (React)
+
+**Plan:** `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_WEB_PHASE1.md` (61 assertions, 9 groups)
+
+**Design:** Opt-in encryption at task creation and on sync-tab cards before commit. Master "Encrypt entire activity" checkbox + per-field checkboxes (title, tags, comment). Reveal triggers: global toggle, per-activity click, per date-range.
+
+**Effort:** Medium. **Depends on:** nothing. **Next action:** Phase 2 (RED: 61 test definitions).
+
+### P7: Encrypt all entry fields — CLI (Python)
+
+**Plan:** `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_CLI_PHASE1.md` (72 assertions, 9 groups)
+
+**Design:** Same opt-in model. Encryptable fields: title, tags, comment, duration. `startTime_enc`/`endTime_enc`/`pauses_enc` already encrypted by default. CLI flag UX deferred to implementation (options: `ph start --encrypt-all`, `ph modify --encrypt-title`, `ph encrypt <title>`).
+
+**Effort:** Medium. **Depends on:** nothing. **Next action:** Phase 2 (RED: 72 test definitions).
 
 ---
 
 ## Summary by Phase
 
-| Phase | Items | Critical | High | Medium | Low |
-|-------|-------|----------|------|--------|-----|
-| **0** — Doc fixes ✅ | I-08, I-10, I-13, I-14, I-15, I-16 (6) — complete 2026-07-15 | 0 | 0 | 0 | 0 |
-| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | — | — | — | — |
-| **2** — Low-effort code | I-04✅, I-05✅, I-06✅, I-11✅, I-02a (5) | 0 | 0 | 1 | 0 |
-| **3** — Encryption gaps | I-03✅, I-02✅ (2 done) | 0 | 0 | 0 | 0 |
-| **4** — Architectural | I-01✅, I-01a✅, I-09🟢, I-12✅ (4) | 0 | 0 | 1 | 0 |
-| **5** — Cross-client | P1, indent=2 (2) | — | — | — | — |
-| **6** — CLI polish | P5, P4 (2) | — | — | — | — |
-| **7** — Remote sync | P3 (1) | — | — | — | — |
-| **Totals** | **22 open** | **2** | **3** | **5** | **3** |
+| Phase | Items | Status |
+|-------|-------|--------|
+| **0** — Doc fixes | I-08, I-10, I-13, I-14, I-15, I-16 (6) | ✅ Complete 2026-07-15 |
+| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | ✅ Complete |
+| **2** — Low-effort code | I-04, I-05, I-06, I-11, I-02a (5) | ✅ Complete |
+| **3** — Encryption gaps | I-03, I-02 (2) | ✅ Complete |
+| **4** — Architectural | I-01, I-01a, I-09, I-12 (4) | ✅ Complete |
+| **5** — Cross-client | P1, indent=2 (2) | ✅ Complete |
+| **6** — CLI polish | P5, P4 (2) | ✅ Complete |
+| **7** — Remote sync | P3 (1) | 🔵 Deferred |
+| **8** — Per-activity encryption | P6 (Web, 61 assertions), P7 (CLI, 72 assertions) | 🔜 Phase 1 done |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅, I-12 (system architecture doc) ✅ — Canonical Ledger Format, 2026-07-17.
 

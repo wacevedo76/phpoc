@@ -4,7 +4,7 @@
 > design flaws in the PHPOC system. This document guides planning for
 > elimination or mitigation of each issue.
 >
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-18 (all issues resolved — see BACKLOG.md)
 > **Sources:** `docs/spec/PHPSPEC.md` v0.3.0, `docs/design/DESIGN_GOALS.md`,
 > `docs/design/ARCHITECTURAL_DECISIONS.md`,
 > `docs/design/CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md`,
@@ -568,27 +568,26 @@ unit of effort:
 
 ---
 
-## Tracking
+## Tracking (ALL RESOLVED — 2026-07-18)
 
-Each issue should eventually get its own ADR or planning document. When an issue
-graduates from discovery to planning, update this table:
+All 17 issues are now resolved. See `docs/planning/BACKLOG.md` for details.
 
-| Issue | Status | ADR / Plan | Target Version |
-|-------|--------|------------|----------------|
-| I-01 | 🔴 Open | — | — |
-| I-02 | 🔴 Open | — | — |
-| I-03 | 🔴 Open | — (see ADR-015 for related D2 direction) | — |
-| I-04 | 🟠 Open | — | — |
-| I-05 | 🟠 Open | — | — |
-| I-06 | 🟠 Open | — | — |
-| I-07 | ✅ Fixed | ROADMAP (Canonical Ledger Format) | v0.4.0 (2026-07-03) |
-| I-08 | 🟠 Open | — | — |
-| I-09 | 🟡 Open | — | — |
-| I-10 | 🟡 Open | — | — |
-| I-11 | 🟡 Open | — | — |
-| I-12 | 🟡 Open | — | — |
-| I-13 | 🟡 Open | — | — |
-| I-14 | 🟡 Open | — | — |
-| I-15 | 🟢 Open | — | — |
-| I-16 | 🟢 Open | — | — |
-| I-17 | ✅ Fixed | ROADMAP (Canonical Ledger Format) | v0.4.0 (2026-07-03) |
+| Issue | Status | Resolution |
+|-------|--------|------------|
+| I-01 | ✅ Fixed | Key rotation — 95 PY + 13 JS tests, ADR-026 |
+| I-02 | ✅ Fixed | Blind index encryption — 103 PY + 67 JS tests |
+| I-03 | ✅ Fixed | Staging at-rest encryption — 52 PY + 35 web tests |
+| I-04 | ✅ Fixed | HMAC → seal/tag rename |
+| I-05 | ✅ Fixed | Per-user PBKDF2 salt from identity_pub_key |
+| I-06 | ✅ Fixed | content_hash required at v0.4.0+ — 213 tests |
+| I-07 | ✅ Fixed | format_version excluded from seal (Canonical Ledger Format) |
+| I-08 | ✅ Fixed | Known Limitations section in PHPSPEC.md (Phase 0 doc fixes) |
+| I-09 | ✅ Fixed | Device-local UUID4 secret + MK derivation (49 assertions) |
+| I-10 | ✅ Fixed | Zero-dependency claim scoped to CLI (Phase 0 doc fixes) |
+| I-11 | ✅ Fixed | Blob obfuscation portability warning + test vectors (21 assertions) |
+| I-12 | ✅ Fixed | SYSTEM_ARCHITECTURE.md created (11 sections, 25 invariants) |
+| I-13 | ✅ Fixed | Architecture Invariant #1 scoped to CLI (Phase 0 doc fixes) |
+| I-14 | ✅ Fixed | Forward-looking content removed, bumped to v0.4.0 (Phase 0) |
+| I-15 | ✅ Fixed | AES-128 justification corrected (Phase 0 doc fixes) |
+| I-16 | ✅ Fixed | Duplicate paragraph removed (Phase 0 doc fixes) |
+| I-17 | ✅ Fixed | day_hash → block_hash rename (Canonical Ledger Format) |

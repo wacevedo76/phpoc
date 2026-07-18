@@ -45,7 +45,7 @@
 import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
 import { MockCrypto } from './mock_crypto.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, jsonSortIndent2 } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -191,7 +191,7 @@ function createV2Export(crypto, masterKey, opts = {}) {
         hashData[key] = entry[key];
       }
     }
-    entry.hash = crypto.sha256(jsonSort(hashData));
+    entry.hash = crypto.sha256(jsonSortIndent2(hashData));
   }
 
   // Compute genesis day_hash (seal over all fields except day_hash + signature)
@@ -232,7 +232,7 @@ function createV1Export(crypto, masterKey, opts = {}) {
         hashData[key] = entry[key];
       }
     }
-    entry.hash = crypto.sha256(jsonSort(hashData));
+    entry.hash = crypto.sha256(jsonSortIndent2(hashData));
   }
 
   const sealPayload = jsonSort(entries);

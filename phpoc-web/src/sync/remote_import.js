@@ -32,6 +32,7 @@
 
 import { bytesToBase64 } from './base64.js';
 import { REMOTE_LEDGER_BLOCKS_PREFIX } from './keys.js';
+import { jsonSortIndent2 } from '../ledger/utils.js';
 
 const _textDecoder = new TextDecoder();
 
@@ -383,7 +384,7 @@ export class WorkerImportSource {
           hashData[key] = entry[key];
         }
       }
-      const expectedHash = crypto.sha256(WorkerImportSource._jsonSort(hashData));
+      const expectedHash = crypto.sha256(jsonSortIndent2(hashData));
 
       if (entry.hash !== expectedHash) {
         throw new Error(
@@ -489,7 +490,7 @@ export class WorkerImportSource {
         if (!entry.hash || !entry.data) {
           throw new Error(`Malformed entry at block ${i}, entry ${j} — missing hash or data`);
         }
-        const expectedHash = crypto.sha256(WorkerImportSource._jsonSort(entry.data));
+        const expectedHash = crypto.sha256(jsonSortIndent2(entry.data));
         if (entry.hash !== expectedHash) {
           throw new Error(
             `Entry hash mismatch at block ${i}, entry ${j} ("${entry.data.title || 'untitled'}")`

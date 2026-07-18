@@ -21,6 +21,7 @@ import { createHash, createHmac } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 import { LocalCache } from '../src/sync/local_cache.js';
+import { jsonSortIndent2 } from '../src/ledger/utils.js';
 
 // ══════════════════════════════════════════════════════════════════════
 // Minimal mock crypto
@@ -348,6 +349,47 @@ async function run() {
 
     t.assertEq(rawEntry.hash, expectedHash,
       '9a. stored hash matches recomputed hash from plaintext DTO fields');
+  }
+
+  // ── 9b: Golden hash — matches Python canonical (sort+indent2) ─────
+  {
+    const storage = new MemoryBackend();
+    const crypto = new MockCryptoForCache();
+    const cache = new LocalCache(storage, crypto);
+
+    // Build the same DTO used to compute the golden hash in Python:
+    // sha256(json.dumps(dto, sort_keys=True, indent=2))
+    const goldenDto = {
+      title: 'Golden Hash Test',
+      start_epoch: 1717200000000,
+      end_epoch: 1717203600000,
+      duration: 3600000,
+      is_active: false,
+      is_paused: false,
+      pauses: [],
+      tags: ['testing', 'canonical'],
+      media: [],
+      entry_id: 'golden-001',
+      metadata: {},
+      device_uuid: '',
+      end_device_uuid: '',
+      comment: 'This should produce a stable hash',
+    };
+
+    // Verify the canonical JSON matches expected form
+    const canonicalJson = jsonSortIndent2(goldenDto);
+    t.assert(
+      canonicalJson.includes('"title": "Golden Hash Test"'),
+      '9b. canonical JSON contains sorted keys'
+    );
+
+    // Golden hash from Python: sha256(json.dumps(dto, sort_keys=True, indent=2))
+    const GOLDEN_HASH = '34431f530ed6c738c0b65a1190d4b727b76bfe88b8ae29eddf48b87abe7b42d5';
+
+    const actualHash = await cache._computeEntryHash(goldenDto);
+
+    t.assertEq(actualHash, GOLDEN_HASH,
+      '9b. _computeEntryHash produces canonical sort+indent2 hash matching Python');
   }
 
   // ── Results ───────────────────────────────────────────────────────

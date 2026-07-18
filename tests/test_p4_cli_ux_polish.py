@@ -99,44 +99,35 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
             "call. Expected delegation to cli._sync_before_command()."
         )
 
-    # -- A2: _list_tags accepts CLIInterface and uses its accessors ---------
+    # -- A2: list_tags is a CLIInterface method ----------------------------
 
     def test_A2_list_tags_uses_cli_accessors(self):
-        """A2: Eliminate bypass — `_list_tags` uses CLIInterface's staging
-        and ledger accessors instead of reading ledger.store directly.
-
-        RED because: `_list_tags(ledger, cli)` currently ignores the `cli`
-        parameter and reads `ledger.store` / `ledger.get_ledger_data()`
+        """A2: Eliminate bypass — `list_tags` is a CLIInterface method that
+        uses its staging and ledger accessors instead of reading ledger.store
         directly.
         """
-        tree = _parse_main_py_ast()
+        import inspect
+        source = inspect.getsource(CLIInterface.list_tags)
 
-        # Find the _list_tags function definition
-        list_tags_func = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == '_list_tags':
-                list_tags_func = node
-                break
-
-        self.assertIsNotNone(list_tags_func,
-                             "Could not find _list_tags function in main.py")
-
-        func_body = '\n'.join(ast.unparse(s) for s in list_tags_func.body)
-
-        # After Phase 3, _list_tags should use cli methods, NOT
-        # ledger.store.read_staging() or ledger.get_ledger_data() directly.
+        # list_tags must use self._staging and self._ledger_engine,
+        # NOT read legacy ledger.store or ledger.get_ledger_data().
         self.assertNotIn(
             'ledger.store.read_staging',
-            func_body,
-            "A2 FAIL: _list_tags still reads ledger.store directly. "
+            source,
+            "A2 FAIL: list_tags still reads ledger.store directly. "
             "Expected delegation through CLIInterface."
         )
         self.assertNotIn(
             'ledger.get_ledger_data',
-            func_body,
-            "A2 FAIL: _list_tags still calls ledger.get_ledger_data() "
+            source,
+            "A2 FAIL: list_tags still calls ledger.get_ledger_data() "
             "directly. Expected delegation through CLIInterface."
         )
+        # Verify it references CLIInterface members
+        self.assertIn('self._staging', source,
+                      "A2 FAIL: list_tags does not use self._staging.")
+        self.assertIn('self._ledger_engine', source,
+                      "A2 FAIL: list_tags does not use self._ledger_engine.")
 
     # -- A3: tags handler has no duplicate check_and_sync / rebuild block ---
 
@@ -192,15 +183,12 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
         function. It should fail because the remote cache tags are
         invisible to the current implementation.
         """
-        from main import _list_tags
-
         # Setup: local staging and ledger have tags
-        mock_ledger = MagicMock()
-        mock_ledger.store.read_staging.return_value = []
-        mock_ledger.get_ledger_data.return_value = []
+        mock_cli = MagicMock()
+        mock_cli._staging._local._store.read_entries.return_value = []
+        mock_cli._ledger_engine.get_day_blocks.return_value = []
 
         # Setup: CLI has remote ledger cache with different tags
-        mock_cli = MagicMock()
         mock_cli._remote_ledger_cache = {
             ("2026-07-04", "RemoteTask"): {
                 "title": "RemoteTask",
@@ -211,7 +199,7 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
         }
 
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
-            _list_tags(mock_ledger, mock_cli)
+            CLIInterface.list_tags(mock_cli)
 
         output = mock_stdout.getvalue()
         # Currently RED: remote cache tags are invisible to _list_tags
@@ -232,15 +220,13 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
 
         We test the actual _list_tags function to verify this gap.
         """
-        from main import _list_tags
-
         # Scenario: after sync, the committed entry was removed from staging
-        # but is still in the ledger. _list_tags should find its tags.
-        mock_ledger = MagicMock()
-        mock_ledger.store.read_staging.return_value = [
+        # but is still in the ledger. list_tags should find its tags.
+        mock_cli = MagicMock()
+        mock_cli._staging._local._store.read_entries.return_value = [
             {"data": {"title": "Current", "tags": ["current-tag"]}},
         ]
-        mock_ledger.get_ledger_data.return_value = [
+        mock_cli._ledger_engine.get_day_blocks.return_value = [
             {
                 "type": "day",
                 "date": "2026-07-01",
@@ -252,16 +238,12 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
                 ],
             },
         ]
-        mock_cli = MagicMock()
         mock_cli._remote_ledger_cache = {}
 
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
-            _list_tags(mock_ledger, mock_cli)
+            CLIInterface.list_tags(mock_cli)
 
         output = mock_stdout.getvalue()
-        # Currently GREEN for committed-tag because _list_tags reads
-        # ledger.get_ledger_data() directly (duplicate path). In Phase 3,
-        # after unification through CLIInterface, both must still appear.
         self.assertIn("committed-tag", output,
                       "A5 FAIL: committed entry tag 'committed-tag' not found. "
                       "Expected _list_tags to include tags from committed ledger entries.")
@@ -839,7 +821,7 @@ class TestGroupE_EdgeCases(unittest.TestCase):
         # re-authentication message. The exact mechanism (rate-limiting
         # or state tracking) is an implementation detail.
         # For RED: verify the notification at least appears once.
-        self.assertIn("re-authenticate", first_output.lower(),
+        self.assertIn("showing local data", first_output.lower(),
                       "E1 FAIL: re-auth notification not shown at all.")
 
     # -- E2: ph tags with no staging and no ledger entries ------------------

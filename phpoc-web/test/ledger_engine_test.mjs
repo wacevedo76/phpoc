@@ -16,6 +16,7 @@ import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
+import { jsonSortIndent2 } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -38,7 +39,7 @@ const ZERO_HASH_64 = '0'.repeat(64);
 // Helper: compute entry hash the same way the chain would
 function computeEntryHash(dataDict) {
   return createHash('sha256')
-    .update(JSON.stringify(dataDict, null, 2), 'utf-8')
+    .update(jsonSortIndent2(dataDict), 'utf-8')
     .digest('hex');
 }
 

@@ -2,8 +2,8 @@
 
 > **Plan:** BACKLOG.md §Phase 6 — Audit `ph view` / `ph list` / `ph tags` for specifier-mismatch blocking
 > **Purpose:** Blueprint of all needed test assertions before writing any test code.
-> **Status:** ✅ Phase 1 complete | 🔴 Phase 2 complete | 🟢 Phase 3 (implementation)
-> **Next Phase:** Phase 3 (GREEN: implementation)
+> **Status:** ✅ Phase 1 complete | ✅ Phase 2 complete | ✅ Phase 3 complete (GREEN) | ✅ Phase 4 (REFACTOR)
+> **Next Phase:** Done — all 4 phases complete.
 
 ## Architecture Overview
 
