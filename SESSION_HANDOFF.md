@@ -5,13 +5,14 @@
 > For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — D1–D10 are the binding principles.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
-> **TDD plan:** `docs/planning/P5_CLI_UNLOCK_LATENCY_PHASE1.md` (32 assertions, 6 groups — ✅ Phase 1-4 complete)
-> **Active TDD plan:** `docs/planning/ENTRY_HASH_CONSOLIDATION_PHASE1.md` (17 assertions, 4 groups — 🔴 Phase 2)
+> **Active TDD plan:** `docs/planning/P4_CLI_UX_POLISH_PHASE1.md` (24 assertions, 5 groups — ✅ Phase 2 complete, 🟢 Phase 3 next)
 
 ## Current State
-- **Branch:** `Staging_migration`
-- **Last commit:** `cb3b0af` — promote E2E-05 seal/hash mismatch to top of task queue
-- **CLI:** 2135 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403). 6 RED tests in `test_entry_hash_consolidation.py` (expected — Phase 2)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)  |  **Cross-Client Serialization:** ✅ Phase 1-4 complete — 43/43 assertions GREEN. 3 Phase-4 improvements: extracted `compute_entry_hash()` to `helpers.py` (single source of truth), JS `jsonSortIndent2()` eliminates double serialization, clarified `_verify_single_block` docstring.  |  **I-03:** ✅ Phase 1-4 complete — 52/52 PY + 35/35 web GREEN  |  **I-02:** ✅ Phase 1-4 complete — 103/103 PY + 67/67 JS all GREEN  |  **I-02a:** ✅ Phase 1-4 complete — 28/28 field token WASM + 35/35 staging keys + 32/32 index encryption all GREEN; 3 Phase-4 improvements: extracted `_applyFieldsToData()`, clarified `_encrypt()` guard + `_fieldTokenCache` lifetime  |  **I-01:** ✅ Phase 1-4 complete — 95/95 PY + 13/13 JS all GREEN; 5 Phase-4 improvements: hoisted `genesis_kv` in chain `verify()`, simplified redundant `require_content_hash` check, clarified `CryptoManager.__init__` docstring + `_keys` comment + JS `deriveMk` section header
+- **Branch:** `mobile-poc`
+- **Last commit:** `8b2e8db` — Entry Hash Verification Consolidation Phases 1-4 complete
+- **CLI:** 2135 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)
+- **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
+- **P4 CLI UX Polish:** 🔴 Phase 2 complete — 24 tests written in `tests/test_p4_cli_ux_polish.py` (6 RED, 18 regression-guard GREEN). Blueprint: `docs/planning/P4_CLI_UX_POLISH_PHASE1.md`
 
 ## C5 File Upload Limitation — RESOLVED (2026-07-16)
 - React 18 native event delegation picks up `new Event('change', {bubbles: true})`
@@ -39,18 +40,17 @@
 | 5 | ✅ Phase 4 (REFACTOR) | Cross-client canonical serialization — 43/43 assertions ✅ |
 | 6 | ✅ Phase 4 (REFACTOR) | P5 CLI unlock latency — 32/32 assertions ✅. 3 Phase-4 improvements: extracted `_timeout_s()` in HttpStagingTransport, simplified `effective_key` in RemoteStagingSync.pull(), updated 23 tests for P5 read-only fast path |
 | 7 | 🔵 Phase 5 | Cross-client: canonical serialization, indent=2 consolidation |
-| 8 | 🔵 Phase 6 | CLI polish: P4 UX kinks |
+| 8 | 🔴 Phase 6 | P4 CLI UX polish — Phase 1 complete (24 assertions, 5 groups) |
 
 ## Immediate Next Steps 🎯
 
-1. **I-09 Device Attribution** 🟠 Phase 4 (REFACTOR) — Phase 3 GREEN complete.
-   - Plan: `docs/planning/I09_DEVICE_ATTRIBUTION_PHASE1.md` (49 assertions, 9 groups)
-   - Source: `domain/cookie/device_cookie.py`, `security/auth.py`, `phpoc-web/src/sync/sync.js`
-   - Goal: Derive device IDs from MK + device-local UUID4 secret (not MK alone)
-   - Deprioritized Phase 1a below — device attribution may affect web re-auth flow
-2. **Phase 1a: Align web staging sharing with CLI** (after I-09)
-   - Plan: `docs/planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md`
-   - Stage 1.1: Remove MK bypass in `sync.js` (~line 527)
+1. **P4 — CLI UX polish** 🔴 Phase 2 complete → 🟢 Phase 3 (GREEN)
+   - 24 tests in `tests/test_p4_cli_ux_polish.py` (6 RED, 18 regression-guard GREEN)
+   - RED: A1-A4 (tags path unification), B4 (non-blocking tags), C1 (tags handler dup)
+   - All RED failures trace to `main.py` tags handler duplicate + `_list_tags` CLIInterface bypass
+   - Next: Phase 3 (GREEN) — implement fixes in `main.py` and `cli/interface.py`
+2. **Remaining E2E tests** (E2E-04 wrong passphrase, E2E-06 export wrong passphrase)
+3. **P3 — Remote sync (git-based)** 🔵 Phase 7
 
 ## Known Issues
 - **20 PY tests fail** with Worker HTTP 403 (pre-existing, unrelated)
