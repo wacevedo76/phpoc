@@ -178,7 +178,9 @@ class StagingService:
         except Exception:
             return None
 
-    def capture(self, title, epoch_ms, *, stop_epoch=None, end_epoch=None, is_active=True, tags=None, comment=None, metadata=None, media=None):
+    def capture(self, title, epoch_ms, *, stop_epoch=None, end_epoch=None, is_active=True, tags=None, comment=None, metadata=None, media=None,
+                encrypt_title=False, encrypt_tags=False, encrypt_comment=False,
+                encrypt_duration=False, encrypt_all=False):
         """Add a new staging entry locally. No remote sync.
 
         Attaches the local device UUID (encrypted) to every entry so
@@ -195,10 +197,18 @@ class StagingService:
             comment: Optional comment.
             metadata: Optional metadata dict.
             media: Optional list of media dicts.
+            encrypt_title: Encrypt the title field (default False).
+            encrypt_tags: Encrypt the tags field (default False).
+            encrypt_comment: Encrypt the comment field (default False).
+            encrypt_duration: Encrypt the duration field (default False).
+            encrypt_all: Encrypt all four encryptable fields.
         """
         device_uuid = self._get_device_id()
         resolved_end = stop_epoch if stop_epoch is not None else end_epoch
-        self._local.append(title, epoch_ms, end_epoch=resolved_end, is_active=is_active, tags=tags or [], comment=comment, metadata=metadata, media=media, device_uuid=device_uuid)
+        self._local.append(title, epoch_ms, end_epoch=resolved_end, is_active=is_active, tags=tags or [], comment=comment, metadata=metadata, media=media, device_uuid=device_uuid,
+                           encrypt_title=encrypt_title, encrypt_tags=encrypt_tags,
+                           encrypt_comment=encrypt_comment, encrypt_duration=encrypt_duration,
+                           encrypt_all=encrypt_all)
         self._touch_local_cookie()
 
     def _find_active_entry(self, title: str) -> Dict[str, Any]:

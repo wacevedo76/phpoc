@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
+import EncryptionFlags from '../ui/EncryptionFlags.jsx';
 
 /**
  * NewTask — standalone task creation screen.
@@ -20,6 +21,10 @@ export default function NewTask() {
   const [tags, setTags] = useState('');
   const [comment, setComment] = useState('');
   const [isOneOff, setIsOneOff] = useState(false);
+  const [encryptTitle, setEncryptTitle] = useState(false);
+  const [encryptTags, setEncryptTags] = useState(false);
+  const [encryptComment, setEncryptComment] = useState(false);
+  const [encryptAll, setEncryptAll] = useState(false);
   const [status, setStatus] = useState(null);
   const [success, setSuccess] = useState(false);
 
@@ -41,6 +46,9 @@ export default function NewTask() {
         startEpoch: now,
         tags: tagList,
         comment: comment.trim() || null,
+        encrypt_title: encryptAll || encryptTitle,
+        encrypt_tags: encryptAll || encryptTags,
+        encrypt_comment: encryptAll || encryptComment,
       };
 
       // One-off: set end_epoch = now, mark not active, compute duration = 0
@@ -63,6 +71,10 @@ export default function NewTask() {
         setTags('');
         setComment('');
         setIsOneOff(false);
+        setEncryptTitle(false);
+        setEncryptTags(false);
+        setEncryptComment(false);
+        setEncryptAll(false);
         setStatus(null);
         setSuccess(false);
       }, 2000);
@@ -128,6 +140,13 @@ export default function NewTask() {
             <span>One-off activity <span className="form-label-hint">(already completed — no need to end later)</span></span>
           </label>
         </div>
+
+        <EncryptionFlags
+          encryptAll={encryptAll} setEncryptAll={setEncryptAll}
+          encryptTitle={encryptTitle} setEncryptTitle={setEncryptTitle}
+          encryptTags={encryptTags} setEncryptTags={setEncryptTags}
+          encryptComment={encryptComment} setEncryptComment={setEncryptComment}
+        />
 
         {status && (
           <p className={`form-status ${success ? 'form-status-ok' : status.startsWith('Error') ? 'form-status-error' : ''}`}>

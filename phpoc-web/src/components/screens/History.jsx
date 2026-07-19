@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
+import { formatDisplayTitle } from '../../sync/display_title.js';
 
 /**
  * History — completed entries with date/tag filter, inline editing for staging.
@@ -568,7 +569,7 @@ export default function History() {
                     }}
                   >
                     <div className="history-entry-main">
-                      <span className="history-entry-title">{entry.title}</span>
+                      <span className="history-entry-title">{formatDisplayTitle(entry)}</span>
                       {isSaving && <span className="saving-spinner" />}
                       <span className="history-entry-duration">{formatDuration(entry.duration)}</span>
                     </div>

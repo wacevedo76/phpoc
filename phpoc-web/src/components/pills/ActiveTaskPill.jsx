@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Icons } from '../ui/Icons.jsx';
+import { formatDisplayTitle } from '../../sync/display_title.js';
 
 /**
  * Format epoch ms to a short time string (e.g. "2:14 PM").
@@ -31,7 +32,7 @@ function formatTime(epoch) {
  *   @param {function} onStop — (taskTitle) => void
  *   @param {number} elapsedMs — computed elapsed time in ms
  */
-export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapsedMs }) {
+export default function ActiveTaskPill({ task, onPause, onResume, onStop, onReveal, elapsedMs }) {
   const [stopping, setStopping] = React.useState(false);
 
   const handleStop = (e) => {
@@ -110,7 +111,11 @@ export default function ActiveTaskPill({ task, onPause, onResume, onStop, elapse
       {/* Top half: Title + elapsed + tags */}
       <div className="pill-top">
         <div className="pill-title-row">
-          <span className="pill-title">{task.title}</span>
+          <span
+            className={`pill-title${task.has_encrypted_fields && !task.title ? ' pill-encrypted-clickable' : ''}`}
+            onClick={task.has_encrypted_fields && !task.title ? () => onReveal?.(task.entry_id) : undefined}
+            title={task.has_encrypted_fields && !task.title ? 'Click to reveal encrypted title' : undefined}
+          >{formatDisplayTitle(task)}</span>
           {task.is_paused && <span className="pill-paused-badge">PAUSED</span>}
         </div>
         <span className="pill-elapsed">{formatElapsed(elapsedMs)}</span>

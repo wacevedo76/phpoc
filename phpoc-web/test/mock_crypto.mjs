@@ -75,14 +75,23 @@ export class MockCrypto {
 
   encrypt(plaintext, masterKeyHex) {
     const mk = masterKeyHex || this._mk || 'no-key';
-    // Prefix with key fingerprint + plaintext for reversible mock encryption
+    // Random nonce prefix simulates real WASM nonce behavior
+    const nonce = Array.from({length: 16}, () => Math.floor(Math.random() * 16).toString(16)).join('');
     const fingerprint = deterministicHash(mk).slice(0, 8);
-    return `enc:${fingerprint}:${plaintext}`;
+    return `${nonce}enc:${fingerprint}:${plaintext}`;
   }
 
   decrypt(ciphertextHex, _masterKeyHex) {
-    if (ciphertextHex && ciphertextHex.startsWith('enc:')) {
+    if (!ciphertextHex) return ciphertextHex;
+    // Skip 16-char random nonce prefix, then look for enc:
+    const payload = ciphertextHex.length > 16 ? ciphertextHex.slice(16) : ciphertextHex;
+    if (payload.startsWith('enc:')) {
       // Format: enc:<fingerprint>:<plaintext>
+      const parts = payload.split(':');
+      return parts.slice(2).join(':') || payload.slice(4);
+    }
+    // Fallback: handle old-format ciphertext without nonce prefix (backward compat)
+    if (ciphertextHex.startsWith('enc:')) {
       const parts = ciphertextHex.split(':');
       return parts.slice(2).join(':') || ciphertextHex.slice(4);
     }

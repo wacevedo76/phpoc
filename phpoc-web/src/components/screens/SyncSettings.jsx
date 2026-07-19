@@ -30,6 +30,7 @@ import { useActiveTasks } from '../../hooks/useActiveTasks.js';
 import SyncIndicator from '../sync/SyncIndicator.jsx';
 import { Icons } from '../ui/Icons.jsx';
 import { computeDisplayStatus, STATUS_READY, STATUS_NOT_SYNCED, STATUS_OFFLINE, STATUS_REAUTH_NEEDED, STATUS_SYNCING, STATUS_GENESIS_MISMATCH } from '../../sync/display_status.js';
+import { formatDisplayTitle } from '../../sync/display_title.js';
 
 // ── Aliases (kept for local brevity) ────────────────────────────────
 const STATUS_REAUTH = STATUS_REAUTH_NEEDED;
@@ -993,7 +994,7 @@ export default function SyncSettings() {
 
           {/* Title + inline tags hint */}
           <div className="sync-pill-info">
-            <span className="sync-pill-title">{entry.title}</span>
+            <span className="sync-pill-title">{formatDisplayTitle(entry)}</span>
             {!isExpanded && tags.length > 0 && (
               <span className="sync-pill-tags">
                 {visibleTags.map((t, i) => (

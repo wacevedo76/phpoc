@@ -44,13 +44,17 @@ class MockCryptoForCache {
   }
   encrypt(plaintext, mk) {
     const key = mk || this._mk || 'no-key';
+    // Random nonce prefix (16 hex chars) simulates real WASM nonce behavior
+    const nonce = Array.from({length: 16}, () => Math.floor(Math.random() * 16).toString(16)).join('');
     const combined = `enc:${key.slice(0, 8)}:${plaintext}`;
-    return Buffer.from(combined, 'utf-8').toString('hex');
+    return nonce + Buffer.from(combined, 'utf-8').toString('hex');
   }
   encryptWithCachedKey(plaintext) { return this.encrypt(plaintext); }
   decrypt(ciphertextHex) {
     try {
-      const decoded = Buffer.from(ciphertextHex, 'hex').toString('utf-8');
+      // Skip 16-char random nonce prefix
+      const payload = ciphertextHex.slice(16);
+      const decoded = Buffer.from(payload, 'hex').toString('utf-8');
       if (decoded.startsWith('enc:')) {
         const parts = decoded.split(':');
         return parts.slice(2).join(':');

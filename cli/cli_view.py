@@ -44,7 +44,17 @@ class CLIView(ViewInterface):
         """Format one entry as a single display line for sync preview."""
         overrides = overrides or {}
         excluded = excluded or set()
-        tags_str = f" [@{', @'.join(entry['tags'])}]" if entry.get("tags") else ""
+
+        # Handle encrypted fields — show [encrypted] placeholder
+        has_encrypted = entry.get("has_encrypted_fields", False)
+        title = entry.get("title", "")
+        if has_encrypted and not title:
+            title = "[encrypted]"
+        tags = entry.get("tags")
+        if has_encrypted and not tags:
+            tags_str = " [encrypted]"
+        else:
+            tags_str = f" [@{', @'.join(tags)}]" if tags else ""
 
         override = overrides.get(entry["entry_index"], {})
         end_epoch = override.get("end_epoch", entry["end_epoch"])
@@ -54,7 +64,7 @@ class CLIView(ViewInterface):
         comment = override.get("comment", entry.get("comment"))
         comment_str = f' "{comment}"' if comment else ""
 
-        line = (f"  #{entry['entry_index']}: {entry['title']}{tags_str} | {entry['date']} | "
+        line = (f"  #{entry['entry_index']}: {title}{tags_str} | {entry['date']} | "
                 f"{start_str}-{end_str} | {self._format_duration(dur)}{comment_str}")
 
         if entry["entry_index"] in overrides:
@@ -124,6 +134,18 @@ class CLIView(ViewInterface):
     # Active tasks display
     # ==================================================================
 
+    @staticmethod
+    def _decrypt_staging_field(encrypted_value: str, decrypt_fn) -> Optional[str]:
+        """Decrypt a staging field value, handling plain: prefix and ciphertext.
+
+        Returns the decrypted string, or None if the value is None.
+        """
+        if encrypted_value is None:
+            return None
+        if encrypted_value.startswith("plain:"):
+            return encrypted_value[6:]
+        return decrypt_fn(encrypted_value)
+
     def render_active_list(self, entries: list, show_tags: bool = False):
         """Display active tasks, decrypting as needed."""
         print("\n--- Running Tasks ---")
@@ -136,19 +158,14 @@ class CLIView(ViewInterface):
             task_id = entries.index(entry) + 1
 
             start_val = data["startTime_enc"]
-            if start_val.startswith("plain:"):
-                start_epoch = int(start_val[6:])
-            else:
-                start_epoch = int(self.ledger.crypto.decrypt(start_val))
+            start_epoch = int(self._decrypt_staging_field(start_val, self.ledger.crypto.decrypt))
             started = time.strftime("%H:%M:%S", time.localtime(start_epoch / 1000))
 
             pauses_enc = data.get("pauses_enc")
             pauses = []
             if pauses_enc:
-                if pauses_enc.startswith("plain:"):
-                    pauses = json.loads(pauses_enc[6:])
-                else:
-                    pauses = json.loads(self.ledger.crypto.decrypt(pauses_enc))
+                pauses_raw = self._decrypt_staging_field(pauses_enc, self.ledger.crypto.decrypt)
+                pauses = json.loads(pauses_raw) if pauses_raw else []
 
             tag_str = ""
             if show_tags:
@@ -193,18 +210,11 @@ class CLIView(ViewInterface):
         """Print a single entry (synced or staged), decrypting as needed."""
         data = entry_data["data"]
 
-        start_val = data["startTime_enc"]
-        if start_val.startswith("plain:"):
-            start_epoch = int(start_val[6:])
-        else:
-            start_epoch = int(self.ledger.crypto.decrypt(start_val))
+        start_epoch = int(self._decrypt_staging_field(data["startTime_enc"], self.ledger.crypto.decrypt))
 
-        if data["endTime_enc"]:
-            end_val = data["endTime_enc"]
-            if end_val.startswith("plain:"):
-                stop_epoch = int(end_val[6:])
-            else:
-                stop_epoch = int(self.ledger.crypto.decrypt(end_val))
+        end_val = data.get("endTime_enc")
+        if end_val:
+            stop_epoch = int(self._decrypt_staging_field(end_val, self.ledger.crypto.decrypt))
         else:
             stop_epoch = None
 
@@ -213,10 +223,8 @@ class CLIView(ViewInterface):
 
         meta_enc = data.get("metadata_enc")
         if meta_enc:
-            if meta_enc.startswith("plain:"):
-                meta = json.loads(meta_enc[6:])
-            else:
-                meta = json.loads(self.ledger.crypto.decrypt(meta_enc))
+            meta_raw = self._decrypt_staging_field(meta_enc, self.ledger.crypto.decrypt)
+            meta = json.loads(meta_raw) if meta_raw else {}
         else:
             meta = {}
 
@@ -372,17 +380,10 @@ class CLIView(ViewInterface):
         print("\n=== Staged Entries ===")
         for idx, entry in completed:
             data = entry["data"]
-            start_val = data["startTime_enc"]
-            if start_val.startswith("plain:"):
-                start_epoch = int(start_val[6:])
-            else:
-                start_epoch = int(self.ledger.crypto.decrypt(start_val))
+            start_epoch = int(self._decrypt_staging_field(data["startTime_enc"], self.ledger.crypto.decrypt))
             end_val = data["endTime_enc"]
             if end_val:
-                if end_val.startswith("plain:"):
-                    end_epoch = int(end_val[6:])
-                else:
-                    end_epoch = int(self.ledger.crypto.decrypt(end_val))
+                end_epoch = int(self._decrypt_staging_field(end_val, self.ledger.crypto.decrypt))
             else:
                 end_epoch = None
 
@@ -408,26 +409,17 @@ class CLIView(ViewInterface):
         print(f"\nModifying: {data['title']}")
 
         # Decrypt current values
-        start_val = data["startTime_enc"]
-        if start_val.startswith("plain:"):
-            start_epoch = int(start_val[6:])
-        else:
-            start_epoch = int(self.ledger.crypto.decrypt(start_val))
+        start_epoch = int(self._decrypt_staging_field(data["startTime_enc"], self.ledger.crypto.decrypt))
         end_val = data["endTime_enc"]
         if end_val:
-            if end_val.startswith("plain:"):
-                current_end = int(end_val[6:])
-            else:
-                current_end = int(self.ledger.crypto.decrypt(end_val))
+            current_end = int(self._decrypt_staging_field(end_val, self.ledger.crypto.decrypt))
         else:
             current_end = None
 
         pauses_enc = data.get("pauses_enc")
         if pauses_enc:
-            if pauses_enc.startswith("plain:"):
-                current_pauses = json.loads(pauses_enc[6:])
-            else:
-                current_pauses = json.loads(self.ledger.crypto.decrypt(pauses_enc))
+            pauses_raw = self._decrypt_staging_field(pauses_enc, self.ledger.crypto.decrypt)
+            current_pauses = json.loads(pauses_raw) if pauses_raw else []
         else:
             current_pauses = []
 
@@ -678,15 +670,14 @@ class CLIView(ViewInterface):
         """
         data = entry["data"]
         start_val = data["startTime_enc"]
-        if start_val.startswith("plain:"):
-            start_epoch = int(start_val[6:])
-        else:
+        if not start_val.startswith("plain:"):
             print(f"  #{idx}: {data['title']} (encrypted \u2014 use auth to view)")
             return
+        start_epoch = int(self._decrypt_staging_field(start_val, self.ledger.crypto.decrypt))
 
         end_val = data.get("endTime_enc")
         if end_val and end_val.startswith("plain:"):
-            end_epoch = int(end_val[6:])
+            end_epoch = int(self._decrypt_staging_field(end_val, self.ledger.crypto.decrypt))
         else:
             end_epoch = None
 

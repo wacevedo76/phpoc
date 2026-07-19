@@ -2,8 +2,8 @@
 
 > **Plan:** Test exploration / blueprint for CLI reference implementation (Python)
 > **Purpose:** Blueprint of all needed test assertions for per-activity field encryption
-> **Status:** 🔜 Phase 1 (test exploration)
-> **Next Phase:** Phase 2 (RED: test definition)
+> **Status:** ✅ Phase 2 (RED: test definition)
+> **Next Phase:** Phase 3 (GREEN: implementation)
 
 ## Design Decisions (from discussion 2026-07-18)
 

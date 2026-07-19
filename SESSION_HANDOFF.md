@@ -10,9 +10,11 @@
 ## Current State
 - **Branch:** `mobile-poc`
 - **Last commit:** `8b2e8db` — Entry Hash Verification Consolidation Phases 1-4 complete
-- **CLI:** 2276 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
+- **CLI:** 2348 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
 - **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
 - **P4 CLI UX Polish:** ✅ Phases 1-4 complete — 24/24 GREEN. 3 Phase-4 improvements: extracted `_reauth_staging()` (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
+- **Encrypt-all-entry-fields (Web):** ✅ Phases 1-4 complete — all 61 assertions GREEN.
+**Encrypt-all-entry-fields (CLI):** ✅ Phases 1-4 complete — 72/72 GREEN. Phase 4 improvements (5): (1) extracted `_decrypt_staging_field()` helper in cli_view.py — eliminated 10+ duplicate `startswith("plain:")` blocks; (2) cleaned up `_apply_entry_encryption()` API — separate keyword args instead of mixed flag+data dict; (3) extracted `_toggle_encryption()` helper — 4x ~10-line encrypt/decrypt toggle blocks → single parameterized method; (4) `_prepare_entries()` uses `_PER_FIELD_ENCRYPTABLE` list for plaintext removal; (5) extracted `_verify_content_hash_v030()` static method from `_verify_content_hash()` — self-documenting legacy fallback. Full flow: staging cache (A/B/E) → ledger engine (C) → blind index (D) → hash integrity (E) → display (F) → commands (G) → sync (H) → integration (I). Core implementation: `local_cache.py` — `append()` accepts per-field encryption kwargs, `read_entries()` dual-reads _enc fallback, `write_entries()` re-encrypts per-field when `has_encrypted_fields` set; `engine.py` — `_prepare_entries()` re-encrypts per-field for committed blocks, `_compute_content_hash()` strips `_enc` suffix (matching web), `_indexable_title()` skips encrypted titles in blind index, `revert()` decrypts per-field _enc variants; `chain.py` — `_verify_content_hash()` tries both canonical (stripped) and legacy extensible formats, plus legacy v0.3.0 fallback; `cli_view.py` — `render_entry_line()` shows `[encrypted]` placeholder for has_encrypted_fields entries.
 - **Genesis Gate (JS):** ✅ Phase 3 GREEN — `genesis_gate_test.mjs`: 218/218. Fixed test `computeEntryHash`→`jsonSortIndent2`, `computeContentHash`→decrypt `_enc`+`jsonSort`, `encRev`→MockCrypto format.
 - **Settings Genesis Component:** ✅ Phase 3 GREEN — `settings_genesis_component.test.mjs`: 26/26. Added `fetch` mock, `reconfigure` to sync mock. Fixed Settings.jsx: only set `genesisStatus='checking'` when URL changed (preserves compatible status on same-URL save).
 
@@ -45,10 +47,7 @@
 
 ## Immediate Next Steps 🎯
 
-1. **Merge `mobile-poc` → `main`** — all blocker tests now pass (0 PY failures, 0 JS failures)
-2. **Encrypt-all-entry-fields (Web)** — Phase 2 (RED: 61 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_WEB_PHASE1.md`
-3. **Encrypt-all-entry-fields (CLI)** — Phase 2 (RED: 72 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_CLI_PHASE1.md`
-4. **Begin Flutter work** — per original goal
+1. **Begin Flutter work** — per original `mobile-poc` branch goal. All CLI blocking work complete (72/72 GREEN, 5 Phase 4 improvements).
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner

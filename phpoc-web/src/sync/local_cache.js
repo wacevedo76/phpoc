@@ -332,6 +332,72 @@ export class LocalCache {
   }
 
   // ------------------------------------------------------------------
+  // Field encryption helpers (encrypt_title, encrypt_tags, etc.)
+  // ------------------------------------------------------------------
+
+  /**
+   * Encrypt value using cached MK, falling back to plain: prefix.
+   * @param {string} value
+   * @returns {string}
+   * @private
+   */
+  _encryptValue(value) {
+    if (!this._crypto.hasMasterKey || !this._crypto.hasMasterKey()) {
+      return 'plain:' + String(value);
+    }
+    return this._crypto.encryptWithCachedKey(String(value));
+  }
+
+  /**
+   * Decrypt field value, handling plain:, hex, and null.
+   * @param {string|null|undefined} value
+   * @returns {string|null}
+   * @private
+   */
+  _decryptValue(value) {
+    return this._decrypt(value);
+  }
+
+  /**
+   * Apply per-field encryption to the raw data object after hash computation.
+   * Moves plaintext fields to _enc variants when encryption flags are set.
+   * Does NOT encrypt structural fields (is_active, is_paused).
+   *
+   * @param {object} data - Raw data object (mutated in place)
+   * @param {object} flags
+   * @param {string} flags.title
+   * @param {string[]} flags.tags
+   * @param {string|null} flags.comment
+   * @param {number} flags.duration
+   * @param {boolean} flags.encrypt_title
+   * @param {boolean} flags.encrypt_tags
+   * @param {boolean} flags.encrypt_comment
+   * @param {boolean} flags.encrypt_duration
+   * @private
+   */
+  _applyEntryEncryption(data, flags) {
+    if (flags.encrypt_title) {
+      data.title_enc = this._encryptValue(flags.title || '');
+      delete data.title;
+    }
+    if (flags.encrypt_tags) {
+      data.tags_enc = this._encryptValue(JSON.stringify(flags.tags || []));
+      delete data.tags;
+    }
+    if (flags.encrypt_comment) {
+      if (flags.comment != null) {
+        data.comment_enc = this._encryptValue(flags.comment);
+        delete data.comment;
+      }
+      // null comment with encryption flag: skip (don't encrypt null)
+    }
+    if (flags.encrypt_duration) {
+      data.duration_enc = this._encryptValue(String(flags.duration));
+      delete data.duration;
+    }
+  }
+
+  // ------------------------------------------------------------------
   // CRUD
   // ------------------------------------------------------------------
 
@@ -347,10 +413,17 @@ export class LocalCache {
    * @param {string} [params.comment]
    * @param {Array} [params.media]
    * @param {string} [params.deviceUuid]
+   * @param {boolean} [params.encrypt_title=false] - Encrypt title field
+   * @param {boolean} [params.encrypt_tags=false] - Encrypt tags field
+   * @param {boolean} [params.encrypt_comment=false] - Encrypt comment field
+   * @param {boolean} [params.encrypt_duration=false] - Encrypt duration field
+   * @param {boolean} [params.encrypt_all=false] - Encrypt all 4 fields
    * @returns {Promise<string>} The entry hash prefix (10 chars).
    * @throws {Error} If a collision is detected (same start_epoch).
    */
-  async append({ title, startEpoch, endEpoch, isActive = true, tags, comment, media, deviceUuid }) {
+  async append({ title, startEpoch, endEpoch, isActive = true, tags, comment, media, deviceUuid,
+                encrypt_title = false, encrypt_tags = false, encrypt_comment = false,
+                encrypt_duration = false, encrypt_all = false }) {
     const entries = await this._storage.get(ENTRIES_KEY) || [];
 
     // Collision check — read all DTOs to find start_epoch
@@ -386,6 +459,12 @@ export class LocalCache {
     };
     if (comment != null) data.comment = comment;
 
+    // Determine effective encryption flags (encrypt_all overrides)
+    const effEncTitle = encrypt_all || encrypt_title;
+    const effEncTags = encrypt_all || encrypt_tags;
+    const effEncComment = encrypt_all || encrypt_comment;
+    const effEncDuration = encrypt_all || encrypt_duration;
+
     const hash = await this._computeEntryHash({
       title,
       start_epoch: startEpoch,
@@ -401,6 +480,14 @@ export class LocalCache {
       device_uuid: deviceUuid || '',
       end_device_uuid: '',
       comment: comment ?? undefined,
+    });
+
+    // Apply field encryption after hash computation (hash uses plaintext)
+    this._applyEntryEncryption(data, {
+      title, tags: normalizedTags, comment: comment ?? null,
+      duration: endEpoch ? (endEpoch - startEpoch) : 0,
+      encrypt_title: effEncTitle, encrypt_tags: effEncTags,
+      encrypt_comment: effEncComment, encrypt_duration: effEncDuration,
     });
 
     // Remove undefined fields before storing
@@ -581,6 +668,41 @@ export class LocalCache {
                  key === 'duration' || key === 'title' || key === 'comment' ||
                  key === 'media') {
         data[key] = value;
+      } else if (key === 'encrypt_title') {
+        if (value && data.title != null) {
+          data.title_enc = this._encryptValue(data.title);
+          delete data.title;
+        } else if (!value && data.title_enc) {
+          const decTitle = this._decryptValue(data.title_enc);
+          data.title = (decTitle != null) ? decTitle : '';
+          delete data.title_enc;
+        }
+      } else if (key === 'encrypt_tags') {
+        if (value && data.tags != null) {
+          data.tags_enc = this._encryptValue(JSON.stringify(data.tags));
+          delete data.tags;
+        } else if (!value && data.tags_enc) {
+          const decTags = this._decryptValue(data.tags_enc);
+          try { data.tags = decTags ? JSON.parse(decTags) : []; } catch { data.tags = []; }
+          delete data.tags_enc;
+        }
+      } else if (key === 'encrypt_comment') {
+        if (value && data.comment != null) {
+          data.comment_enc = this._encryptValue(data.comment);
+          delete data.comment;
+        } else if (!value && data.comment_enc) {
+          data.comment = this._decryptValue(data.comment_enc) || null;
+          delete data.comment_enc;
+        }
+      } else if (key === 'encrypt_duration') {
+        if (value && data.duration != null) {
+          data.duration_enc = this._encryptValue(String(data.duration));
+          delete data.duration;
+        } else if (!value && data.duration_enc) {
+          const decDur = this._decryptValue(data.duration_enc);
+          data.duration = (decDur != null) ? parseInt(decDur, 10) : 0;
+          delete data.duration_enc;
+        }
       }
     }
   }
@@ -813,18 +935,71 @@ export class LocalCache {
     const endDeviceUuidRaw = data.end_device_uuid_enc || '';
     const end_device_uuid = this._decrypt(endDeviceUuidRaw) || '';
 
+    // Decrypt new encryptable fields (title_enc, tags_enc, comment_enc, duration_enc)
+    let title = data.title || '';
+    let tags = data.tags || [];
+    let comment = data.comment || null;
+    let duration = data.duration || 0;
+    let hasEncryptedFields = false;
+    const hasMK = this._crypto.hasMasterKey && this._crypto.hasMasterKey();
+
+    if (data.title_enc) {
+      hasEncryptedFields = true;
+      if (hasMK) {
+        const decTitle = this._decryptValue(data.title_enc);
+        title = (decTitle != null) ? decTitle : '';
+      } else {
+        title = '';  // No MK → can't decrypt, show empty
+      }
+    }
+
+    if (data.tags_enc) {
+      hasEncryptedFields = true;
+      if (hasMK) {
+        const decTags = this._decryptValue(data.tags_enc);
+        if (decTags != null) {
+          try { tags = JSON.parse(decTags); } catch { tags = []; }
+        } else {
+          tags = [];
+        }
+      } else {
+        tags = [];
+      }
+    }
+
+    if (data.comment_enc) {
+      hasEncryptedFields = true;
+      if (hasMK) {
+        const decComment = this._decryptValue(data.comment_enc);
+        comment = (decComment != null) ? decComment : null;
+      } else {
+        comment = null;
+      }
+    }
+
+    if (data.duration_enc) {
+      hasEncryptedFields = true;
+      if (hasMK) {
+        const decDuration = this._decryptValue(data.duration_enc);
+        duration = (decDuration != null) ? parseInt(decDuration, 10) : 0;
+        if (isNaN(duration)) duration = 0;
+      } else {
+        duration = 0;
+      }
+    }
+
     return {
       activity_id: data.activity_id || '',
       entry_id: data.entry_id || '',
-      title: data.title || '',
+      title,
       start_epoch: startEpoch || 0,
       end_epoch: endEpoch,
-      duration: data.duration || 0,
+      duration,
       is_active: data.is_active || false,
       is_paused: data.is_paused || false,
       pauses,
-      tags: data.tags || [],
-      comment: data.comment || null,
+      tags,
+      comment,
       media: data.media || [],
       device_uuid,
       end_device_uuid,
@@ -833,6 +1008,7 @@ export class LocalCache {
       entry_index: idx,
       committed: raw.committed || false,
       block_index: raw.block_index ?? null,
+      has_encrypted_fields: hasEncryptedFields,
     };
   }
 

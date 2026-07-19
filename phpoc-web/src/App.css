@@ -906,6 +906,18 @@ a { color: var(--accent-blue); text-decoration: none; }
   color: var(--text-muted);
 }
 
+/* ── Encryption checkboxes (EncryptionFlags.jsx) ── */
+
+.encrypt-per-field {
+  margin-left: 1.5em;
+  margin-top: 0.25em;
+}
+
+.encrypt-field-label {
+  display: block;
+  font-size: 0.875em;
+}
+
 .form-input {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);

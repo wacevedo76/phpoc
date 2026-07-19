@@ -24,6 +24,42 @@ _DEFAULT_FORMAT_VERSION = (0, 2, 0)
 _CONTENT_HASH_REQUIRED_VERSION = (0, 4, 0)
 
 
+def _decrypt_or_plain(decrypt_fn, data: dict):
+    """Return a callable that resolves plaintext or _enc field values.
+
+    Returns a function ``resolver(field_name, enc_field_name, default='')``
+    that prefers plaintext *field_name*, falling back to decrypting
+    *enc_field_name* when available.
+    """
+    def resolve(field_name, enc_field_name, default=""):
+        plain = data.get(field_name)
+        if plain is not None and plain != "":
+            return plain
+        enc = data.get(enc_field_name)
+        if enc and decrypt_fn is not None:
+            try:
+                return decrypt_fn(enc)
+            except Exception:
+                pass
+        return default
+    return resolve
+
+
+def _resolve_json_list(field_name, enc_field_name, decrypt_fn, data: dict) -> list:
+    """Resolve a list field, falling back from encrypted _enc variant."""
+    plain = data.get(field_name)
+    if plain is not None:
+        return sorted(plain) if isinstance(plain, list) else []
+    enc = data.get(enc_field_name)
+    if enc and decrypt_fn is not None:
+        try:
+            import json as _json
+            return sorted(_json.loads(decrypt_fn(enc)))
+        except Exception:
+            pass
+    return []
+
+
 def _verify_entry_hash_flex(data: dict, stored_hash: str) -> bool:
     """Verify an entry hash, trying all three serialization formats.
 
@@ -558,6 +594,40 @@ class LedgerChain:
             return _DEFAULT_FORMAT_VERSION
 
     @staticmethod
+    def _verify_content_hash_v030(data: dict, decrypt_fn=None) -> bool:
+        """Verify content_hash using legacy v0.3.0 fixed-field algorithm.
+
+        The v0.3.0 format used 9 hardcoded fields, each individually
+        decrypted. This is the final fallback after canonical and
+        extensible formats fail.
+        """
+        stored = data.get("content_hash")
+        _resolve = _decrypt_or_plain(decrypt_fn, data)
+        legacy = {
+            "title": _resolve("title", "title_enc"),
+            "startTime": decrypt_fn(data.get("startTime_enc", ""))
+                if (decrypt_fn is not None and data.get("startTime_enc"))
+                else data.get("startTime_enc", ""),
+            "endTime": decrypt_fn(data.get("endTime_enc", ""))
+                if (decrypt_fn is not None and data.get("endTime_enc"))
+                else data.get("endTime_enc", ""),
+            "metadata": decrypt_fn(data.get("metadata_enc", ""))
+                if (decrypt_fn is not None and data.get("metadata_enc"))
+                else data.get("metadata_enc", "{}"),
+            "pauses": decrypt_fn(data.get("pauses_enc", ""))
+                if (decrypt_fn is not None and data.get("pauses_enc"))
+                else data.get("pauses_enc", "[]"),
+            "tags": _resolve_json_list("tags", "tags_enc", decrypt_fn, data),
+            "comment": _resolve("comment", "comment_enc"),
+            "media": sorted(data.get("media", [])),
+            "duration": int(_resolve("duration", "duration_enc", default="0")),
+        }
+        return (
+            hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
+            == stored
+        )
+
+    @staticmethod
     def _is_format_version_at_least(genesis: Optional[dict], minimum: Tuple[int, ...]) -> bool:
         """Return True if genesis format_version >= minimum (segment-wise int comparison)."""
         actual = LedgerChain._parse_format_version(genesis)
@@ -584,51 +654,44 @@ class LedgerChain:
                        encrypted values directly (less accurate, but matches
                        old pre-v0.4 behavior).
         """
-        content = {}
+        content_canonical = {}  # strips _enc suffix (new v0.4.0+ format)
+        content_legacy_ext = {}  # keeps _enc suffix (old extensible format)
         for key, value in data.items():
             if key == "content_hash":
                 continue
             if key.endswith("_enc") and value is not None and value != "":
                 if decrypt_fn is not None:
                     try:
-                        content[key] = decrypt_fn(value)
+                        decrypted = decrypt_fn(value)
+                        content_canonical[key[:-4]] = decrypted
+                        content_legacy_ext[key] = decrypted
                     except Exception:
-                        content[key] = value
+                        content_canonical[key] = value
+                        content_legacy_ext[key] = value
+                    continue
                 else:
-                    content[key] = value
+                    content_canonical[key] = value
+                    content_legacy_ext[key] = value
+                    continue
             elif isinstance(value, list):
-                content[key] = sorted(value)
+                content_canonical[key] = sorted(value)
+                content_legacy_ext[key] = sorted(value)
             else:
-                content[key] = value
+                content_canonical[key] = value
+                content_legacy_ext[key] = value
+
         computed = hashlib.sha256(
-            json.dumps(content, sort_keys=True).encode()
+            json.dumps(content_canonical, sort_keys=True).encode()
         ).hexdigest()
-        # Fallback to legacy v0.3.0 algorithm if extensible doesn't match
-        if computed != data["content_hash"]:
-            # Legacy algorithm: hardcoded 9 fields, each decrypted
-            # (same as original v0.3.0 _compute_content_hash in core/ledger.py)
-            plain = dict(data)
-            legacy = {
-                "title": plain.get("title", ""),
-                "startTime": decrypt_fn(plain.get("startTime_enc", ""))
-                    if (decrypt_fn is not None and plain.get("startTime_enc"))
-                    else plain.get("startTime_enc", ""),
-                "endTime": decrypt_fn(plain.get("endTime_enc", ""))
-                    if (decrypt_fn is not None and plain.get("endTime_enc"))
-                    else plain.get("endTime_enc", ""),
-                "metadata": decrypt_fn(plain.get("metadata_enc", ""))
-                    if (decrypt_fn is not None and plain.get("metadata_enc"))
-                    else plain.get("metadata_enc", "{}"),
-                "pauses": decrypt_fn(plain.get("pauses_enc", ""))
-                    if (decrypt_fn is not None and plain.get("pauses_enc"))
-                    else plain.get("pauses_enc", "[]"),
-                "tags": sorted(plain.get("tags", [])),
-                "comment": plain.get("comment", ""),
-                "media": sorted(plain.get("media", [])),
-                "duration": plain.get("duration", 0),
-            }
-            return (
-                hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
-                == data["content_hash"]
-            )
-        return True
+        if computed == data["content_hash"]:
+            return True
+
+        # Try old extensible format (keeps _enc suffix on decrypted fields)
+        computed_legacy = hashlib.sha256(
+            json.dumps(content_legacy_ext, sort_keys=True).encode()
+        ).hexdigest()
+        if computed_legacy == data["content_hash"]:
+            return True
+
+        # Fallback to legacy v0.3.0 algorithm (hardcoded 9-field format)
+        return LedgerChain._verify_content_hash_v030(data, decrypt_fn)

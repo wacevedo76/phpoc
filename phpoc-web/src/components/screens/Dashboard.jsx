@@ -3,6 +3,7 @@ import { useApp } from '../../context/DevModeContext.jsx';
 import { useActiveTasks } from '../../hooks/useActiveTasks.js';
 import ActiveTaskPill from '../pills/ActiveTaskPill.jsx';
 import { Icons } from '../ui/Icons.jsx';
+import EncryptionFlags from '../ui/EncryptionFlags.jsx';
 
 /**
  * Dashboard — main screen.
@@ -37,6 +38,10 @@ export default function Dashboard() {
   const [newTags, setNewTags] = useState('');
   const [newComment, setNewComment] = useState('');
   const [isOneOff, setIsOneOff] = useState(false);
+  const [encryptTitle, setEncryptTitle] = useState(false);
+  const [encryptTags, setEncryptTags] = useState(false);
+  const [encryptComment, setEncryptComment] = useState(false);
+  const [encryptAll, setEncryptAll] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
   const [newTaskCollapsed, setNewTaskCollapsed] = useState(true);
 
@@ -49,6 +54,12 @@ export default function Dashboard() {
     const now = Date.now();
 
     try {
+      const encFlags = {
+        encrypt_title: encryptAll || encryptTitle,
+        encrypt_tags: encryptAll || encryptTags,
+        encrypt_comment: encryptAll || encryptComment,
+      };
+
       if (isOneOff) {
         setStatusMsg(`Logging "${newTitle.trim()}"...`);
         await sync.capture({
@@ -60,6 +71,7 @@ export default function Dashboard() {
           tags: newTags.split(',')
             .map(t => t.trim())
             .filter(Boolean),
+          ...encFlags,
         });
       } else {
         setStatusMsg(`Starting "${newTitle.trim()}"...`);
@@ -70,12 +82,17 @@ export default function Dashboard() {
           tags: newTags.split(',')
             .map(t => t.trim())
             .filter(Boolean),
+          ...encFlags,
         });
       }
       setNewTitle('');
       setNewTags('');
       setNewComment('');
       setIsOneOff(false);
+      setEncryptTitle(false);
+      setEncryptTags(false);
+      setEncryptComment(false);
+      setEncryptAll(false);
       setStatusMsg(null);
       setNewTaskCollapsed(true);
       await refresh();
@@ -114,6 +131,16 @@ export default function Dashboard() {
       await refresh();
     } catch (err) {
       console.warn('Stop failed:', err);
+    }
+  }, [sync, refresh]);
+
+  const handleReveal = useCallback(async (entryId) => {
+    if (!sync?.revealEncryptedFields) return;
+    try {
+      await sync.revealEncryptedFields(entryId);
+      await refresh();
+    } catch (err) {
+      console.warn('Reveal failed:', err);
     }
   }, [sync, refresh]);
 
@@ -158,6 +185,7 @@ export default function Dashboard() {
                     onPause={handlePause}
                     onResume={handleResume}
                     onStop={handleStop}
+                    onReveal={handleReveal}
                   />
                 );
               })}
@@ -243,6 +271,13 @@ export default function Dashboard() {
                   onChange={(e) => setNewComment(e.target.value)}
                 />
               </div>
+
+              <EncryptionFlags
+                encryptAll={encryptAll} setEncryptAll={setEncryptAll}
+                encryptTitle={encryptTitle} setEncryptTitle={setEncryptTitle}
+                encryptTags={encryptTags} setEncryptTags={setEncryptTags}
+                encryptComment={encryptComment} setEncryptComment={setEncryptComment}
+              />
 
               {statusMsg && (
                 <p className={`form-status ${statusMsg.startsWith('Error') ? 'form-status-error' : ''}`}>

@@ -151,4 +151,32 @@ export class IndexManager {
     this._cache = {};
     return this._flush();
   }
+
+  /**
+   * Build the index from an array of entry DTOs.
+   * Skips entries with encrypted titles (has_encrypted_fields and no plaintext title).
+   *
+   * @param {object[]} entries - Array of entry DTOs with date, title, duration, has_encrypted_fields
+   */
+  buildFromEntries(entries) {
+    this._cache = {};
+    for (const entry of entries) {
+      // Skip entries with encrypted titles (no plaintext title available for grouping)
+      if (entry.title_enc && !entry.title) continue;
+      // Skip entries explicitly marked with encrypted fields that lack a readable title
+      if (entry.has_encrypted_fields && !entry.title) continue;
+
+      const date = entry.date;
+      const title = entry.title;
+      const duration = entry.duration || 0;
+
+      if (!date || !title || duration <= 0) continue;
+
+      if (!this._cache[date]) {
+        this._cache[date] = {};
+      }
+      this._cache[date][title] = (this._cache[date][title] || 0) + duration;
+    }
+    return this._flush();
+  }
 }

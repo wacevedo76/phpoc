@@ -85,6 +85,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/ledger_roundtrip_test.mjs` | 🟢 GREEN | **NEW** — 46 tests for full export→import fidelity (v1, v2, active/paused entries, deterministic seal, wrong key rejection) |
 | `phpoc-web/src/hooks/useCookieMonitor.js` | HOT | `checkCookieTtl()` + `createCookieMonitor()` — proactive cookie TTL polling + MK clearing + `onWarning` callback. Stage 1.3: no cookie → returns `true` (graceful skip) instead of `false` (Jul 4) |
 | `phpoc-web/src/sync/display_status.js` | HOT | `computeDisplayStatus()` pure function + STATUS_* constants extracted from SyncSettings.jsx |
+| `phpoc-web/src/sync/display_title.js` | HOT | **NEW** — `formatDisplayTitle()` + `ENCRYPTED_PLACEHOLDER` constant, extracted from ActiveTaskPill/History/SyncSettings (Phase 4 refactor) |
 | `phpoc-web/src/sync/base64.js` | HOT | **NEW** — shared `base64ToBytes`/`bytesToBase64` utilities, used by sync.js, remote_sync.js, genesis_gate.js (2026-06-30) |
 | `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (10 keys: remote staging/cookie/ledger + hash index, local cookie/blocks/index + hash_index), single source of truth (2026-06-30, updated 2026-07-02, 2026-07-05) |
 | `phpoc-web/src/sync/entry_dto.js` | 🟢 GREEN | DTO conversion: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON`. Bug 3b: handles `device_uuid_enc` field. (2026-07-01) |
@@ -98,6 +99,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/row_sync.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `buildDiff()` 8-scenario LWW resolution + `RowSyncWorker` HTTP client (manifest, row CRUD, retry). |
 | `phpoc-web/src/sync/migration.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `migrateBlobToRows()` blob→rows conversion, idempotent (marker key), best-effort. |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
+| `phpoc-web/src/components/ui/EncryptionFlags.jsx` | HOT | **NEW** — reusable encryption checkbox group (master + per-field), extracted from Dashboard + NewTask (Phase 4 refactor) |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
 

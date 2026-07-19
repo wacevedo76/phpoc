@@ -86,20 +86,66 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
       } catch { /* ignore corrupt metadata */ }
     }
 
+    // Dual-read encryptable fields: try _enc first, fall back to plaintext
+    let title = '';
+    if (data.title_enc) {
+      try {
+        const decrypted = crypto.decryptWithCachedKey(data.title_enc);
+        title = (decrypted != null) ? decrypted : '';
+      } catch { title = data.title || ''; }
+    } else {
+      title = data.title || '';
+    }
+
+    let tags = [];
+    if (data.tags_enc) {
+      try {
+        const decrypted = crypto.decryptWithCachedKey(data.tags_enc);
+        tags = decrypted ? JSON.parse(decrypted) : [];
+      } catch { tags = data.tags || []; }
+    } else {
+      tags = data.tags || [];
+    }
+
+    let comment = null;
+    if (data.comment_enc) {
+      try {
+        comment = crypto.decryptWithCachedKey(data.comment_enc) || null;
+      } catch { comment = data.comment || null; }
+    } else {
+      comment = data.comment || null;
+    }
+
+    let duration = 0;
+    if (data.duration_enc) {
+      try {
+        const decrypted = crypto.decryptWithCachedKey(data.duration_enc);
+        if (decrypted != null) {
+          const n = parseInt(decrypted, 10);
+          duration = isNaN(n) ? 0 : n;
+        }
+      } catch { duration = data.duration || 0; }
+    } else {
+      duration = data.duration || 0;
+    }
+
     const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
+
+    const hasEncryptedFields = !!(data.title_enc || data.tags_enc ||
+      data.comment_enc || data.duration_enc);
 
     return {
       entry_id: data.entry_id || rawEntry.hash || '',
       entry_index: -1, // committed entries have no staging index
-      title: data.title || '',
+      title,
       start_epoch: startEpoch,
       end_epoch: endEpoch,
-      duration: data.duration || 0,
+      duration,
       is_active: false,
       is_paused: false,
       pauses: [],
-      tags: data.tags || [],
-      comment: data.comment || null,
+      tags,
+      comment,
       media: [],
       metadata,
       date: dateStr,
@@ -109,6 +155,7 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
       end_device_uuid: data.end_device_uuid || '',
       committed: true,
       block_index: null,
+      has_encrypted_fields: hasEncryptedFields,
     };
   } catch {
     return null;
@@ -148,6 +195,66 @@ export function rawEntryToDTO(rawEntry, crypto) {
 
     const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
 
+    // Dual-read encryptable fields: try _enc first, fall back to plaintext
+    let title = '';
+    if (data.title_enc) {
+      if (data.title_enc.startsWith('plain:')) {
+        title = data.title_enc.slice(6);
+      } else if (crypto) {
+        try {
+          const decrypted = crypto.decryptWithCachedKey(data.title_enc);
+          title = (decrypted != null) ? decrypted : '';
+        } catch { title = ''; }
+      }
+    } else {
+      title = data.title || '';
+    }
+
+    let tags = [];
+    if (data.tags_enc) {
+      if (data.tags_enc.startsWith('plain:')) {
+        try { tags = JSON.parse(data.tags_enc.slice(6)); } catch { tags = []; }
+      } else if (crypto) {
+        try {
+          const decrypted = crypto.decryptWithCachedKey(data.tags_enc);
+          tags = decrypted ? JSON.parse(decrypted) : [];
+        } catch { tags = []; }
+      }
+    } else {
+      tags = data.tags || [];
+    }
+
+    let comment = null;
+    if (data.comment_enc) {
+      if (data.comment_enc.startsWith('plain:')) {
+        comment = data.comment_enc.slice(6);
+      } else if (crypto) {
+        try {
+          comment = crypto.decryptWithCachedKey(data.comment_enc) || null;
+        } catch { comment = null; }
+      }
+    } else {
+      comment = data.comment || null;
+    }
+
+    let duration = 0;
+    if (data.duration_enc) {
+      if (data.duration_enc.startsWith('plain:')) {
+        const n = parseInt(data.duration_enc.slice(6), 10);
+        duration = isNaN(n) ? 0 : n;
+      } else if (crypto) {
+        try {
+          const decrypted = crypto.decryptWithCachedKey(data.duration_enc);
+          if (decrypted != null) {
+            const n = parseInt(decrypted, 10);
+            duration = isNaN(n) ? 0 : n;
+          }
+        } catch { /* keep default */ }
+      }
+    } else {
+      duration = data.duration || 0;
+    }
+
     // Parse device UUIDs — may be in device_uuid or device_uuid_enc field
     let deviceUuid = '';
     const deviceUuidRaw = data.device_uuid_enc || data.device_uuid || '';
@@ -173,17 +280,20 @@ export function rawEntryToDTO(rawEntry, crypto) {
       endDeviceUuid = endDeviceUuidRaw;
     }
 
+    const hasEncryptedFields = !!(data.title_enc || data.tags_enc ||
+      data.comment_enc || data.duration_enc);
+
     return {
       entry_id: data.entry_id || '',
-      title: data.title || '',
+      title,
       start_epoch: startEpoch,
       end_epoch: endEpoch,
-      duration: data.duration || 0,
+      duration,
       is_active: data.is_active || false,
       is_paused: data.is_paused || false,
       pauses,
-      tags: data.tags || [],
-      comment: data.comment || null,
+      tags,
+      comment,
       media: data.media || [],
       metadata,
       date: dateStr,
@@ -193,6 +303,7 @@ export function rawEntryToDTO(rawEntry, crypto) {
       end_device_uuid: endDeviceUuid,
       committed: rawEntry.committed ?? false,
       block_index: rawEntry.block_index ?? null,
+      has_encrypted_fields: hasEncryptedFields,
     };
   } catch {
     return null;

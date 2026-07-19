@@ -142,6 +142,9 @@ class LedgerEngine:
             return last_hash[:10]
         return None
 
+    # ── Per-field encryptable fields (title, tags, comment, duration) ──
+    _PER_FIELD_ENCRYPTABLE = ["title", "tags", "comment", "duration"]
+
     def _prepare_entries(
         self, entries: List[Dict[str, Any]]
     ) -> Dict[str, List[Dict[str, Any]]]:
@@ -162,7 +165,9 @@ class LedgerEngine:
             metadata = data.get("metadata", {})
             pauses = data.get("pauses", [])
             tags = data.get("tags", [])
+            comment = data.get("comment") or ""
             end_epoch = data.get("end_epoch") or None
+            has_encrypted_fields = data.get("has_encrypted_fields", False)
             # If no end_epoch provided, estimate from start + duration
             if end_epoch is None and duration > 0:
                 end_epoch = start_epoch + duration
@@ -176,14 +181,34 @@ class LedgerEngine:
             elif "pauses_enc" not in data:
                 data["pauses_enc"] = self.crypto.encrypt("[]")
 
-            # Remove staging-only fields
+            # Encrypt per-field encryptable fields when flagged
+            if has_encrypted_fields:
+                # title and tags always encrypt (even empty)
+                data["title_enc"] = self.crypto.encrypt(title or "")
+                data["tags_enc"] = self.crypto.encrypt(json.dumps(tags) if tags else "[]")
+                # comment and duration only encrypt when non-empty/non-zero
+                if comment:
+                    data["comment_enc"] = self.crypto.encrypt(comment)
+                if duration:
+                    data["duration_enc"] = self.crypto.encrypt(str(duration))
+
+            # Remove staging-only fields before computing content_hash
             data.pop("start_epoch", None)
             data.pop("end_epoch", None)
             data.pop("pauses", None)
             data.pop("metadata", None)
+            data.pop("has_encrypted_fields", None)
 
-            # Compute content hash (after removing staging fields)
+            # Compute content hash — for encrypted entries both plaintext
+            # and _enc variants exist; _compute_content_hash decrypts _enc
+            # and uses canonical (stripped) key names, so hash is independent
+            # of encryption state
             data["content_hash"] = self._compute_content_hash(data)
+
+            # Remove plaintext versions of encrypted per-field values
+            if has_encrypted_fields:
+                for field in self._PER_FIELD_ENCRYPTABLE:
+                    data.pop(field, None)
 
             # Compute entry hash (2-space indent — matches web app utils.js computeEntryHash)
             entry_hash = hashlib.sha256(
@@ -216,11 +241,12 @@ class LedgerEngine:
                 day_entries, prev_hash, date_str
             )
             self.chain.append(day_block)
-            # Update index
+            # Update index (skip encrypted-title entries)
             for entry in day_entries:
-                title = entry["data"]["title"]
-                duration = entry["data"].get("duration", 0)
-                self.index.update(date_str, title, duration)
+                title = self._indexable_title(entry["data"])
+                if title is not None:
+                    duration = entry["data"].get("duration", 0)
+                    self.index.update(date_str, title, duration)
             return
 
         # Insert summary blocks if needed
@@ -230,11 +256,12 @@ class LedgerEngine:
         for summary in summary_blocks:
             self.chain.append(summary)
 
-        # Update index
+        # Update index (skip encrypted-title entries)
         for entry in day_entries:
-            title = entry["data"]["title"]
-            duration = entry["data"].get("duration", 0)
-            self.index.update(date_str, title, duration)
+            title = self._indexable_title(entry["data"])
+            if title is not None:
+                duration = entry["data"].get("duration", 0)
+                self.index.update(date_str, title, duration)
 
         # Build day block
         prev_block = self.chain.get_last_block()
@@ -321,6 +348,22 @@ class LedgerEngine:
                     else:
                         data["pauses_enc"] = "plain:[]"
 
+                    # Convert per-field _enc variants to plaintext if present
+                    for field in self._PER_FIELD_ENCRYPTABLE:
+                        enc_key = f"{field}_enc"
+                        if data.get(enc_key):
+                            try:
+                                decrypted = self.crypto.decrypt(data[enc_key])
+                                if field == "duration":
+                                    data["duration"] = int(decrypted) if decrypted else 0
+                                elif field == "tags":
+                                    data["tags"] = json.loads(decrypted) if decrypted else []
+                                else:
+                                    data[field] = decrypted
+                                del data[enc_key]
+                            except Exception:
+                                pass
+
                     # Build staging entry
                     staging_entry = {
                         "hash": entry["hash"],
@@ -330,10 +373,11 @@ class LedgerEngine:
                     staging.append(staging_entry)
                     entries_restored += 1
 
-                    # Remove from index
-                    title = data["title"]
-                    duration = data.get("duration", 0)
-                    self.index.update(date_str, title, -duration)
+                    # Remove from index (skip encrypted-title entries)
+                    title = self._indexable_title(data)
+                    if title is not None:
+                        duration = data.get("duration", 0)
+                        self.index.update(date_str, title, -duration)
 
         # Write updated staging using duck-type adaptation
         if hasattr(self.staging_store, 'write_entries'):
@@ -356,6 +400,9 @@ class LedgerEngine:
 
         Scans all day blocks, sums durations per title per date,
         and writes the result to the index store.
+
+        Entries with encrypted titles (title_enc present, no plaintext
+        title) are silently skipped.
         """
         self.index.clear()
         ledger = self.chain.read_all()
@@ -365,9 +412,24 @@ class LedgerEngine:
                 date_str = block["date"]
                 for entry in block.get("entries", []):
                     data = entry["data"]
-                    title = data.get("title", "")
-                    duration = data.get("duration", 0)
-                    self.index.update(date_str, title, duration)
+                    title = self._indexable_title(data)
+                    if title is not None:
+                        duration = data.get("duration", 0)
+                        self.index.update(date_str, title, duration)
+
+    def _indexable_title(self, data: dict) -> Optional[str]:
+        """Return the title for blind-index purposes, or None to skip.
+
+        Entries with encrypted titles (title_enc present, no plaintext
+        title) return None — the index stores plaintext only.
+        """
+        title = data.get("title", "")
+        if title:
+            return title
+        # Check for legacy entries: title_enc present, no plaintext title
+        if "title_enc" in data and not title:
+            return None
+        return title if title else ""
 
     # ── Block access delegates ───────────────────────────
 
@@ -389,10 +451,11 @@ class LedgerEngine:
     def _compute_content_hash(self, data: dict) -> str:
         """Compute a content hash from all entry data fields.
 
-        Decrypts _enc fields using the crypto manager, so the content
-        hash is independent of encryption (survives re-keying).
+        Decrypts _enc fields using the crypto manager and strips the
+        ``_enc`` suffix from field names, so the content hash is
+        independent of encryption state (survives re-keying).
 
-        Matches the algorithm in core/ledger.py._compute_content_hash.
+        Matches the algorithm in the web app's engine.js._computeContentHash.
         """
         content = {}
         for key, value in data.items():
@@ -400,7 +463,8 @@ class LedgerEngine:
                 continue
             if key.endswith("_enc") and value is not None and value != "":
                 try:
-                    content[key] = self.crypto.decrypt(value)
+                    # Strip _enc suffix for canonical key name
+                    content[key[:-4]] = self.crypto.decrypt(value)
                 except Exception:
                     content[key] = value
             elif isinstance(value, list):
