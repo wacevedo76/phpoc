@@ -23,6 +23,7 @@ import json
 import time
 import uuid
 import hashlib
+import re
 import unittest
 import tempfile
 import shutil
@@ -42,11 +43,30 @@ from security.crypto import CryptoManager, NoAuthCryptoManager
 # ═══════════════════════════════════════════════════════════════════════════
 
 WORKER_URL = "https://phpoc-staging-testing.wacevedo.workers.dev"
-API_KEY = os.environ.get(
-    "PHPOC_CLOUDFLARE_API_KEY",
-    # Fallback for local dev — always use env var in CI
-    ""
-)
+
+
+def _read_testing_api_key():
+    """Read Worker API key for the testing Worker.
+
+    Priority: 1) PHPOC_TEST_WORKER_KEY env var (CI),
+              2) TEST_CREDENTIALS.md Worker Secret API Token (local dev).
+
+    Deliberately does NOT use PHPOC_CLOUDFLARE_API_KEY to avoid
+    collision with the user's personal production Worker key.
+    """
+    key = os.environ.get("PHPOC_TEST_WORKER_KEY", "")
+    if key:
+        return key
+    creds_path = Path(__file__).resolve().parent.parent / "TEST_CREDENTIALS.md"
+    if creds_path.exists():
+        text = creds_path.read_text()
+        for line in text.splitlines():
+            m = re.match(r'\|\s*Worker Secret API Token\s*\|\s*`([^`]+)`\s*\|', line)
+            if m:
+                return m.group(1)
+    return ""
+
+API_KEY = _read_testing_api_key()
 
 # Test master key — 32 bytes (base64-decoded seed)
 TEST_MASTER_KEY = hashlib.sha256(b"test-cross-platform-master-key-2026").digest()

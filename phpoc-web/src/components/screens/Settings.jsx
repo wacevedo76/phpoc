@@ -178,10 +178,14 @@ export default function Settings() {
     }
 
     // ── Step 1: Verify credentials with a quick ping ──────────
+    const urlChanged = workerUrl !== prevUrl;
+    const apiKeyChanged = apiKey !== prevApiKey;
     setSaved('checking');
-    setGenesisStatus('checking');
-    setGenesisReason(null);
-    setGenesisStats(null);
+    if (urlChanged || apiKeyChanged) {
+      setGenesisStatus('checking');
+      setGenesisReason(null);
+      setGenesisStats(null);
+    }
 
     try {
       const pingResp = await fetch(workerUrl, {
@@ -223,13 +227,8 @@ export default function Settings() {
     setSaved('ok');
 
     // ── Step 3: Genesis check if URL or API key changed ───────
-    const urlChanged = workerUrl !== prevUrl;
-    const apiKeyChanged = apiKey !== prevApiKey;
 
     if ((urlChanged || apiKeyChanged) && services.crypto && services.sync && services.storage) {
-      setGenesisStatus('checking');
-      setGenesisReason(null);
-      setGenesisStats(null);
 
       try {
         const { GenesisGate, createRemoteTransport } = await import('@sync/index.js');

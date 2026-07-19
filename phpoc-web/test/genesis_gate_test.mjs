@@ -31,7 +31,7 @@
 import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
 import { MockCrypto } from './mock_crypto.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, jsonSortIndent2, computeEntryHash as utilsComputeEntryHash } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -94,40 +94,36 @@ const LEDGER_BLOCKS_KEY = 'ledger:blocks';
 const crypto = new MockCrypto();
 
 function encRev(plaintext, masterKeyHex) {
-  return 'enc:' + plaintext;
+  // Match MockCrypto.encrypt format: enc:<fingerprint>:<plaintext>
+  const fp = crypto.sha256(masterKeyHex).slice(0, 8);
+  return 'enc:' + fp + ':' + plaintext;
 }
 function decRev(ciphertextHex, _masterKeyHex) {
-  if (ciphertextHex && ciphertextHex.startsWith('enc:')) {
-    return ciphertextHex.slice(4);
-  }
-  return ciphertextHex;
+  return crypto.decrypt(ciphertextHex, _masterKeyHex);
 }
 
 // ── Chain building helpers (same pattern as ledger_merge_test.mjs) ────
 
+// computeContentHash mirrors LedgerMerge._verifyContentHash extensible algorithm:
+// decrypt _enc fields, sort arrays, exclude content_hash, then sha256(jsonSort(content))
 function computeContentHash(data) {
-  const contentObj = {
-    title: data.title || '',
-    startTime_enc: data.startTime_enc || '',
-    endTime_enc: data.endTime_enc || '',
-    duration: data.duration || 0,
-    tags: data.tags || [],
-    pauses_enc: data.pauses_enc || '',
-    metadata_enc: data.metadata_enc || '',
-    comment: data.comment || '',
-    media: data.media || [],
-  };
-  const sorted = {};
-  for (const k of Object.keys(contentObj).sort()) {
-    sorted[k] = contentObj[k];
+  const content = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'content_hash') continue;
+    if (key.endsWith('_enc') && value !== null && value !== '') {
+      content[key] = crypto.decrypt(value, MASTER_KEY);
+    } else if (Array.isArray(value)) {
+      content[key] = [...value].sort();
+    } else {
+      content[key] = value;
+    }
   }
-  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+  return crypto.sha256(jsonSort(content));
 }
 
+// Use production computeEntryHash from utils.js (jsonSortIndent2 + sha256)
 function computeEntryHash(data) {
-  return createHash('sha256')
-    .update(JSON.stringify(data, null, 2), 'utf-8')
-    .digest('hex');
+  return utilsComputeEntryHash(data, crypto);
 }
 
 function makeEntry({ title, start_epoch, duration = 3600000, tags = [], comment = '' }) {

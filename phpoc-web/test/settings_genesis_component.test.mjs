@@ -55,6 +55,11 @@ vi.mock('../src/sync/index.js', () => ({
   HttpTransport: class {},
 }));
 
+// ── Mock fetch (ping step in handleSaveRemote) ──────────────────────
+
+const mockFetch = vi.fn();
+globalThis.fetch = mockFetch;
+
 // ── Mock localStorage ────────────────────────────────────────────────
 
 const localStorageStore = new Map();
@@ -99,6 +104,7 @@ function createMockServices(opts = {}) {
     },
     sync: {
       checkAndSync: vi.fn(),
+      reconfigure: vi.fn(),
     },
     storage: {
       get: vi.fn((key) => Promise.resolve(storage.get(key))),
@@ -231,6 +237,7 @@ describe('B1 — Save: Compatible Genesis', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B1.1: Compatible status renders green badge', async () => {
@@ -310,6 +317,7 @@ describe('B2 — Save: Incompatible Genesis', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B2.1: Incompatible status renders red badge', async () => {
@@ -376,6 +384,7 @@ describe('B3 — Save: Network Error', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B3.1: Offline status renders orange badge', async () => {
@@ -422,6 +431,7 @@ describe('B4 — Save: Error State', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B4.1: Error status renders red badge with reason', async () => {
@@ -458,6 +468,7 @@ describe('B5 — Status Transitions', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B5.1: Checking → compatible transition', async () => {
@@ -623,6 +634,7 @@ describe('B6 — Save Button Feedback', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('B6.1: Save button shows "✓ Saved" after submit', async () => {
@@ -674,6 +686,7 @@ describe('E — Edge Cases & Regressions', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('E1: Double-save with same data — no duplicate check', async () => {
@@ -850,6 +863,7 @@ describe('F — Accessibility & A11Y', () => {
     localStorageStore.clear();
     mockGenesisCheck.mockReset();
     mockCreateTransport.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
   });
 
   it('F1: Checking hint has aria-live="polite"', async () => {

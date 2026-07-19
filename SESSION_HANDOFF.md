@@ -10,9 +10,11 @@
 ## Current State
 - **Branch:** `mobile-poc`
 - **Last commit:** `8b2e8db` — Entry Hash Verification Consolidation Phases 1-4 complete
-- **CLI:** 2135 PY tests pass (1 pre-existing date-sensitive failure, 20 pre-existing Worker HTTP 403)  |  **Web:** 70/75 JS test files pass (5 pre-existing RED-phase failures: genesis_gate, onboarding_import_component, reauth_overlay, settings_genesis_component, vitest-setup)
+- **CLI:** 2276 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
 - **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
 - **P4 CLI UX Polish:** ✅ Phases 1-4 complete — 24/24 GREEN. 3 Phase-4 improvements: extracted `_reauth_staging()` (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
+- **Genesis Gate (JS):** ✅ Phase 3 GREEN — `genesis_gate_test.mjs`: 218/218. Fixed test `computeEntryHash`→`jsonSortIndent2`, `computeContentHash`→decrypt `_enc`+`jsonSort`, `encRev`→MockCrypto format.
+- **Settings Genesis Component:** ✅ Phase 3 GREEN — `settings_genesis_component.test.mjs`: 26/26. Added `fetch` mock, `reconfigure` to sync mock. Fixed Settings.jsx: only set `genesisStatus='checking'` when URL changed (preserves compatible status on same-URL save).
 
 ## C5 File Upload Limitation — RESOLVED (2026-07-16)
 - React 18 native event delegation picks up `new Event('change', {bubbles: true})`
@@ -43,13 +45,13 @@
 
 ## Immediate Next Steps 🎯
 
-1. **Encrypt-all-entry-fields (Web)** — Phase 2 (RED: 61 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_WEB_PHASE1.md`
-2. **Encrypt-all-entry-fields (CLI)** — Phase 2 (RED: 72 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_CLI_PHASE1.md`
-3. **P3 — Remote sync (git-based)** 🔵 Deferred — infrastructure exists, `init --git-create` remaining
+1. **Merge `mobile-poc` → `main`** — all blocker tests now pass (0 PY failures, 0 JS failures)
+2. **Encrypt-all-entry-fields (Web)** — Phase 2 (RED: 61 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_WEB_PHASE1.md`
+3. **Encrypt-all-entry-fields (CLI)** — Phase 2 (RED: 72 test definitions) at `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_CLI_PHASE1.md`
+4. **Begin Flutter work** — per original goal
 
 ## Known Issues
-- **20 PY tests fail** with Worker HTTP 403 (pre-existing, unrelated)
-- **1 date filter test** fails with date-range conflict (pre-existing `test_phase5_main_wiring.py`)
+- **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner
 
 ## Browser E2E Setup
 - **Browser:** Vivaldi via `agent_browser`, port 9222

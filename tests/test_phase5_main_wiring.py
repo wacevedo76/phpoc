@@ -272,7 +272,7 @@ class TestCLIInterfaceDateFilters(unittest.TestCase):
         """Explicit --to overrides days."""
         from cli.interface import CLIInterface
         _, to_str = CLIInterface._resolve_date_filters(
-            days=30, to_date="2026-06-15"
+            days=900, to_date="2026-06-15"
         )
         self.assertEqual(to_str, "2026-06-15")
 
