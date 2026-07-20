@@ -13,10 +13,12 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `workflows/` — User-facing and system workflow specifications (cli/ and web/)
 - `flaws/ISSUES_TO_ADDRESS.md` — Guiding document: 17 design flaws organized by severity with dependency graph and recommended attack order
 - `flaws/PHPSPEC-Design_Flaws.md` — Brutally honest assessment of PHPSPEC design conflicts and weaknesses
-- `TOP_LEVEL_DIRECTIVES.md` — Binding principles (D1–D10) read first for every architectural discussion. Referenced by `SESSION_HANDOFF.md`.
+- `FLUTTER_ARCHITECTURE.md` — Flutter mobile architecture: comparative analysis (web vs CLI), state management (Riverpod), navigation (go_router), data layer (SQLite/drift), flutter_rust_bridge integration, project structure, screen inventory (2026-07-17)
+- `FLUTTER_AXIOMS.md` — 31 axioms for Flutter app development organized into 6 categories: Protocol (A1–A8), Architecture (B1–B6), State Management (C1–C5), Data (D1–D6), Development (E1–E6), Decision (F1–F6). Quick-reference card with 20 yes/no checks before writing code. (2026-07-17)
+- `TOP_LEVEL_DIRECTIVES.md` — Binding principles (D1–D11) read first for every architectural discussion. Referenced by `SESSION_HANDOFF.md`.
 
 ## Local Contracts
-- **TOP_LEVEL_DIRECTIVES.md is the first read-in for every architectural discussion.** All ADRs, design goals, and workflow specs must be consistent with D1–D10.
+- **TOP_LEVEL_DIRECTIVES.md is the first read-in for every architectural discussion.** All ADRs, design goals, axioms, and workflow specs must be consistent with D1–D11.
 - ADRs document decisions that have architectural impact — include context, decision, and consequences
 - Design goals cross-reference `ROADMAP.md` for planned features
 - Workflow docs describe expected behavior — test suites validate against these
