@@ -63,6 +63,7 @@
 2. **Storage decision** — ✅ Drift (SQLite) + SharedPreferences + in-memory MK (ADR-028). Schema: entries, blocks, index_entries tables. JSON columns for tags/pauses. Config via SharedPreferences. API key via flutter_secure_storage. MK never touches disk.
 3. **State Management decision** — ✅ Riverpod chosen. Merged `feature/flutter-mobile-riverpod` → `feature/flutter-mobile`. Both branches pushed.
 4. **Architecture review** — ✅ Complete. SyncService stays in Data Layer (`data/sync/`) as unified entry point (port of web sync.js). `services/sync_orchestrator.dart` deleted — premature split for MVP. Escape hatch documented: extract orchestrator if multi-transport or commit/verify coordination exceeds ~100 lines. Transport interface is the injection seam for Drive/Dropbox/S3. Doc: §4 layer diagram fixed, §5 project structure updated, escape hatch note added.
+5. **Initial development plan** — ✅ Draft saved to `docs/planning/flutter/INITIAL_PLAN.md`. 8 phases: Models → Crypto FFI → Storage → Sync Core (staging-only) → Services → Screens → Ledger Engine → Polish + Release. Under discussion.
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner

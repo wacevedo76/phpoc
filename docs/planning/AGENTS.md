@@ -22,6 +22,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `CLI_COMMAND_TIMING_FIXES.md` — Investigation report + 4-fix plan for `ph view` latency (16 HTTP round-trips, ~5–26s). F1: duplicate check_and_sync, F2: ledger block cache, F3: skip unchanged push, F4: HTTP pooling. Execution order F1→F4 with 4-phase TDD per fix. (2026-07-14)
 - `I02_PHASE1.md` — Phase 1 test exploration for I-02 (blind index encryption + staging field key encryption). 74 assertions across 9 groups (A–I). (2026-07-16)
 - `RELEASE_CHECKLIST.md` — Google Play Store release checklist: device testing tiers, build requirements, app signing setup, Rust crypto cross-compilation targets, encryption export compliance, data safety declarations, permissions, store listing assets, testing tracks, and phase-gated rollout sequence. (2026-07-17)
+- `flutter/INITIAL_PLAN.md` — Flutter mobile app development plan: 8 phases (bottom-up), staging-only MVP, dependency graph, cross-references to axioms, architecture, ADRs, and spec. Draft — under discussion. (2026-07-17)
 
 ## Local Contracts
 - Roadmaps track status with `✅` (done), `🔜` (planned), `🔮` (future), and `⏸️` (deferred)
@@ -39,4 +40,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 None — planning docs are tracking artifacts, not tested.
 
 ## Child DOX Index
-None — flat directory.
+
+### Flutter
+- `flutter/` — Flutter mobile app plans (no AGENTS.md yet)
+  - `flutter/INITIAL_PLAN.md` — 8-phase development plan
