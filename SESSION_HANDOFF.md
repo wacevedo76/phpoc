@@ -8,7 +8,7 @@
 > **Active TDD plan:** `docs/planning/P4_CLI_UX_POLISH_PHASE1.md` (24 assertions, 5 groups — ✅ Phase 2 complete, 🟢 Phase 3 next)
 
 ## Current State
-- **Branch:** `feature/flutter-mobile-riverpod` (off `feature/flutter-mobile`, off `main`)
+- **Branch:** `feature/flutter-mobile` (merged `feature/flutter-mobile-riverpod`, off `main`)
 - **Last commit:** `f5d3287` — feat(encrypt-fields): per-activity field encryption — CLI + Web, Phases 1-4
 - **CLI:** 2348 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
 - **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
@@ -62,7 +62,7 @@
 1. **Navigation decision** — ✅ go_router confirmed (ADR-027). Phase-based redirect guards, ShellRoute for bottom nav, deep-linkable.
 2. **Storage decision** — ✅ Drift (SQLite) + SharedPreferences + in-memory MK (ADR-028). Schema: entries, blocks, index_entries tables. JSON columns for tags/pauses. Config via SharedPreferences. API key via flutter_secure_storage. MK never touches disk.
 3. **State Management decision** — ✅ Riverpod chosen. Merged `feature/flutter-mobile-riverpod` → `feature/flutter-mobile`. Both branches pushed.
-4. ~~Architecture review~~ — Axioms created (`FLUTTER_AXIOMS.md`, 31 axioms). Release checklist created (`RELEASE_CHECKLIST.md`)
+4. **Architecture review** — ✅ Complete. SyncService stays in Data Layer (`data/sync/`) as unified entry point (port of web sync.js). `services/sync_orchestrator.dart` deleted — premature split for MVP. Escape hatch documented: extract orchestrator if multi-transport or commit/verify coordination exceeds ~100 lines. Transport interface is the injection seam for Drive/Dropbox/S3. Doc: §4 layer diagram fixed, §5 project structure updated, escape hatch note added.
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner

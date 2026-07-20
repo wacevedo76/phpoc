@@ -136,11 +136,12 @@ phpoc-web/src/
 │  State: Riverpod providers                       │
 ├─────────────────────────────────────────────────┤
 │  Application Layer                               │
-│  services/ — SyncService, AuthService            │
-│  Coordinates data layer + UI state               │
+│  services/ — AuthService, OnboardingService       │
+│  Auth lifecycle + onboarding workflow             │
 ├─────────────────────────────────────────────────┤
 │  Data Layer                                      │
-│  sync/ — staging, remote, merge, genesis gate    │
+│  sync/ — SyncService (CRUD + sync gate + block sync),│
+│         transport, merge engine, genesis gate       │
 │  ledger/ — chain, engine, index, summary         │
 │  storage/ — SQLite, preferences                  │
 ├─────────────────────────────────────────────────┤
@@ -162,6 +163,22 @@ Presentation → Application → Data → Domain → Native (Rust)
 ```
 
 Each layer only depends on the layer directly below it. The Domain layer has no Flutter imports — it's pure Dart, testable on any Dart runtime.
+
+### Escape hatch: extracting SyncOrchestrator
+
+SyncService lives in the Data Layer — it owns CRUD, the sync gate, and
+ledger block sync, same as the web's 770-line `sync.js` and the CLI's
+`StagingService`. A separate `SyncOrchestrator` is not needed for the
+MVP: the app has one remote transport (Cloudflare Worker), no daemon, no
+stratum engine, and no multi-step revert workflow.
+
+**When to extract:** if multi-transport (Google Drive, Dropbox) or
+ledger commit/verify coordination grows beyond ~100 lines, extract
+`SyncOrchestrator` into `services/`. The transport interface (`pull`,
+`push`, `listFiles`, `delete`) is constructor-injected — SyncService can
+be split to operate per-remote, with the orchestrator iterating over N
+remotes, reconciling results, and picking the winner. The refactor is
+mechanical: move methods, inject SyncService, done.
 
 ---
 
@@ -192,14 +209,16 @@ phpoc-flutter/lib/
 │   │   ├── block_dao.dart
 │   │   └── preferences.dart      ← Key-value (SharedPreferences / NSUserDefaults)
 │   ├── sync/                     ← Port of web `src/sync/`
-│   │   ├── sync_service.dart     ← Unified entry point (port of sync.js)
+│   │   ├── sync_service.dart     ← Unified entry point (port of web sync.js)
+│   │   │                         CRUD + sync gate + cookie mgmt + block sync
 │   │   ├── remote_sync.dart      ← Blob pull/push with obfuscation
 │   │   ├── local_cache.dart      ← Staging CRUD
 │   │   ├── merge_engine.dart     ← Cross-device dedup
 │   │   ├── genesis_gate.dart     ← Genesis compatibility check
 │   │   ├── hash_index.dart       ← SHA-256 fast path
 │   │   ├── device_cookie.dart    ← Cookie create/validate
-│   │   └── transport.dart        ← HTTP transport (port of HttpTransport)
+│   │   └── transport.dart        ← Transport interface (pull/push/listFiles/delete)
+│   │                               Injected — swap for Drive/Dropbox/S3
 │   ├── ledger/                   ← Port of web `src/ledger/`
 │   │   ├── chain.dart
 │   │   ├── engine.dart
@@ -209,9 +228,8 @@ phpoc-flutter/lib/
 │       ├── entry_repository.dart
 │       └── ledger_repository.dart
 │
-├── services/                     ← Application layer (business logic + state)
+├── services/                     ← Application layer (auth lifecycle + onboarding)
 │   ├── auth_service.dart         ← Passphrase, PBKDF2, MK derivation
-│   ├── sync_orchestrator.dart    ← Sync lifecycle coordination
 │   └── onboarding_service.dart   ← Genesis creation, import, worker connect
 │
 ├── features/                     ← Presentation (screens + their providers)
