@@ -1,0 +1,52 @@
+name: phpoc_flutter
+description: "PH Ledger — personal history protocol, Flutter mobile app"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Local storage
+  drift: ^2.21.0
+  sqlite3_flutter_libs: ^0.5.0
+  path_provider: ^2.1.0
+  path: ^1.9.0
+  shared_preferences: ^2.3.0
+
+  # HTTP
+  http: ^1.2.0
+
+  # Utilities
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+  equatable: ^2.0.7
+
+  # Crypto FFI (flutter_rust_bridge — added when rust integration begins)
+  # flutter_rust_bridge: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # Code generation
+  build_runner: ^2.4.0
+  riverpod_generator: ^2.6.1
+  freezed: ^2.5.0
+  json_serializable: ^6.9.0
+  drift_dev: ^2.21.0
+
+flutter:
+  uses-material-design: true

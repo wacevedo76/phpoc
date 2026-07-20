@@ -8,8 +8,8 @@
 > **Active TDD plan:** `docs/planning/P4_CLI_UX_POLISH_PHASE1.md` (24 assertions, 5 groups — ✅ Phase 2 complete, 🟢 Phase 3 next)
 
 ## Current State
-- **Branch:** `mobile-poc`
-- **Last commit:** `8b2e8db` — Entry Hash Verification Consolidation Phases 1-4 complete
+- **Branch:** `feature/flutter-mobile-riverpod` (off `feature/flutter-mobile`, off `main`)
+- **Last commit:** `f5d3287` — feat(encrypt-fields): per-activity field encryption — CLI + Web, Phases 1-4
 - **CLI:** 2348 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
 - **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
 - **P4 CLI UX Polish:** ✅ Phases 1-4 complete — 24/24 GREEN. 3 Phase-4 improvements: extracted `_reauth_staging()` (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
@@ -45,9 +45,24 @@
 | 4 | 🔴 Phase 4 | I-09✅ device attribution — BACKLOG entry stale, code complete |
 | 5–8 | ✅ Complete | All I-01–I-17, P4, P5, cross-client serialization done |
 
+## Flutter Mobile App — Riverpod Scaffold Complete 🚀
+
+- **Flutter:** 3.44.6 (stable) at `/opt/flutter/bin/flutter` — on PATH
+- **Dart:** 3.12.2 (bundled with Flutter)
+- **Android Studio:** `/opt/android-studio/`
+- **Emulator:** `pixel_6_avg` (API 35, x86_64, Google Play) — created, runs
+- **Crypto core:** `phpoc-crypto-core/` (Rust, `ring` crate) — ready for `flutter_rust_bridge` FFI
+- **Architecture doc:** `docs/design/FLUTTER_ARCHITECTURE.md` — comparative analysis of web + CLI, key decisions
+- **Scaffold:** `phpoc-flutter/` — Riverpod + go_router + drift (stubs), 21 source files, `flutter analyze` clean, 1 test passes
+- **Dependencies:** flutter_riverpod, go_router, drift, shared_preferences, http, equatable, freezed_annotation
+- **Key decision — State Management:** Riverpod chosen over Bloc for compile-time safety, testability without widget tree, lower boilerplate for singleton services
+
 ## Immediate Next Steps 🎯
 
-1. **Begin Flutter work** — per original `mobile-poc` branch goal. All CLI blocking work complete (72/72 GREEN, 5 Phase 4 improvements).
+1. **Navigation decision** — go_router confirmed? Discuss routing architecture (redirect guards for auth phases, deep linking)
+2. **Storage decision** — SQLite via drift vs simpler key-value? Discuss schema design
+3. **State Management decision** — ✅ Riverpod chosen. Scaffold built on `feature/flutter-mobile-riverpod`. Confirm and merge back to `feature/flutter-mobile`
+4. **Architecture review** — review `docs/design/FLUTTER_ARCHITECTURE.md` and adjust before Phase 1 implementation
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner
