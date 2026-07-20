@@ -1869,3 +1869,107 @@ that MK_v1 cannot derive the keys used by MK_v2.
 - I-04 (seal naming) ✅ — prerequisite; `identity_seal` field name cleared for this work
 - I-06 (content_hash required) ✅ — prerequisite; hard rotation relies on verifiable content_hash
 - BACKLOG §I-01 — the issue this ADR addresses
+
+## ADR-027: Flutter Navigation — go_router
+
+**Date:** 2026-07-17
+**Status:** ✅ Adopted
+
+### Context
+
+The Flutter mobile app needs a navigation and routing system that supports:
+
+1. **Phase-based auth gating** — different screens based on app lifecycle state
+   (boot → loading, locked → unlock, ready → dashboard). Modeled on the web
+   app's phase-based `currentScreen` state machine.
+
+2. **Persistent bottom navigation** — 4 tabs (Dashboard, History, Sync, Settings)
+   that preserve scroll state when switching tabs.
+
+3. **Deep linking** — Android/iOS can open the app to a specific screen via a URL
+   or notification tap.
+
+4. **Back-button handling** — correct system back behavior across auth gates
+   and tab transitions.
+
+5. **Web URL compatibility** — if the app is later deployed to web (Flutter web
+   target), routes should map cleanly to browser URLs.
+
+### Options Considered
+
+| | go_router | auto_route | Raw Navigator 2.0 |
+|---|---|---|---|
+| **Maintainer** | Flutter team (Google) | Community (Milad Akarie) | Built into Flutter |
+| **Core model** | URL-first — path patterns map to screens | Type-first — codegen produces typed route classes | Manual RouterDelegate + RouteInformationParser |
+| **Auth gating** | `redirect` callback on every navigation | `AutoRouteGuard` class, attached per route | Hand-written |
+| **Bottom nav** | `StatefulShellRoute` (built-in, preserves tab state) | `AutoTabsRouter` | Hand-written |
+| **Code gen required** | No (optional typed routes via `go_router_builder`) | Yes (`build_runner`) | No |
+| **Deep links** | Built-in | Built-in | Hand-written |
+| **Navigation calls** | Strings: `context.go('/history')` | Typed: `HistoryRoute().push(context)` | N/A |
+
+### Decision
+
+**Use go_router.** It is maintained by the Flutter team, requires zero code
+ generation by default, `ShellRoute` maps directly to our bottom nav, and the
+ `redirect` callback implements the phase-based auth gating identically to the
+ web app's lifecycle state machine.
+
+### Rationale
+
+**Flutter-team maintenance.** go_router is published under the `flutter.dev`
+verified publisher, listed in the official Flutter navigation docs, and declared
+feature-complete (bug fixes continue, API is stable). It is the lowest-risk
+choice for a multi-year project.
+
+**No additional code generation.** The project already uses `riverpod_generator`,
+`freezed`, `json_serializable`, and `drift_dev` — four codegen tools in the
+build pipeline. Adding `auto_route_generator` would be a fifth, increasing build
+complexity and introducing another generated-file-sync failure mode (stale
+`.gr.dart` after merges or SDK bumps).
+
+**Right-sized for 6 screens.** auto_route's compile-time-checked navigation is
+valuable for apps with 30+ screens where fat-fingering a route string is a real
+risk. PH Ledger has 6 screens. The go_router weakness (stringly-typed paths) is
+mitigated by keeping all path strings in a single constants file.
+
+**ShellRoute matches our UX.** The bottom navigation bar with 4 tabs that
+preserve state across switches is exactly what `ShellRoute` (specifically
+`StatefulShellRoute.indexedStack`) provides. This is the standard Flutter
+pattern and maps cleanly to the web app's `AppLayout` component.
+
+**Phase-based redirect matches the web.** The web app uses a `currentScreen`
+state machine. go_router's `redirect` callback implements the same logic declaratively:
+
+```dart
+redirect: (context, state) {
+  if (phase == AppPhase.boot) return '/loading';
+  if (phase == AppPhase.auth) return '/unlock';
+  if (phase == AppPhase.ready && state.matchedLocation == '/unlock') return '/';
+  return null; // allow navigation
+}
+```
+
+### Consequences
+
+- **Positive:**
+  - Lowest setup cost — already scaffolded and passing tests
+  - Stable API — feature-complete, no churn expected
+  - Deep links and web URLs work out of the box
+  - `ShellRoute` handles tab state preservation without custom code
+  - Largest community — most examples, most Stack Overflow answers
+  - No additional codegen dependency
+
+- **Negative:**
+  - Navigation targets are strings, not types — a typo in `context.go('/histroy')`
+    compiles but crashes at runtime. Mitigated by path constants file.
+  - Flutter team declared go_router feature-complete — major new features will
+    come from community packages, not core
+  - Migrating to another router later would require rewriting the route layer
+    (~120 lines in the current scaffold, so manageable)
+
+### Related
+
+- FLUTTER_ARCHITECTURE.md §7 — Navigation & Routing design
+- FLUTTER_AXIOMS.md — Axioms C2 (navigation state owned by go_router, not Riverpod)
+- app_router.dart — Implementation in the scaffold
+- B1 (Dependency Direction) — routing is presentation-layer, owned by `routing/`

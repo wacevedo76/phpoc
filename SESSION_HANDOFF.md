@@ -59,10 +59,10 @@
 
 ## Immediate Next Steps 🎯
 
-1. **Navigation decision** — go_router confirmed? Discuss routing architecture (redirect guards for auth phases, deep linking)
+1. **Navigation decision** — ✅ go_router confirmed (ADR-027). Phase-based redirect guards, ShellRoute for bottom nav, deep-linkable.
 2. **Storage decision** — SQLite via drift vs simpler key-value? Discuss schema design
-3. **State Management decision** — ✅ Riverpod chosen. Scaffold built on `feature/flutter-mobile-riverpod`. Confirm and merge back to `feature/flutter-mobile`
-4. **Architecture review** — review `docs/design/FLUTTER_ARCHITECTURE.md` and adjust before Phase 1 implementation
+3. **State Management decision** — ✅ Riverpod chosen. Scaffold built on `feature/flutter-mobile-riverpod`. Merge back to `feature/flutter-mobile`
+4. ~~Architecture review~~ — Axioms created (`FLUTTER_AXIOMS.md`, 31 axioms). Release checklist created (`RELEASE_CHECKLIST.md`)
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner
