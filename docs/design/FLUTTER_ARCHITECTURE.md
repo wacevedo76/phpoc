@@ -367,7 +367,7 @@ final appRouter = GoRouter(
 
 ## 8. Data Layer
 
-### Storage: SQLite (not IndexedDB)
+### Storage: SQLite (not IndexedDB) ✅ ADR-028
 
 Mobile has proper SQLite, which is superior to IndexedDB in every way:
 
@@ -592,7 +592,7 @@ This is the same model as the CLI's WAL (write-ahead log) — local-first, sync-
 |----------|--------|-----------|
 | State management | Riverpod | Compile-time safe, granular rebuilds, testable, no BuildContext needed |
 | Navigation | go_router ✅ ADR-027 | Declarative, URL-based, deep-linkable, back stack |
-| Local storage | SQLite (drift) | Typed, indexed, ACID — superior to IndexedDB |
+| Local storage | SQLite (drift) ✅ ADR-028 | Typed, indexed, ACID, reactive streams — superior to IndexedDB |
 | Crypto | flutter_rust_bridge → phpoc-crypto-core | Same Rust binary as web. One implementation, zero drift |
 | Architecture | Feature-first with shared data/core layers | Clear dependency direction, testable in isolation |
 | Offline | Local-first, sync-when-available | Same model as CLI WAL. Works without network |

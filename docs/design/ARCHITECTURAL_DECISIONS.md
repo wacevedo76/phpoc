@@ -1973,3 +1973,217 @@ redirect: (context, state) {
 - FLUTTER_AXIOMS.md — Axioms C2 (navigation state owned by go_router, not Riverpod)
 - app_router.dart — Implementation in the scaffold
 - B1 (Dependency Direction) — routing is presentation-layer, owned by `routing/`
+
+## ADR-028: Flutter Storage — Drift (SQLite) + SharedPreferences
+
+**Date:** 2026-07-17
+**Status:** ✅ Adopted
+
+### Context
+
+The Flutter mobile app needs on-device persistence for:
+
+1. **Staging entries** — frequent CRUD (capture, end, pause, modify, remove).
+   Dashboard queries active tasks reactively. History queries by date range.
+
+2. **Ledger blocks** — append-mostly, queried by index during chain
+   verification. Must survive app restarts.
+
+3. **Blind index** — queried by date + tag for history filtering.
+   Rebuildable from the chain.
+
+4. **Preferences** — Worker URL, API key, device UUID, device cookie.
+   Infrequent reads/writes. Some values are sensitive (API key).
+
+5. **Master key** — derived at unlock, must never touch persistent storage.
+
+The data is relational: entries belong to blocks, blocks form a linked chain
+(via `prev_hash`), index entries reference blocks and entries. This is a
+natural fit for SQL, not for a key-value or document store.
+
+### Options Considered
+
+Table data from the 2026 Flutter database landscape (Luci Studio guide):
+
+| | Drift | sqflite | ObjectBox | SharedPreferences |
+|---|---|---|---|---|
+| **Model** | ORM over SQLite | Raw SQLite wrapper | NoSQL object store | Key-value |
+| **Type safety** | Compile-time checked | Runtime SQL strings | Compile-time | N/A |
+| **Reactive queries** | Built-in (streams auto-update) | Manual re-query | Manual | N/A |
+| **Migrations** | Built-in, testable | Manual SQL | UID-based, fragile | N/A |
+| **Relationships** | Joins, foreign keys | Your SQL | Limited (NoSQL) | None |
+| **Codegen** | Yes (`build_runner`) | No | Yes | No |
+| **Web support** | ✅ | ❌ | ❌ | ✅ |
+| **Maintenance** | Healthy — Simon Binder + Stream/PowerSync sponsorship | Healthy — stable baseline | Healthy — commercial | Healthy — Flutter team |
+
+### Decision
+
+**Drift (SQLite) for entries, blocks, and blind index.**
+**SharedPreferences for configuration values** (Worker URL, device UUID, cookie).
+**flutter_secure_storage for the Worker API key.**
+**In-memory only for the Master Key** (never written to disk; zeroed on lock).
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  In-Memory (RAM only)                                    │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Master Key (32 bytes) — zeroed on lock/logout    │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                          │
+│  SharedPreferences / flutter_secure_storage               │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Worker URL │ Device UUID │ Cookie │ API Key 🔐   │    │
+│  └──────────────────────────────────────────────────┘    │
+│                                                          │
+│  Drift / SQLite                                          │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐   │
+│  │ entries     │  │ blocks       │  │ index_entries │   │
+│  │ (staging)   │  │ (ledger)     │  │ (blind index) │   │
+│  └─────────────┘  └──────────────┘  └───────────────┘   │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Schema
+
+```sql
+-- Staging entries: mutable scratchpad
+CREATE TABLE entries (
+  entry_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  start_epoch INTEGER NOT NULL,
+  end_epoch INTEGER,           -- NULL = still running
+  is_active INTEGER NOT NULL DEFAULT 1,
+  committed INTEGER NOT NULL DEFAULT 0,
+  device_uuid TEXT,
+  content_hash TEXT,
+  metadata_enc TEXT,           -- encrypted JSON, base64
+  tags TEXT,                   -- JSON array ["coding", "work"]
+  pauses TEXT,                 -- JSON array of {start, end}
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_entries_active ON entries(is_active);
+CREATE INDEX idx_entries_committed ON entries(committed);
+CREATE INDEX idx_entries_start ON entries(start_epoch);
+
+-- Ledger blocks: append-mostly, immutable
+CREATE TABLE blocks (
+  block_id TEXT PRIMARY KEY,
+  block_type TEXT NOT NULL,    -- genesis, year, month, day
+  block_index INTEGER NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  data_enc TEXT NOT NULL,      -- encrypted JSON, base64
+  identity_seal TEXT,
+  prev_hash TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_blocks_type ON blocks(block_type);
+CREATE INDEX idx_blocks_index ON blocks(block_index);
+
+-- Blind index: derived cache, rebuildable from chain
+CREATE TABLE index_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  block_id TEXT REFERENCES blocks(block_id),
+  date TEXT NOT NULL,          -- YYYY-MM-DD
+  tag TEXT,
+  entry_id TEXT NOT NULL
+);
+
+CREATE INDEX idx_index_date ON index_entries(date);
+CREATE INDEX idx_index_tag ON index_entries(tag);
+```
+
+### Rationale
+
+**Why Drift over sqflite?**
+
+The project already uses `build_runner` for Riverpod, Freezed, and
+json_serializable — Drift's codegen is not a new dependency, it's the
+same tool. In exchange, we get:
+
+- Compile-time-checked queries — rename a column, the query breaks at
+  build time, not at 2 AM on a user's phone
+- Reactive streams — `watch()` turns any query into a live-updating
+  stream, which maps directly to the dashboard's need to reflect
+  changes immediately
+- Testable migrations — Drift exports schema snapshots and generates
+  migration tests that verify old data survives upgrades
+
+**Why not ObjectBox?**
+
+ObjectBox's headline feature is built-in data sync, which would replace
+the Worker protocol, merge engine, genesis gate, and device cookie
+system — all of which are already designed, tested, and proven in the
+web and CLI codebases. Adopting ObjectBox's sync would mean rewriting
+our sync layer to fit its model. And our data is relational (entries →
+blocks → chain), which SQL models naturally.
+
+**Why not Isar or Hive?**
+
+Both were abandoned by their original author. Community forks exist but
+carry maintenance risk — a stalled fork on a new Dart SDK version means
+a migration under deadline. The lesson of the 2022–2025 Flutter database
+landscape is that maintenance is the most important feature of a
+persistence library. Drift is actively maintained and commercially
+sponsored.
+
+**Why JSON columns for tags and pauses?**
+
+Tags and pauses are small, append-only lists. A separate join table
+would be correct for a many-to-many relationship, but PH Ledger's tags
+are a handful per entry (< 10) and pauses are 0–2 per entry. JSON
+storage avoids join overhead for data that is always read/written
+together with its parent entry. The blind index handles the "find all
+entries with tag X" query.
+
+**Why SharedPreferences for config instead of a `settings` table?**
+
+Configuration values are single keys read at startup (Worker URL) or
+during sync (cookie, API key). They don't participate in relationships,
+queries, or reactive updates. A full SQL table for ~5 rows is overhead.
+`flutter_secure_storage` for the API key uses Android's
+EncryptedSharedPreferences and iOS's Keychain — OS-level protection
+for a credential.
+
+**Why in-memory for the Master Key?**
+
+D3 of FLUTTER_AXIOMS: the master key exists only in RAM. It is never
+written to disk, never stored in SharedPreferences, never persisted.
+On lock/logout, it is zeroed. This is the same model as the CLI's
+session cache (`/dev/shm`) and the web's IndexedDB-cached encrypted
+seed (which requires the passphrase to decrypt).
+
+### Consequences
+
+- **Positive:**
+  - Type-safe queries — column renames caught at build time
+  - Reactive UI — dashboard auto-updates when entries change
+  - Testable migrations — schema changes are explicit and verified
+  - SQLite is battle-tested — the most proven embedded database
+  - No new codegen tool — same `build_runner` as Riverpod/Freezed
+  - Clear separation: structured data → Drift, config → SharedPreferences,
+    secrets → in-memory
+
+- **Negative:**
+  - Drift adds a codegen step — but the project already has four codegen
+    dependencies, so this is the 5th, not the 1st
+  - Must think in SQL/tables — simpler than IndexedDB's schema-less model,
+    but more ceremony than a pure key-value store
+  - Migrations must be tested — each schema change requires a migration
+    test. Drift's tooling makes this straightforward, but it's work that
+    key-value stores avoid
+  - Two JSON columns (tags, pauses) are denormalized — if we ever need
+    to query by tag without the blind index, we'd need to refactor
+
+### Related
+
+- FLUTTER_ARCHITECTURE.md §8 — Data Layer design
+- FLUTTER_AXIOMS.md — Axioms D1 (SQLite is source of truth), D2 (encrypted
+  at rest), D3 (MK in memory only), D6 (Worker is dumb)
+- RELEASE_CHECKLIST.md §2.4 — Rust crypto cross-compilation targets
+- ADR-001 (Sovereign Key Model) — MK derivation from seed
+- ADR-009 (Local-First) — local storage is authoritative; remote is mirror
+- lib/data/storage/database.dart — Current provider stub (to be replaced
+  with full Drift database class)
