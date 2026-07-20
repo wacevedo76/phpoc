@@ -61,7 +61,7 @@
 
 1. **Navigation decision** — ✅ go_router confirmed (ADR-027). Phase-based redirect guards, ShellRoute for bottom nav, deep-linkable.
 2. **Storage decision** — ✅ Drift (SQLite) + SharedPreferences + in-memory MK (ADR-028). Schema: entries, blocks, index_entries tables. JSON columns for tags/pauses. Config via SharedPreferences. API key via flutter_secure_storage. MK never touches disk.
-3. **State Management decision** — ✅ Riverpod chosen. Scaffold built on `feature/flutter-mobile-riverpod`. Merge back to `feature/flutter-mobile`
+3. **State Management decision** — ✅ Riverpod chosen. Merged `feature/flutter-mobile-riverpod` → `feature/flutter-mobile`. Both branches pushed.
 4. ~~Architecture review~~ — Axioms created (`FLUTTER_AXIOMS.md`, 31 axioms). Release checklist created (`RELEASE_CHECKLIST.md`)
 
 ## Known Issues
