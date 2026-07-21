@@ -44,3 +44,7 @@ None — planning docs are tracking artifacts, not tested.
 ### Flutter
 - `flutter/` — Flutter mobile app plans (no AGENTS.md yet)
   - `flutter/INITIAL_PLAN.md` — 8-phase development plan
+  - `flutter/MODELS_PHASE1.md` — Phase 1 test exploration for domain models (93 assertions, 9 groups) ✅
+  - `flutter/CRYPTO_FFI_PHASE1.md` — Phase 1 test exploration for crypto FFI bridge (74 assertions, 11 groups) ✅
+  - `flutter/STORAGE_PHASE1.md` — Phase 1 test exploration for storage layer (100 assertions, 11 groups) ✅
+  - `flutter/SYNC_CORE_PHASE1.md` — Phase 1 test exploration for sync core (106 assertions, 10 groups) 🔜

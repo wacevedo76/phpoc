@@ -5,7 +5,8 @@
 > For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — D1–D10 are the binding principles.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
-> **Active TDD plan:** `docs/planning/P4_CLI_UX_POLISH_PHASE1.md` (24 assertions, 5 groups — ✅ Phase 2 complete, 🟢 Phase 3 next)
+> **Active TDD plan:** `docs/planning/flutter/STORAGE_PHASE1.md` (100 assertions, 11 groups — ✅ Phase 1+2+3+4 complete)  
+> **Active TDD plan:** `docs/planning/flutter/SYNC_CORE_PHASE1.md` (106 assertions, 10 groups — ✅ Phase 1+2+3+4 complete)
 
 ## Current State
 - **Branch:** `feature/flutter-mobile` (merged `feature/flutter-mobile-riverpod`, off `main`)
@@ -15,7 +16,7 @@
 - **P4 CLI UX Polish:** ✅ Phases 1-4 complete — 24/24 GREEN. 3 Phase-4 improvements: extracted `_reauth_staging()` (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
 - **Encrypt-all-entry-fields (Web):** ✅ Phases 1-4 complete — all 61 assertions GREEN.
 **Encrypt-all-entry-fields (CLI):** ✅ Phases 1-4 complete — 72/72 GREEN. Phase 4 improvements (5): (1) extracted `_decrypt_staging_field()` helper in cli_view.py — eliminated 10+ duplicate `startswith("plain:")` blocks; (2) cleaned up `_apply_entry_encryption()` API — separate keyword args instead of mixed flag+data dict; (3) extracted `_toggle_encryption()` helper — 4x ~10-line encrypt/decrypt toggle blocks → single parameterized method; (4) `_prepare_entries()` uses `_PER_FIELD_ENCRYPTABLE` list for plaintext removal; (5) extracted `_verify_content_hash_v030()` static method from `_verify_content_hash()` — self-documenting legacy fallback. Full flow: staging cache (A/B/E) → ledger engine (C) → blind index (D) → hash integrity (E) → display (F) → commands (G) → sync (H) → integration (I). Core implementation: `local_cache.py` — `append()` accepts per-field encryption kwargs, `read_entries()` dual-reads _enc fallback, `write_entries()` re-encrypts per-field when `has_encrypted_fields` set; `engine.py` — `_prepare_entries()` re-encrypts per-field for committed blocks, `_compute_content_hash()` strips `_enc` suffix (matching web), `_indexable_title()` skips encrypted titles in blind index, `revert()` decrypts per-field _enc variants; `chain.py` — `_verify_content_hash()` tries both canonical (stripped) and legacy extensible formats, plus legacy v0.3.0 fallback; `cli_view.py` — `render_entry_line()` shows `[encrypted]` placeholder for has_encrypted_fields entries.
-- **Genesis Gate (JS):** ✅ Phase 3 GREEN — `genesis_gate_test.mjs`: 218/218. Fixed test `computeEntryHash`→`jsonSortIndent2`, `computeContentHash`→decrypt `_enc`+`jsonSort`, `encRev`→MockCrypto format.
+- **Sync Core:** ✅ Phases 1-4 complete — 378/378 GREEN. Phase 4 improvements (6): (1) extracted `_decodePauses()` helper in `local_cache.dart` — eliminated 3× duplicate pause-decrypt+decode blocks; (2) extracted `_buildBlobBytes()` in `sync_service.dart` — deduplicated blob serialization between `_pushBlobOnly` / `pushToRemote`; (3) extracted `_findActiveEntryIndex()` in `sync_service.dart` — eliminated 3× duplicate find-by-title pattern in `end`/`pause`/`unpause`; (4) added `MergeEngine.mergeMaps()` — centralized map-based merge logic, deleted `_mergeEntryMaps` + `_mergeKey` from `sync_service.dart`; (5) made `DeviceCookie._generateSpecifier` static — no instance state dependency; (6) removed silent try/catch from `_makeDeviceProof` — now throws on crypto failure instead of pushing empty proof.
 - **Settings Genesis Component:** ✅ Phase 3 GREEN — `settings_genesis_component.test.mjs`: 26/26. Added `fetch` mock, `reconfigure` to sync mock. Fixed Settings.jsx: only set `genesisStatus='checking'` when URL changed (preserves compatible status on same-URL save).
 
 ## C5 File Upload Limitation — RESOLVED (2026-07-16)
@@ -59,11 +60,18 @@
 
 ## Immediate Next Steps 🎯
 
-1. **Navigation decision** — ✅ go_router confirmed (ADR-027). Phase-based redirect guards, ShellRoute for bottom nav, deep-linkable.
-2. **Storage decision** — ✅ Drift (SQLite) + SharedPreferences + in-memory MK (ADR-028). Schema: entries, blocks, index_entries tables. JSON columns for tags/pauses. Config via SharedPreferences. API key via flutter_secure_storage. MK never touches disk.
-3. **State Management decision** — ✅ Riverpod chosen. Merged `feature/flutter-mobile-riverpod` → `feature/flutter-mobile`. Both branches pushed.
-4. **Architecture review** — ✅ Complete. SyncService stays in Data Layer (`data/sync/`) as unified entry point (port of web sync.js). `services/sync_orchestrator.dart` deleted — premature split for MVP. Escape hatch documented: extract orchestrator if multi-transport or commit/verify coordination exceeds ~100 lines. Transport interface is the injection seam for Drive/Dropbox/S3. Doc: §4 layer diagram fixed, §5 project structure updated, escape hatch note added.
-5. **Initial development plan** — ✅ Draft saved to `docs/planning/flutter/INITIAL_PLAN.md`. 8 phases: Models → Crypto FFI → Storage → Sync Core (staging-only) → Services → Screens → Ledger Engine → Polish + Release. Under discussion.
+1. **Next per INITIAL_PLAN.md** — Services → Screens → Ledger Engine → Polish + Release.
+2. **Phase 1 (Storage Layer)** — Riverpod services wrapping Drift DAOs (EntryDao, BlockDao, Preferences, SecurePreferences).
+
+**Sync Core (Phase 4) improvements:**
+| # | File | Category | Change |
+|---|------|----------|--------|
+| 1 | `local_cache.dart` | Conciseness | Extract `_decodePauses()` — 3× duplicate blocks → 1 helper |
+| 2 | `sync_service.dart` | Conciseness | Extract `_buildBlobBytes()` — dedup blob serialization |
+| 3 | `sync_service.dart` | Conciseness | Extract `_findActiveEntryIndex()` — dedup find-by-title |
+| 4 | `merge_engine.dart` | Modularity | Add `mergeMaps()` — centralize map merge; delete `_mergeEntryMaps`+`_mergeKey` from sync_service |
+| 5 | `device_cookie.dart` | Clarity | `_generateSpecifier` instance → static |
+| 6 | `sync_service.dart` | Security | `_makeDeviceProof` throws on failure instead of silent `''` |
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner
