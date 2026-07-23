@@ -1,0 +1,3224 @@
+[
+  {
+    "type": "genesis",
+    "day_index": 0,
+    "date": "2026-06-01",
+    "identity": {
+      "username": "Test User01",
+      "email": "test@phpoc.test",
+      "recovery_seed_enc": "b092de3b6a2b8df74058affe7fe516008db59bca1e5ad670dc465e41125ac63425937602dd3a6277e96902953a57662b38e2a7e64524e91ec685ba82d4acf13ef5b52a17083f27213e25c208fd0b83096258ade212652a04dc69e455b5fbd175151d8aca",
+      "identity_pub_key": "61b673a24091ce2ac1976dbd883c4b31d089ba6c1cff3ad0fa580e6fe2aa1ced",
+      "identity_secret_enc_fallback": "97e1993d7ad1c3f21905d325b624e08d4258bdedf91c4781204b86891cc785ed7cc0915cd48f6689af8000185f4c1a200a65bb42116edc7648f5311440fbdcdb212c4309fbcb936542272ea48a606e1420683fb8f0865a3ced1d646ed066f005652d8c50db9be0619c14045a4274ad20f4fe8791a019a652"
+    },
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "entries": [],
+    "signature": "",
+    "block_hash": "f8f461b612f770b90b05e45188fa0848e134cfa92af3218037d4c049d9d3035a",
+    "identity_seal": "9dbf0a3940fe5ce80c9a194043a3da30ad7082ad8edff38160fecda704231b18"
+  },
+  {
+    "type": "day",
+    "day_index": 1,
+    "date": "2026-06-01",
+    "prev_hash": "f8f461b612f770b90b05e45188fa0848e134cfa92af3218037d4c049d9d3035a",
+    "entries": [
+      {
+        "hash": "a9c149df38e0aabe6d0a2465a6ea4408f46b618dcdc36cb79a71a0800116a369",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9271858,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "38ac247092437dde1b184b6636aaba9379b79ca115aa196dbf53eb787b7b14d41b80bc2c95b91d387d80fd7829c6238247a71c35d0c498a2ab399ea288c765ebf26b4ca8a3",
+          "endTime_enc": "87fea4b98826dd07f94b427e449e00709d184cff371d3e09d79b4a73d675e2e13459459f2074421f42494fda2edf30be435348ae896c843e7fe678ec0f272015a5f0ee39c7",
+          "metadata_enc": "b89c612befebf85c9b90c029d509752bf81660125d94cb901f9f456b6133458d943933e6a0231190bd79bb6e5fd740c3c6659df6849b62d6c13a",
+          "pauses_enc": "861057fc92b7cb2d03bbba0f575198d52d3ed8748f15e02103e16fff2b91431a5956c86e895f9e01f1b3c173143b22b206c8356480f755fe04f6",
+          "content_hash": "6fad17d906fdb7c578c919e9e4ea05f8fe7e82b870259d93e5ff7a0f5d125891"
+        }
+      },
+      {
+        "hash": "707a2d739eb11c9dab4a62d7307fc29e34bb2e64e2fc354f8116e434d194324c",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1942417,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "74c4f62acfcd71a97a3bae56bacc2138bbb5b6e0000c9dd6909b368a56295d42225ead15a0860010c292b642400c6472eae59d50d13ade9c33b0f607bebffb947cea5babb7",
+          "endTime_enc": "3083a71bb86dfb0eef4a4ff294da9ca1aa57af0bbd52c50f31f792f331185109311bf071d835d933987f788459b5c9a2029d6964428d80592bffb4b67fd77f3eec698ea71e",
+          "metadata_enc": "f4cd290ed92548b6417c2cb8641c2a7905f7b6c41571fdc494999febe20ea0f357fb576555e9af186890ccf94f7490d6819b2617ac474b4d5394",
+          "pauses_enc": "74f57700e064e55d6b667fb0e5da7701d76f2e80ffce44fad638e5a8797582cbc64729e076e17754496aeba142ffcdf26cb0b8a75b783d5abbe4",
+          "content_hash": "860ed393075bcb3fd464ffe32cc01a227bdba54c4ebc344773c8008432a75545"
+        }
+      },
+      {
+        "hash": "254b1bf25be2f2e28da16dc0611d3e8c7eb1ba54a64548b531c7298fababa6d6",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8731244,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7b217e6b2bee0cce7cad5e10a917310c6107164b87119c3df28cd2c7eac3e73f893bd7bd2f8b7461c8160e1389b4146e7de36553946d4be9084d8f7f08dc83adb7407d351f",
+          "endTime_enc": "f62d91da79b257cd742433cf61a08c0d97383f4c5609db6bb81d8f989beb6a5197d2e91b5ccc5171fffcc4ee818c747d0661f99ae9969633de326f0859cbf17af9f8b8135a",
+          "metadata_enc": "bd46267fdf2f55f2a40932fa49bdc89913777a987d558cb58d8e4ef785300b5347d317ac32f5fc1868fa6510abf0d3ae8def7f5ce92dcd7b224d",
+          "pauses_enc": "e69f932578a58e3d653e9c043fafaaa40c7b66dc2716d583e47ca6b4b91237fa515d7993a09c660daf1ae821c72927ce61b313497a6103cc3702",
+          "content_hash": "0f9febfd21dae3b6c071e68d44af5c7d1d7ba702776028f724c7c93d895f370f"
+        }
+      }
+    ],
+    "block_hash": "1dc8621f3b696969beff878b234b76afad4597c9ca0e9a59d20738ee8b66ca74",
+    "identity_seal": "d2daff691a9c1e30d69b7ec9811fcf673a9491c0d17228540348355a5d59ae8c"
+  },
+  {
+    "type": "day",
+    "day_index": 2,
+    "date": "2026-06-02",
+    "prev_hash": "1dc8621f3b696969beff878b234b76afad4597c9ca0e9a59d20738ee8b66ca74",
+    "entries": [
+      {
+        "hash": "1fe47c9f49617fbcd7f24aa14116efa29e3ff6e61503225447f89e964489c559",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3871412,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "45b39e905603a5fa1ac5bc29e0908021ace9800b29a5af5993034f252efc15fc033937d6e65f6365240719383036fd55b47666f87f7676b1f5f46db6144fe0fab20f41f84d",
+          "endTime_enc": "c68846e57479fe800cd8d6deeb20c8bff79b9d8042378fe83c8a30dd176cded5bdfcce712c2f1cb68141e1ef71b7e6f93add600a04f90cf3ca83085c0e190998055e414d10",
+          "metadata_enc": "5fb9e3a9187c79a68f3a283abbc57b08aa150099bdc84a1e6480fc070c2fec04faad51c581d8a1df159d237b3de6bed9e37daa60105f9750bfc6",
+          "pauses_enc": "806c2d3b6947b3089d89848a87e14f798a611cbf734a55c3f65099406ab085919da218fcdba0bfe524353b88e2f94d4fe58c4ab5ef9e09e9797a",
+          "content_hash": "ee5edfb5cfe596ca75316f50da5cd27937ebd3fc89ccb651f133b088317a8203"
+        }
+      },
+      {
+        "hash": "fa039d5c4eb48827200a279c2794310b578da188530a6328e3502192a4003528",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1731148,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c6b10ce57109bef00aabda0901d4efd67faae82f9c831286afcd0385215641cd0b11f08e2a02b37cc17e377e48182fc8aa4e884dc8a2ee08fbc63e4116efa297ad250a0bfc",
+          "endTime_enc": "2356a518fbfc1a8aeca5f0492bf253af03eba469be0b805a4854bfe418f357d02061a8e3696a9a4e5b1c817649ec5e9de6992010d78adf4f975ef272e35cd96ee725c82347",
+          "metadata_enc": "4ebd3ed19b66cabccd847119863ea644f6b3ab7981f78c1dc006f82f35e570828db3ed466187a72242b72f0654b624842cd83ba9ad9830189bd0",
+          "pauses_enc": "b0ea4c8ac40dec6e13933053eaa7898afc6833496816c2fe065387b361e440d6fd07fb41e0f4fa8375f13106b083a8951f589a25ced8ed1fbe4f",
+          "content_hash": "37c864a0d5ba82ca93ad725d310766642a66439b53366595b50f71cfcc6820df"
+        }
+      },
+      {
+        "hash": "16751fd2bfabccca5153bb4558a61ac5a1cc66c6491446f34a0f821f90b9c0ff",
+        "data": {
+          "title": "Code Review",
+          "duration": 1791704,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "27f0d05452396b52836ccfe9d9003ae2ad8eb6e24970f530d31a89d674019ed22ade86be36bdf5282668cd3a9ba4852bef8aafab91f9bccbcdd5299f017571ee672abbab6e",
+          "endTime_enc": "12745906403d754f8f3beb9062047ceea9eaf5fc1075ba5ec12f6c827d68a4e3d2b215ad68e1d1b20d31d015f0d863ac006cc957bbc538d94717d2bdcaaf214681a7047df2",
+          "metadata_enc": "6d613aa92937e79eaf13ed9b8d4054230cfb47331e8aadb2cc1c5fd3a911c5c7ac18835165976a58e37889a6438c3a57da4fc77a0a1b9367ae27",
+          "pauses_enc": "41a02d1f7c6bcffb290c3ff01c5bb21957809e6b419a1d640c12478d4875ba4501f4f446ead2fc5bdd33261018477eb511cd03c7fe28283c7768",
+          "content_hash": "a5fce65e83020c3240d9d71cfd53b6564cee2a576f1eee4cac028f17f827a666"
+        }
+      }
+    ],
+    "block_hash": "f92c298cb3cc7af0f610b469eb4b0e7f7404dad432bc1a3b7fa9faeba250fcb1",
+    "identity_seal": "ff74e439a745c03dc6d2abc24735cdf3b681619fdf8aa5c0c4342292834fc706"
+  },
+  {
+    "type": "day",
+    "day_index": 3,
+    "date": "2026-06-03",
+    "prev_hash": "f92c298cb3cc7af0f610b469eb4b0e7f7404dad432bc1a3b7fa9faeba250fcb1",
+    "entries": [
+      {
+        "hash": "413cfbaf23b356303724271431ce97e223cfaabe1a3a11719717474bb88a621d",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9052944,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "3111008bbc3913bbd29745d8c5c349967889a0a172b0368f4e31ec9176eb4790dd56d09467ccd44cc5d25e5f91fe7aee6bfe59178f7b8bed61e44029853049fe6ad58ca7a3",
+          "endTime_enc": "6830f6463ed6f8f1d5e940cf967ca128aacb3e4e99629c5382c9841efa2b600b3f8e628814359cf80ade4d9050d9cfdeafae97d3b96333add70169882cbd6f4d34dbace8fc",
+          "metadata_enc": "78b93668a1992dbdeb68ac71ec14568cd57216d47044818579f057b7220dff1f7d87b0312efc21156931d2984805d551ee495dc4bae55972f583",
+          "pauses_enc": "1a0f4bbefa05bce830a5ecc12d40f74f904f83c1ea6052524fbde5316c238b1ccb2359e6dd59a2cfa704e92c102f17c5370040b9e39f5e4d2799",
+          "content_hash": "3a46a205737d917628aba0d806bc012487be4c9a37fa8b3a469d4d19786219da"
+        }
+      },
+      {
+        "hash": "72495806122669b7f714d553db9295063b8b2362dcfdd6dee00bdb78857bfd35",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3397251,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e3d2abe965c550994763c338ca4fcdfbd39baf5a628d4fb75fe1857bdd3aa4685cd5a15de2f16e553a68c44cbcc6ff9077f41410203646351bba0c72e5c383aba0b0fa995c",
+          "endTime_enc": "4a893f767be5e240c4adfd0556f38b21f0a7f5b8814d8daa1f35c5c06d59a8c1a8487dd6b30351321e8756b8c507f443d824757071fe100e6759e2e92011fcff76daba4944",
+          "metadata_enc": "36e39f0f588aaf6e92d89847dd2e567735c95c341fe63f98f9b4a092e9fde4cf1d436501d620c93da6a5fe205bcf9e1e66f3f8e1138218501f3e",
+          "pauses_enc": "31d34acecee68fe2c90fc9bbb396071f1740ec4879859f8ce8157ab0054bb0bb1625b9772e034366ca948dd9d91605d0c8cacc1f1c41f36af4df",
+          "content_hash": "5852472bef218d5c7d2524ffd6c253ea9c2d632be5cb1f9bf641f5cbf5304519"
+        }
+      },
+      {
+        "hash": "6d0b5a99f92fe89a9d6a7514af2c55d1b37ad7f05ee5a761d1861b453b408ee3",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8801414,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7d3df938a2ba0bd4f52f3f3bc01b09b38090b616fc8d4977b7de0ccfcd19de354614843cd78512a4ecbdefa26759f4362fa14372855f8726cae221b2d37d417cc027ece328",
+          "endTime_enc": "aedac8917a2e09b99237078bae4ed36abbaa57105c318dc847a9f905329248a88be758ffc81fd1ec769791e5ac04f48722616b6eb2592b0629a6c1e0e69a57960fe28751d2",
+          "metadata_enc": "ae376affc0f4ac7a9e481ec9449aa6d87978eb01e73b0a661c35f42d41c8d4c073cee28c09db697825a218c2a2b7d09961da619155516c8b0819",
+          "pauses_enc": "c9aa175d63f09d22febcaf2392ed78f4fb1098882e25ceb85e836e92ea9596def80a222f75b6e2b31e2c11e26a9a71901995a510b0341d33fe61",
+          "content_hash": "5b13e22d342b2fe1dcc9b6217e3cb39bd86b462637c9a766f914cd6d41589a49"
+        }
+      }
+    ],
+    "block_hash": "79be445f03a3f4544e228a57460c10d248da5cc89a04ade3d88672dcbea47bef",
+    "identity_seal": "8591750efc57f2178695dc7388549be4dec26ca0ffbe3ba68b36a3676a9aff49"
+  },
+  {
+    "type": "day",
+    "day_index": 4,
+    "date": "2026-06-04",
+    "prev_hash": "79be445f03a3f4544e228a57460c10d248da5cc89a04ade3d88672dcbea47bef",
+    "entries": [
+      {
+        "hash": "7ce538c413dd7afc4bb3197c26279ea8dea55e436af98f5672637a7dd35d54cb",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3382627,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "286843540ae9aaa202351dfaf7ff1d7fee330d8f709a6e68b8a2b1d97e4859554d929142f08061cbf0c97cde075296141a1ea8ebd5f570103ceed41bad222c70b2feff61a9",
+          "endTime_enc": "e1fdff7964a2d3ed78c16c52693466bc57a41287626c24e9150daf571058fdb6b28adccc061ef0a94c3726a3f95872c1f93deb447f7430d1ade6d0b0a756f111f8e7dd22ba",
+          "metadata_enc": "2f60bb58c8af612090028bfb31fe03d895b864f6afd240911619b9af3fc52c889b3794cb3f89df8ea12e0d57304da1146ae814e1784b0d515379",
+          "pauses_enc": "fdcd004b456800a5c3455f39c7b6cd412ceb1a360679bc208fb3b608309ffdfcaa9ac2065433efc1dadfb4c20b789db7819fdd90568a426ae4b1",
+          "content_hash": "d04ea0cb3b989f6303dbfc3675d0369f493ddd72f866db3214bbfd0cce958ff0"
+        }
+      },
+      {
+        "hash": "37412b21e50d6befa573e39f0ced8595197131eae548b478e3d91b5753df2710",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9007419,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "cfdb9cae5b8be636c80352e50c6321de30da22f5031c5a0f7c2d0d5c2aac6348bdba154b61f83b661443dabe2826a46ac16d2604865fd23e4068064e6bf4838349a2f9ad6c",
+          "endTime_enc": "a7918d7f02264f6d39f3ca261cd1cdc9c2aecd1dad51cd4239f5a00ab29217424a61600551dea9c001e1078009d5b8bf1e7c7bd8b5e78bec3f97a654b759b884867aaeaa96",
+          "metadata_enc": "ed08dd2417570e7e79bd3c9ca9e964fcfac8afab74602dd369693f8f7d5a3c2367f6f8c123da8092b0ce1ceced7a1849fadb7d27de29f1c91ee9",
+          "pauses_enc": "c7003179e7db21ccd07673f7938fceef54a5e49369ee11062611b06c9b65705e1eaa4ef0128316afa6d58146a3beea05766fdfabf1410425a047",
+          "content_hash": "e32f57849abf26812994589eef7e3bf6a28b752e1059a47bdf61d4184ab7ab7d"
+        }
+      },
+      {
+        "hash": "be4e68e2e848dce98a521eb307855ec0aeffcdb753d19622ed822ecbdae12516",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1879201,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "8840413d021dfd39e020678e1c6131a571a4b88c5d41c0e67c4830ca06c5cc06f9ed3144f13be4be8e8a06df0d14a0a785056185c750b931f7d7eb1c81f45a8c034d478850",
+          "endTime_enc": "88c4f394d342c3fa2a12006440aa87a6836252500a3516a985a5218c395dd469741607a6ec2f4f8707ae0c1a7e5287e73637cb371502337591dc3d22d8a8bd416e5972a781",
+          "metadata_enc": "b3bdd7e653b2149f1d2a4c82188f5d3fb002c8e5bc9eb7ff49131f876c133051e547cdb7bde7ee8ed64ccc4f2c7dff9026916afaf1008cf4bc4d",
+          "pauses_enc": "98cbbfd8304610aaf6ba2003153cdcd8fdb985c837967470b4de3e162d559d0164b22323639151a1032c222b4827c48d8a9ba5ceebc3d7ff1d3e",
+          "content_hash": "243f423a966e16c5a9d3d8516187bec054d7d0f2faf0188193e00589e2c8f37e"
+        }
+      },
+      {
+        "hash": "d96a7cd9b86c324a724f3adfd5ec0fa61b3145ebf1a4249f346cb49ec481dd64",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3501629,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ed8b21baa97d2b89282e604a43f7f33f3e5e4fbf5b51ac7dd09a8b8942b1a8f0b65eca3cf786ef47843f7efb808abc692fbfc794fb32c8251bd1d640b0f54da16234a86ee5",
+          "endTime_enc": "b79ab86567079b667d5bb7464337e646744558d54c4857da1366e64696e2ca9de6a1932f57fbe66951cf4152716f7a39eebe4b1e526a51399e192ea08a03541ca5c0d28d6f",
+          "metadata_enc": "6cca90121603d0d70e1e39850e216eb23d4c852268ef1806680142487ffd252105e9c1d5a819545b5f80e4e79300adae133979a6141aaa919924",
+          "pauses_enc": "ac5e9b3ba693737afe30043a5240d933b8b55ca242da6aaad261099c9b0fb154c6e36727087194fc5c98f662ead857a6058f4d031a0902f98650",
+          "content_hash": "7ba90368a9ed21670d031a5cbb1294713c61970a4717ab60c3406f62cf65f42d"
+        }
+      },
+      {
+        "hash": "2477e6485728eb9ab2f2c47a7bd2758f5447fecb824a5a331054e7fda98b9dca",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1548050,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e305e825fc1c58386eb493189c37ce8cfaa9b2f72f6725b2d93f01f8834d7c707cfe6627a64e1a8a103f9d8720abfb7e2f2964cb6b80c8e93625e18fdfc7513e94713579a6",
+          "endTime_enc": "3b4e479985c5c57fa4289300dc06e7b4e94fb3af901cdc5bcc236385ece28d2863e88f83c8a1af1cd88f0e56b85573a5337c5cc04d8e50fb782196cc1c5dc875b4a4bcfaa3",
+          "metadata_enc": "393ca8110a4d61f201fd1952c6614db52e39ea82a8db0774cdeb18669450ddccf4ea77472d9eb7f972bb515948d20bb3df8d6a4e41f53706977f",
+          "pauses_enc": "c05d6a71a968c7cf76eb472fbcb0ed8bee8f9ad617f49d0c4019fbb6f88b787131a13a6d1d873ffc03cab3e6d80e6e4c97b44f074d23de9a16e6",
+          "content_hash": "ed93533463e5fac0fb0ec2e5a85bedb6d578d53cbf71e8b4e2a9fcf1b5d7f509"
+        }
+      }
+    ],
+    "block_hash": "574b67eb7923d3ea122d549231a197ab12bc719843208a46605357b3ae25641a",
+    "identity_seal": "2d710cfe83fb2af40e16a5aceb4fa0841ef355eeef735c5a9228fb4529119c07"
+  },
+  {
+    "type": "day",
+    "day_index": 5,
+    "date": "2026-06-05",
+    "prev_hash": "574b67eb7923d3ea122d549231a197ab12bc719843208a46605357b3ae25641a",
+    "entries": [
+      {
+        "hash": "d19c0d3c20513fdb2a41dc797b9050eb7d41b3be2136f789af3d338b3a700c0f",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3470555,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "b4215422c830590cdf5072417cb002e3240ed41043cb53a3d1297ddb23a17f5e84ff519521bae844d1e91bc96b276fe6fd66746ea9b6c17d84081e5771883afe0de6d95b5c",
+          "endTime_enc": "a6a0904718d972574929e5f61817caecef749c79976bb19b21025ce2b081b737fbbcbb54f23db820f0e557605fcda43fb2496d1afdb263c979a759914bd3e13609f0f2bd9d",
+          "metadata_enc": "8d01111ed87c2e578e71c038ce29fb3913d214a4a51209ed26d01052921db7b9b630c0a736d83222310f9da6e4d0756065c6e23b3a01cc239c9a",
+          "pauses_enc": "25f217c1896e66b432f989382a1fb89d64203859794b2ffc39f4f31d7b92a5b60cbb18acb71d243a6341ba98194d387dda50da7bedddd1671cd5",
+          "content_hash": "e52d1d9c3daddd8f5e2eaa5b5b6ca3cc2558eaecdab9c6a00950a1a71ccadcc2"
+        }
+      },
+      {
+        "hash": "cae17be24bb5b119ca2f9de31b9ad3a87a3f7f1459c44236ea58bf40b7538ce9",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3672528,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f15dd79b54b6a08ab6915c7be02fd460e3845f35a33d753e13e023fb7666c97e8f084c670314fd08b5cf8154359b091ca60560a9e34c73a0fd8d72d75711c16aac516f6260",
+          "endTime_enc": "6e7716eb09bb9f6bf573419b7cf6d5ba8f14935acbef4ca1fc5c53ea74ad49d0f95460d4f5e7faba250ec76d907f4f086c0a9bb3eedc38e525bc4d286117844566a51e458f",
+          "metadata_enc": "d0e5e98667b9396818ba17ada81f04d31e52bc85f52e8cb56e1be524891df25b0aa085b3f1989499927257cca2890e547759b7449032174b6dd7",
+          "pauses_enc": "fe8abfcd627546ed7498517611c503ef861b617dc7224945bf736355f12f147728a1659eb6f1e5ebb08556e68047186875efa076c2bdfa437f86",
+          "content_hash": "9b2ca3dcf42a2e40cb7331ed16a58534eaa7a8d8a8c79d00f0695ecba4695649"
+        }
+      },
+      {
+        "hash": "6c1f454256e85c5416489784606cff00c195f607173338d35632cff06d6bc78b",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8979946,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e4388b497ba86b5f6cf4f407dd55484bc1112ed82e05f36c940c55df1a4dd12c5d62fac04ea76260aabefd9e0ac940828adda296057d689794793ab0864bfa1d2a38a75e24",
+          "endTime_enc": "69cfb4a57a7e21e89ad51b19c01a6719be35e371b044c2d9b98cda7b995f89b69dc909a4d064c14db3c8578f8f003f89e887a5351fca726a29a11c0276d4e210f5682c6576",
+          "metadata_enc": "112ccafc90367830c33b0db0c1ddd582d9e84caf934f3357bef60fd064b0ada7f32124970ef05f6be2831a981ead5a50d318288c5f149f4874e3",
+          "pauses_enc": "9afbe552ecd2647f16b7c620330f6d6b54d8d4c7464345188eadd1d46deed970bc452f27461563187570dc1cab6df3af1280f74bceed50ff20da",
+          "content_hash": "a700fc59db68c18cab1d441e9073477ea709047ac94b0cb17e456a50fd1cea8e"
+        }
+      },
+      {
+        "hash": "9ca1558669431ae73f16cdd8bd3a0829350a0818b973962eee5ee34c3841b163",
+        "data": {
+          "title": "Dinner",
+          "duration": 3374870,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c3ebb340ab90bdb4ea4382953a5ac9b7a0193401a0ad7ab60e19e31e7c8c7ef3a0d88090d16eebfe53cc6025226ace57d6ec791f827b4da53fd94f4c86b71a0b3ae4288c65",
+          "endTime_enc": "7074a963327c33e1bf822eef7d21c8256a3d6b86cf79d7f58403677e0bd25db3dd33a366a4fd15a12890300f750eb94b4370715eb981b51c87520b3977b6fbc56b15b90e90",
+          "metadata_enc": "1bee29d4df8517a5c191cea038e26e7ac04fc33778c141dd541d4d17a81b1b8c69665044e280373e0da06da9249eafc9d0c67f60ce2f6045d670",
+          "pauses_enc": "9968a3c2c20f0aa7b3725e2a92cdae49e34134877968cf857bc2b058d93205b6e18e6cc10f150815ab37f3529352b2a0792c797deddd9a6439ff",
+          "content_hash": "95e7c5f9af566a7f6688f890711fc73b554fb0eb16b6ad67dc0314d3c652391f"
+        }
+      },
+      {
+        "hash": "fe3645536b84109a42886e34ea9f146c45129f59dc24cffa019a92a0bbefe542",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 7079451,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e896e25af446ee64ddeaf0a9f2c6b5690c14f50e37c41514fea038a9447e55c643c5debdd638221849fa0dde085a81e9953a981e00563bc07e328601568c8f13f30fdf37b2",
+          "endTime_enc": "a01021e23c513151e31c23cce7dac516b369ca63ec877914339718cad4677a597fd9b20b3f30008302b1b8bbbc0838962aa2c4eddbe1d8c961cc48454075eb74766c453d77",
+          "metadata_enc": "73e2ad6adc6d8dccdbadeaaa5126130a4ee0a26cbd31d110ce2be583ba2532d90b3c64bc35d0ebb528b3674e8c6be4a3b423909ababac212a2a9",
+          "pauses_enc": "63cf29376bdc37e4f3f6cbe4abbb13265def2d3ad29372dce3fc5fdee3a67ff3a004ea4e2f76f3f37919f6bb7fb1b9783006de574fe94e0fe79b",
+          "content_hash": "42081697c620b78a671311eb8a6cef5f253a2fc0fc2fa65fbec541a0f8d94dc5"
+        }
+      }
+    ],
+    "block_hash": "83b01220cdd3f6dd1b72cd19ff68d0d406952a48d55460431dd5ee42ba5e8b42",
+    "identity_seal": "748b84be7931a241ae474bf63a511eff14f301ee5fe504be3edbb85a581b7d15"
+  },
+  {
+    "type": "day",
+    "day_index": 6,
+    "date": "2026-06-06",
+    "prev_hash": "83b01220cdd3f6dd1b72cd19ff68d0d406952a48d55460431dd5ee42ba5e8b42",
+    "entries": [
+      {
+        "hash": "b0251bdeccb401edab03e545946f57612d0337be2199e63c34373f787607e6f7",
+        "data": {
+          "title": "Reading",
+          "duration": 7130283,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "cf4fe97147fcd0824f0d6aafa56781097c9bc9df5503287c2f89dce6359c828d6071197843d4e75bbad22d8cff00608a926ca9c073c1e47eab4b24ec9ea3346a9a80e38fc6",
+          "endTime_enc": "ebdd83e61de6c3fadb92c3ff25fe02319c484df6c8c73369fdac2f5a3b4b4085695b1a214091ab1996060d856aef559434fb511f7610d274995ea37286370179d766467037",
+          "metadata_enc": "13db73bcf2159ba3726f96786ec71c9e7a8ec944b409919a4b17daa5b8915d1c856f2b43d5e5bb3dc27cac80c5659d524226fd27493a5660d579",
+          "pauses_enc": "4e8229ced3811c8e60c5e580d6669898a374d95ff8c7df5934ba7225fc8379bcb08b436c4fa5cc642030bdcba8440c956cddbc086c09a4e05a4d",
+          "content_hash": "83df00fc5c41b435733bb231787138c080f0a99d8bbc3bc13d6f486dde3368b0"
+        }
+      },
+      {
+        "hash": "f89e13679431c17a72d18bbf4adbb26db00e9a63b162c0683e00801ace177bda",
+        "data": {
+          "title": "Lunch",
+          "duration": 3640035,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "05594f2ae42abeb4b7d74b8f24ca2678487278b5d4207a833e599e455f7dbe45c75693ad213c61c01d7f576fb32c5be241466b481aafa616770a6579af3c73f70d1139cbfa",
+          "endTime_enc": "9867bd73ba2582db971a354bf8901fbc2d8b92b0ee9f72f75bd21a7b4d4b00a10e18ac73b28cb51c30f72126c18fe38a8d70152da18c9bf455dbe21b20588d327570a11396",
+          "metadata_enc": "a53607056ff7283e6fd69b2d1ac915ba2da2e5500b1bc5cd8bf272b35f4a79ac06299286d451f81369dc34987889310e578387993e4555b02021",
+          "pauses_enc": "db8699ab436d8f2a83063f91070bccdc27ee10b867998ec62ffbb0cf1e5bf03780a2c790ac7f6a9241c896444760d71238566beecf5604e3e68d",
+          "content_hash": "e66aa8d51e94c1c24dcf6e9db773a8a098e6b361ac5274aca0fd158ac4e6a0dc"
+        }
+      },
+      {
+        "hash": "cb27ca69b0454158287b5929d69300a7e1ccaf2051e522ad319ace47f1cbf97c",
+        "data": {
+          "title": "House Cleaning",
+          "duration": 7140174,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "cleaning",
+            "housework"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2fb5ce76f7edb04b10c4bac7e9f478bb2ca0b0760a09165cca49f18f890e156a8b787d6017c642fdc35821a5ac0765f95c0c1a5a286407b7fc249a85cbb636ccea8b630719",
+          "endTime_enc": "72d09753ed5d8d8ce2ffc6708e75621af61b6679f5b991e93ae7886fb5c8b833f4acc3e568f42b6668489195c93eef511046fbbde70ab6db893ff918366a868b1491d9c357",
+          "metadata_enc": "fb8da3e0c12629bfff2e98ed6677f5da2655c51bddbf86ae518e52680f53ac4b86c5afde8cfe732014618ee0a6ce3cbacb8d034cf85825187684",
+          "pauses_enc": "3d53dac3a4d94cff22c48f67b423fcbfbafbd4c24a433eb42bcfff32c7f6401cbd853745985b7d720844c559d03952cfdb3ef09485499c845377",
+          "content_hash": "c4a5e3f61b13e030f6ef70d39050e14be70a46ebbfcdb77bf3a7ccf408e52cd0"
+        }
+      },
+      {
+        "hash": "a9b443bb51c37073a6d0431af13df10112fe96b2a3e2b8eb57e7b4d84326f31c",
+        "data": {
+          "title": "Movie Night",
+          "duration": 10830776,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "d8b5d58059ed6f74306f9e5bc1a094426ab1171e184153a2be7c943866ea66bd9e770e6c15e619ac6db81e12bc4897c4e7a6ded88c367e545c2de859373a3d0ab1dafcadce",
+          "endTime_enc": "0a74eff4b529c44afba662303dec2c6dd938a09a22dd158027fd3eff6a38bd89d55fa72f70c4e62284deb6444ef04a7fb90c23b6a4dcfca1a794fc3a2c2efcf44d5105b3f6",
+          "metadata_enc": "cf69776bf4f3678a3bb8e1f64786b7845e516bf88432d58eb525fa2c6a332b2376d71fc5f1a348cad83024934ce76a7ec8be990e234a29ab9bf1",
+          "pauses_enc": "7cebd46e81924174ee110ebcb0bd52626b78b507e4e40ce628dd2beb265773e392fefadc58cb93ea6d6de3020754310189cd1120e4ba1fd13dc2",
+          "content_hash": "104fea632e9fd5742a84f5e8bda8e56a91d6eb75bb63ca22f3d5d60c66d5db7d"
+        }
+      }
+    ],
+    "block_hash": "54ef309f92bd5e5e758951c9b1e0d8deae47d357a1315c3859564c219a337046",
+    "identity_seal": "6be85b04bd931075f5f526803c4842040064ba6f2945b13232ee825199854395"
+  },
+  {
+    "type": "day",
+    "day_index": 7,
+    "date": "2026-06-07",
+    "prev_hash": "54ef309f92bd5e5e758951c9b1e0d8deae47d357a1315c3859564c219a337046",
+    "entries": [
+      {
+        "hash": "241e506409ffce9e8863e24a8da331ab25feab38d75b9f1d2eb1b4559a991748",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3823481,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "8b3110403c08f624cfbbcd64a4d698a136291c4efbeac81c9634eefcf17b17bfe0accb010dc4c797acb640b8d3b72dfa66b67af4c0a8489c3251a55880fd8c73d9e71574c1",
+          "endTime_enc": "ef55db9db9b9bc6982103a87006c8a8e712c9c4978706fa78222075e8e23dcc06df46e8668c6dd3cca52aabafda0bf2e6e1f67c50c715d9980e768133730ce3d3fe09b0976",
+          "metadata_enc": "55b8dc6494b804ca0a15d56456d8b8bad16b3f7bfa2106003c0707ca5f80da4a717a6ea10152ac109a620f7d62ee20cdc46fce426183748ab07d",
+          "pauses_enc": "60ecd9be657a8fb0454de0e223f1a6afec031c78ee88e8d1a4da652c93b6b6642aad28dcfa718df69414b0497310632a76d019329ff6074fd31f",
+          "content_hash": "0f69d1e65735b78f9c5f1bf64b759b8e6d436721c81227e25ba5f37e8aa3aa43"
+        }
+      },
+      {
+        "hash": "e457da917e6dbbc89304fa32d4ae0735e5ac5e88caee6081321ba823f566e5ca",
+        "data": {
+          "title": "Brunch with Friends",
+          "duration": 7381141,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food",
+            "social"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "16fa817a42960b37040745fdff7ca9600d253b9356d4eea1ccb2b5a75fdba55757f856f9cb7d8bde586e732ad70c015bb8fecbb5d056b1ee94cd86a8861afb9c213ea486d6",
+          "endTime_enc": "89db48afeb03d9b654fee876872d7b3737b68c1ecd9da3b521c4883e30e6e2d7fa214d8d48a7a9696d59e6853a0132934466c2d51ffbc2b7bc6305a3fbd4f390d890436797",
+          "metadata_enc": "d0c5766a2d780ce648f225ba8f9326b8358358c48604b3e25fdb33ea5e5603b2e1a727915be1b295a0a9d48e4103ac621bdc7dfd64a7ad587fb7",
+          "pauses_enc": "0577da7328cdd1bf1def2cf9ceb9ecb9a2f3973db38aee0c9524f86e86166b8ccb046833056ac20d10ba0a3b6fffd92ba7a21b50a480b15fd1ee",
+          "content_hash": "5acc87211653a907841ddd45556356e2d0ee09e56fcfde3ff7bad6920a2a53f3"
+        }
+      },
+      {
+        "hash": "a40590df41ab29fe8cc9fb1cdfae6cf5db6a8d412435c035905e7739974ae0ed",
+        "data": {
+          "title": "Reading",
+          "duration": 7177746,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4a3de543ebc0276f2d43365b398cba1edc013aa1950ded458e58e0650d5c3ebd5f0716f5a5c8a1c14db443083c8be8526ab863e4a9b1b19d617adcc913b377e3e999613585",
+          "endTime_enc": "33d27dcb44e2952ccbf9f908d9ac170f590222aa6cf3e6a1afc49b5df4641201273e40b4f6b96b7c393a2e7457e9115d17741bd687bcfcf34ffe4d7acaf6779db29fd5d780",
+          "metadata_enc": "d3e25d580d5d1d559fe2893ff82ee363b7cf1316697d28ee7093f293dad2a52410075df01e074e0780586e9b5b669d7ed0f234d795b98c59ae16",
+          "pauses_enc": "3b4b57a2dd6c6a1bfb7de77b9c43d9bd84ca2329db48457a1f9dbf5c5eb3d135c569baed329402e073cdfcbb6ed2aad16b0df1aa2fbe55bdfd82",
+          "content_hash": "15bb3e4ef6d57a631fb3d7fbc83196687eb925c870f70f66381c6b32cf19f313"
+        }
+      },
+      {
+        "hash": "835f8e1fe06ee33c8b49d4e92aa52886f0457e172f69b4e650eb52ece509f927",
+        "data": {
+          "title": "Video Games",
+          "duration": 10758607,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "96c35f388d4131808fe5a15c4bccf29fa7569425f2d72b048ff35516ab3b5082e0880c9fb162d9e50f3f96b497ccc733e55ea80bb2a652c2df8886e2cca757866638f09b0a",
+          "endTime_enc": "a5efc563fdafd78bb7417bf5fc382ed487cf6e949476f6e767f2360b28464b0c959974de6f3a2f837b9a5ab0171d8b70da803630acc8323c0c363631c49e8e54a1c58f3fc2",
+          "metadata_enc": "2c0f28a480dd9523d7f4f31e135961f022245143647b126cf38241bf3dcd09270a24cd7c92299f8a40fa0ed83fcb251c0135ca8f51ec239a548e",
+          "pauses_enc": "f87e6932a9fee844330f2c1dbda6705ce52f355304cb4a60fa78d51bc2ae31e20b6d7960c7db723b55c73c38e70cae82bb9405c99f91c8f94096",
+          "content_hash": "b4d08eb922a67cf81734d2b12572dbc981a07215b9200a85beb8dfc4a71edd47"
+        }
+      },
+      {
+        "hash": "8a09389b5e8dadec2dbbeb31cd3dd4fb3c7afedd2421a9496e6756c98e7342dd",
+        "data": {
+          "title": "Movie Night",
+          "duration": 11065158,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4dcbd274edd45e2791f32e9a28a17a3ea34c69d220084a613984c7324654195106f4a411d37671d26b2ec0bad09a4a9737fc8141934dda5ee8096f964bd004d3564f0751e0",
+          "endTime_enc": "8d80f0549736333bbade4accd15248204c66eee7059532cf8e6164b03a0189614a26a902c543912e774b3a85ad74e0fc22970dfe778035c816841d6ca3ac2cebaa05383b7f",
+          "metadata_enc": "f3d20f3aec46e6688b1120814f80756c000652b28a4a81e4f8257bf51135f09c57215f051f2f969cecf7d7b8e2be36cb51b66ae072ae3aab0f1c",
+          "pauses_enc": "a55e8c6b76b5ad6947ac006bb0822bc64b9c057d9a3636fff6bb82ecb4cde6271820473e9265bfae893c13863b7f77b3554fb0b748962e64ca7d",
+          "content_hash": "81f59e3a944ae717eec8aef56d862d080d804fa5f2a22e55d5aa387f22b026fd"
+        }
+      }
+    ],
+    "block_hash": "fac738ee1fe1cc8eec8eeb6860c7d630f7b0a849b5df5fb53f33694654c3362f",
+    "identity_seal": "5e19e625473762deb934ecab9e7d0f589b5611c0839890b2400cd197cad35158"
+  },
+  {
+    "type": "day",
+    "day_index": 8,
+    "date": "2026-06-08",
+    "prev_hash": "fac738ee1fe1cc8eec8eeb6860c7d630f7b0a849b5df5fb53f33694654c3362f",
+    "entries": [
+      {
+        "hash": "dca2773d8d771a169b1f4e31391cd309ae356ba9f8dcb0879454e218f7661d95",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3414975,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5594636a58dc5df8654d43e7ee4d6d6148b2bdf025e4fab6f6edd51b9c0801ffc9005899828c64ce3bce2d445ebd2a7416a9bf443c8840dfd6df35ffe89d769d9fdd3ccdc1",
+          "endTime_enc": "17405527316bfbbc105539ef95d5f57f48131f0f4699d280f019fda64462a63976bdf0513cd76537fc57bfc5606608df2846ebc5d468a7f24a14928a69a58a88692bf2b889",
+          "metadata_enc": "4064a8e757ab64b214191ad21e5fec277c6262adf0b477dbbaedc447602ab5dac09b1c459c3850e006d95e259b1ca7dea7b1f76e3aacb234481c",
+          "pauses_enc": "ccd33fb0b2e0317a7b01119584af480389cb78483cc23b76cff4b68a63e4b9017c6a678160c30fea1644651f57b59921eb6dc8eca7a388a173a1",
+          "content_hash": "8b5da7b1ef4e271c32439e6fe60e17010de40e862fc6f8c36e94ac011ad8f770"
+        }
+      },
+      {
+        "hash": "6a855c44dba9199469a189ec8abd95e3d71322f366ceae25c485581acac62bc5",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8867753,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4e79445769ebdb5318129e946e9fef5c53d81ec84951aab1f24a38edb9a1394e234aa9dd40638f0dded9125f98c8691869d31a6cee9fff5f5796bdcde18fc043df3564cbff",
+          "endTime_enc": "65b01f5f6b1dbe80f610fecef6bd30ccafab6d60a541614c787a1e0ec681308f532461c3437c99ea682bf9b1ee3e3a5ce43e7702d872f29ce5e3d04f10ba3cd3c26d39f862",
+          "metadata_enc": "b8016568bef57384cbd27323451c94d19f692456f9492eab34f6237d06d94b275cad5ff48f1bc74055620bfb55c4235dc1f0befdd86253038433",
+          "pauses_enc": "53dd0c9d2931d9974a6ed16b4259b655b3488536bdcd90e829f923abc1c7d89e3892d660f71a6390683c0d299b7a50ee5abdf148f36e61daba7a",
+          "content_hash": "71ab0373d647b1a41fae043ba05229779d9eb8abc384f8ae3165ba5237e11bf6"
+        }
+      },
+      {
+        "hash": "051bf00c9e61cb3214ffbcd2e9259ffe1465a87ca5ae13f4964c7c836e91aa12",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1942666,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7118a99bb6e955cd59f705f9e211f009d0cfc8e1425c29a26800e6b264688581967d72d7b647604f82f384076b86f6a82c55cc4aff0fdf7f735a360ab7c34bf0e70faf6761",
+          "endTime_enc": "2dcec02ab78344bffd73f4b0c3967728a8094b00c25b6ed30c5a922600ec8a5f2b859f58bc0ac6e98a40e7a5008eb640f26b965ec98a82d054e349a6a322a66e346237e87c",
+          "metadata_enc": "1304a9aa0606bad26601a346cd6748078ac9136c3894e45b5b15d2b5dbc81910d74da7f49cc4e818ae5bb376e8d334ac59ca14e95409a39aa3f7",
+          "pauses_enc": "354ca8dfa4cfa6f2d69f3bd0c1a65ee2eac529a0070a1a07d72f5f58721dc3549a00d45b87cd7fc2247621fe168d12ac235c84be7625fd40f637",
+          "content_hash": "93f336ab3156666dc169746f78d791d77ba535d521d59bb907e0c315c70acb89"
+        }
+      },
+      {
+        "hash": "82fdae6f3ae1cc04699fe207c5b4539c1359b627d7a8594da488dfd186b68124",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8766613,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ef4b7a187cb6871fb4c7140178a3114f5ea57f962c22cc6e5683ccce69b9d29b164538d1a4ea2817d6fde435287f69fca5384e7803044c0c88b3f1ad58227620bcb918277d",
+          "endTime_enc": "0a0c126529dc6cf3f29387fca919d793984d738525e633fc7ff187c8d6cbf2b494b52f0ce84f78f9c7ac2207c0111f1949d823743f51a47c3a360346477ae63d75287475f6",
+          "metadata_enc": "18ac66b273e6e5de210edbacd31578482db2b7f08302e98e1fab203ccb55109f32caecea42789be1dc53b46c555f0bfb6d94ba14ec0989678a94",
+          "pauses_enc": "f469468ae8d1e80ecacf643715225a457971e7cf1f78728921c699471e507f29d0f091ea21b6a62fcfd0afedf69c507e63b97c0212a85a4c38a0",
+          "content_hash": "2035a1cb909841dfc331a56432a7dc4ada1429406d4c4535f7f2d05e994a7a1a"
+        }
+      },
+      {
+        "hash": "9ba264c5facbf6883b6e6b88cdb4c5a475235702bf9eb9a7ca016aa84d0f2bda",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1900156,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "0ba74a082887859b6d7d17bb6488b0f47dfa4cc4ec01dbeaff7f483a602a53001a346da7155730b1b0c8a1b3d886b1124c8a1f2e0dc0ce48abd7ea9b083cfb05e6552dec72",
+          "endTime_enc": "bdfba515d2da72079b38f336d65405893440afe98b59a0460f91a81222ed2204d609f299d890fdbf4b4a5f56e1adad626c7fe59740ce8443ed325fc12975b5190933818b6d",
+          "metadata_enc": "bbc152e3fd88eec1ec159b16d7c66261a9940f007655bd48329573e220ff7e6bf1f768dd9e459a8826b511debac7e1b3a0d88382f799582c1927",
+          "pauses_enc": "75fd59607eb464502afffac07bcedfbbd235485d6096a93cda95d676aed58dd2e75c227bfa51be08947c5993acc11b7ac42be4661d98b1ca717e",
+          "content_hash": "86ffea642387b261958b9df2d603ce95351a5cdc2389089336ca664014c4b8af"
+        }
+      },
+      {
+        "hash": "05cc7aa97469f24fb4c395132735454319f3b4b09ba2867314ce43c8ebf8c72d",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3790785,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "266aaf3363d3951535b1aba6f2c259c68b4b2c14144e2463e98fbd56d99e251298c08ac64fbd505c6400f33ecd197d6279217e9f627e5ca30c80245272154923744675e54c",
+          "endTime_enc": "532896e686cdcbc1bce40fc8c4d96d9465ae8ca482ae8adf65c3b75fc72ffbf5df040878667bb8ded5c17794fea9d27bcfe29169a15ab185bf4ab0bf187287bc742f3d31d0",
+          "metadata_enc": "798f1440482af1aa789f8c8b70a91527d1f84f11d962159df73fb0f4371fb71aab70111df08997c583a244303b6bc949c48fa98b5a9cfecffbef",
+          "pauses_enc": "74b06a1d3863bc0aa49a39b688711a915b2a9ea63f6a5bb0e1642cceaa4ea72a759a574c4c5a55753d4e8dcd22839cb34fb27155705e9cc6f666",
+          "content_hash": "72fc405635b5fdf1eb87ad959291a3c35b24845fe427909004eccac7121ea6e1"
+        }
+      },
+      {
+        "hash": "a78c4cb851d9fd1867783e72e9f0aa1e69bb6a78a1aed921fb23049671bba3f3",
+        "data": {
+          "title": "Video Games",
+          "duration": 7163626,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "393f0bae19eeb800f336849412792f29bd9699c3a3103b56dc720f470084ddf717bab9733c1ea2214fdaac3545263b1165aec646b16f134fc22fb9b5021b2b868045c95558",
+          "endTime_enc": "27e3f96afd58f4209bbae2ed231221bd3cdd4d66ab059e4e5e073727f920536012dd936ad7f0c3b478b1e523adaec7f12d889223473789758b752e0bb0210828b483ba8e08",
+          "metadata_enc": "6831ccbaa2801853c05d18fea58f598eb1bc3f83637829eab98e07bf5465c5384c97ff35893ff699f89a37c0dd09eba354793d4ed9950039fa93",
+          "pauses_enc": "9ae22491ccd4a416e371fae6d73e4d3a6a651959c4fda6cb016d6253d45c1febcd76e3877dab89ade82935e2c115a427a64e7d7d71a821a33262",
+          "content_hash": "13e954c035d725d567fe0a1c7163bc766456060b73bad0a36b668ab754aa3f1b"
+        }
+      }
+    ],
+    "block_hash": "4032fefaa03b8fdd35853445272ca5fad6f408ece6699224736438434ac1f025",
+    "identity_seal": "a1b199a9d56a622dbcfff1cf87367c2deb0cd57d49df09365ec9d9db111fdf36"
+  },
+  {
+    "type": "day",
+    "day_index": 9,
+    "date": "2026-06-09",
+    "prev_hash": "4032fefaa03b8fdd35853445272ca5fad6f408ece6699224736438434ac1f025",
+    "entries": [
+      {
+        "hash": "8b46691d4a8ddef12a8827045c30319f38a8b360ab1c14ae1d44e322e5affe88",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1616970,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "636a6e3e677306562b8b01a507d8bfc99c783da2dc33ba472cd591e2fee6e86555103896fd297d14a22fa779c913b36aabaa72f8ad6dadbfed058bccef80ed00d4341864e7",
+          "endTime_enc": "75c6fe2fb134d25243fd5f9c66853e549c43af399053a781237c434cda5e74a131ff71d24e9b14aee503a1d0313f5b9b16d9efc9da0f5b391b2dd7f92ef4cfe04096c82159",
+          "metadata_enc": "bd13d8779def4c5d0c6cf65c7b677092598126c37018862193bdc6090a9f12c0abb5468ca20c7cb4169a53dccd49c591f8a8c6ceb88dec717abd",
+          "pauses_enc": "06deaff251cf12cc91aba9e319815ebcae1953529e2aad74926fa1b28a72c372ffb6d6af492faf043841760c456ee33aa5c8091a4bd37fd38986",
+          "content_hash": "4609709dcf5a3531cdd2e520615aea21dacd8e1a7eb6d923c5de18bb733da329"
+        }
+      },
+      {
+        "hash": "f99ff624b6eca6f55819ab3998b68bb1502d5bb7c9ab99959ad5a16d67c9d41e",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9155884,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7b393cecc666d379e6e3bdee0d94fa31edaec52a7484f3a893a1f2174f0fdd57441cadc3ac46234ec353db753a49d5c91ff6672a796a7174bd0a1fa98688fdabd43bcd5ee8",
+          "endTime_enc": "c46e92f7933a26a714833c61c1d16874a0f75d182d5127a049eb422931cdf8a3764bd8b987f3823a021fbb584c875b91a2f0da59d1063971db13bf72bfd6a3b76a1d32d4ee",
+          "metadata_enc": "14e35ee4f563eaaaf6c5e625d6b77112a9f6ac8e78a4a177340377498eb20359854a9e4b069157607507dcbcfe0555066eb1a4cd9109fbac1689",
+          "pauses_enc": "66b39d7a003de3e59d6628cf6f325bdeddd9e9aa28272b76cf65fc0a83836e92c3d2612e8475792701ae551f34180a92a2b7a6e49caca0a395ce",
+          "content_hash": "65921245bf930ed61935f2fe1cf0dd7f4e9baf178e8b3f5cddb4dfd25021a46e"
+        }
+      },
+      {
+        "hash": "49e830491f6695c564c8098fbb9a31150c83a5c28d73533b1d2a86a351de993a",
+        "data": {
+          "title": "Learning - Rust Programming",
+          "duration": 3775763,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "programming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2e376e80aeb74f7bb07f085e4da5ce377edc2abe1242df51ed44200644b9e77009b75658b6632d62abdf0cd6eb79cc1c4b0b4742863dfa121102acc80e53c11309e5f41ae7",
+          "endTime_enc": "13d3a560c4f09c1be432d03ecebda453db0acf9c7b2be599186cb8c29be7f4a8d1be202cb8d3bcf55c4db10edfaa40262b89751160cdd8bf1a4af8316a563307646322e19e",
+          "metadata_enc": "2986dce99bb4162a01bb69ab415b33be258f812b593d9c061708215b48f39eb405c550e2a2929955d0f3da5dc3380f913a8a759ffc63ebbcbc8c",
+          "pauses_enc": "704066dbf45dbb8454b3de54890882cf6107934f79e5049f2551c95369692f1464f6afa0b530f379c3baec7a2b1ccdd9cf3860bbafc1e31b6894",
+          "content_hash": "cb86f29d4942b7a21b2546c67338f54d1a8cbfe79987e5611ab68f01e5c32dfd"
+        }
+      },
+      {
+        "hash": "d14f939c303b5e552418ac674e0de9545cb24424002ef3339d3a7836eb7a00fa",
+        "data": {
+          "title": "Dinner",
+          "duration": 3576183,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ddf4cb1ff81a3305ae59ce7219d984ecad208512d02e1ce8c160116479b3dfe1fe16201cfe70cc09919684a4da51327bd49f1acc84afcb70c827dbccc6a4d58e72e73059ec",
+          "endTime_enc": "37ebe13c9caf4fd81b28bd3300448b6f33dc0a6414349befbe62fb20d524c351148b6baef286918318a3c28a72a2f6b540171bdff649beac40f4cebf5d003656a1bf0cd308",
+          "metadata_enc": "3a4d0bbcab7088c212265922687cc7bcd6e7d2ecb6775314c9e4eed00c230597427ba08e0e48c5bc1bce4fcf888a9f88ac1dbaa26289688e4cb0",
+          "pauses_enc": "9a34b40bb71928d45ac8d90d25e9e019a96cfa9e946bb61d1326208c5f420fe2311478ba40ee9838a926d1e2edac69d248f9221e9bc87fe16956",
+          "content_hash": "56f97c57f6fac53de8e471d6b4b5237a6ab72f463d62f5d4bb963e8da6bdf249"
+        }
+      },
+      {
+        "hash": "f6ada2159c6db00e54dfb511b9a2b10ce8cb17027cba000f51ec31d4d2651464",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3487330,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7844f4ba1320313e25ee71cdc4ee699237a848c4b0987cd9958feda29b3375b88e8e7486efa4ea622f45cdffe98eaed4fdbf1973622b4692243d4de029eec67107c1e3727f",
+          "endTime_enc": "2e965ff6025ef7699f883041a4ab2971cd9e4aa5bb017a064a8e0b504e19ac901683a453f4e706bda8f71677eb86b7704d85301d19dcaeb093070f6befc8e9ed2243b52b4b",
+          "metadata_enc": "2d32d315e70e5805edf1f4571d91b650df8a3e5d37f24ecc3d02486a0da4ef0f9e9ac3fa839643e14a19204ac7fcf6329798f12b3daf3dcfc06d",
+          "pauses_enc": "3ce86b2dbfbc1d16b40dca863bd26386358555f834f461974421a69efd4880811516ee4b0335d977d84d2ef53df631502f12c60f0c8ac7a100b5",
+          "content_hash": "1680bd78a1c7b7c3814c6d1cf4f3ef7f6c8c0a3cb2dc7e6b9463946a5dd1c98d"
+        }
+      }
+    ],
+    "block_hash": "1e943a81d6a020e189456bdb903a494c39fa08948d09ff3382a4d43225f2f162",
+    "identity_seal": "73db2ba0abf9fb45e2f998514cac3ef033fd41fd75021a2dcd7cca9ac94e179d"
+  },
+  {
+    "type": "day",
+    "day_index": 10,
+    "date": "2026-06-10",
+    "prev_hash": "1e943a81d6a020e189456bdb903a494c39fa08948d09ff3382a4d43225f2f162",
+    "entries": [
+      {
+        "hash": "a54b94601c44d26e167ed4bd7e9e5cebdd2bd3305fb866f2f71695eb495961e8",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 2065579,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "839ca91fa17fd852ebbaa82f07bd5e760cf832fe3dbbe912e2bea36778040c146b7c6b7a1e17190019a07a0aa0b1892365f35e00b03102cd88d5d65c7d01a29611848c5454",
+          "endTime_enc": "671590e521d977a9679ced2899b773b0fd26edd50032cd7873a020d2e59add61060a96ad70ff231ae8d2831ddff5faacb30cca836ff9ed917fe7fe24780cb13a1eb44158eb",
+          "metadata_enc": "2668eb0cdc6aa4c9e82ce91c97e003fb92d309a2ae66d4aee0a0c2758f6f241e2e0652bb0d67b00f558a9da3ab22046cddf4107bfcdbba228d29",
+          "pauses_enc": "06a837908be92cebfd54e866d62cc731ed80ff32d4fbb69bfdcd951df568b1e16b5109fdfaa5efb33e0b14a83011bd27d3b349f9096dc52a2020",
+          "content_hash": "f5711f291070c0bf19c25329682e01a537130d34cf6846bc5d8bd2045fd60f92"
+        }
+      },
+      {
+        "hash": "39c99dae5cf95d79608a9670950a6eb350a8e1765b94398daea5d4f7bb8ea715",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8700599,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2557946a8d89893a724476268ff71143d813b98e30c47a28faaf0a2ccc18851ed3bc124781190a4bd5b9c1e5463222e0c02a7d6d64a1805d1f13bb842e0537db06d83679fc",
+          "endTime_enc": "ade55c69dfca2fd185a32ec612cde445e10eab46838bd63f482b6b47f1424971b7a1ce4e7432574a5a60a07d8ed724ecb7a9d23a19988e2b9aa6b977bb6368b15520171f5c",
+          "metadata_enc": "45a7125e5604dba7a242861e222badfb04028998635b3f4563edbf1fe2b719ee7df0a90687b204de01a66a6ae5adc1c60c183a160275aa0d4b74",
+          "pauses_enc": "c4ceda5d81af773e9435831e41f9a3dfebd06581f291a722e8d331644cc609b3f49c3386d8b8815543c4f075d4978ff7895a9590ac7421fd2c05",
+          "content_hash": "56e85500f76114a04dc0d204617b7b23502c9c64ca95982550b5c62ac5ffc000"
+        }
+      },
+      {
+        "hash": "37b512a6d99697edad64adee1498e0e719139df6cc32662d0f7b5360ec6f6f12",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9039902,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "1184754675c32f1550f748a50ae49c5b255d7471e5d89b87e54974e787907cc3cafd1b98d1cab0aa85734c15eda2fcb4e276aeda25ab9571727f29064c99f124bc59dec984",
+          "endTime_enc": "36a6ad3063804fdbc0c1605d2064bbc8a0c985b79c2b85a0d162907618b1a3ce57b7a855d3152dc73585a3b49a564146a09b5dba824b10b1b2a0e8029693f62f50fea947f0",
+          "metadata_enc": "3670d35d8933c7da4abcbb5db8dbe3d92dc529a929512ace276dc37bbed1ae8a89cc2a6805f246be351b5a476fc76c2f86b927ac4c4e4a0b4138",
+          "pauses_enc": "77c5948e2c62f51ec540f0847b004d524315441c2882824c987cdda56800a42c52a3cebcb1f78bbc1e7d3f4fa3f443a9ec88988782c4976f19f4",
+          "content_hash": "62ad23dabbe5144153984276397493b9ac461bde8d8119783dbda18988faedbb"
+        }
+      },
+      {
+        "hash": "28ea868791f1a86ca42b4aaae51a3d8031e2a62741163ed1f00704066c2e00ea",
+        "data": {
+          "title": "Code Review",
+          "duration": 1520422,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5a86a0a376b26e6b50ae6d6d61d769e3a46611fb0de273f55dadd6f5d7a7905eb3ad44baf18db061cf0891e4044180fe04cfc1320157f3b8f35d70c955c8fedbab180425d8",
+          "endTime_enc": "b5b39f32a21ae9933ac5dbb750422de327298137f234f18f7dda35ad9dfd5270c3b68b8890a9c52da5e26e8a709b89921eaa6a1493d58b23fcfcdce168da5c421008e14fd2",
+          "metadata_enc": "565eff56535e9c7a98b5dfa6759bc18c2c9fed566dfca7387cf08baad704bd7bd727a4d41a1b8e2cff183464b1313be9cc0e826bd66dd279e3ff",
+          "pauses_enc": "9b2b168c1e333dbeacd37763c57ee965e3ddfdf623c340101b69a46583546e3b2bbc3c1ba685a13927ab6fabe4c34292d253465937e4893dba89",
+          "content_hash": "64b63b34f575f525d07734dc25e20f297491c7e5305d4430f4f040dba2d7389f"
+        }
+      },
+      {
+        "hash": "0301855442de602e16f06475fb66b1891cca3ec9c49a5c82115cc4a0fbb11ead",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 7280612,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "6e3c2729539dbd7792f1a33532ded390627805330a9fca056b8642f769a9f93ac02a64fc2f842799a3f16ab79e2fc01b15ad696a831755674af6717e8e73aeefc49a63e1c1",
+          "endTime_enc": "913cfd0f6aebb310a9096b892b05f27f17148a344af8e6f826c3828d19fb6e1c14be0cb3312ca2fa72a857144d3c574b02e5756e3cb41d8642025ac4c4004d652093e7d976",
+          "metadata_enc": "48c0e77b9880d510ec7da4b1a1f0dd9ad0cef98da4c28ae3910cc8247645b949a59e5d083ed0f5ed12d4e9c6db0cc9cb8f726e77e3a3668e152f",
+          "pauses_enc": "803a41e58be21835d48ee59aa3fc8c499c94c5f66c643b30a401c25a3d22ed7759d0a8a8f7abd551090ab56185c17e7ba4df9af624ce12810b5a",
+          "content_hash": "551da88990af7b458becea6ea062c0efbe8d65da94b6de775c724050d0b6f69a"
+        }
+      }
+    ],
+    "block_hash": "57b16449f2d4cfcb65cf79c2ade30db0d10ca1439068d2563493943eaecf9ccd",
+    "identity_seal": "561568c4a8660a67cc5675d982acc913da1625f452760d95946025d7a822f06a"
+  },
+  {
+    "type": "day",
+    "day_index": 11,
+    "date": "2026-06-11",
+    "prev_hash": "57b16449f2d4cfcb65cf79c2ade30db0d10ca1439068d2563493943eaecf9ccd",
+    "entries": [
+      {
+        "hash": "52fe839666ecc04ed2ccccaa87a847217e6b27f07fbe199f9b9c4d326b72f5df",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3372574,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5d12c8d4c44570682c96c36d947312d277213756fe506c6886ecc13ac87c3f2ab7f9728f77077d8f8574a9b851edae7c3bb14b50af76ef82f57b64df44684ca62243337a09",
+          "endTime_enc": "a41ba8eb9345af0842aee99e298bf7a3a779423276a69bdf11381e2ee0bfcccd01499d8a10fe9f280032456bb6693a4e4f9f1511bd6733f4fdbe4442bab826f32b5872f62a",
+          "metadata_enc": "a165e5771bd23cc93325b86b0c0e73d63c566c7c70aeb6e8edd6b3a8ec4bf4ea3c156d7675a0dcb02d38c0add0778bf22b1af3d96367a57a091b",
+          "pauses_enc": "c9f1b09001372519c9c2825a8d16874ab8b85231598650b266297900583152f5e1d3ce8a139c63bbff26d3297ca9475babba9af05bb000e7e42e",
+          "content_hash": "45bc9fdb9852b7ea62f37b509d3b7244e69f94819bfe4aeca8b659a79a767a8a"
+        }
+      },
+      {
+        "hash": "b2679a1fe208bd01ce6d8ff991ba85d0ec3063f5c35faa61c5374fb1c82c02e0",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1631869,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "31c228fec89e7edaab118b36b7bb4728ec7c7648d70c56aa5ace520e13619bcdaf4a75f6d57038c25792b798e8041f0e3e90fe696b0504eb46ef253d60d18da7f8aeadbbec",
+          "endTime_enc": "55ee861acd983a9121cfd0888a7edaa2a974dd3607ced13ba9d8103b0ae1e688e94d6b9f4bb246edf5b0ec52c3bd61efd44f0d60b92e45a8efadc55198cf61cd572384ffcf",
+          "metadata_enc": "7dfad2590312029ef457aed0ada4394a9aff92632ecfed3020d4b6a0a776f24f69d4a860e0c03d8947760049068c74a3289ecaae2b29817577bf",
+          "pauses_enc": "1d3ef6ba770d36239304576ec8ffb21505cf9b7411b14262e0f9b5664eaa8bbd8c9b212e6edf2e2496b14d5f6202a300b0bc34c9841d5ac050aa",
+          "content_hash": "ab0a501fe86712529a0c524371696c28a2df57029e1f8958baf211561b7ee2ca"
+        }
+      },
+      {
+        "hash": "b838a08e9cf66605334ac98b355d6ff407e7d54267586e8ff33e3490ece51d2b",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1998369,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2576dfccce08d66e5a8fc59f6472f07a864466a447587c1b40af056bc072f89b23e2cb5f5f5f1a70b10662c8ca574e3745319c591cec75c0c92182827b580df1b7a60096ea",
+          "endTime_enc": "124d22dabc2a4b88b2d44e5af64d1bbbad108734b13e92ddd219fac06ee2b3ffbb38f41cbe7044eefa8861b0ed48b8c524804608395209406a49d06683b99b96c9bc9fb4b7",
+          "metadata_enc": "bc13ea64f22f63c6109a5b07b18d3aed4f27436086e42de966b6faf103dbab03d32f762585ebd5c14680afb69330dbc1420422fe6b806e886cff",
+          "pauses_enc": "5c2b252a80d18899588e127ae06eef90291e5ff602d9b4975a98b279e0c3d19c9c1df2fd20ebc83142c96e9b26f7dcf4b5da617d001818e01feb",
+          "content_hash": "6f52849ddbdcda412afd4fbc5bf3a4478a3e2560057f8c0a69bd0876d2e49141"
+        }
+      },
+      {
+        "hash": "a921ad0974f34bc38d9bd85d78c6e0637d9a70bd4eb3a5dbe1369ed2303ec013",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3473148,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "819661e1ede538c3f3c1c05f09af080ec98ab64ad979911db8aad6e897b781a7cd3b09b4203fa353f94485ec15282538e2a4769eb6bafef0a3bc2e53e36d9266e82bf525ee",
+          "endTime_enc": "756295b9780b28b14c9a8238b914d10598bb071d181efa82bddd35fb4142945e3b77c940f068c6b01fd2c6a1865a51505f66bf161a404fadc468ef544499a172a4f0cc39d9",
+          "metadata_enc": "1de6edbeaa99c6ddc9d7f5317575ee5c90aa6b1a71af26b1f814870a6be7d43e3a75e2fcf69139db7dfe54a69c47bf45c98444e49a0999a71aff",
+          "pauses_enc": "9193130dcf2b09dd2297e57beb94e76e790ea69ba61530605526771e3df164abca26b095f2076fadcd1688c1c56c68fd4cfc511f58206f4848af",
+          "content_hash": "e04239a3302bc718d1dbfff0d2ae27d4169581c3ec4119e026b291e3bf8879f4"
+        }
+      }
+    ],
+    "block_hash": "ce3c116cf85b62d758e824c6919e63fe3a0ae9bc547afb4e87f95d90d89fb7c3",
+    "identity_seal": "dad617a02ef1abe879ef14f80e9fc95618029369ca480108f50daf21acd8ac19"
+  },
+  {
+    "type": "day",
+    "day_index": 12,
+    "date": "2026-06-12",
+    "prev_hash": "ce3c116cf85b62d758e824c6919e63fe3a0ae9bc547afb4e87f95d90d89fb7c3",
+    "entries": [
+      {
+        "hash": "9f17425671a0bccc9a6b4b5f66f9b9d2598d0fdb801cf180617025c0b42f26e8",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9091559,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "643ef1126a0f40fb01c7a1cc65cfec6972c68a9193102dc87bffa9b2d7fa38f85a06444ef231c7380d5d5b0b30c4292c6d289a51c0808e6b5ff63f2b291daadf9528737b44",
+          "endTime_enc": "5ec1520e052b53359d19addcaf6406e7fc807bd469bf7e8ff3bd515e4fa8d904ccc4b67899706bed5ff73ce155fa711d1ec1048e41a8dee579fcc0879e6512d23fdf655bc1",
+          "metadata_enc": "f28e999747576926ac0cf9a94a7781482cebe356fdbb9f37150b5d3e6a71b8c086ba6b26e47eb8b2f6c2bd3b995f0fa5246c72a516bc33d6dc20",
+          "pauses_enc": "fbe116da7209021843e948977fa853bfb3816431c9126296627dff2bba2da6152e42b25a2b4b98173e8c4cafcc327e5e465a943f98dfaf87e5e9",
+          "content_hash": "b47298799377dd429d8bacf12bcb3c12442097bee675e7221e78c4ee7484956c"
+        }
+      },
+      {
+        "hash": "b789c9809f222ceb8da0aa759fcf07d2830eae7241926b1b8f918bfe2bcc383a",
+        "data": {
+          "title": "Code Review",
+          "duration": 2042717,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ea1faa42142616b61e18e79e9bd9ed392fa496a107d3df6d609e61db52e4d96a4c5f62357c5d203db9049c82086e9b986d14a14d0e98fee2c2b71ddd71827894dd1a4d9a88",
+          "endTime_enc": "8816b4ef5eaec549f460cfdea92fd0ac1a683fc3361d75934cbb4c6c7c7f10d593d8c5cfe6dcb7f1d4edf8e5034a5ea8234f86e906c29694996fce5e1349babadca1efcfc4",
+          "metadata_enc": "f805bb6d2390ddc448f87feec489ad06d3ee0a7f2381ac2659f02e3a616fcf4070aa748b8b826827ee093ceafbac131fb3d30f635139cac6a535",
+          "pauses_enc": "2ca438cc19efd37d2d40ec858311eb8f1694b44c86d06975acc3a4ebd39de64d04fc15e03774993d6f777d9476c4abeb357c0e7d4a84b4690232",
+          "content_hash": "799e3bb9acb9043c2e18fad907cca339ae09a8d0f62b09e3c1dd1d940848b0b5"
+        }
+      },
+      {
+        "hash": "c11eeda29bd75490a6023b822764f6ef94190e2dde43c8d0b990a0e2073af242",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1626882,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "b7bb75ea4a387e1624c7344f0c78885bfc63e5037546272aa6b7eebf5a7ab8232df201dc793346e383e52ba36ad1b674bd3df559626c7546b8bd79a9774f5af97973f82a0c",
+          "endTime_enc": "eec2e794c5be524dd97bf293c81c9df40517b732d6ce8fb22fcad8279e34fe5d7e7d612a13c10186b7c6a1db0ac9cac8f445760f966f6fad6990c7a00aed431d111321cf78",
+          "metadata_enc": "b1ec043986ba171ba93de90982997c02dd453ba9f9bff114ece20e980ad39b8c739f61cf6767fc4d285bf005b510d9a631fad649886649fa9b14",
+          "pauses_enc": "8943ec013b339b7c75a5ca7d8ab94b5fabefa46f2e6227ec8440f03520142c7f2acdb0563645e1a68f2ef3d401919639ef5c1d984b46567d7711",
+          "content_hash": "db624f5f7aa1f8e37152931328d48a12496b72d3bb48f5dccdabb0adbface772"
+        }
+      },
+      {
+        "hash": "2f623009153ce0e18f1a0a929613947e16affd00979b96a3dce6a646a55c5e97",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3535612,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "180e2188ece6be716f551333d4183beec4fabc8a1747f0e39b98d72d57c1ffdc9efbcb6d360f9cc09a796cf4c9748c8a90264d183fcdf81de5ed27a171d9efe3592485b223",
+          "endTime_enc": "929e74dd5ecea769b7c5877d16aaffa0ca52ec2187a625c36fa2cbbaae65dfd9e453df3c8d29ed8ace18d94f087eaacefc915d81a9835b668c9d5c644f55613071929f7149",
+          "metadata_enc": "eeb1104db8f8f065941b841216392b19ac8ac4ba80d7703db5c943c3c0987fd292725e23552b66710aa738767e970a04fe6d08bdc910e8498f52",
+          "pauses_enc": "b46e813d797b163e81d0c906249902d487fa5614d133f18f439990c4b9a37f34e32c3c64c9cffb23cadf15651f51c2dba4871bb5be7b773ca7ff",
+          "content_hash": "e5ca8d132edb8b71e7c743e9a9d5b14109fa8f4ad6b077f9e59d3a43946fb5a9"
+        }
+      },
+      {
+        "hash": "86443f0f51c61174a9ebe601e37446beb846966f1525686d892fa8ddf5ae7645",
+        "data": {
+          "title": "Dinner",
+          "duration": 3654508,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "816251839807fed8839ae53c402570d263e619aad434f07a2b54e76cb3c26f0aa0b861dbfe4b83f76925fdd46a38d23f2835f0cbecc1238daaf28c29e4d84dece217a5cb35",
+          "endTime_enc": "1f4d1277f4f1eef6b1712923ad0b92f368e65f9d3ca7bc0cac667d886107555b359520f6f1eff96208b5df34bc39712e5ce85ce66c5e34e679e395e5c57a006e865aa17279",
+          "metadata_enc": "a59e36fbfaf53743106a10451cf46c41aff1e46cd15b0fa250865b47c070d4168b96ba8a823b98162f06a7a28ad2baaa00896a560fec7b79aeff",
+          "pauses_enc": "fbdf9c8d45b0849cbedabb411d57b0646456c7736cf8bc52df1b065380293bc04a7d0a6c1f74afc9abaf62b536819f0259c9bc10d9c9f80f68c5",
+          "content_hash": "3aa753b641f102a742b502aa20cc1e7fffc025c53ebce94b4b263349161a8182"
+        }
+      },
+      {
+        "hash": "a423049f62c80335fc0fe03b3f324946ca96f71cbc6f90f840427467f4ca026e",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 7480828,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "402aa4459d608a7687ecd694eb15211828ac4b5ee28e1408c8644f6db6b7e73d24cbcb23c1f14a49b6641868528560d6393d04a7aa16cfcf9eca0003cd8645606abd8aaf18",
+          "endTime_enc": "3eb3078aea660aa45f33e76d251fb6267e73eaf514c46ebddf493eb228a84fb5a9741a4cea2ac0236a82c913e2fd31ae03dfd0c87f51bfcd720cc6438b06046e7075b8e6f2",
+          "metadata_enc": "59d89a89217df935c1d88758a2c1f07954b17397e10fbf658ad8f96583ddb817284a1d8b416a607ae622b6bea999a634372432d0ba035aa55c0a",
+          "pauses_enc": "81e721d9f00c911fc62f1da8aef8a0dfdfb2262e94b7f1f526be2383665faa67cef0694e5b45af7437ba2ef8a6b959d22e81714288103d2d473d",
+          "content_hash": "2f1124435c351f269f8e95d0313ce93c278a081bc29dd2d1050ba9f705bcd884"
+        }
+      },
+      {
+        "hash": "ae0c4f33e432b7020c43be7d37f0b10e19780dcd7d22fdbe031ff92610a198fe",
+        "data": {
+          "title": "Video Games",
+          "duration": 7130914,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c7f6df7176e62bb71a1c0cd17a457c5803198f9cac29c59766045ffc98e8bc10a0007d1302df33d3721eded8f29d5b4cc1b6b87ce83da22f74290a2247df099330c1ec34c7",
+          "endTime_enc": "d517f9e8ed5b2777ae181fad708d69e0688fa00305bf28b94eaa6507592c8a4dded7e268cd3ed18cdd78c888f766ed0fe00d7228a43897e28f2b32b62906d2cba44b09aa61",
+          "metadata_enc": "a27b2d2c91e25261fda7f695d30107c7b742f4fa77d2115cc85adad1ae540efef08171c16b2f2c4bf776c8cd6b8c79173026b390599df0fdc556",
+          "pauses_enc": "ed49bc955ddaddd7a7f9a601a390ae1d4b023cfe87adb43f958db6ef5bb19935711379499a0f99290f96ad6c827c3cf6094d7777ec791714e227",
+          "content_hash": "8a3e21af3727d0b753ea7c1a62b3ba9d3bd9c82559b5bb0b344e7a649b57e625"
+        }
+      }
+    ],
+    "block_hash": "c82912ee8fb0cb77d735fa4a012387d05c45bd64f4c9bdf46a3f2e0411cb4399",
+    "identity_seal": "92a0bff30e15636dcea240e6ed9e72129371c4a54598062e3edfd924ba67d012"
+  },
+  {
+    "type": "day",
+    "day_index": 13,
+    "date": "2026-06-13",
+    "prev_hash": "c82912ee8fb0cb77d735fa4a012387d05c45bd64f4c9bdf46a3f2e0411cb4399",
+    "entries": [
+      {
+        "hash": "a58a1de3f46c7adb4748d8f7b8bbbcbef87d55aba1988b664b412f587a7bf279",
+        "data": {
+          "title": "Morning Walk in the Park",
+          "duration": 7246479,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health",
+            "nature"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "27912a8ab2b9e9e5e33e3fa3d839426a9db50dc467067ec41a52caf6921d7e082fdfe17cb9c4254883653011dbba08b348b3c7706ae49f19b220ac59f72f2eeaccebde3b42",
+          "endTime_enc": "bdee527a0471fd3e12f0d5ed361a0fd7f1b93ec24456dd95f7ac608b8f80cce5f1a07996f93fe59c320697a1ac1d522ebed12182d3e6b42f47ac6c4a558f12bf6ee62af865",
+          "metadata_enc": "350ea10d535c9bb90bab07b69be91c215afc9fd90e88197c8d033adf8683ed2bb85ab494edb84a1329c790c565cc48885c6ce978320b1820432b",
+          "pauses_enc": "4e15af2aefcbc6e38d57df3536302df64193aed9200ad6441b67f95428c46236a19ba94ee1a67822d67e33154703e712d757ba105c0654833fa9",
+          "content_hash": "027bcb2cc64d20ab676cdaf858523e9aeeb95ab73f8cc74d2c918ee3b0d53211"
+        }
+      },
+      {
+        "hash": "35470d5cc5c48bcfa9ee3367d99ffa6e8cc6e8a979e040547344bb7710c0d3ce",
+        "data": {
+          "title": "House Cleaning",
+          "duration": 7439131,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "cleaning",
+            "housework"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "0bdd2c34b246e3750d787437eb96c5827a106b8d700e5f0e5c51dbb3e2f14cc543b23a412174f988ab195f1534653aeda6e82f5191746ee6d15f72a0d874afc3917ea823bf",
+          "endTime_enc": "a4aa6e9cebfec688a1f3112d5b3bb1c630c7be1f40f0030f1f56811689a8b1852e12087e2537df6ce9122c8996a802a54e0ebdde27aa12023c2e1ccddb301c1669540372b2",
+          "metadata_enc": "11f1af2bd9b42f78a5d35c8a62878177dcf2e56d76c2d70b1d121026e89c3ec2ba3e05fce411a5669a75d0d9433e6e779fba61e035cc9ece8d50",
+          "pauses_enc": "3a7f3e0d0ee588cdf61301f3ade665ed461fb24f05d26c97fee6e376aadfbee6b4e396c2854c34c3139da41ec4c259b14f6a037b6976956bb5b3",
+          "content_hash": "aef0b8cee83996df6a930b394b8c6f856ca74c1f5dfa9e81ad4b04124bd377d7"
+        }
+      },
+      {
+        "hash": "0711edea4cd0efedfe705b18c63f7aac5569d84523f9b10571f604e897b8e261",
+        "data": {
+          "title": "Video Games",
+          "duration": 10792004,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "8cbef1958e5f577e566425fa14b1294f290650ee7cac1b8ba7a08997ea34db81925cd2621f1ebf9033393d7ce6a1493f0d03678357904d524ed7a9ac7e141160750df4e0df",
+          "endTime_enc": "e2dee7021d7a7c5a5b8e9587154cf100098dafca349cc099b87fb3f536265b381168a768bc41240cd72ea9742157edafb445874d710f7cf404a6b556937fb4f8676ce8aaff",
+          "metadata_enc": "601f61b2104880ef8bd222bb0dbb8fec7a82f7c2d670593c16c83572e81f4286c74b0b8947053b608d29dbdd9be801c7a99f2d46588a9ca60517",
+          "pauses_enc": "88a372c3c827ca8399e5aa9f1b677d5696d3b3d89a071158039b0e99a1b5ef9432ec915941d8dbf122c96118c8aa7cf17950c9e8f9e2557ab2c2",
+          "content_hash": "8b1c1088843ee7073bdaa69543f8f7cc86aad3f9003dcec381cf6854daf3eb62"
+        }
+      }
+    ],
+    "block_hash": "2843217b9cbf71efc856695435767b09225231a8d87045ebbba341d11182cefa",
+    "identity_seal": "e38bef2936c7c7cb141bd6b1e6b1922d30a4c1f34a1fff029cc88b68dc23624e"
+  },
+  {
+    "type": "day",
+    "day_index": 14,
+    "date": "2026-06-14",
+    "prev_hash": "2843217b9cbf71efc856695435767b09225231a8d87045ebbba341d11182cefa",
+    "entries": [
+      {
+        "hash": "f080cfefe69cc9e82b9c2e61e033c64cf4118f2ecdc11d63c7dca4a6ba343507",
+        "data": {
+          "title": "Morning Walk in the Park",
+          "duration": 7154801,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health",
+            "nature"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "126edb163acd480052c6179ede6ad29fdbcf229ffff8be6ab67f039634dd46cbdada433c71dd4e89d1ebe579ae04a1091d57cd95c69c1e0fb108b14f3a516cf110a883e60c",
+          "endTime_enc": "b596d42cfee4cf4fc7a55edbc25a79cdbb027f2b3dc91347ede48c654faac5feefab59154b1a50da0059bcf4147722244643cba74619dcb0c348c6b4b8ecd87805143f80ef",
+          "metadata_enc": "2cb4eb2099432e12bc47c91e485ef4a6bd51f0ca7d444a578327d7a100e3ce73666cdacfca24aa11ce61be849dfe4517a93e9e0c645f00031ea5",
+          "pauses_enc": "99d2314f72589ae42606fc4b308a11bd071200a6f422e1531967c2a6b636d2beada9bc2a52d0a57e6b567ef2cb25b7f629264f78af710ebe7f90",
+          "content_hash": "3e95ff8f1a9fab31a98482cba9a018a09b2708710142828af60794c0b15693fd"
+        }
+      },
+      {
+        "hash": "92b6a446a43576bac1c942a375ab05db500f438e9fc95205f3e088c7a28a7b13",
+        "data": {
+          "title": "House Cleaning",
+          "duration": 7326833,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "cleaning",
+            "housework"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7e5af55b0f40a7ed66f37333031dc3b38c1f5461dec8cdcd9a4a3a98c91831648c42356acf3cd9c4ae44b377e5b2d0919ce91c9c99a2c15340fb98f015cb52c863d13d5d12",
+          "endTime_enc": "024cae80eeb27f657093064787db21d5448e9dfe71497475d8ef1af1dfe877e3e0e46c2d31dda101290574466c9cfe2394340aa572c362c30603958a37130a8f87abef9f09",
+          "metadata_enc": "254071df5a240bdea0a8884cca4459ad210bad1c980d500fffe4cb996a65164bfb9d04e34a28e366a196a2f4c1594f21890670eef233d41f36e6",
+          "pauses_enc": "6fb2e1fef598fdbfcad4f835a9149ee57daff40501ca158cf688f4450719b5152171c2bdbbfe380ac677b8c40090ae006ff45897cd030b727e37",
+          "content_hash": "4e6d3a112d940f5e0363061979acc8f299dce7111dffbeddbab3ce7bf2b614db"
+        }
+      },
+      {
+        "hash": "c66d07a88eca948e56b034f182f037be1c6a77c1b486fa45d0fc838c6f496c83",
+        "data": {
+          "title": "Dinner",
+          "duration": 6998907,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "1970b964d17d2ba2f99a5f0a1524d4623683032aa9c943bf3ba14db12837bf6b449196edc7d29348f9f672dc870f2eaff5f4dcd64c0d02f5b243bf46b160b6cc0522d49370",
+          "endTime_enc": "d192482ff1af46cdebc84174b4f3e3bcd7e8369ed4962d8562bdc258f98e87c937a4f97e53661c38a1e3f1ec8821ba1ebd5d4dde881f4dccdbcb851aac0858e1f2601c16d1",
+          "metadata_enc": "30a3d516d2d974dced63825209dcbf781a79db22b4f48dd349d7be273428cdb7e540174896e88d0791b4462a0b0b59c7818afc69c48e559ef204",
+          "pauses_enc": "0b3f1736c03e8cf2ea1f0b5b581335664a503701675cc96cb798950c7fc0d3807ea4b277ddd605a8153b78d9dd881f2da207c22343ef818e6b9b",
+          "content_hash": "d0bd1adb0ccdad3336c32f3c8ba51982abe5ff6359c2671018ccf4b057403ac5"
+        }
+      },
+      {
+        "hash": "5fa87cd590a23a9502ceec633827bfac4b20e354657b6974afda371ae48a6e09",
+        "data": {
+          "title": "Movie Night",
+          "duration": 10951989,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "9c8f910362dc6718414110bea650a823c963605c0aceb1a3b27eaf26170372f6e800ccb766b50a6fef4833c796944cab24889b80272863b7a4856cfe8fa0a1c82aa69591cb",
+          "endTime_enc": "de6109cdff52b2fc66ce0078524be89457e9fcaad90b0a80b01232d89af2fbd0e0eb2afcbd355a7e21b5682928a8ad3f2a70e4f9b93c57856518c91967df5757c5942413cd",
+          "metadata_enc": "68c4eefdc44e32d7c8e80366627b557eb8877aafd535b17198b00218b51f97a895603db61bd62d79db490d309fdbc26d42c7ae5f831d212ab95b",
+          "pauses_enc": "e63d14db825382a6f8673b10a489ff3341c52a76e6b4d36f365a157f8638c6f39be547cd773f4ce4126ab850a95b3c7896d142283a88b1a9d9e8",
+          "content_hash": "dd4358f08f96946e841caf1d92c6a997ad51e60b4c439b9179b73544e4fee309"
+        }
+      }
+    ],
+    "block_hash": "237883ac4244558ad6cabcc8aedbb8e66295bfa1c72dac9632ed501b836414d3",
+    "identity_seal": "6175e2aaacb8a68be80c6f61754921997ebd2b79f10ffc716f61199efb60fde1"
+  },
+  {
+    "type": "day",
+    "day_index": 15,
+    "date": "2026-06-15",
+    "prev_hash": "237883ac4244558ad6cabcc8aedbb8e66295bfa1c72dac9632ed501b836414d3",
+    "entries": [
+      {
+        "hash": "204e419ce43c9265cb7f2e5adcbf6443353e5a187c9f9a993eb30b0e23267708",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3655784,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "af1f5847ffeb44a69a2c315d75107f6b65bb5e58fc6b02aede826947f901646dd91496d4c6cdce334f19c645e8b2f014f6cd0032a9fb873b1b6334c42fd4a1364eee252732",
+          "endTime_enc": "50c097f88ae835093d5235f9323c5eb9dffd53ebf832171a6ca34dc7b9de1a97263c1c913fbf8e4e1233b7258382cf88b1971f662ea8ff5bfc37955c0650d916f1e9e9e61e",
+          "metadata_enc": "029c1351df974910d3c7ea2b4caae8a39b25201fd1da39a61e0b5ed5cb130861a5520baf29a544067980196037265481fe89b9bf6d951e5ed2cc",
+          "pauses_enc": "cd979658e7517fe08eb29e58e6c9ad8e10998f0bb868bc2279d6e2adc9032bdf5b2fd13ab412db9e7273bbb29fc02a29cfd305bf4924ccd4a568",
+          "content_hash": "faabd2d3e8fd7402a3a9d3cc89122b9d57a258934c45f32a617b3af8f9f7eb19"
+        }
+      },
+      {
+        "hash": "011a3e4b0f4e74355c1894e5abaa701a3b91340d68c66300ac38ac695c72a5d2",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1760735,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "a6c27500ac9b63f436213c54187adbcad0e184d366b1b801972bd5691a99db7ccf035ab10cea4051946e61587565cfa86cecb25119d5f9f9c12bd962d24f350f7c7fe53cbe",
+          "endTime_enc": "1998f7f1b4c1b3f0f5f141b339d69f7889a548b6dd1db8d50d6afcf2010219f0f61dbd8c1c64304248e86d443a43ac5ae2d9fc7929f3108bcdeb22f7f16b24daace942c658",
+          "metadata_enc": "4833b7d7f6c6e0ca159a5f83258517e3382013b4ffa185d0f4a17d5835363f223764573b234350f8d5c80e6773ed6652b800ad3d407e5df428bc",
+          "pauses_enc": "4cf62dfe39246be512329ecfc97ca615018e6ad1608c7d4afdedfa23b567be1787621631b10cc835272b5fd95ab65558e15d1e40303aeaa020b4",
+          "content_hash": "52d2d68d40a8e0d20054bddff98d8f02efa2bea8ec0b10612c9686ae794115f7"
+        }
+      },
+      {
+        "hash": "babe375f58d11365b1408c9070d61571218a009628e1a5fa8b0543aac19a8241",
+        "data": {
+          "title": "Code Review",
+          "duration": 1699448,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "8542c87807b4174b5dbab33b74cddf2bd6bfac2df1d59eb84c97c5c71dc0c1fad339a533f89c3cbb1663b8c355389e7c879f40be97010388ce055d439a048e0dd795670546",
+          "endTime_enc": "2626520aff4ea22231441ffc18a0fbcccbbbad3d8f4e77acbd03ffcc4d27feffac88158e42614a03723b12e1d7da3ccd33620089ff09128a4b4b059deb7b84a9c94268e122",
+          "metadata_enc": "383535e7f6c299667692019c9d4cfce2c38c6f4b710ba6fb2a9c70d073610a6a93ec7c4a467777fa787446a7bfe6ce83188b78c6620e08d8ee88",
+          "pauses_enc": "0582e533189148ce39ba4228d5ed487bf9d8c3fe1c1db6edeef775aa9e327a3c3e43f83454ce1e56cf70b47426172638d4b0ffa3ea72b2bb2ad1",
+          "content_hash": "1c8cbd20b85d433ed04f23d7cc00a23cbbacc643058157f6c301eae573a06197"
+        }
+      },
+      {
+        "hash": "c268bc1a2588079dba3e59241525e18d0c2056ed603f5dcd1126f3b43cabc5e6",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3770405,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f371d1c015079de5777ea0d686f70b093ffcd14e00ec1bf84752553f5a17c7ec78becf53f8914212b9dcfc1c920e59cc1ec7452bc3e35cb5f7ce0c148508ec5f4e04f2e5ec",
+          "endTime_enc": "abe66fc4945f5d70da797c8edc89863253eea608b112fb71b27f8de7d9caf435e8d060fe27dd548e16fc6a8f59d5b1ef6053eb5bd2acc20882dd6d3c72e33f8704045f37e7",
+          "metadata_enc": "4adf778dc9711b2438580c3faf39b21ce1675ddd4585a2e90a609c45293b6b69a146ac0e6a8dfb479062fe31008d133327a3ea1ef7f87cb56dd3",
+          "pauses_enc": "0dcce658d500983737411ea2629d100b84c54cc59d6353fb7610af10a34795d248def1859635d5a83ed03e64bf547562c22ecb61136b8d28d579",
+          "content_hash": "672bb70f4d0d932f38ebf332128079940367cab8f6b62b290def71f7e6a2938d"
+        }
+      },
+      {
+        "hash": "a5663586d39f8975bbb47cfd110925fc2b75182494357039b5e83d07eaede97f",
+        "data": {
+          "title": "Dinner",
+          "duration": 3742374,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4d1efe3eec4d5b2ec504b1003e34aec316f8db5c3b1aa9bae1057378f062ff05566fef9a54d5d20f5864fc05a0b57cc8099fcd6e21fa96a78cc6cfb5eb7dd366807b0ca285",
+          "endTime_enc": "3755054280f850df952d3f9e9483cfd59a2fcbf0f0302f93a2a982cf26bf4a03a247a4f5efc9cbb8321f5bed88be01b8e61a4aa596d458462c16218839d6d442b9e9b31198",
+          "metadata_enc": "de12cd7cea1d1b227d182c400a8477b9e0593db32488149c7405bf90cad79f944150ba6ee01964e934d52048fec9864a78343ba0c937b5792ef6",
+          "pauses_enc": "981449ed1920e78d037ebf5a1face6a6d545311ef40b229fb57a632980505a24f442adb1dc2b866984bf5d277104e52be3e274ee9b1332bfb81b",
+          "content_hash": "1724c641fb7cd2769d8e1ad48d65d1c89b8c8bc4056672a2602a5e190a31116e"
+        }
+      },
+      {
+        "hash": "0668b6267f954eab81117c1b74cb4d4a87c722204a01cbd2d4a8fca068c94b72",
+        "data": {
+          "title": "Video Games",
+          "duration": 7192075,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "70f8ad20684d029188f6d7a9af121b862b7982315c4f5c76139e80669bb83ff0d6df3de4f3d7afc8f6e8a1c36bfabdabbbecab8bd4dd6e00683188d741021514a570d4c427",
+          "endTime_enc": "24944c3ab2cafffa80df9409317928e3c74a1a635052a07df651950b9253cd2599f590077b0b1cb68b01d757523755d08f407b2ce624173cddc513c219357d512e60c457ac",
+          "metadata_enc": "3611c2963e4627d7c302747227a0571d0fb589af70353005aabe9fd5a3b0bd57aa4e161759136e36719dad3cb2d36efcb5017f78af07a5f23865",
+          "pauses_enc": "480b7e013f59b6fb8222b6ccf5056573518d5f0e1997ff86f401910a34935d36d88bb013e6cf2b4286f3e7694d041032842d44bd1492607cf0e5",
+          "content_hash": "69bf2b721774635c65510da25616c83a5b3017391e743f55b8ec0cbb9038a9d6"
+        }
+      }
+    ],
+    "block_hash": "3f9a94d6dcd0f15cf7344ce6506fbc73fb8f17d6606c445a88de5f21785e4cf8",
+    "identity_seal": "10c35c92c4aa1ac81014a66edc7e4b84f898bc5e8cb1feaf2eea1f48cac2b3d5"
+  },
+  {
+    "type": "day",
+    "day_index": 16,
+    "date": "2026-06-16",
+    "prev_hash": "3f9a94d6dcd0f15cf7344ce6506fbc73fb8f17d6606c445a88de5f21785e4cf8",
+    "entries": [
+      {
+        "hash": "505b3fa23c346db163de5346a3efba01c4c8f1917febd48a745be023054db93a",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3402664,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ec2432639bc11f40ef6a2cd9f128aee865f7e9a4e61549a13aa93bafe7f9ffb207dd74110fe4872697fee775eb23c9e1087de78c77cabf8793ee9b7b75a22ec66517cc9595",
+          "endTime_enc": "1c7b754d0c69789ce9fd699b31fe7cde1ef5dd22c5e8e6569f61c689242981960d61a4e24b00e9601f7cd1714a4be84440c3d2961e69a32c5ff89471ff186a407c530671b5",
+          "metadata_enc": "c7513903483b04b5075151d0d1ad46955222034c165eb8ef4fe011ccfc69f530da10b577986686660843fa9a16c88d1d63aaf4d521ee8e750af7",
+          "pauses_enc": "f702bfeaf0b217b75f908134c33ec2294298c80f1600f0d1d8a1eafe34ef02c75ebe914f8a5e59ff590822b9e85b7781392e5f812415cf555d3b",
+          "content_hash": "a8b1c4b665445af86f2425e389781d79778ba2f2c31c18180d26ebbc4cc5e72a"
+        }
+      },
+      {
+        "hash": "1d75ddfd2ee589d742d3489fe4bbaf3cf7e4670a7d016378aa1fedbb861373fe",
+        "data": {
+          "title": "Dinner",
+          "duration": 3866847,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "73fa4e5cc609837022578c77662dc8a7115f8453f2e62f346111bf893982c83de9043dbd338f00ea85f8ea80db355f81288915749b0059d9bfabd6c2ed4ba9cac69a71f7ad",
+          "endTime_enc": "d73c2797512e12e1a53ac0b895d81acc2c3b6c1df350618fdd9bbd9283b74d994947770eff0704bed9cdc923759295343d37eda49f9c605531ea43cf3e00cd1756748d1183",
+          "metadata_enc": "2616e5e9bb3f981bf80f58d25043ce7ab38f7bc7a5575e075868e3fda1b8c31a83d09e4f75c64ce4927f0a7964d92de6c3803ed9d546ef0803be",
+          "pauses_enc": "1ebe83230dec38a3e040804627f8cfe6bc35d7c7015a64bf1c3e04f2656aac819c7e04a22137b27868b7cececcda6d3f6b53e489a8f45f2277c4",
+          "content_hash": "cf699833aa2787ae345969f31495440555ef8e9f4effdf3efb64fb4be5f78200"
+        }
+      },
+      {
+        "hash": "169f468a2f18131f6ad2d05eceda40dd6270458749ef26e3f14b5e68442bf520",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 6997793,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2854eb50d242715dda85ca6ae523a0bfe80603efbffa678a9c862e29fbbcf225c4eebbfbe749f854c08da03de24dc394020a8ec5911f72cf084c145207923faa19449c07cd",
+          "endTime_enc": "36911ac13f0ddf23c97ac6f4bf2fd1fb4b327a9741d477666e13b2df77a3affc78057401866a294b1b13d49c829d780c725e19fb05b04eec19cca42170a3718c8fa4e51486",
+          "metadata_enc": "de300a2b1083fcfb670472cc01c6f33f035db37c0b756a42f3e31fb25cc6a0baa91228b2bf93a3215b39b5e877958b10a169c88da8be96ba754b",
+          "pauses_enc": "75fc5892e6ea7220af95fb4d033bf15b36f91794a522b64d614647caa817df54fd36efdf329470aede880bd554983cec19d8407b4365380c4b91",
+          "content_hash": "86bd49fb15a119ac0cd7227d8a447b89d7e736df1fce9720b8a3a9262900b06c"
+        }
+      },
+      {
+        "hash": "2b0750bd22faf1b8787440f81523da550e0697c3dc599e550ac701c0d8485f99",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3474389,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "458c46c7169573366a58c5b2d5e36409c2b156fab5f5f9c920c7e0c1602a75540b2b71821af82d36bb67e65da4552f697d57127f0b9616554cb2f37565ec2f609e2e42e298",
+          "endTime_enc": "479745cf1f4816633cce4786fd88239a5e96c03e41416e75283e61d853ea22325550b661b194eeb2d19fa4eeb564d17d6d97e9b90cbfb0ff1fa2dcc4377c287d92cd2481ac",
+          "metadata_enc": "9e15b7d59b7b6fd5269780dc5072564198733b9d366ffa43d53c8e2318688f480941e5198ab50c8d592f340136936cd4b5292fb98f952a67e1da",
+          "pauses_enc": "a5b79faece927309d1aba628d4c4c831a4de4dd5597d28e3180b7a2a44bd825a2fc898b3a7cae48cedb4e9bb3a2a508bb439159567955cc509c4",
+          "content_hash": "2f43c4a162e8c15781c5b383389db636852cc6e0455aae1b96437f67065524de"
+        }
+      }
+    ],
+    "block_hash": "b0c03cac77abc43ead2031fbf277e18d3fb924c4d13056efce3433bcc5fbfd80",
+    "identity_seal": "2334c6d37d7188d59fe8178ee22ff94084117879eea8626493f85072eba16082"
+  },
+  {
+    "type": "day",
+    "day_index": 17,
+    "date": "2026-06-17",
+    "prev_hash": "b0c03cac77abc43ead2031fbf277e18d3fb924c4d13056efce3433bcc5fbfd80",
+    "entries": [
+      {
+        "hash": "b64f61eaec08411b3253275da623c4df7f236a0e7b9a770d3dcd4d7bddf936b7",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3777110,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "955addf6297231e0b6006221c08e85555c261d5a7e3d28cb55789e75a8d2edd995954f8fa42851014f3abd6925b13b792f15da549716b3ac89f51257d9d54ac57c07257a33",
+          "endTime_enc": "c8fcb0a733568b7dd927a37e1dafaa11ccd6f49383d073a4576527c60091324357d44fcc3aec1768cfc7fb1f6bdca9f9cfb9e59f5be8f9c1d74999874404bf8c9ddb5386bf",
+          "metadata_enc": "6edccb3cf73f6ef3a455a952895c3fff936f54e97e0201aa747f44da639a73d240e7777ed106a46ec35da2ae7ee71d0fe21849ec4c4382e953f8",
+          "pauses_enc": "7c3b1e4ea7a042c49d089f7b25b051e19d5abcb096249462d17d3e54cc58a1510b02e6c41b067d7b410bdb9f6eea4dcfd2808eb70c28ec6eccdd",
+          "content_hash": "d4c2a593f23266f86f5f19548b9d6163c71af7fb87ccd7538cde6c07aae47118"
+        }
+      },
+      {
+        "hash": "aaf82a85003e1c25a3ab749483fc2227a0c0fc1274270e36c5531fe7d8852ebc",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9143555,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "1183526f2bd759581beb54ea9b12e834bfc122fe571a241685be87c9d2c4188782056f6007893e7d88b46ed8366edeebecd21a43a2c77e38cb05985b76aeb7bcb335c63aa7",
+          "endTime_enc": "3654d168cfcc242d770fe18d5c29f213f53731b343a511c0c03e80cb10d0d7fb2ba59d7203ff62fea6a2dc7f3e3c4714d0c0d7f3aec1f7754f479914a86bcc00fe3b3b774d",
+          "metadata_enc": "5e78aa4bf534ca788565f06a4254b8bd42284659774ce83147fa9e97816c4ee6d0804083a715c0cec51329b71cbfcbcd11de753eda98f0af3a47",
+          "pauses_enc": "0a9dce99f3f5db8a395728098f4bcf553aef2792fab2fe4729e463b58347421b6bd768e7abd1694d1dc303d332da8de436458a5affa76b3d87f7",
+          "content_hash": "702ab455b6397f19c4c61382d2411cc9305d6b10c43ff1acc907ed3f554be702"
+        }
+      },
+      {
+        "hash": "7d63d0c7a339e7112f58e9f282ea52c9278d2517b237757dac4b5b78dc2fe040",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 2010311,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "171583b817c6b4b8a0c837cf3ed4cd4e298c9d3c6db01d284f1e8f0459daba56fca19bf6b66e8b1b81f309975a7fc483b98f2da84947f58c49c27548952e7a5d3643a624d5",
+          "endTime_enc": "29d368eec0fc3ede384e77c1524377d47ed2084c6f38406184d7d7ef8c2e3fc659d852d147a6cb335825c27e073865430cacddad2c49c6ad7cc9247345528d40a18e868643",
+          "metadata_enc": "8396584e6bed8ab87e92f49ed8c265346183b99b77c68747a45ed11a56a318b8b7d9ed0e3734ca1142d81c83a138e890871fb1d30031d3b6f484",
+          "pauses_enc": "36151397d2b46dc6731df248e0efcd68e09d4a92afcb5402052d9064dc690ee253bea0716753da76046aff499583fcd87e4ccbc7a2f0401a37a9",
+          "content_hash": "16a1483372c6044beba9dd6abb4660555d291fb07f181673e3bffad91519c8ce"
+        }
+      },
+      {
+        "hash": "5b53b84216483af1d957e7b8ae5084e7ed046412f8682f55edce53429dacaebd",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8899122,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "b58ff9f3622c1ec15e53d36742f96cb6287fffa88b0642302c2862a3f7ed5e6090da03509d33312e44bd43b415a672c975784e9f846902993456458ce1629e259c831eb93e",
+          "endTime_enc": "351fa20b3743366d15a3b4fb4acdee660d3b646f9b71e083e54eccb0a268ad44f55aa763b5f014b05fcc06f23012c45375d871e09a6746b59ea8a6fcd8e73bfc664e8db15d",
+          "metadata_enc": "f7092a5908114598b0e11ca55cbe134c27abc966f4b6fdf55a9965b0ab7d9a8f4fdef148dfc14490ffddd45ab261c0fd83438da91dde0e77b715",
+          "pauses_enc": "3420e18d1876fc45f3281119d24ba9593173fabe9e10e0e0e14cf98ef00f94c5e99ac131c52a34646d2eff85ab15862e5fe206496e5e7d4b6f57",
+          "content_hash": "305b0bb23cb201d9747feeb01ce25d4c43f8f7f4c5e31f729a0ab6bbeb187382"
+        }
+      },
+      {
+        "hash": "df9efc9b1a1fe5a3ad831f94d898451268e321927e57eaf995fbf01ce679c779",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1728275,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5cc8cd6dddcb6357177bfb60dd8ff6a8c7514646f2fa30b3acf4391961a92c92a105d5d5566422f52f42946bd2d2f082253379af037f2971adede0926d6dac3ba8f68fce53",
+          "endTime_enc": "3b082677a8b14e160b437974242a53221f0c027b9fa2d32670843c981994fee75fa1e487611365a7a1c48bb241857afc20a8cdb790d4d6028c0451ddc525a6f02ccbe0dd30",
+          "metadata_enc": "c5e11e4e8da7000b2b9adeaddbae1b786a306e4633026c72805085954f0ff6df76226ad2ace3cea3d576c21314a6d8bd09dc43bc460e4bc0db81",
+          "pauses_enc": "cf77776b8928f7f7a389bef4b0be8b791bb67a31bef16a13d3e60c70578dabe94177ac88152d4b2520cb7d85a2cdfe375cfcbede6626b567efda",
+          "content_hash": "7585de92d683a146ae755ddbb6315e5075de3a82935aecaeb255468afd91b32d"
+        }
+      },
+      {
+        "hash": "cb833159d1371baa537e0ecb9fc222415431e4da7d2b0a366464848286617473",
+        "data": {
+          "title": "Video Games",
+          "duration": 7468532,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "3b319c2683e39da45fc9464b57c96acc5470061d60a9ab9676e3199a56fc6654b677013d734558ee36dd7c0da21634bf34db8192abb2e458bde91972717c0a2f8f036a082c",
+          "endTime_enc": "ebb4e8f003e36090d3042d4b3fbb98127ed7373243afad604b26050a76bd4230ddf71e40ed1c8e8a2a4c8933eda7ed146787d88aaa2fb118006131a7aabb2fedb282ef2ee9",
+          "metadata_enc": "52dd76b1be6bd18570f4c6fe3bafb7fca403a6ff467dc4793adef9eb23974dbfdf79624e049354f624b6655b14af71ac2766f8b92e8a31cc5893",
+          "pauses_enc": "7c64ecf89fd265ce12b9f94fac16f720447466974534675c7e3662674c79d181d75b0cdedf97a069c77e3c46d63ab0ec42a0a70a74f982d069ae",
+          "content_hash": "bdbe2d3ef050403ada204b608bad1f128130fcf3b8955ceaab021a4dad0a6715"
+        }
+      }
+    ],
+    "block_hash": "f9ffe0064db467f3ebe978bc0d06dae2085414280932149d974197ed2d50869a",
+    "identity_seal": "e55d335bd5d8ff9e9424726d43aee744be99ee8d031b329f0b945d8cb30fb0d1"
+  },
+  {
+    "type": "day",
+    "day_index": 18,
+    "date": "2026-06-18",
+    "prev_hash": "f9ffe0064db467f3ebe978bc0d06dae2085414280932149d974197ed2d50869a",
+    "entries": [
+      {
+        "hash": "8c6976f0d638897f22fe11c07483774a57bd442c2083021c776c0dc04690cf3e",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3359642,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4f1acc561b55b323e0b20891dcb3e275e06c63d93b4d8a492e402991754558a3718a5ece68df92693643bdcb7776b26a5795ad83c7133d3f396c2b9185a0f9db4808410f3f",
+          "endTime_enc": "7b390b49b743e9199110c0d49697caf825107b33ee30c984af803143943c17ecd87279c027c7d1f7af95bb0a67d3c466d7ffd087f9f0f97c735b0de67106db7af2819ab202",
+          "metadata_enc": "eceacac2ea1d062e3ce3b6285b94b0de81ff11556992c4e92aa2b21ebf12ae0fabdbd64ca53e5c4cabbf2094a55344396f708e743a88d2704861",
+          "pauses_enc": "4659e8716e9341a7c400697236c3849de57cc1769cd948fdc6c47029cedcf8ec81dc2d61cffdd8cfeb57539a7fb91c3396d31403680848c98f7d",
+          "content_hash": "7e4d6bdc2eab1b01ccff01a6f80f6a83ff1928615540de26f92b78550def598c"
+        }
+      },
+      {
+        "hash": "6d2a75724739b923a98dd5e8ce3891b76fc6e77f5f62af183cf414d8ef9b2128",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8784002,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "28503647f2a8fe1f3d5d8bd420946f7794d2a7f4e5b2eaae34824a1b678ddd03948e87f307bbff86bfa378c04912853518b819a6aacac2baddb3d80ac8e7eee0094048f360",
+          "endTime_enc": "e4a9e30a50e9e8972727df9efae01237c4419cb78f24e55bb6f5cd85aa5055a961d138dd73cafe4e49c37edd5cc33dfd65f63b47f55ce2038f17e67b350773d729c6c0ad3d",
+          "metadata_enc": "19ee1cf79811ab966d182976035f744e9859f5f1180618d2b8e94a4e8ab22ade26541a1e81e0726bd5a74042b11b122a0f40c09a9660af451730",
+          "pauses_enc": "4102ae5b2ac4e83317bb24188b4275c261889536a0a33db97a413ad05ffb28bf739a1137e2352463fcb1cb24523012dd4e5f616d44cc9fa9438b",
+          "content_hash": "a173f70ec6196ad9ce3938d49a492c061713c018237e7b33d27851c4f65b97b2"
+        }
+      },
+      {
+        "hash": "a489d37a0a5df1d9845c66942788f36e97f77f1736e891ffaedced1c1b5e5ab0",
+        "data": {
+          "title": "Code Review",
+          "duration": 1571849,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "94fd0e3ea64234d0b634bc19577b947ba02af4bdb17247731356903b445ae5c6fcb203fd8cce0a565969c2c25c81f7e219e4bdf9593e4e4db453fa863a56f46e4c35d9c73b",
+          "endTime_enc": "55c479996f2b5a0fdae4ad6e9a8bcf0f81004e710af33ccde3f4f4bdacfce19b65c21b88d6a5199c4459ea41b2224ead171a3cfc7b3c59684f7eb2ab3ba9632e1f09d86189",
+          "metadata_enc": "287bac7a8efa24906f5c7cab179f33d0cf90015abe1a76f0e8e8758b229c6775441434bb564f1473ef6ba1dd8429925642953d971ea728bb8e19",
+          "pauses_enc": "b9ec159f369d1adcc5f4e27097f0509f301414db4883c86e667ebb8f2f06d2168776ffe4f7f2663095e690115120b616ad8237596a4d31cafe8b",
+          "content_hash": "0e35a99e7690fd274cee882445941fffc8896dffb090c6f1c1c4697e6ad80e06"
+        }
+      },
+      {
+        "hash": "cca5a57ea56881ba12ecdaa0a7a45f5e853db799e7a00e71523c3641ad8b6cb4",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3371262,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "abad08fe5da259212a2578daea72a0114a294939b47fb06c09e03f0ff05063f76f064867db75a2327ecd202b9857e7b6e808602345448aa15b76b9b3491cabe2b45deae5dc",
+          "endTime_enc": "dd4811c3ca9e1e6db83318b8e763ae5208b60609b7e74fd6000e9b628c895be874372abe562a51c01a4777008874361020c6e1c6992a1204762aecaeefed7e2173f7c8d65a",
+          "metadata_enc": "70dc681a4d5f5e3b581d559bec7dfcea52cae62724fe0229a6eec5561920eb850e62d5eaeee013625e93945088e2a81c9ce4598594bae4f3f482",
+          "pauses_enc": "a9390acf83695d8399180052c0f3d157fbc1f966f041b227f1efe61a846140c3369458c44b15180dbf3b596841970ad3867a6e4b438e3e9f8d45",
+          "content_hash": "a9afa332a700f40c6635beb5917f5d30d872834d627abf033c5fde6ac9eb7208"
+        }
+      },
+      {
+        "hash": "0ca692078928095e0c8026a3c16f8bbe5240596f46e523597ee4a57486c482d9",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3546629,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "6c10660d1025bf40916ebf6f2ca714d3d197adf90ebe9678c2c61c6556b12a9b8e2d59120b2b4143637c3c278b0f9297d1399dc188d4d80e2400aecb29e3f15152ed91da6b",
+          "endTime_enc": "bfa4d7466d686630aca9c1db6bc8d44ee84132b7a663d61735ee6d8142df406f84854623a6bef10c885ca489406c445f4d479abc18896bbc20b8ed0d659ba52506bb95146b",
+          "metadata_enc": "c352798c5db2bf6988819194d5df50240b5d63fc16881c820ca6b29c76d83422b6b90919850ddb224c1e8b77bcbc44ec5d5ff663156f264be547",
+          "pauses_enc": "747beea0066a7c49e32ff755b8fab365740db6042f8ff6d7898fac5fdd8d0b4fbf006c5b1e68e353a3b1413d149737543a91205952585cea93fd",
+          "content_hash": "b8da2ae893679b3cb21894d75057237d94f0ab5ff4f84c57d6651b009f5da14b"
+        }
+      }
+    ],
+    "block_hash": "2f5618dc0d44f9226c2c9c2e274b1c78f94f9807fd51da10e9912a5235c07163",
+    "identity_seal": "3a10b9315b590ee980b7a307c122c0938819f1b68436a6ecc59946b262c50bd9"
+  },
+  {
+    "type": "day",
+    "day_index": 19,
+    "date": "2026-06-19",
+    "prev_hash": "2f5618dc0d44f9226c2c9c2e274b1c78f94f9807fd51da10e9912a5235c07163",
+    "entries": [
+      {
+        "hash": "fb23d818502010ba9d24ca6a45cfabec0e74e4a722bd348fc76d13baba38a2a7",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8785965,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "193885945d784a9931dafb34c4a644fdd8581d44de813228791a73bb33ce06785398ec037531c0a81dcec00c970b5b096080ebdf238340c4a002af2116d87c99a115e747a7",
+          "endTime_enc": "f876e003603da9c125bac4bdbd9d892fb92565ce7d8c0aec7bbde16f067b5846c7272a6a12d2e2caf2a86b469112aecde3511c16914f7c832048dc71293a57cf6f756681c1",
+          "metadata_enc": "85ed474fc66dce7416f4e9bbc86ea0a3717605c4f53a414a0aeceead96587f023230757d92421240df4d1940cc5232a9129a2f92a8d027eaa36c",
+          "pauses_enc": "ef96c492a52095bebbd33353d5f1b5993e11e090e465e80d41517d810ac06835571101e47d5e5dca47921791534ff91f9f9aab876813e9d664c3",
+          "content_hash": "bba09519f13742d7ac7b851bd6be667d3e18cb97dcca481d64c85554abba97f0"
+        }
+      },
+      {
+        "hash": "51782d6be3c9a3f6f25a95460f322894e6d99f8ccb3afba8ba3940a5e57dafd7",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3892683,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "975c7322536ec924e822b29cc1c8c155dae4b5451670fca1802afc50c7993d06f6ec747d3ea8c5eba3ed4c21b981c5c94a02bf8f40e0b6c81aa42277bb730d262c374839a8",
+          "endTime_enc": "2dbdc0f7c1ba7736bf9b3a893398f6969994560a650f17abe0e22e4b4753f1e47fe62415f0a67502b48524b75684c536da9cc4589ff6879df8a88cdab6711ae9ac8c61fbe0",
+          "metadata_enc": "1f73e133c7acf236460e0e0df9c0307f13920c046053a6059042ca95849d4a8f1b86f70381fb6c81fbccf38abedbb5d54c5d3db902fd6a92fe47",
+          "pauses_enc": "55a70a0af392b76958bb6f72fc3d1837c7308e96b45a5a343c9613dee38f994bc85d9253b67aa3be143623107349257fc5c04547ac4953849cd6",
+          "content_hash": "19604a06baad2e184946bada4c47c2712e2d7ef39f8cfcf058ef0e5ce43f3fff"
+        }
+      },
+      {
+        "hash": "8d86183803cef4b60098c878a1bd3779db334f9c1c2a45455c2342c16f952c4a",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3631737,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ed5a7c45487db533052b23db9838914b76fd06351649991c262000c68802aae964b3c6a4a8b4bfb6ed80a6ca753a28bcc3d31b9f795d5e148f5e2d15a7f9782ea1401a5cde",
+          "endTime_enc": "ca0289fedbb7451d3dba0cd6b5b9318553c0a9b17fecfa24728b0cdae8b258e9865df1ee98d66690e4bd4f5e66ed899e1edf10cf8c527a24e8ef3cbc0cd72a6a0d0e7c0a83",
+          "metadata_enc": "9b9c926ff0a0ecfa8e2309a032fafbe925e160d9ee464a25303a8a0df1dcbf5f58c3d9696a65c47ea00917d81c009a1d7a71ef5d5cb1906b60ec",
+          "pauses_enc": "3757763413b7bfa2d491624669de9884cf651f66bc7192ec7fa8b4b53a917dc2b4dec7e24070a2011ce9778cea941044da60d2897dcc4692aa0a",
+          "content_hash": "a5ab482fb506665234e366028214393df585cdff6763e8442d7e82ccf8fcb36a"
+        }
+      }
+    ],
+    "block_hash": "d94805f8795c7e8027cb29f49a06f2b5d0786c51a68039dd8b042d3f20fd44ee",
+    "identity_seal": "55cde8d04a817cc4976d82810bc9ed4a7b7f092748913bdb1314fc82f60f6a2b"
+  },
+  {
+    "type": "day",
+    "day_index": 20,
+    "date": "2026-06-20",
+    "prev_hash": "d94805f8795c7e8027cb29f49a06f2b5d0786c51a68039dd8b042d3f20fd44ee",
+    "entries": [
+      {
+        "hash": "7f02f0aa199ef5d2ceec3a4c23472eb4d960cbfc410913c5d052bd62762e50b1",
+        "data": {
+          "title": "Morning Walk in the Park",
+          "duration": 7214569,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health",
+            "nature"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "0a98edc61487500b8d3a331783a5e245f09f4affa3f656098e68bb990e63aee45f9b3fd4e7c30b81c9135ab513861ea8bacd48019f4f2f505e028be1b171d2689d29285f63",
+          "endTime_enc": "07c4bb4595a77f5228bd69e325afd5bb8f33f12b766a1e0ed91549ff2b7fde020bc9520698286dc0cc95144a39f9ae72789a9bf90b5d5fe50c04edc302c1afa22f2a86de7c",
+          "metadata_enc": "6b7e4f9f65666c36e99aafe838aff9bc7015e29fca2ed05f65ffc9114ad5e358ea9f8c1d9aaeba1b015ab1e52baa7a1260f76c1eec97d7238fe4",
+          "pauses_enc": "07e05fc700272449f39c2bc89a43b62b9ef7aaf5219764782b6d15a3db4f0d97c70ad7fe9bf06ad435622086be6e213db8b789f6906c4f627ea1",
+          "content_hash": "6845ab92bdb97469d81c12e33fe91cb543b00fcfc08da4fa854f64c07cc488de"
+        }
+      },
+      {
+        "hash": "d5037a68a734a398ae970dc51459e376c494f2af5f797b4b0988af8751a2b4d0",
+        "data": {
+          "title": "Brunch with Friends",
+          "duration": 7231535,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food",
+            "social"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "6f5a560101cf8225a5f961bca60de86e4cbe27feb97829da649adef84c134bfca59167c19adbe3368e8fe04bd5dd0ab723ca20417e2a4af4c2afb10d8c89798fa89c00ec5f",
+          "endTime_enc": "91489309573f82931caf856a69c07296c77816e0d4e0df1a38e5fa55046c420591d21e0df83c531922d69f000c020a837e7aa073ac3fbce165991d66eb12130f40db250c11",
+          "metadata_enc": "084c37e730234809223bd30010cd06324102fc2f3582dc0ce67604702124df1c9172693739e39f877303c0cbbddf043aaa2519487f5ed9d501e9",
+          "pauses_enc": "0ec8c999880d684743810d51c9445f376ba6beb93a01b2c558d615eaee39a10602529a16864992c66e41c22c0430b6a1244412b301b8bb388a25",
+          "content_hash": "7dcdcbad256d0537b30462f5d508919e5e86c36392f8df17bd7904dc74af39e6"
+        }
+      },
+      {
+        "hash": "976f0207a9bcc3db47666ebf3d6767624be63f19412a090c7fc05f42aa60b692",
+        "data": {
+          "title": "Lunch",
+          "duration": 3309767,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "6370aebeaab7fa8519ecade065e5e84930d3e6ca07c278d343a5640a2f8ab3d442556491f9b0035f780a1f2c7f2981400f0a613135e28378ea18e798267ed0cc1f5935759d",
+          "endTime_enc": "ecba6cbbe40afd88500a3c014644bb87a8d28966dd051be95fc62ec8ea9eeef1709cbba2e5241fcfd11608e7709063d770ccce62d8fdb6532183254bbf05b88309344c0533",
+          "metadata_enc": "74f8f061eca227629aefed06ce86d7b8ba7f11a1e34d385f898cce7cb955b9afddfbabd5d8941007fc36924e90786073abc016616846e1d1f01e",
+          "pauses_enc": "b5b7570e498850b97c5c5fe84316180ef1ba71e5f18085ac399356ee31508ebe0a9251ad45764a1a023749f908790051e6706b7792adb823fd08",
+          "content_hash": "e966938b614d3d7446d8c3b05a0106ccdbccbfa5e2a5100c1e17c96ccfbc621d"
+        }
+      },
+      {
+        "hash": "20074dab2eb72dbcb6cea238706f82543346581fe0e9b3c1740a2e1040e42bcb",
+        "data": {
+          "title": "Video Games",
+          "duration": 11090341,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "df42836660b6bd6b54a09eb38d53a85d10a4f0dc49de3392fd43ec21cf52f960b037bcfd70afb591955ba426dafae4c94680c0bd10a45ba8f00fbfc1d3cda8544c0bcb5577",
+          "endTime_enc": "3d512590d7bf2b8a29a535f5a1ae73d7eff8fe3f1d1da10772d0d2e66e26eb9b0c3a627607361c3a63cfd9e39cea837ae0082dda174a78f07ec7ecbab8ba6bfbe6d58bdb2e",
+          "metadata_enc": "d3e1cc16eb80b1ab414cf0cb0af7efe8df6e09a9e92614c74784e27b5e448f8412d0596a926100b29b2ffa781ffcac875d31660ecce29d78f28b",
+          "pauses_enc": "62c040db3e037356f635655c2409913ec57ffe2433681b86b88f67d56328c3e57d9965261063bca294bd90acad93909ac051aab594736088e15d",
+          "content_hash": "8d0d84396c2d4264a44bf606472c3f00689444c78df5a66fd85f8eafcf70ae4e"
+        }
+      }
+    ],
+    "block_hash": "49495098ba4f712d8303cefb6ae8142440bab9d476506fe7880c0c941fc547f7",
+    "identity_seal": "9b2de1eef9bd46613bbc39129d82cb070ecc71fb64b303f3d27c75d34737a560"
+  },
+  {
+    "type": "day",
+    "day_index": 21,
+    "date": "2026-06-21",
+    "prev_hash": "49495098ba4f712d8303cefb6ae8142440bab9d476506fe7880c0c941fc547f7",
+    "entries": [
+      {
+        "hash": "f56bb9dfadbdcccda34461a2d49b5f2fef3173419eedee79ad910f3ded3dd7b6",
+        "data": {
+          "title": "Morning Walk in the Park",
+          "duration": 6972132,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health",
+            "nature"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "348af840057401e1cc1cccb04d1c6813d7f7545b0276143eb29453a3c507cf2c18189c12391ae14b2efdf897cf78180b931c70b1bca14e7ab331f16c3250e340fdd28597cc",
+          "endTime_enc": "d66412f5bdbe2f9bcafb70d873b36178de38eb6128d5c8e5f93db8236ec46e7547d061c3e109836d21d1ed4f4726050fe50ea1205f0f9b7d09095364c15a475a3d0d5670eb",
+          "metadata_enc": "dee2fabd2937b60f8d0ee561a1715ebd025584ad98aa0e364f333b22ab7312c815150fc257456f0b91f835a54027b668fb9d8048c21d8874145c",
+          "pauses_enc": "2d4e8b50e6cb8dd7d195c767fdc6afe981d617f3ee31669f3b010f5315309538c15bbd5702061cc1832aa44a89129883e5f6e3129bc4428a1503",
+          "content_hash": "2fac754cdecff32f19aafd48521ffb7dc5105ae4514f45c6f13b1d2758a39020"
+        }
+      },
+      {
+        "hash": "766d2a1b548ec226c4e91f8c743c10206ccafa430e5a50bba535c1958c32ec61",
+        "data": {
+          "title": "Reading",
+          "duration": 7287477,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "b70d5f9f83a1f2d6b560e0f2a95e6fc0d21b870f76705765919b5b1c154c9a517f2bfa1063de7aa453df5056bcc7ac4a97114f85b01594b75a960d974c4dd2321315d1d07d",
+          "endTime_enc": "376bfeac946bc306a58a97b780b55e0996d37046a452aa2f4a05daf74d54476092a7d0130b47c5ae66c9974d84252c05b633bbb0a0f021a7016b4cc23472a9b28e71766e62",
+          "metadata_enc": "a2ca5e2b31f66e6f207b0aba9d36b5ba6d9f0cc4d81b60023fd959618840a79c4ff8ffb8d85a1238177800c9f4b168057c5660faf5b6d68e0f5e",
+          "pauses_enc": "e3f728697545870ca653cc8e5dd42d9deb0a6c2dffb72c00698d0cfde4a3f64392423b1b527f578fbb4303a601ea35ab768241805252d196f6f8",
+          "content_hash": "65b1b4bb0984b421d6823757ba71efd2457545cdbec0d974698f22ba63b6541f"
+        }
+      },
+      {
+        "hash": "b30a8b9db6e7902f316fa9313380656b5be54370964ab88365e7224905f60cd5",
+        "data": {
+          "title": "Dinner",
+          "duration": 7065409,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5533e29dc2dfc24fe7de159b23e0adc0e4211e72045de815e872c31c93ace157e351da02a6fd52297d0fb2cd8d7d9672b9c4ea796c5cff22bfa2182b392bb9f992719e95da",
+          "endTime_enc": "6428036121fa9591606e2ba5edd5baba25a80ace214e1f475e9ba2fa21bd9a5dcc5a66d45192bd4a925a394685db1c799aa4e27b59cc5e24e452121c4f61592c033199546d",
+          "metadata_enc": "e2ff891856f053210f4e6011cadee99078bf9ef8ae5cc22153daa283b4bef342ec24b10049111c8c6586b59076bfc36e9885a03cac9bf8a83590",
+          "pauses_enc": "489776556b2d501b29b3ad893d3f743f0be0439b964665660d793ee3fcdd25af1e52f3f03f3e3d04ce175f2ffecb97d319fc5fb6dda5ad3552bd",
+          "content_hash": "d3ff38023ad8c5fe6c9ec88dc211861cd5eb73e5901d73006900eede7707ebdc"
+        }
+      }
+    ],
+    "block_hash": "6e371e29967fc017fb2d795d477bc3a4c2d29cc1de361542b9eff930ec8da366",
+    "identity_seal": "9c5072e6f2f955d23a75b571d83d08c1439908a410f90777778fa7512777c049"
+  },
+  {
+    "type": "day",
+    "day_index": 22,
+    "date": "2026-06-22",
+    "prev_hash": "6e371e29967fc017fb2d795d477bc3a4c2d29cc1de361542b9eff930ec8da366",
+    "entries": [
+      {
+        "hash": "f955792fd4a69bdc8af1bfbc983761bd494e8b67b12238e6a04fcde5e2a0e6e3",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1608618,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2b363c9d255c8c7b298fb2ad5fdcd535c87c71bdbe070d2a06370a804538b85beffda1346e0a0b97ba7ef1fbf18a9acb7de09c894743ef9ab9fdb0982783f3cc4a5bf4b19b",
+          "endTime_enc": "4b1b18385c63d4833413d0232a450854f85f7d1854ba8d7405204aaa46b3a630e45939d3a8a4920f186a32446aa04399fd5ba8ad91a5ca72b597f52a998d77462df34811d8",
+          "metadata_enc": "81bf16e104b174d3910c34ba544eb5d721f56eeb5a7b37b097e309fce47825af5454390cd355b719d91d3167e0f1f4eaa1417c53c3d9b726a6fe",
+          "pauses_enc": "5e3996839c69395dbf79f457a3ccf90637c0413f3d5b9de4f2c714fa5a49c4dde34538aec928ab7cdd56986cb9894917b829c98d210033dbdf40",
+          "content_hash": "8f61499402e74b5d30b4578bd51f9cb14a2a7494ef738b5cb364154bc1ea6e65"
+        }
+      },
+      {
+        "hash": "d33c1d72418a77bad86d9a88f78ceb57818a12c81505392ab809987dd8e2cb55",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3577312,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f5f5359119aec1b151bcc63c6245460042350ffc002acd1946f323983f3cab1dfb38cc41f1fdce7d173fff81daa6eabdfbb7cb3de4c4cd35aefa9c8f3b7bf2ba37edc201a4",
+          "endTime_enc": "b7128a5fa84da52f4e4240f040f47d3460d0617a0d41646367b6c256e244e2169b804d3994c8e57969b24ae4e36815cc8b69494385c204285901d17dbd9e6d2022e0d275d1",
+          "metadata_enc": "fb713c48b8a93b45183b63a32db7eef292812f78be5b78790a7c82aa6e3daf23fc69b284057a6a3b0ea1ffc324fdb119c0b36b2713be5c54cb74",
+          "pauses_enc": "91447ba41283824ddb63bd44fc24eb0f2bd85bfcc4ff581f81d5597e6d2516a655774728ab950d149df113f1695e31b15934365a48900622213d",
+          "content_hash": "f01e45dc140f88a5c0618226a44460e43f02b789e46774c1750c0d101b7a39d9"
+        }
+      },
+      {
+        "hash": "de1b5e93231b349a04247b1981ecab596fee6b94fc1e04bd77e6e3b9da523a64",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8812235,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4f3939077ec112dac10ed6f454223227abc8f3646c6e15ac635f56d103d05a17056bbd4be7519c500cc471859ef9af8b159c4144da4085956c21c42f779f3e72230f3d41fd",
+          "endTime_enc": "83cb22f4ede3bd58ece9aca6de781bb9e8a69f659fdd7d1db78fb88022762d75f3cf0def6c5aa9b23d6d34ae85cd2e9e09f360ed5c04a7cfa825cbd574f3965bd6dfddaa69",
+          "metadata_enc": "1e6b94cce00ec4d02e9b50d2f0ddf19b274dbb3601bdd6ff3639af0b91eaf331b67a60c7d19e2894e10fef0ffdf7129c1c1bbb5742965d8a3a25",
+          "pauses_enc": "8001d6bc819f6c7795378fb259e75c63cbc9be8aa358f547d74789aa1b18b3e823409f54983407a2544759e8db69e75afc814bccb69cf0d044ab",
+          "content_hash": "10da9fe80b221b1dc151733deac0e87894d05496c67f44395cb69582c7e0c6f7"
+        }
+      },
+      {
+        "hash": "82c0a9b66ab99df5e985cdd421158c0623ddcb3ce6a325a45f9290aa78971fd5",
+        "data": {
+          "title": "Code Review",
+          "duration": 1662998,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "beac07538c60444b78b773179f3cbb0945ba8e82168ecdcd5088f7ed3375741089e7fb94572b2702fc1e080c0f0af29f63db7d50d0abd4b3daa367cda267719cb5a32b90fc",
+          "endTime_enc": "6aadcc0c322f9d57e730854ff5d0821610ec71631636b7887c3334a19721e165508d6af008c9eadbfd7a8280a2614f2d4cf5dc891cda09cf3e962d5b0b4bd9ac0c08e5b692",
+          "metadata_enc": "8115b3f79f5c76e3cc7f8fb7b8f82dd3727d1487246a997b4ea487139643dee0ab21fcf5b4c6d4044391d4b6aa52d4613b058fe70b08d1e72d7e",
+          "pauses_enc": "5415c120cdbb8b37f6ff34eb5ce82b44cef189aa8daaf011922f31982215a55baeefef8d36e87d6ad7a90aafeede20966004b34516063f1aab6a",
+          "content_hash": "c2b9bc069ab4c23aa60d9f60c4f9451837a521c03608e942bf3c6482b45bb3ec"
+        }
+      },
+      {
+        "hash": "4069249cf31d73e2515971a59fb7e6f56db561247d83a613e9eacc4f06b53624",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3595442,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "48583ba63207c112339a081e48edeea056ba2b574ea16deb7b649d1f6f00a2fc5012baeffe179a9d33a4165fc116621d73866134c7aa842d6f4a4d2fb99a55327412d050ab",
+          "endTime_enc": "a738d002b29519f0994367bf968f462361ad9a98b892ad99cbc65b686984722330c1f4974cc43ec537b9f6b7baaa0b0625e539e2abd0f94ca4b00da2162f1e7403675388d2",
+          "metadata_enc": "577c61dfc4ed308858ac47d15d509670d6294029b11550685088adfe417489d0c9510b8aed163eceee8c60b7266ea303a2b224f43f3e347f2d3d",
+          "pauses_enc": "06a283dd8f0ea6f2ee077c3a86ed2606be694c353f40681abf228a7a771e9ede9ce2874224c6364ccf3c98ab586033b154033628e282a084fe44",
+          "content_hash": "57b1c13871ea02e23d1630f15b51f16123ed326a124aae8c1a16090c553ff90a"
+        }
+      },
+      {
+        "hash": "f014ab455272e5b54d49485452b1b9babc8298e1e9f1ca1e5425c3e0ffed26f6",
+        "data": {
+          "title": "Dinner",
+          "duration": 3520861,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "d31f71d6cf5c328a35fb1a5c4289692bb4a27002f1a92c1bb0e2d7b82d4b86a2c9253145591954fe952a235e312340b54187a935bd8324f699d998a603b2d625f41a06dcfb",
+          "endTime_enc": "1f9081d12f3d32f3e85e74b6c5f10e15c36decb64d2494bcea55744c5f6de08a6fc0e55ee71dae39d271f27beb348dc34b279edd4c9335ee52065a478aaacb694479d5fccc",
+          "metadata_enc": "7825b79c6ac18a4b43adf9a122fdf258006b507a93a8ef4f759e9ffbcfe081dbbd91c38d48d79cf3c4c58076e327d08ed509f56c1f303c490aa7",
+          "pauses_enc": "ee474d67ee309b0833390500915d15435d42836e25b004df9a3e4d221373e9fe46a32acf745b5c5896b0051c96248d4e088ca23605189e9fe8e0",
+          "content_hash": "30e2a2719594f8a5699334b55f8122a29eff3f299eab5d75d98aea2dd6b916d2"
+        }
+      },
+      {
+        "hash": "8d339ccfc7a577d221a037c84243aab50b8ba96e43600516efb283cce7a7277e",
+        "data": {
+          "title": "Video Games",
+          "duration": 7113487,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "88fb37372828cad7567664e2782f81c37529babe6ea0e3861e4682fa340a5d92dadab35472c88e2ca5ed1da8efbff03b667fb93c6cac22757e8e7adbd0b97d63f7bde5b86a",
+          "endTime_enc": "02a53fa9c2e62c77a8ffc3355215a212e01821a41addc611254a4ce5cb59e7b4798768b8006e87123e972a8204836e82c898ae5694ad740469272cc3fe7254841c5ce4292e",
+          "metadata_enc": "dc00bdd4c717264959f1cf200093d1d0a2092fef7c3ac74f7eef550c6be49eb7e0adc9c551537b6039cfe55f170753d7cad3cdf06d1e7c0ccf24",
+          "pauses_enc": "6353b001bacead55ba321c3f9380905c32431b9d2dce70c19ad72abe586f0407593d951253ea5d2b942784360b5fb40086e52b19d89bd7fa5cba",
+          "content_hash": "fd53a7f9337ca361fe74f673c3ea9b57899597654e842121ae7ec5546dd63b11"
+        }
+      }
+    ],
+    "block_hash": "c905f5a03750a4fdbf730977031bb501b427efd679bb987e1b457880c895ae80",
+    "identity_seal": "7c8728c81b4b7d065dbe40ae2c66ecb50c87b96bb3339f62b0dc3af3f549826a"
+  },
+  {
+    "type": "day",
+    "day_index": 23,
+    "date": "2026-06-23",
+    "prev_hash": "c905f5a03750a4fdbf730977031bb501b427efd679bb987e1b457880c895ae80",
+    "entries": [
+      {
+        "hash": "7300aa36e505ab234905052e0aa2ae29f1685279635be645ba350e771b3c8afc",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3437174,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "2c4e801d4a629676d3b2bf9224cbc701b742463cb91342aa71652ecd32a176a81262448ea5884da788be2cc6ee0b624d60fd323c3e735c0a20a22de3d9fd714971ef32b828",
+          "endTime_enc": "d45bcff89e6ecc9e110d90636e20edc12b2a4f3c4783363415dc11d65e52edf08a49b84cefd30235735953bfd1455ee29136e5ff919c0f07db7e60615fc3aaed8e478135a2",
+          "metadata_enc": "a9ca2d2547bbeee3c893f5dd162c3de8099348ab71af0134b85b5486b7201680030b3acddb98ff94acce8fadc79a2fd780494025240ddc7f1833",
+          "pauses_enc": "a711e61ead29597568c1a70f3c2a424938aa0cb1192886519559e2e6953426fb656f590c36cad6f511d50c94198876af591cf550a0749ca6f606",
+          "content_hash": "712535266ae4dcf8c07beb647ee3535b21730920138df0fedbac2f9ce810dc74"
+        }
+      },
+      {
+        "hash": "308a5c646d695350640c06db743aec55325f855b37e7f20aca14c908df8f41d4",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1774680,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "953b1373d10e180b699a91152267236d9144c84eff5dce739012d1f6e1004d4c55392c97aad76b77b2fdba718b48705a9bbee1f856f59b61cc71986183fd0d97d714e93d6f",
+          "endTime_enc": "34e640e95a673cffb6df78bfd0c0e6c078b535bd3bef814c6ee06e3f12f85d60078a679e442494120bca44bab52c1c5b37f333d58b85a1125279f238c3e4a14365d5629b93",
+          "metadata_enc": "bceeac9e42efd897029b4fa25a0bd633011b0c13653fa673e752a648688269c2aac62cbe24b79d3cd0650f8ede97c3a136c9ea2484b9db13e806",
+          "pauses_enc": "7f5a11825cfa1d0446241cdcbda035c57d431a58580c1613da04431a49e965b235c947602e1eaf9b9d4df8f4fae8f88d3a0cb5eefcf7fc48282a",
+          "content_hash": "57023621f9b4d058f1e32f876078df5f1aec8315ca81d9b35eb8889f69ba86a2"
+        }
+      },
+      {
+        "hash": "4cda1282e7e9f279786c95201b76a0fc4fdf6c8b7dc6bb66bacd3cd7f85f36f6",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9163298,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e146d1f4ac4aeb04c6354e1731ece9806425d1e3a7ae297601a49f5bc243a342d173c46af2bd33b3943c0e7f0574325f03c89fb18fcface20928e3a009ce975b9d012ba67c",
+          "endTime_enc": "37c0e4127709df463107d85346f8a6d40d0712989a28cda7c053e1efe96e88f58729959bbe9bf70196387079e81d0988bd136e9f26b0262c2adb2e83e3dc74481bea598bc4",
+          "metadata_enc": "f76b0f711cb2bc7b18c6fb0a0d67f8e8c9c1d1e51b5eff84fb6618373417cb0d199ebbd761912ec53bb11586a96989eb93748f53f5f345c7aa0c",
+          "pauses_enc": "f457c244fdeb91af7a1476eb4edaea2cf62dadf5bd436886485674a090481fd4a1117198045896caccb86e16e6adc2c39562c47502c569c1911d",
+          "content_hash": "d6cba5961d861a7eb41d026c940d0c9dc8ca9fbf8ffcdf8b3bf5eddc9f68aabf"
+        }
+      },
+      {
+        "hash": "03463208a09319ce56c0e041345ef1161617ff6d11ab7b0c85a8827d801b1a2e",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1948462,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "af3d9031ad8056d0e9c5b385723e1f513084e132a9ac4da9d3491684b23e834833449c68bb676b2baf06e99c4222066f5edd3aded5647e025baed86af9429f34efd58230a0",
+          "endTime_enc": "1649756ed0b09e2c50f39810b1d298bc242886a98f173e8a2a0f330d229b3160c8e6981ea070a1c9625332f3996c9a1c3a911afbad439a82e01b93f281734b0d94f9555d6d",
+          "metadata_enc": "ff22fc72303d916656afee7a6cbfcb2526a218894cae75af2d4e601b35af9e33f48fc211bcdb3d8aafd0c200c1e84368609cbf87c3cfd1609402",
+          "pauses_enc": "640ade8ec3d3548e07ae10094f8031ded1770a7f4f9acc5d1b2beb37a64eb59b80356f1268015367680f17011636c250dbdc4f578c21c4d0d6c9",
+          "content_hash": "58a362cc2e87dc3bc03535b86b7636694e7767623c7f04228b5c3d8310983f87"
+        }
+      },
+      {
+        "hash": "cbd0a81ed6f00848a0eeb484decbda7a1051d3c145312124bd5d97f6c6e2582c",
+        "data": {
+          "title": "Learning - Rust Programming",
+          "duration": 3310139,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "programming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "61f8af8f33f44646048e5d44eb3d24384c452889c23661f00c64ea4402cec23d60108870b9397bcd00659508a5041da8bde314f5fa648b6fb10af9a13eb6f96fb6ec53a7af",
+          "endTime_enc": "5a53c130cb61fe5f345ef2975deb72c68db65edea7ac52d95f842dbe00361d252aff996c999b0baf5db54369885fbd685dfe686ee3fc409359d1cfd903acb39f975cce4b3e",
+          "metadata_enc": "6e9ab7b9349812f2424047358ab2a342f38e227cbaca8e9e3498fdc16d28f57aa144d4180a11f386a28f5d92862f8a811abeb4d893156bd2d16b",
+          "pauses_enc": "cd7a31c5ec2392ed67ecf77a4c3459c9200426776f819e48dfe0011611efb2ae4bacabb5f81395ee566205db4e8399093df3a41d227d329d5a74",
+          "content_hash": "59a348d1bd0eb01d5cd839a1b5c95a4726683d56e14cdb698bfd76af570476f5"
+        }
+      },
+      {
+        "hash": "be13ae89e1e197195243e3d75f1be381d8d0894ccd3a81aac7e5d79c4fee3d5f",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 6978898,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "ead4d54cb07f97789f30872810609656a78c67f3f8fbfb33c8fe824461072e4325fb7cdc24548e124fcbf101b46aa3f7db361b0bfaa974cb21d7828037a72e3744d9375710",
+          "endTime_enc": "2359da6fa9ba95ce483b845822611211645ba2af67945bbade3fb68a20362f88a4dc7e009416c5b86d0e19cf4047be2740061e2ea038af25c7d837becad10dfb3f890e1351",
+          "metadata_enc": "d5e2d5c5ed7d8504b8e4d51ead5e07ba174c20c5ff5f2344ee9296beae2e03832c1981999f06d0d75b50d675138ff3608cded34a723853e6ab6c",
+          "pauses_enc": "10d3459bd434209bb79ee0d3d70a9e0824b367ddc9abea9ae527e0289b3e22cb03f2ae5aa2d8238ca9a5595f3e02bb3fc4a5348c992b35917514",
+          "content_hash": "c9990812b163dd13146023f1646f04263a6df691eec9426fcca0b4fd2a8a6e14"
+        }
+      },
+      {
+        "hash": "1a88f816d73eeb5022f3784cb19a0596d40ff263f58301bc54fe316f157a426b",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3872092,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "16c63a10d5ceab52b74087669f9118c0f3f1bc8b8b469bb2b9bea9d56e0d4e0815bb78c22a6dd4d0bdc09121a36d007ad6e20f4b183371006a02698716992f778c9df7f05a",
+          "endTime_enc": "fd6653b00b3723e799a29c6963f2085724e7ad3218e36516e5550b3c7a0d5ebdb1335ddce5410f96fcb99519873c41ea0283bdfb72980a8bd2b3e65afda92d41b72aa031a9",
+          "metadata_enc": "5564ddc5e07b372f4a9ee55508c95e57cb1aec415632afc2524163d4974924a877f015d1f1dd44b5e5fbef95120ab8ad1957f2989d7ecb2db7c1",
+          "pauses_enc": "83ed122303df90854ce56644423406e0e1239ef82b43b69348b59c394ae09bfcb23d71dcd61e63e09d671027643cdeea0ecf4c852dfb941b4d2f",
+          "content_hash": "bd2f3f6046ac355b0f48fc7b5abedff387772e2e1d92d4c2a3f20e82775a4711"
+        }
+      }
+    ],
+    "block_hash": "0f7d73c9473887b86a87df1d37c203751f5a1799c5c86774f664556b3dafaf44",
+    "identity_seal": "769149d73a3ff6f9266c7b85d45f1ff469c7fd423797f2cfa4baa3356d626d33"
+  },
+  {
+    "type": "day",
+    "day_index": 24,
+    "date": "2026-06-24",
+    "prev_hash": "0f7d73c9473887b86a87df1d37c203751f5a1799c5c86774f664556b3dafaf44",
+    "entries": [
+      {
+        "hash": "d14a4c51d6034b606684ecad2fe7d1fbfcab03c9c5eecf9b200fd056ef5cad7e",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3341832,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "fc4cbc643cecbe580d161683c798db0010f0601646e8057a5df0d673f43bae8bc5306dc69a49a6fdbb6a7d32703cc254ea7d2b8a3cd7e8d860daf84dc85ea30f0284fd1cb3",
+          "endTime_enc": "5036c3b1974d91f1cef97d2ca802819bcd512cb387d9c4835913c51a0acd612763514e0c49de2f0afee773fde8e0dc2ae39b809205fd59d3a5f1fd0c4f69cf5325a0b5ddcf",
+          "metadata_enc": "ee043e67adad8ad54761a5a23f393e2fd19f4cbb3356bf8df09d57be3d7b057462200f93e89181ac63b71185f83706f8696768259445b9f9d14f",
+          "pauses_enc": "63dde2c4f9c5d454e851221d41f46a1dc5205fb6202181b45108e30bd0654839ac4acb010f1ede83389e2ec5723de836c5a47f8d2ad63e70af34",
+          "content_hash": "d26821bf0999bcf80cf7fa8b750431bdbe9d7859e4a7f1b8e9fac0b3de99a66d"
+        }
+      },
+      {
+        "hash": "74f802c54bd7e8cfe6aabbd92e52ca5275b912f675595dd65393c70e87610792",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3520281,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c2bf40bbb67745198c75362f5a8ba866d9340ff36090c5e404a388e8e0278411dee4111927cf4e726c59db43152cfdcfd647f03b3c2a38594ac0d96cd20902304be6630618",
+          "endTime_enc": "313d264bd4817b93809c6ba6af076c18be31ec769059abcd47b205d879e95fdb759f03fa16911e05d89ea45ababf30d9d5343c49ec988f313af70933098e6cabf0c08a4cb6",
+          "metadata_enc": "32adbe3b3b6a46189f0ddf70052e7cd9b25482d15359d43e607a5292ef73d2dd7092b4afa869433602521b1231752769244626f30fa90d7c55e7",
+          "pauses_enc": "15daa91f1a4c7feaeea779d1ecec1de7df42ea6238c3a28f891a77481a2d50e41a61a31459659e5563eb45f35385979ae467a5e4f7e21d70f88d",
+          "content_hash": "19f05a4f0d19ec1c7174ed1cfeb1ad4f65b5091fd4d60f4e797a81d37c05a879"
+        }
+      },
+      {
+        "hash": "52f9a3b8673d4c73184f15b10b31fc767673f1c62b9baafdc0011c56f6f133bb",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 8961650,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f4887cc6e3e2d2043d6e60b4e2f5d44cd3d86192154fa9f0bf6a0717ebcea85699cc18a051bce2d7f671390cca26fd144fb9b36fe32dc9e254e01104af60e96e8b23f0856d",
+          "endTime_enc": "80cb8953ef17a2e034956e9796908c678084ae77f98be229af870338e8db3be2e6bcf7a165f309206c19a254a2840f6556b23d44731f1baa7ed94794d3cdae6569acd0c7a2",
+          "metadata_enc": "bf81dba2efae606110f214e94f51667e29a63e3b181a9fb8fb844b64dc1eae6c2f4be143922830e38504fec43215d75d0390eeda7caf84cf5cc6",
+          "pauses_enc": "7817846ecb86f3682cce8e8f56b2e3e44e6ddf3f44384599b43414693fe14d04311d9644ad1937dccf539e12ccc5829033c1ac7a564d9892d745",
+          "content_hash": "8218ea0f9c31963f834fcff74c53e7b99a515747982138b6d9993df65566bcad"
+        }
+      },
+      {
+        "hash": "6d7ee6a9b6dc547acdc09e751adcbda331987fee1459c44a3eaa955443c11622",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1607786,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "6ea70d1f92a5ff262dd280141d97887fe4fd29fab18967704b0e0d149fdda2a7ce3846c5eedbfbc93f0fb4e9c6087ee0880a2eb52486e8c462d453d0b90e75451db449840c",
+          "endTime_enc": "2b97f6d8ae0578139168ed48111706edf945a4b1ff292f0703f3bd8a2064c5a03fa42c367aa575a6e329e1f476c8aaeb8b630729bb42a9d89a17c24e8a3a7e0eb3e72feac5",
+          "metadata_enc": "ffae31ab2ac0f206db7e857b563713747e741b3befbf9788ccc5d3870fd67981ed61fffb1fc172792c0e9eece213583069ca48fd3754e22f3531",
+          "pauses_enc": "2ef307c856cff372cde2d768af6b475248466a3e6418d1457a754909db1680fe153e94ccb3b27767ae8a051c2adab211820f693ac317bc2fac9f",
+          "content_hash": "18d574dc7814e2cb02ec9da49aa14df5cd33e97dc94c1c75746fb5a7dace2f40"
+        }
+      }
+    ],
+    "block_hash": "6e9f5feb2e537b283f295af72250637b38a32fbb8a8fef5e7dc03181d3a987a8",
+    "identity_seal": "88451b245c7332c7062721728cf182b888391877b5a4fc317e2d48871e504893"
+  },
+  {
+    "type": "day",
+    "day_index": 25,
+    "date": "2026-06-25",
+    "prev_hash": "6e9f5feb2e537b283f295af72250637b38a32fbb8a8fef5e7dc03181d3a987a8",
+    "entries": [
+      {
+        "hash": "7e1fe43182066f093f135b5ee695d5a2d2a313e0f0dc0e37b59bcd69b678a7af",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1932322,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "3c1be1fe0ae17d249cef4fb4415297d45db5e9c2adaffdc7cc88e394b794c81ad9ca6564fdc5870c50b9aa3949416f06e33248130f78ae9447657f74e4d84cad590ffcbc1e",
+          "endTime_enc": "56bb16d6b3279d393d2b5b4495ff5e80f90162f48e7bcd0047a00e0edd25d2d4464400ac43e8a94adf37e75fb51d9186c5e68d54183c2eb745a2161c16b5f1372d88772e4c",
+          "metadata_enc": "21d9699ece6dcf5e133a6c95af7d7a7da5d665a8395375d18ad6979fc9e68baef0d8d143e32c7a1ade6c743d13f6e284d0bbb56aa3d531c7ba92",
+          "pauses_enc": "1ee152ae5cfe3c0100b2777c90f4debfa70584bdb2bcaea62059d934f67bbad0aad3685ea33cf051a9c9c4a884e3f7bca1c075078e8f0563e743",
+          "content_hash": "e7499652806f4275e58372975817f5220717ec495b954edb0a75167f7028024e"
+        }
+      },
+      {
+        "hash": "64e03191629d79c45a313bbfdb4b352185a67b22b14524121575a58609e929d6",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3488073,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "5b227084c50923843bc97d1793847c7f043152a34d6d64efa17e7d4285ca40ce1dba34bcda9bc9b466b0456a5459e5736ad26ca46e95c223518b9721a14bd0dacc539cfc6e",
+          "endTime_enc": "9052d5fb2019a4ff38225e32346bf433a9af932639aaaaa06776f3bb5edb69e13f182acef3bfeecb39db562fb9d3dfc688081e990a7ee4b18998de9da0e7fff898af2adc95",
+          "metadata_enc": "5b45b01730686cec43030e0f32fb77e9843a4ce58b9679328bae45b640388950d46146ada394e89f4d9b0b311712a39a316564f70af79c67ec8e",
+          "pauses_enc": "c4a47c7811dddfe090a35feea0373f6e056a15c171368b3f8949694889a105cbf1415d735d71378114b501d81d6085b3a6f34db9304937ff1dc3",
+          "content_hash": "5d8e346732ec897eeca8da078052651c3de15422fccaef5dab8436d458a8516a"
+        }
+      },
+      {
+        "hash": "1d1d6e3c787909f9b644a080455852ab35ad2fd703b7081e7b658898170f431d",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 1931712,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "bcb2416d5b3956a2741e7158c2dc6a843e34f8c1891194595464e3acba755e4cc17a80dbd1c143a1b3d6241b6263db07556a227af9e885728213df2cab325fb7d91c13dc77",
+          "endTime_enc": "514448a3fb9a2689192b75de13c055613ae640ad0b3442e8161822ee33d6b454acd880735b81c9c69cdafd34b6b4d82d4cd03a350e3463955890b9cd5fcb77de615497c93a",
+          "metadata_enc": "a2372c0199bf3977a4dc3b03965de7cadf8ac7659a605578e7a11523674196b76a9bb0bae8925ffe51f0ae362be0cae4be03d76bcec35e5c785a",
+          "pauses_enc": "d82697cfa9c16001b1b10c59537cfc53d117caec5fc1e5ae4fe5a0b944b3363d846f8d6e829364688ebac60feba03a0ab0a3648f7515a9a27244",
+          "content_hash": "345a6a2134308233599a0287fb524018ee8a7542abd73875e1ce9543530d6faf"
+        }
+      },
+      {
+        "hash": "120c1f41cb8c21b0152547c4638c4b7d6339c0ec8e5983044c320dc59c6b8523",
+        "data": {
+          "title": "Dinner",
+          "duration": 3560222,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "9abfd0b21cb5c2de3f5094ef45a268eb49db0d70cd9ef5ac5ee87f9e26b9ad998555477d4ae8ca4822d23f415b8ad47ec22fa8184f63065985a8723ccadc2201db0cd927c0",
+          "endTime_enc": "9af12aabb15a37a495a2879d3a3bbe4333bf8e04de907e253019136436e2bac86cb1fcb2f49263d02ad590fe8fed8101d1d52401804af280ca502b5bbb5d8eecc2cc7f9242",
+          "metadata_enc": "3cd45708769324b8e15b8ec794ddce659f94e4036ffd421833790586e1cff89e5a667f70f523073bba2b924836364eaf18262c5d33369110ed5b",
+          "pauses_enc": "6e9965d2110098a98dd563b8abfb74cbec21e34d1387e373b988499ab0005248d807620afe1c6f957d2d3227e54aa745b9360e9e08ad70f32207",
+          "content_hash": "d2c17e91d068d5e72a480f05615cb9338381aee047dd48cbb4ca7134ae0c754e"
+        }
+      },
+      {
+        "hash": "02d8bbaab7902fd68503280b1981b9924278f1913244973d9b68d719e6592b52",
+        "data": {
+          "title": "Reading - Technical Books",
+          "duration": 7066931,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7474eb2425eadfe38990c0b5d1e33ba467acc9d94b373fa9421230932e0ea7c57109d5a2cba67d9b8d73b81bd4ba6596396aa932c6e4c165aa48be30791d6c7f0fb82d98f0",
+          "endTime_enc": "32fc06a3c557ff7d44eec5890b73204aceff2033bca72a42957a2bb756c7a67b9bf1efd9568da86702d79d7d466b856b8136b216201d651c2259975df4f46e47e4ec780f3c",
+          "metadata_enc": "56a30e18ed1f5d4592e73b0b8d04c2b3cb4fb96a1d993b83da601c72768564f3c4e37e7d9bcf5990addca3466bf67337ccc3d5e82f2aa7d6b7da",
+          "pauses_enc": "4dddf10f25858ca053ba75cfcad635843fe860fa1f6a7fe987893173ce7c0cb9e86e1999e14c712d2b113dc149abb9dfb0adc7e6a967262f15e5",
+          "content_hash": "8616fee6fedbaf86cfcbae236d30f7f7361b0ba803085cd3c98d31f404eea216"
+        }
+      },
+      {
+        "hash": "e545db4dbbf542c0990f177f75dcabbf02c39ecffa51280fa3f6637df6432900",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3701124,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e59eb531bd4a4eae1826527d23f719d00a242e67956768a7cfdb3c609878f2e10ad3af833ece1d5319edd1f38bc873822de33afc0d18817faef8a014619dd4f2aef14305eb",
+          "endTime_enc": "01698b052d80485e27310de1e7a0b6cf902be81ffe92d216844dca21377366b702866cc83d917fd25d31819db9f160103edebd490253cbf4d843b934452ebd8b5fc4377aa2",
+          "metadata_enc": "a31a7551f7b817a1b005a50b4417686d2234b19b83b02285278b6f58c718cbdf7af94f4a91327164e6e04ef928304a9bd3c79344934d19fc7e71",
+          "pauses_enc": "7081b8df357370e60cc88a786db1de50c0cf7b7f51f6eec18dea25c948b39c599f3840906960dee10028c120489afd0bbd066d56f80c4df5d501",
+          "content_hash": "1d5e31531faa84b1ebbb75f4bd7b814b0b2eb7548b5d00abcaac0a6c1b19a354"
+        }
+      },
+      {
+        "hash": "df4f5c4a3f9570647eb8616086937c74267e1884bd8890e31b65b5b27d73d0f5",
+        "data": {
+          "title": "Video Games",
+          "duration": 7393554,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "4ae4635df32e0b940aa3a99d1a8aa9579f0f164519839ce7f7df74e0478e14813aeb3d4e6841869316d6c7b0fefa7553a01ba897863d5b6c4085924dab354ddc69acd419ab",
+          "endTime_enc": "e443625d86742096b2606432923820fd5dc449bfba9afbc947ed3db3a930d25b79db5a8d27f8aebcaacfbede63091e76803c1375729c2295bdfe2a26db990e6157c8649a1f",
+          "metadata_enc": "26d69d17ac3c335a3da97d221a7fa92ab82b58958f203b6f19a147ec717bc3e0fbaaa17ece5d81604330b65647862c7d760645d0bebc9221a30b",
+          "pauses_enc": "48e14a725a8542cc114941708eadd0ee7ad7330d8a742b44b72791796a6389a68143a16651e520552a6a342c599b827a2ed379b3bc7b94506514",
+          "content_hash": "c8aebaff815052baa85276b8b720225bea8ea456f637961ae9ba46668abe196c"
+        }
+      }
+    ],
+    "block_hash": "f205f721c7be236fdb3c7001b91745183ff687b8a2af7baa5f11ac1644a496ba",
+    "identity_seal": "4964521e395275d28e434db0ce56eb49100e7182955d9c4edc435f02c5f24dc1"
+  },
+  {
+    "type": "day",
+    "day_index": 26,
+    "date": "2026-06-26",
+    "prev_hash": "f205f721c7be236fdb3c7001b91745183ff687b8a2af7baa5f11ac1644a496ba",
+    "entries": [
+      {
+        "hash": "38ec9ba6e5a124520a37e5b931d039f1bf2d6a482ad2f94566def01ec60846d2",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1733752,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "041f43d9544d554c0f5a8106c376182db73f0120743362c6ad37bdb688f176aae07535699dcd2f77496a2d269dff10747f82861310bb4442878147d0caaba0197d015d582f",
+          "endTime_enc": "f02dd20e2f670e8b257efbcf66037fd8ce616ab45d4aa80c38801ab9157401d6a82118fc34fa3689523f0243c66cbaea329291c030aef950d32d5b7ff3cde2193745ac8875",
+          "metadata_enc": "96b34530170a74643f28a0dfb1b974cafde4a522558c118ba54923abc8582e483720c744fa7fe039b069fddb1295d65ff6c115bcc8ce9fdff2b4",
+          "pauses_enc": "8fefd801a836f84ca0aee36c1ebe7611b97fdc76fd3f05c5b24612978bfd19f3ca9a0a4cbb05e6e1e259b9d55b598281604335601a4e422c7394",
+          "content_hash": "72a5cf0aebd35029a659ac3cf943dc2828ce707aba70ceffe00781b64334ff22"
+        }
+      },
+      {
+        "hash": "7e23d1991e34e80a00e84d0d7fd6b287d035c83e691d88c6e20f425b25de6943",
+        "data": {
+          "title": "Learning - Rust Programming",
+          "duration": 3502511,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "programming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "56af7eb321d12e1690acf45c6bea179ef00eac838a26fd19db00fb556829a866eafbe42236d4a9b744e2fd06eeb656a4f509dc42ec3b8a7931670984fdbc173bf9eef2aa40",
+          "endTime_enc": "ebba46dc5bb2b00dbd925969a59596328d9555a945f767c305d0b32d735b81d5075291feff8242a95496f1024adfc5d696c902a23680554c4dc0373498255c76c78dbaae2c",
+          "metadata_enc": "9152f639a1b00616fe1cfda74fa291f5f1c4bead102f5121c182ce74879bd6afbc100ae75810ecb62a1d0b2ec76bc518cf568e424e2e45ea8404",
+          "pauses_enc": "c7938a4c1da8347ac8ea47d35e9a1a0b246e80eb72fe3278e29c49afca20b09df35048435e9ccdc586793902a58bf866c9cc7c56d85c3840c84e",
+          "content_hash": "cf8f8a216618a2cc1af87876fcece5a3864c2669b107b753f7908b184c2d0e58"
+        }
+      },
+      {
+        "hash": "a0beec268aa3df4fec4b277058592ce1be99a0e9eac500f01b87ad7a70fee57c",
+        "data": {
+          "title": "Dinner",
+          "duration": 3644207,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "d060c58a29e0c447f0234cc923bd9fc48fa70334423528125f3e0fd7dd035ad7fe7e659dab45dac8d77635f1d9e69f88f338519eea2676afadf316b88d4908dd434c7c4760",
+          "endTime_enc": "ed635b74aca9c71dfc48b2ff4762d1ae16d342ba2e4f919dd038c07be2225b4a54c0695ba0d4ddb1e54d2f78be109bf1e29ba275e7894b2b553b234d11f4d564f7a0569b8d",
+          "metadata_enc": "e1d9256999ecd5430e0f80c6fd5b9531f1672211c7d44861e5d20b28899bcd54d772f47adb5b5344c1ce874eb6ab6f57866ba5b0306e2f1323eb",
+          "pauses_enc": "b4f515874ff1fd3dcc8c9e326af12075a518a33a726ec173e23c58db29a8ce51fd3e5d8f505499ec8e88e4f71571dd4eeffbfaf32d0fbf4ee8b8",
+          "content_hash": "0deb48286fd81331685e84b61089640dc98a9b48c393b2de6ad9647e21770629"
+        }
+      },
+      {
+        "hash": "b6df09d6eba3c2d3f5579b41d0cf9d4b7cc24fb062ccb08ed0521c05147a00d4",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3372792,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c4c01a1f6617bb815c8600cb481eb1b66192a5cfb25d080494a7af2cfcff89c6888a1f671440374359a3b06efbf82890f9569ad5f3704deb24d0ff929420e1f9f07feb7b67",
+          "endTime_enc": "42346df18d1e453cfb95e6b3c357137f64c63b0b98f6f29a62af8867866f354b2bec7832f4ac9116ab565e3b09422dae661fcda797333f3dd1d1561626de2e6fa5c3ce6474",
+          "metadata_enc": "62947947ca02eec4cc3e67e9e4c7a1f71aa7a9bc3b8a614124a17bacc5e6e83590d86a1dab6ce60c0520d73a6644062c2e9f5ca895d4d85c7678",
+          "pauses_enc": "134ad1003a2012d249c440232387797741e962140718bfa416248e48c0e346457ffea673ef2cbd3a130e5316f4fcedad6223307be593ee7be3cf",
+          "content_hash": "abec7d3dcba69a5ef2af4e7cc2ee6abc530c736e1394ea261b3868c38f3ae91a"
+        }
+      }
+    ],
+    "block_hash": "c28083f1b8844ca28b1a7bc7a28a2a4c6dca9cfd09cad41193bac219ca8c8588",
+    "identity_seal": "d172e4b7ce4798ef829fcc4609a7a7defad0e01dc64d85600eaaacf3a3e997f5"
+  },
+  {
+    "type": "day",
+    "day_index": 27,
+    "date": "2026-06-27",
+    "prev_hash": "c28083f1b8844ca28b1a7bc7a28a2a4c6dca9cfd09cad41193bac219ca8c8588",
+    "entries": [
+      {
+        "hash": "3dc927945985dfd61336dc7621582f44d996d0120a4183b712833f8185bd9a50",
+        "data": {
+          "title": "Working on Side Project",
+          "duration": 10620944,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "hobby"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f6693aa997d22a1a387a6bbc8018ace1ff76146966cbf31d4ee6767e9773f63d0e1574f5a6b2267e64216dd45ed20cc5b98ed905add00b3bd3c4a67da942d1ce35ec06389f",
+          "endTime_enc": "3ae422f7f173ae6f24845480ecfc149fc7dd9e43cfaad5c79b3a021dfa0a2292e3028071c783d6c4d776204558b91949d25786a86a421a50ffe09c769e4b273ff9ab9774dc",
+          "metadata_enc": "42f81632ac946fbfb1042e5fcbc52a46c45890165be869564ec68ca697dcf5988eae7547711f1ebde248c9fe754f7eead9f5abbf28c431c3eccd",
+          "pauses_enc": "ebd3243f72ff355025414f070fd5e5e9b5cf51cf1419e473152c9f9c04d27f53eb5d6605b3303e436d226d68e88623059f1f626f1c67e8458450",
+          "content_hash": "88aca1c39edb925cbc60215b8a74584cd8af8512c5285ec0ef2fe6a0b6738ce2"
+        }
+      },
+      {
+        "hash": "5076ef40d9104f2f821ffcb9f3ab5e7a031624fae4b6a783bc0ce646648aff03",
+        "data": {
+          "title": "Lunch",
+          "duration": 3487241,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "f21eb8c1598722db2726bfc0834dbd25d811e00e6e9af65afe132078b8049fabdcf1acae44e27e56a5a296cfc31d28dd6848b112d4d08b5eda30e9fd7e41eddfcbb83d55e1",
+          "endTime_enc": "41ca2e51bfe28b6c9cff5b78c0b9ed39842ace943b3659795a6b0799f325522acee6c96690da336a5020239d5139a1da3f4efdc7d4d95c3fd6eee3a7281a6e3b642045f916",
+          "metadata_enc": "16c3af14cc0eacbc59ab3526541c979bf98c4d886de36226632b774f7d55e1029441697d49cbd2fac9e13e9903c51eef614d037ee25449f47b9b",
+          "pauses_enc": "68e6850f7a78e57206c8d077e84db8dea5fcef26bb7863d65512a1fa54853218765c8b1bed62a5bc320fa1c3d7902c9c2719eeea0d7539d40d3c",
+          "content_hash": "1a90a1afe2353c7cda78fd6d97cd87c8b84e8af08ceafc8d2cc7c87ee9dad0e2"
+        }
+      },
+      {
+        "hash": "549b00782a99e9f8ccf3816ed8d88b6fc0e91695d76c9ff7c5890badff5b8b7e",
+        "data": {
+          "title": "Garden Work",
+          "duration": 7178361,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "garden",
+            "housework"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "a3728c831473f4a61bafc041a9eb99ea1275ca075600f9135c36191da022ac4062d1d768d7daabf980b63950c16fe95f93555ede9c0f69a2200d652ca8f444b29ef3220dfb",
+          "endTime_enc": "348dd87d9e13821886b4d195793892f52de0a396abb737cf01734199d2256f794239d29eae67f7943d2310e69265f8fe548de4bdcc6de209daa9dc6bbc46c0de5265ab8bbd",
+          "metadata_enc": "51e2fd91a6f680b02e2c98f4b2e4a28e9ac7b03b7ecf049d0fd54e42ff55345567f04ab0ea6ed3a432c4947602b8f6554ae25f328a54cf905f49",
+          "pauses_enc": "bc8ca4dd0d63c095492c4243ce3f824008ee38cbdac120858ed7ffc9d556fd40d9fa7cbeef141235c60488da811e39e730764b008162e54a13ea",
+          "content_hash": "26d0afbe037c7783b13cbe1032efb65298cadb0b3b30b06a072ed0485931aa19"
+        }
+      },
+      {
+        "hash": "8c51ba016fbc47137d3195a748b1bd5ef24f938155f89f443153d6b5bb31a2b4",
+        "data": {
+          "title": "Video Games",
+          "duration": 10613668,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "entertainment",
+            "gaming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "7420c0c122664d9b2df18be7b0f22e17dd2bf12c5f052024d0b87f0adb8d5550a0712ce01b6860a0f7d7f5830ab8da35263f61f071b729bd650f42e0743c24fe442b436b71",
+          "endTime_enc": "a8e2e0e8c54cd8ffba2edbe2b94ae0a1dde391099266272d0b52753883140d1f4cba66f1fe5fe230df1a2fe6628c118e801cdde7b1e8a3494f1b3128ab2d6bb64aa176dff7",
+          "metadata_enc": "758e24649ff8612a19bf1be458ba68ee5a5d12d384cb9cac9288ec89e76529a56df35e55caf938be003746ee6340fb88f81c47da3ec2aa1cc39f",
+          "pauses_enc": "9b76cb06a604789bf4c36d2207d2c6fc1159ffb77eea482eda66825a80c646ca0ac1dbb7ff97056b0fe675cd1ecd0446dd90b03b60b36715eed4",
+          "content_hash": "debe31cc87b44963ccbe9d526002736d4eb861cee765d070b633dab16b7fcb61"
+        }
+      },
+      {
+        "hash": "8c839e1317eb2c4c116feeb2727753e9b082c76dae4ec82b6af4bd95f7a5bb29",
+        "data": {
+          "title": "Music Practice",
+          "duration": 5555673,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "hobby",
+            "music"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "341acba3d962ba48b199227bf1479a863450fceec598e3a67b88c64acfb1c7bc237cf990b8bb66a4facb6a72af4e1991d5d0b924cbc8f9e7adac7f6b9d37047022142be4a0",
+          "endTime_enc": "7770c17f956fd20e96e2f09cc5c67ac2e0086ce8736584394b814f62d4f692fcf1467ee8bc9b14ba7c2b3f080c00d5b6a5018487e9863401d714b120334700e583f5963591",
+          "metadata_enc": "50276052af002ee202ec85fd1f02618c4ca980b8cde6cc8f4341ad2d72c7e0c56093b27c8115990003f20b6b7d27e7a73e56a76f4d5110163b9c",
+          "pauses_enc": "6fe58cd0fc819a535a54ee1bde24381f106104dc4bb7afdea5233663fe07a444d06a052547176696f51a2177190f411f3b3116d8e814fba175a5",
+          "content_hash": "0751ba29867a31d2b0e0b8eb90bc38cdd316727a0b1630ba86faac48d1975616"
+        }
+      }
+    ],
+    "block_hash": "0a28940f9b67cb8729acba88da76525ebc4390114d4a3a014db75775a1e59141",
+    "identity_seal": "d2865ba05f8aa91acce9f50e9a203dfddc30e50d5c802debb68c1482461058bd"
+  },
+  {
+    "type": "day",
+    "day_index": 28,
+    "date": "2026-06-28",
+    "prev_hash": "0a28940f9b67cb8729acba88da76525ebc4390114d4a3a014db75775a1e59141",
+    "entries": [
+      {
+        "hash": "3eada887f55bf3efc2d63724ffc1d5239a3f5efb044cc26c319a1308ce97b34c",
+        "data": {
+          "title": "Brunch with Friends",
+          "duration": 6946542,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food",
+            "social"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "1af6bacf440d496268c4a6ed3c8915b9ab21244f6c42c4b3c97147b095aef72e48d92d412f0ab90e593682f57a1b45f6d3c6f49b778c3459b3d2daa4660ecf87bea4f2f81e",
+          "endTime_enc": "0b7cb55c5bd500c8f10d84726f5e45243c3ba4433ec9fbd47cd979f2cf1df798e759ae70e4af8308135d82cf970d95d922cc02221b4638be47823a82734cfb40486c6a269e",
+          "metadata_enc": "f8be05342ef1cc447f69436ef5767394f4a542c35fb3101f613524e0093c469f9f242b5a74df7a7871f31190e1293e222dbcd3cfdbbe35411787",
+          "pauses_enc": "3b843cc6544a9639ab32dacb9e334faf5c8408918b01a41fab378a67af77fde2a01e2c15a0f70dc18fde323e66f72cb59341c14697daac2b4c69",
+          "content_hash": "c7cb6d3dc88d4847ff73f1a4ff0d67eb25284ad0bdb49cce4da355d20e88c158"
+        }
+      },
+      {
+        "hash": "c5043cefbc73f616f4a3525204e8bbb8571b9dada23bb7ed5303762cea6a110d",
+        "data": {
+          "title": "Reading",
+          "duration": 6901773,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "reading"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "bf1f62166bf0a59a2b4b9ce9b572f5e7a110189101afff259ed622d6c0010dd09bd7a59b7204f88d40b69e8b1e6cebec14587660c3d4a077d1507edf0973e508f34db993a0",
+          "endTime_enc": "5be1685866070d1a2b22f947c4c2cac791e362b269e5c0a47db3d7166025bd71a69eef035c20a78131162978fa1289bab3f8eca4b4bae3f36f763f1969c72661a706f860da",
+          "metadata_enc": "cc22809ad6c79c628a47af4860fc4f1287f88d7985bfe9182406df8aa3b114896a51927099b96e0f3859bc4314c71792a2086888d714a62ac0de",
+          "pauses_enc": "f9879fdc2b0f737a809c91cbdad949ad557962d50c2dd286dcff687ea067bf543741c3d83927039789251256e2e6212b943b5f73bd2fc0268870",
+          "content_hash": "afbb0f10c19249884e84c526155247f0ed5b3b7a474348fbf8a9f3124f9175d9"
+        }
+      },
+      {
+        "hash": "cd59a417bb13454ae8652c9160dd25dca5ce08143b0463eb44d06c8867eb7a2b",
+        "data": {
+          "title": "Lunch",
+          "duration": 3864607,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "325caa8335bd319fbbf9688bf01bed9142df3f292e096386d20a9fe14e549e96d249f0322bbee8fa2aa2223f10e7973477c5c96d2cb9a3e111c325f4f876e5960bd63e2ad6",
+          "endTime_enc": "8cd523012b9cf2628225e7540ef827c0ff33de07a3d67f8632ed599afdff2c4a8303aa3a38d9322b7aef036848237fd30f3d913283087fe111a1faf0f182b3c297720022ca",
+          "metadata_enc": "fa8613442cacec8e71c64e72ed0e49c9f2a2a73c8147bbc999a763f15ac0b287f0a53616ff03d7736a13f4acaa9fc1f4156098c662ff5262df6a",
+          "pauses_enc": "8c71f6d8e04d517e9590d36bbf7b27330ad5a85eda546130a50ef23350072fe12182230a6ca6f78eb33de143286914ec64a445fc2649b096cca1",
+          "content_hash": "9e1e039c972687a9b60dbd4aec97cc2fa2e219c602a3898c1dab3692e7dda98d"
+        }
+      },
+      {
+        "hash": "637494a1d5286d4f0eb5895de459f3496ed571058c4aeba554ba83d279c53f70",
+        "data": {
+          "title": "House Cleaning",
+          "duration": 7106606,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "cleaning",
+            "housework"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "3509cae8952b1457dd62ee3f7c55720f1c3ae7085ec950f47271f229cfca24808cfa98683cbc2feaaf7f04edeff33752eda0227599baecf324faa71500d00759fc62bef51e",
+          "endTime_enc": "4b8ef1aaaac48fce7bcff3b22cd58ff2d1759d2df5bc7c0933078a2011c6d96b39c03d141909696be2c607a9fb8853c3cb7d4ac97a0a8002bf0bd7cb96c7149af76c372c02",
+          "metadata_enc": "d73e4045b20344e74a1c84483010580983620f99bfc4c55fe2d1203e44659fa2f720fdedc7c302c2f09ead8b5e79aa1da74240100e24da9913ad",
+          "pauses_enc": "6b569ec18f00f2a52079cc04fa8956998b4d3c4acf592c7741be0860b5f09b95a33c87980cc5f86a1a11c6df319b83a6e22d88804abe20a64955",
+          "content_hash": "5a2bcad42491207a08e9729577d7b9832fd27ae90493e8063beb3bb9b0631c8a"
+        }
+      },
+      {
+        "hash": "189387be87fadfa8e426dcaaab362b3766fdd452613c65e24fd5ed27ed8279d1",
+        "data": {
+          "title": "Dinner",
+          "duration": 7352248,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "c60cf7e65c15374e1afc9c1b5ad474bed4ad5eae246b7a63f814864991ceea917af055045252896c7e64c2f276bd4fc1bab4b613fb4d6d0f8c28f9c69f7f21a0cefca7c1ee",
+          "endTime_enc": "8c88ddf8bd675bd59d1820ab2e8cc1c945aefb70a51886b5c368fbd2929c95d7b6f270fa60b6e76f124f0825446918c403b6cb269e8f29d0fbbc7f93e506fc1ffa1a5667d4",
+          "metadata_enc": "06778fa7d12cfa87b0addf74d5466116bd0d35350c1a533934adb3501097b564ecd6e8e38776ec8f91c255a7e8cb3ab9c1108f8c9f218f080211",
+          "pauses_enc": "138ebed7d6115d74db6676c4b953b5cefd4211be13b1fec2fa6164708f041839f3be0e6e1f3e44604808bd732d1fe1a8114031533e9c992e20c7",
+          "content_hash": "a897d7fc0dec18662dc09d0967708cc74d5c2d342674a46b11172c30e756bc86"
+        }
+      }
+    ],
+    "block_hash": "6f8c098612792ba0bbbec48c629eb7ab1d6f325e6fd92e1faa075277218c2d2d",
+    "identity_seal": "398587e1c35eb2b3d196099297a2afe40a61004ca34c52887e91f9b646e6c18a"
+  },
+  {
+    "type": "day",
+    "day_index": 29,
+    "date": "2026-06-29",
+    "prev_hash": "6f8c098612792ba0bbbec48c629eb7ab1d6f325e6fd92e1faa075277218c2d2d",
+    "entries": [
+      {
+        "hash": "6d045f83996abfc9ad244739c8e4e93af153e1fa013d1578df5693153b838237",
+        "data": {
+          "title": "Morning Commute",
+          "duration": 1824308,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning",
+            "travel"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "655c6e2c8bb6ab2374cf94e24ead1507e5c505b80d4697bd4341cd8d7b4636c6c73272d0c2cf3c67a13100cb6de538691d0c1e2f437f47e935dde96f0e07c5e4f1a6ebf546",
+          "endTime_enc": "4d8f630c296b2df9c87c26473a81c24dce8bf2ff813d2e2810d911740227dbe0b499d5e4753711c9e401e256f4f8df08afeb4056a73c2955b95ffddcd65968f3da703eb1ba",
+          "metadata_enc": "cff19a4f3ea6672635e1c48aaa9f28a22de8cb72df792931396e97454130a0ce86b2c52affc352b8931a45c366c28f27c16a5e48318e85fa7382",
+          "pauses_enc": "04a0dac492aa70dea964ba2594de7b50f09ff6e5f530f1b7277b4b6a9fc33c443caa00713406295ac9fbf0a4f54c54a6fef43da5fddcbd12ab98",
+          "content_hash": "5af9124e1cb30ae67867fdea69689d536d71fedf7b1c0b921afb39a3be1d279d"
+        }
+      },
+      {
+        "hash": "a21a91e37e5080ff2cdbdad29ee0e2ddc9397bacfa918812ddbf19276ddc4f42",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9128231,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "697d70af0216e85b99d01505cd16f984078f0e35c06152afb640411ba9ce6ff422a9e359f60fe48cfc339761b7648ab87542d198ad0d06b171b317ecc1868b7425e1d54ae2",
+          "endTime_enc": "00ae2bb6a71a8e2c61899bd16e7f9d97cedde5a84f062a5cb7b1a99bd1821e5e5a8937655f3ef2e3025d40ae1a72d11c3a4b928361411b61e3f42258cdc9897919c0472949",
+          "metadata_enc": "97e634bb16e02640fe3935ad7ecc3b1658832eae4909f1497d1174c11824f474fe2f6f5c8eda6aeb77aa6f493db94b9b0eaf7a29735823eeff82",
+          "pauses_enc": "0201191a598846815519546798dc1687702c3abf055032a02bd0a9674c75e2f06d38796261e84ca2e45b7fb3520f568ad6812e14b135b0ffe795",
+          "content_hash": "420e30a8941d4c58a9f6399a843267719086b57b5b359e67b0140980e5416a43"
+        }
+      },
+      {
+        "hash": "97654ada0a02dd9f70c1f348d27c63e2b79e356b9b3eb1d2a71f9c79bb6904b8",
+        "data": {
+          "title": "Email & Admin",
+          "duration": 3721947,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "admin",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "beb7077b57a83aa4c52716c22c2b562c45b43e55c801c18a1002f126098758129c5ccf3455c96f378b9709b79d4fe6385790cdbb41518f4332359b102aacb8975cd2c96664",
+          "endTime_enc": "ea18447642e1e78ade5ce9d2fc1d7c8b7c9a4ac6ba36bb18233f55984098359ea8b821d31250f9d4685cf30fd6d4301b5dd795696c0f77447252bdd17d3ad8abc242cad370",
+          "metadata_enc": "95897232d1f474fc96cb3b1b644aadce7f507cfa2cf1bee2f730618cb39a79299a1d4a8798cf997abaaf2103c933ef34ed664714ec13777a9c75",
+          "pauses_enc": "f69ef925be8038750dc8a5f8a522cacb1f6c9ca3bf2b886d678ab93e0a1d88dc1eaf29e21ae3298717bff06d460d403e25a350f44e2554d5c0e1",
+          "content_hash": "019526c5b00dd0a2422d82f399a632645e74393906d5059293611dfd5ac517be"
+        }
+      },
+      {
+        "hash": "aa6148a7c012328e709f98c20404e45eb26907a7e7cae4fe3880bdf5e5ccc3ce",
+        "data": {
+          "title": "Learning - Rust Programming",
+          "duration": 3881343,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "programming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "e664973ecba055f1657a7dc010aee522b0c30ec06dca55ab60ced353bd1e40cb982397b0726ae932ad71df8d49b6705ba528490b5a24144cecd4c3e60843d1610e7f42ac14",
+          "endTime_enc": "1a88cbce007640f71d3f58965e045c3b5007ac75b5af5c7e88a68ef6a55feb9799ebd6d130f38ef03c3cdf01771a72c52976aea8fe576faeb7381bb0133d46bf906f5c84c7",
+          "metadata_enc": "cb67040b1e64c4ba75d719fd466634d3c4e0ad76f81a19c2334c597acd4b4490af4bc0f60966b13f941873b8a73d895a03ca72fa876f3c39f6c1",
+          "pauses_enc": "05f63909a8240bd410ac7a28015315e1cbead4cac47f545c240987b98d09f5bde522f4d94c795961c4ea27e5d9172aab894f72d6f964c166407a",
+          "content_hash": "ec2bd917035dc593ab458a78ee5d3e7db97da8192867370b061b2899fe852746"
+        }
+      },
+      {
+        "hash": "171f71dac37e00237c611a20b84836b34a8e4838d44bb9c9535659c5853d9b96",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3501158,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "a49b374a254c51366a096abc26b00cc24bd946916f4d688bc2b1a1c00a4f276f055dd62f8470035f5b5fb0c6bc7eab177755a8b40665f4dd20ae9c7d425504adec947850ff",
+          "endTime_enc": "e9156fb85b2b01fd1d5fe6751d74a74ed56d78430430e003c62123f8d224277384990911b23af57f58ee90c0d3f4f82b0cf4b2b758c875c29bf57607956bba434580af6099",
+          "metadata_enc": "35729222400df42e55f48df09376040e0c56b5fd25ddc35f94ca9b664d769b2ce21ba4fdb6c791e067c1505381fae3bf5eaab955ab974c0431b5",
+          "pauses_enc": "89906f89959b3e3b01ec8e7b720d6199ec44dc262d443d5df4a83cfdaab98d2d5e92c455fa0c531c4356fb11b6f38f63ce235e861a04f2ed1691",
+          "content_hash": "79353749ce6f1f4c5d198abba6d588beed0c31fd7e81b8e875f7fe6e34573a8a"
+        }
+      }
+    ],
+    "block_hash": "e596879b26eebeb2c7cab5d4fe5a35ecd2ae7115a4e2886bd9f32bc7df37be04",
+    "identity_seal": "2a34efb83ca085ee508a7f786bece1be8cf60f119ed62c333257101a306225f9"
+  },
+  {
+    "type": "day",
+    "day_index": 30,
+    "date": "2026-06-30",
+    "prev_hash": "e596879b26eebeb2c7cab5d4fe5a35ecd2ae7115a4e2886bd9f32bc7df37be04",
+    "entries": [
+      {
+        "hash": "429d2e451430b86cb6d942f29afaec3bfa38334ccf6f75c2a9b33261b9b7e344",
+        "data": {
+          "title": "Coffee & Morning Planning",
+          "duration": 3637902,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "morning"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "dc4deef5a96b26f7a1bf757420de357bf3468af32d41e6daa95ebff85fb41bb2d9564a703aee1dbebd56410b6dfad15170bac8bdfd5806e9071ec4c1c11936605474a550b4",
+          "endTime_enc": "838de013210eb3412172c1801e19e5d2a26022a50665e980d5df2d675c8259f00807822e2a9c2808628dcf0b4f1352dfff7b897feb104fc4988320570200427ee604c286f2",
+          "metadata_enc": "402b549e2729fd9eec2b3a0ffe39c24445ff7a4d7b4c610cba7c11fc42cb23f217aa9fa1f08d850b16f4264f0ca26af09490e385f22c18349ed3",
+          "pauses_enc": "a6238b79d6a0441a6f6f9cc8a18ae4802c70c40797a7ee018715bb99f146ffea2fb69084ddfbd05ddfe091551c4fe608b1e060a7149fe795ec6d",
+          "content_hash": "ea233e2d3c17b3c13d0f58a83bbd91a8c52f77db5c7ea3da13e1b74df6478846"
+        }
+      },
+      {
+        "hash": "054e364bafcd15acd6145e0b5b7e82bb8d70fa92e6b3e6a2720cca7c82585d1d",
+        "data": {
+          "title": "Working on Project Alpha",
+          "duration": 9163246,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "d36518dabf39fe99a03377e62f83c4ef8a0994f0eef68f9c4fe215ac9548f9e20fa97beae189d7f4ff0c14d7203473394f4a8a78e77d73264dc9721a293704be4c8785a1db",
+          "endTime_enc": "4d6410596736d6bfd875050c49276f215e226c8bae21006f9d07763d50a788fc9940d030b8775dfda47d700064635a926a74dcab45c954b5ebb4cf3e3ed62e57fae0a6cdba",
+          "metadata_enc": "1da46bfcf4d210f73a17bef4e521346f6410acb790111cc4af9eb7945f3dd01155ae6595cdaa7b11458bbbd6415fa987a93e0d84a235914be07e",
+          "pauses_enc": "219e28af7df76bba67ce5084802f3a2bed4463cbe750d12265da96522665e2887c7402a242ebd5a26a82372ae80abc6a65858dac987778be1b22",
+          "content_hash": "beea4e04ec80efe7bc1af44e6eba91a213653153ac0c21d1ac6061d64d969ad6"
+        }
+      },
+      {
+        "hash": "73da307c1b92359501bfdc0f23169811da616d1462940fe27abaf1e85c022a2c",
+        "data": {
+          "title": "Team Standup Meeting",
+          "duration": 1724082,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "de030c792d816346c7f0bfae88960f80de88883b2ce13a16aefa5c2d54c73b30b2f3e1d379fbff88261cc146fe896d36e04afd6744cf5c6283123634ac01f07482978456c5",
+          "endTime_enc": "3b58cd8e4529829d80737573a2962783198e8a463f090202b8f304d25c672d41f6398ff24ffe2c3739ba26cda3868b17792ae18aa731c5391dc4b9ec1ec55a8f495c2799de",
+          "metadata_enc": "a4b599219fd000ed631fd53a75e4116cbde1989a2eb8df612ec12a346d64f461f63f9ca1c50e5cce5864a3dd19ffb36172baf608410aff09c0be",
+          "pauses_enc": "23d3a5ca04cea9ef97c27c4fe58d6543be8598c5f4ff59780e5a8b8c43332aec4ccecd990e8c55efbb60784c615eb663c196bdf65897e23e7d3c",
+          "content_hash": "fa9ff9e223dff59bed5c2696162617e151dbe37e4df095049dd77fe32069142f"
+        }
+      },
+      {
+        "hash": "a47ea0ee6b1343fe1e3360880a2d9f7d4e3c3dab5b1dd3186f7111b684a84a9b",
+        "data": {
+          "title": "Lunch Break",
+          "duration": 3796171,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "break",
+            "food"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "38f7f893a4579fdb14ef853799018d61eb5b38e2a5545483cf5268abaa7bb406d4922edc8ad5fef898da52b2947b61be24c627239070a311545f904011f2712590b2eb0b65",
+          "endTime_enc": "749ed52a74dfc4d47b8dcf317c49b4b181028f9fd0dedd3a39f9e07e08ff3693b8efceefa79a8c15c4fe6721727165cfc2122c765666b7dbe22f9e823a78146fcd660890c9",
+          "metadata_enc": "d0101d8a76989386f827a9605fefecc236d2b5cea2492d7f9f8c1f2f5f6de1b04baad077081598672b15317fc801b7cd2a90a692204ba8332d64",
+          "pauses_enc": "48ba6c2ed5c056e1c95c18e2446ba13057931d8321f4cc3e6edec310fb34d07ac432aec8d0ae6597c70af9c7e9045a913624f6f5205423a2c836",
+          "content_hash": "ab7e79209ba94c6a3a24fa2de11e4ea9ce917f7c919d326e13ddc3e89ec7d49d"
+        }
+      },
+      {
+        "hash": "ec1341eb96474cc1b36caca84da76a0e43e9e909c7f7deec292df64814dbaa34",
+        "data": {
+          "title": "Code Review",
+          "duration": 1588914,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "coding",
+            "meetings",
+            "work"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "36acbcf9c5debf671f17ce30c468f9efe71f33044bf6a76abee62e165c0dcffbfaa9b647044ab0098f4e888ae622994168b35b0ab00b95aa9dfce73cb71f35a3967bc406c2",
+          "endTime_enc": "9c5fc2f7d85ffb20c8ff40435be599dc0f6d5833e6e00efd9633e25c3ace7134c6e41d4c76b63c241581ab99e4f220b9fa89a2787f258f20ea5bf1cf7bd53c646c22dc1f83",
+          "metadata_enc": "0d1b71f7c524c4ea16577b8acc0b90b81201bc4d1b464b594ac111281d78345d02887a50805fc98ebe82061ae311d5a66fc870b55c48e796d78a",
+          "pauses_enc": "5d635fbeb63505c2f72a45390193d14769cfd71120f57c58489319188f9c4fdbf67b7ac7983f0f88af11cf7881b9c03344f28b523af82557b83f",
+          "content_hash": "66630b1295de8a04723df35bf5ef624a3c0daa250e74706bf3376590a894b24f"
+        }
+      },
+      {
+        "hash": "462fdcb64354bc498f5f97adc3f852a1f39d44bffcb0fe277e73f233d273b705",
+        "data": {
+          "title": "Afternoon Walk",
+          "duration": 2040490,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "0d88b338aa91107a6d0466c43c05f56eec352b1f99f97679d6e097afc64c98ed2fd4fcc442554307efb2a7d04deccdd7e63b3ff110f0288880999133c6ab08a4cefc498079",
+          "endTime_enc": "6fa0d16b3ca7ef43ce901feb81c1ffd8d325075f891a4e91420eb992fab96ffb7721b8615d891fa402174743a670f671f2a525259dc538caa4dc036d211719ddafb4ad8e0a",
+          "metadata_enc": "08d5a8b614325c8202189f55482fa73451b4b3f8105dcc0293b600f2b96752b08294f231ee69b588b8c2cef7a3275adc91e9beb4f841f46efd72",
+          "pauses_enc": "4cc34887f5944163756e9fb513ba4f26dbabfb72691dc80c1b3c9e4051f2d51c4b7895ce27fcd4c9cbeb51d20174bccbd7db9db29b0593ab2618",
+          "content_hash": "97cc4427db8f8edd5d5a2bd882fe21bf235d706f43acbfd92ebb150c1fe7b318"
+        }
+      },
+      {
+        "hash": "35fabb4d77b5b42729e4ac5a1146f9345ccf743cb14a7621948f28e3937172dc",
+        "data": {
+          "title": "Learning - Rust Programming",
+          "duration": 3651470,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "learning",
+            "programming"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "073e08119cb0eb6b8e1118a7caa7e6b8c3e67eccc247bd21a08c8f0d801b0b665dfa3798f016e62d38e1cba1e8d153897ce623ac7040f5c3d5fbc04a263e418a0f71dd8b48",
+          "endTime_enc": "9342f9f4ce35f462773e694ca457cb81bc1436dce7a561084ebf5020bc952fa89d0d0b9a0eb449aad969b496224eaa0188964dde6755db7b99c466269702fa5416b1004ae4",
+          "metadata_enc": "b03efed3856fc8efad0802cc3810d6892b2d2c1fae847a87bd3f601a2312b898463b38f420df91258b1923226552bf011677855515538d9ce3c1",
+          "pauses_enc": "d6561042b8ebff7e2b95733ebd962e57cd242335741af4407783b4a850371278ad3379843cfce85a9df9ff549abf80b447516c3c05130b623cb2",
+          "content_hash": "21caae4bcb40fa5bfe3c4dd126a9e143ee7ab0f3d14f08f0e5aa153c1e468104"
+        }
+      },
+      {
+        "hash": "e90a2c40486b8af4da5190e3d8446dea41e13fea3f25b5bd9f3700c1fc711214",
+        "data": {
+          "title": "Evening Exercise",
+          "duration": 3546277,
+          "is_active": false,
+          "is_paused": false,
+          "tags": [
+            "exercise",
+            "health"
+          ],
+          "media": [],
+          "comment": "",
+          "startTime_enc": "3f003d0a223cb3f6a041dd7639657e14c4d3d81c7f047c9ce868f591df2455e219fea06608fe6e3eb83a83c8cfe4320131c6ddfb0f2f8c59681d40dce3ed87f274a769b19f",
+          "endTime_enc": "cd4c8800e6d87e110b18499d8273fbd230524b6b3c58c0bfc931f920563f5095e4f81461c1c09d3a49fe7edaca960581fe86cac4b5a1c3862414bb4df3f9340e026ca94595",
+          "metadata_enc": "a4e80e55fe6a450affa785bdefbf4edaa05abbefc04eacfa0f705086a736d1909ecf8a65954128dfefd83da270f19a41daa3ebbb1e07a86c3846",
+          "pauses_enc": "b7d6a7a85a3cacbe43f30385d36a51bfe9c581bbcfa32f4d425d58916767bb973d68fba2c7dabbd078e3cd73e6100b6ed2067dcfe4e36b5cf1f3",
+          "content_hash": "13a59607524d922a39dee6f3fa7d67567be70f265f5365b86386f82bd21020c2"
+        }
+      }
+    ],
+    "block_hash": "4a2b0f6735d5872572f75e0435ea812f9d51bf1887c254da7b89ac93a693e943",
+    "identity_seal": "137f1c0ac74f0884991618f88df5a5011e91f599be5c668e31ac2e947c4ea47d"
+  }
+]

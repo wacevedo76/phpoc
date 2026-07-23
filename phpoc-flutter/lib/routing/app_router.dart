@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../features/shared/loading_indicator.dart';
+import '../features/landing/landing_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/auth/unlock_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
@@ -81,7 +82,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/landing',
-        builder: (_, _) => const _LandingPlaceholder(),
+        builder: (_, _) => const LandingScreen(),
       ),
       GoRoute(
         path: '/onboarding',
@@ -104,11 +105,4 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Placeholder — replaced by LandingScreen in Phase 2.
-class _LandingPlaceholder extends StatelessWidget {
-  const _LandingPlaceholder();
-  @override
-  Widget build(BuildContext context) => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-}
+

@@ -29,6 +29,10 @@ serde_json = "1"
 # WASM interop
 wasm-bindgen = { version = "0.2", optional = true }
 
+# Flutter FFI interop
+flutter_rust_bridge = "=2.12.0"
+anyhow = "1"
+
 # Random for WASM (required by ring's wasm feature)
 getrandom = { version = "0.2", features = ["js"] }
 

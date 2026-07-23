@@ -8,6 +8,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 | File | Temp | Key contents |
 |---|---|---|
+| `lib/core/crypto/frb_generated.dart` | HOT | **NEW (Phase 3)** — 23-function Dart FFI API surface matching Rust `frb.rs` crypto core (AES-128-CTR, PBKDF2, HMAC-SHA256, blob obfuscation, device identity) |
+| `lib/core/crypto/crypto_service_native.dart` | HOT | **NEW (Phase 3)** — Thin wrapper delegating to `frb_generated.dart`, 29-method public API matching `CryptoService` contract |
+| `lib/core/crypto/crypto_service.dart` | HOT | Pure-Dart crypto shim (74 tests), to be replaced by native FFI backend |
+| `../phpoc-crypto-core/src/frb.rs` | HOT | **NEW (Phase 3)** — flutter_rust_bridge Rust API surface (23 functions, mirrors wasm.rs), compiles with flutter_rust_bridge v2.12.0 |
 | `main.py` | HOT | CLI entry — argparse, auth tiers, staging + orchestrator wiring |
 | `cli/interface.py` | HOT | Display: `view_active`, `show_rep`, `list_habits` |
 | `cli/strategies.py` | COLD | `InteractiveCLIStrategy` — sync confirmation UI |
@@ -35,6 +39,28 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
 | `worker/src/index.ts` | HOT | Cloudflare Worker router (~175 lines): CORS, auth, generic blob handlers + row-level staging dispatch |
 | `worker/src/row_level_staging.ts` | HOT | **NEW (Phase 4 REFACTOR)** — Row-level staging types, validation, manifest helpers, 4 HTTP handlers extracted from index.ts (ADR-025) |
+
+### Flutter (phpoc-flutter)
+
+| File | Temp | Key contents |
+|---|---|---|
+| `lib/core/utils/format_utils.dart` | HOT | **NEW** — Shared date/time/duration formatters used by screens |
+| `lib/data/ledger/helpers.dart` | HOT | **NEW** — getBlockHash, computeEntryHash, verifyEntryHashTwoWay, computeContentHash, verifyContentHash |
+| `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain: buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, computeSeal, verifySeal, identity MAC |
+| `lib/data/ledger/engine.dart` | HOT | **NEW** — LedgerEngine: commit, verify, revert, queryIndex, rebuildIndex (coordinates chain + index + staging) |
+| `lib/data/ledger/index_manager.dart` | HOT | **NEW** — IndexManager: blind index (date→title→duration), encrypted at rest, plaintext fallback |
+| `lib/data/ledger/summary_policy.dart` | HOT | **NEW** — SummaryPolicy hierarchy: YearMonthSummaryPolicy, YearOnlySummaryPolicy, NoSummaryPolicy |
+| `lib/data/ledger/merge.dart` | HOT | **NEW** — Chain merge: fork detection, content-hash dedup, chain rebuild with summaries |
+| `lib/features/landing/landing_screen.dart` | HOT | Landing screen — Log In / New Ledger routing |
+| `lib/features/auth/unlock_screen.dart` | HOT | Unlock screen — passphrase entry, validation, auth flow |
+| `lib/features/onboarding/onboarding_screen.dart` | HOT | Onboarding — create/import/connect sub-flows |
+| `lib/features/dashboard/dashboard_screen.dart` | HOT | Dashboard — active task card, capture, timer |
+| `lib/features/history/history_screen.dart` | HOT | History — entry list, date filter, detail expansion |
+| `lib/features/sync/sync_screen.dart` | HOT | Sync — status, manual trigger, pending count |
+| `lib/features/settings/settings_screen.dart` | HOT | Settings — Worker config, passphrase change, seed export to file, ledger backup/restore |
+| `lib/features/shared/app_scaffold.dart` | HOT | Bottom-nav shell (Dashboard/History/Sync/Settings) |
+| `lib/features/shared/loading_indicator.dart` | HOT | Shared loading indicator widget |
+| `lib/routing/app_router.dart` | HOT | GoRouter + AppLifecycleNotifier (5-phase lifecycle) |
 
 ### Web/Mobile (phpoc-web)
 

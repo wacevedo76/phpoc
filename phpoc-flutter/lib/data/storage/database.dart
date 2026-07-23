@@ -82,7 +82,7 @@ class AppDatabase {
   late final BlockDao blockDao = BlockDao(this);
   late final IndexEntryDao indexEntryDao = IndexEntryDao(this);
 
-  AppDatabase._(this._db, {int? openVersion}) : _openVersion = openVersion {
+  AppDatabase._(this._db, {this._openVersion}) {
     _initialize();
   }
 
@@ -110,7 +110,7 @@ class AppDatabase {
     return Future.sync(() => _db.execute(statement, args ?? const []));
   }
 
-  int _execute(String sql, [List<Object?>? args]) {
+  int _executeAndGetChanges(String sql, [List<Object?>? args]) {
     _db.execute(sql, args ?? const []);
     return _db.select('SELECT changes() AS cnt', []).first[0] as int;
   }
@@ -130,13 +130,11 @@ class AppDatabase {
   // ── Internal helpers for DAOs ────────────────────────────
 
   List<Row> _selectOne(String sql, String value) {
-    final result = _db.select(sql, [value]);
-    return result.map((r) => Row(_rowToMap(r, result.columnNames))).toList();
+    return customSelect(sql, variables: <Object?>[value]).get();
   }
 
   List<Row> _selectTwoInt(String sql, int a, int b) {
-    final result = _db.select(sql, [a, b]);
-    return result.map((r) => Row(_rowToMap(r, result.columnNames))).toList();
+    return customSelect(sql, variables: <Object?>[a, b]).get();
   }
 
   // ── Initialization ───────────────────────────────────────
@@ -166,7 +164,7 @@ class AppDatabase {
         _cachedVersion = _currentSchemaVersion;
       }
       if (_openVersion != null) {
-        _cachedVersion = _openVersion!;
+        _cachedVersion = _openVersion;
       }
     }
 
@@ -217,6 +215,18 @@ class AppDatabase {
     }
   }
 
+  // ── Pre-resolved path (set in main.dart before runApp) ───
+
+  /// Set by [setDatabasePath] before [runApp].
+  /// Read by [providers.dart] to decide file vs in-memory.
+  static String? preResolvedPath;
+
+  /// Set the database file path before [runApp].
+  /// Call from main() after [getApplicationDocumentsDirectory].
+  static void setDatabasePath(String path) {
+    preResolvedPath = path;
+  }
+
   // ── Factories ────────────────────────────────────────────
 
   static Future<AppDatabase> openAtVersion(int version) async {
@@ -244,6 +254,13 @@ class AppDatabase {
 
   factory AppDatabase.inMemory() {
     final sqliteDb = sqlite.sqlite3.openInMemory();
+    return AppDatabase._(sqliteDb);
+  }
+
+  /// Synchronous file-based factory. Requires [setDatabasePath] to be
+  /// called first (typically in main.dart before runApp).
+  factory AppDatabase.openSync(String path) {
+    final sqliteDb = sqlite.sqlite3.open(path);
     return AppDatabase._(sqliteDb);
   }
 
@@ -340,14 +357,12 @@ class EntryDao {
     for (final e in updates.entries) {
       final col = _snakeCase(e.key);
       final val = e.value;
+      setClauses.add('$col = ?');
       if (val is bool) {
-        setClauses.add('$col = ?');
         values.add(val ? 1 : 0);
       } else if (val is List) {
-        setClauses.add('$col = ?');
         values.add(jsonEncode(val));
       } else {
-        setClauses.add('$col = ?');
         values.add(val);
       }
     }
@@ -356,12 +371,12 @@ class EntryDao {
     values.add(now);
     values.add(id);
     final sql = 'UPDATE entries SET ${setClauses.join(', ')} WHERE entry_id = ?';
-    final count = _db._execute(sql, values);
+    final count = _db._executeAndGetChanges(sql, values);
     return count > 0;
   }
 
   Future<int> deleteEntry(String id) async {
-    return _db._execute('DELETE FROM entries WHERE entry_id = ?', [id]);
+    return _db._executeAndGetChanges('DELETE FROM entries WHERE entry_id = ?', [id]);
   }
 
   Future<int> getEntryCount() async {
@@ -459,9 +474,14 @@ class BlockDao {
   }
 
   Block _rowToBlock(Row row) {
+    final typeName = row.read<String>('block_type');
+    final blockType = BlockType.values.asNameMap()[typeName];
+    if (blockType == null) {
+      throw StateError('Unknown block_type "$typeName" in database row ${row.read<String>('block_id')}');
+    }
     return Block(
       blockId: row.read<String>('block_id'),
-      blockType: BlockType.values.byName(row.read<String>('block_type')),
+      blockType: blockType,
       blockIndex: row.read<int>('block_index'),
       keyVersion: row.read<int>('key_version'),
       dataEnc: row.read<String>('data_enc'),

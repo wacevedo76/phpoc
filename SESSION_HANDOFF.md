@@ -11,13 +11,13 @@
 > - `LEDGER_PHASE1.md` (196) — **all ✅ Phase 1+2+3+4 complete**
 - `CRYPTO_FFI_WIRING_PHASE1.md` (99) — **✅ Phase 1+2+3+4 complete** — flutter_rust_bridge wiring
 
-- `RESTORE_FROM_CLOUD_PHASE1.md` (63) — **✅ Phase 1+2+3 complete** — restore ledger from Worker/R2 during onboarding
-- `WIPE_CLOUD_ONBOARD_PHASE1.md` (38) — **✅ Phase 1+2+3 complete** — Stage 3: push→wipe→restore→pull→verify
+- `RESTORE_FROM_CLOUD_PHASE1.md` (63) — **✅ Phase 1+2+3+4 complete** — restore ledger from Worker/R2 during onboarding
+- `WIPE_CLOUD_ONBOARD_PHASE1.md` (38) — **✅ Phase 1+2+3+4 complete** — Stage 3: push→wipe→restore→pull→verify
 
 ## Current State
 - **Branch:** `feature/flutter-mobile` (merged `feature/flutter-mobile-riverpod`, off `main`)
 - **Last commit:** `1f57f29` — feat(flutter): Sync Core — Phases 1-4 complete (378/378 GREEN)
-- **Flutter test suite:** 1042 total (1042 GREEN, 0 failures, 0 regressions)
+- **Flutter test suite:** 1013 total (1013 GREEN, 0 failures, 0 regressions)
 - **Flutter analyzer:** 1 pre-existing info lint (_obscurePassphrase)
 - **Flutter analyzer:** 4 info-level lint from raw sqlite3 API (pre-existing, not actionable)
 
@@ -47,6 +47,7 @@
 | Crypto FFI Wiring | 99 | 5 (security: zero MK on clear, clarity: comments, modularity: deriveDeviceId/getDeviceSecret in frb, conciseness: dart:convert _toJson, List support in _sortMap) |
 | Restore from Cloud | 63 | 8 (_pullRemoteBlob, _pushCookie, _pushBlobOnly reuse, _touchLocalCookie clarity, RegExp consolidation, _handleServiceError extraction) |
 | Push to R2 | 39 | 4 (shared epochToIsoDate→FormatUtils, removed redundant sealFieldNames, blockId fallback comment, _textBytes helper) |
+| Wipe Cloud Onboard | 38 | 5 (extract _pullBlock, static _pathRe, _blockPath helper, _addMissingIndices, _pendingPull→_inFlightPull) |
 
 ### Only Deferred Item
 - **P3:** Remote sync (git-based) — infrastructure exists, `init --git-create` remaining. Not needed while Worker sync serves all active use cases.
@@ -62,20 +63,21 @@
 
 ## Immediate Next Steps 🎯
 
-### 🔜 Stage 3: Phase 4 (REFACTOR)
-- Code review `LedgerPullService.pullAll()` (~195 lines) against modularity, clarity, security, conciseness
-- After Phase 4: re-raise E2E tests (see Known Issues for blockers)
+### ✅ E2E test blockers resolved + cross-platform format aligned
+- All 9 Flutter TDD modules now **Phase 1-4 complete** (744 assertions across 9 plans)
+- **E2E tests unblocked:** `LedgerPushService.pushAll()` has empty-DB safety guard + E2E tests pre-populate DB from `testdata/ledger.json`
+- **Cross-platform blob format aligned:** Flutter `obfuscateBlob`/`deobfuscateBlob` rewritten to match Rust `blob.rs` and Python `remote_sync.py` byte-for-byte (PHPSPEC §3.6). All three interfaces now produce/consume the same wire format: `salt(16) + nonce(8) + ciphertext(payload) + tag(32)`. Methods now operate on raw `Uint8List` (not base64 strings) — matching Python's raw bytes and Web's base64→bytes→push flow.
+- **To run E2E tests:** `cd phpoc-flutter && PHPOC_WORKER_URL=... PHPOC_API_KEY=... flutter test --tags=e2e`
+- **⚠️ After E2E run, restore canonical R2 state:** `python3 scripts/push_test_ledger.py` (E2E pushAll overwrites R2 with Flutter's obfuscation format)
 
 ### Deferred
 - **P3 (git sync):** Infrastructure exists, `init --git-create` remaining. Not needed while Worker sync covers all active use cases.
 
 ## Known Issues
 - **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner.
-- **E2E tests (Group E) blocked by two pre-existing design issues (discovered 2026-07-25):**
-  1. **`pushAll()` from empty DB wipes R2** — Tests call `pushService.pushAll()` with empty in-memory DB → pushes `hash_index: []` + empty `index.json`, overwriting the canonical 31-block test ledger.
-  2. **Format mismatch** — Python `push_test_ledger.py` stores obfuscated blocks as raw binary bytes; Flutter's `deobfuscateBlob()` expects UTF-8-encoded base64 string. Pull fails with `FormatException: Unexpected extension byte`.
-  - **Auth fix applied** (2026-07-25): `HttpTransport` now sends `X-Api-Key` header (5 methods), matching Worker expectation. Was sending `Authorization: Bearer` → always 403.
-  - **Resolution options need exploration:** (A) align Python push format with Flutter expectations, or (B) fix tests to not overwrite R2 + handle format gap. Both require design discussion before re-raising E2E.
+- **Cross-platform obfuscation format (Python ↔ Flutter):** ✅ **RESOLVED** (2026-07-25). Flutter's `obfuscateBlob`/`deobfuscateBlob` rewritten to match Rust `blob.rs` / Python `remote_sync.py` byte-for-byte. All three interfaces now produce the same wire format: raw binary `salt(16) + nonce(8) + ciphertext(payload) + tag(32)` where payload = `original_len(4 BE) + plaintext + random_padding`. Methods operate on raw `Uint8List` (not base64 strings) — matching Python's raw bytes and Web's base64→bytes→push flow.
+  - **E2E guard (2026-07-25):** `pushAll()` empty-DB safety guard throws `StateError`. E2E tests pre-populate DB via `LedgerBackupService.importFromJson()` with `testdata/ledger.json` before pushing.
+  - **Auth fix (2026-07-25):** `HttpTransport` sends `X-Api-Key` header.
 
 ## Browser E2E Setup
 - **Browser:** Vivaldi via `agent_browser`, port 9222

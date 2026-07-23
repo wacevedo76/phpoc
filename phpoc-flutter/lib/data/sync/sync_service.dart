@@ -212,32 +212,55 @@ class SyncService {
     }
   }
 
-  /// Reconcile: pull remote blob, merge with local, push merged result.
-  Future<void> _reconcileAndClaim() async {
-    if (transport == null) return;
+  /// Perform initial sync pull during restore-from-cloud.
+  ///
+  /// Pulls the remote staging blob, deobfuscates it, merges with local
+  /// entries, creates a device cookie, and pushes the result.
+  /// Used by [OnboardingService.restoreFromCloud].
+  Future<void> initialPull() async {
+    await _reconcileAndClaim();
+  }
 
-    // Pull remote staging blob
-    List<Map<String, dynamic>> remoteEntries = [];
+  /// Pull and deobfuscate remote staging blob.
+  /// Returns list of entry maps, or empty list on any failure.
+  Future<List<Map<String, dynamic>>> _pullRemoteBlob() async {
     try {
       final blob = await transport!.pull('staging/blob.bin');
-      if (blob != null && crypto.hasMasterKey) {
-        final base64Blob = String.fromCharCodes(blob);
-        final jsonStr = crypto.deobfuscateBlob(
-          base64Blob,
-          crypto.getMasterKey()!,
-        );
-        final decoded = _safeJsonDecode(jsonStr);
-        if (decoded != null && decoded['entries'] is List) {
-          remoteEntries = (decoded['entries'] as List)
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList();
-        }
+      if (blob == null || !crypto.hasMasterKey) return [];
+
+      final jsonStr = crypto.deobfuscateBlob(
+        blob,
+        crypto.getMasterKey()!,
+      );
+      final decoded = _safeJsonDecode(jsonStr);
+      if (decoded != null && decoded['entries'] is List) {
+        return (decoded['entries'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
       }
     } catch (_) {
       // Blob pull failed — use empty remote
     }
+    return [];
+  }
 
-    // Get local entries
+  /// Push device cookie to remote transport, if a cookie exists.
+  Future<void> _pushCookie(String deviceId) async {
+    final cookie = await _cookie.create(deviceId, storage);
+    if (cookie != null) {
+      final cookieJson = json.encode(cookie);
+      await transport!.push(
+        'device_cookie.bin',
+        Uint8List.fromList(cookieJson.codeUnits),
+      );
+    }
+  }
+
+  /// Reconcile: pull remote blob, merge with local, push merged result.
+  Future<void> _reconcileAndClaim() async {
+    if (transport == null) return;
+
+    final remoteEntries = await _pullRemoteBlob();
     final localEntries = await _local.readEntries();
 
     // Filter out committed entries
@@ -246,25 +269,14 @@ class SyncService {
     final activeRemote =
         remoteEntries.where((e) => e['committed'] != true).toList();
 
-    // Merge
-    final merged = MergeEngine.mergeMaps(activeLocal, activeRemote);
+    // Merge and write
+    await _local.writeEntries(
+      MergeEngine.mergeMaps(activeLocal, activeRemote),
+    );
 
-    // Write merged result
-    await _local.writeEntries(merged);
-
-    // Create new device cookie and push
-    final deviceId = _getDeviceUuid();
-    final newRemoteCookie = await _cookie.create(deviceId, storage);
-
+    // Push blob + cookie
     await _pushBlobOnly();
-
-    if (newRemoteCookie != null) {
-      final cookieJson = json.encode(newRemoteCookie);
-      await transport!.push(
-        'device_cookie.bin',
-        Uint8List.fromList(cookieJson.codeUnits),
-      );
-    }
+    await _pushCookie(_getDeviceUuid());
 
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
@@ -274,26 +286,15 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
 
   /// Push local staging blob to remote transport.
-  /// Blob before cookie (crash safety).
+  /// Blob before cookie (crash safety). Includes hash index (best-effort).
   Future<void> pushToRemote() async {
-    final blobBytes = await _buildBlobBytes();
-    if (blobBytes == null) return;
+    if (transport == null) return;
 
-    // Blob BEFORE cookie
-    await transport!.push('staging/blob.bin', blobBytes);
+    // Blob BEFORE cookie (crash safety)
+    await _pushBlobOnly();
 
     // Cookie second
-    final deviceId = _getDeviceUuid();
-    final remoteCookie = await _cookie.create(deviceId, storage);
-    if (remoteCookie != null) {
-      final cookieJson = json.encode(remoteCookie);
-      await transport!.push(
-        'device_cookie.bin',
-        Uint8List.fromList(cookieJson.codeUnits),
-      );
-    }
-
-    _lastPushAt = DateTime.now().millisecondsSinceEpoch;
+    await _pushCookie(_getDeviceUuid());
 
     // Staging hash index (best-effort)
     try {
@@ -323,16 +324,15 @@ class SyncService {
 
   /// Touch local cookie TTL (extend on every write).
   Future<void> _touchLocalCookie() async {
-    try {
-      final localCookie = await storage.get('cookie');
-      if (localCookie is Map && localCookie['device_specifier'] != null) {
-        await storage.set('cookie', {
-          'device_specifier': localCookie['device_specifier'],
-          'creation_time': DateTime.now().millisecondsSinceEpoch,
-        });
-        return;
-      }
-    } catch (_) {}
+    final localCookie = await storage.get('cookie');
+    if (localCookie is Map && localCookie['device_specifier'] != null) {
+      // Cookie exists — refresh TTL
+      await storage.set('cookie', {
+        'device_specifier': localCookie['device_specifier'],
+        'creation_time': DateTime.now().millisecondsSinceEpoch,
+      });
+      return;
+    }
 
     // No cookie exists yet — create one
     final deviceId = _getDeviceUuid();
@@ -371,8 +371,7 @@ class SyncService {
     };
 
     final jsonStr = json.encode(blobData);
-    final obfuscated = crypto.obfuscateBlob(jsonStr, crypto.getMasterKey()!);
-    return Uint8List.fromList(obfuscated.codeUnits);
+    return crypto.obfuscateBlob(jsonStr, crypto.getMasterKey()!);
   }
 
   String _makeDeviceProof(String deviceId) {

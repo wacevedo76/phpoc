@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 
@@ -293,12 +295,12 @@ void main() {
       expect(deobfuscated, data);
     });
 
-    // D2 — obfuscated blob length ≥ 64K for small inputs
+    // D2 — obfuscated blob length ≥ 64K bytes for small inputs
     test('D2: obfuscated blob is padded to at least 64K for small inputs', () {
       const small = 'small data';
       final obfuscated = service.obfuscateBlob(small, mkHex);
-      // Base64 length for 64K bytes = ~87,382 chars
-      expect(obfuscated.length, greaterThan(80000));
+      // Raw bytes: 64K tier = 65536 bytes minimum (salt+nonce+ciphertext+tag)
+      expect(obfuscated.length, greaterThan(65000));
     });
 
     // D3 — deobfuscateBlob with wrong key throws/returns null
@@ -314,10 +316,9 @@ void main() {
     // D4 — tampered blob fails deobfuscation
     test('D4: tampered blob fails deobfuscation', () {
       final obf = service.obfuscateBlob('important', mkHex);
-      // Tamper with base64: flip a character
-      final tampered = obf.substring(0, obf.length - 5) +
-          (obf[obf.length - 5] == 'A' ? 'B' : 'A') +
-          obf.substring(obf.length - 4);
+      // Flip a byte in the ciphertext
+      final tampered = Uint8List.fromList(obf);
+      tampered[30] ^= 0x01;
       expect(
         () => service.deobfuscateBlob(tampered, mkHex),
         throwsA(isA<Exception>()),
@@ -329,7 +330,7 @@ void main() {
       final data = 'x' * 100;
       final obf = service.obfuscateBlob(data, mkHex);
       expect(service.deobfuscateBlob(obf, mkHex), data);
-      expect(obf.length, greaterThan(80000)); // 64K tier
+      expect(obf.length, greaterThan(65000)); // 64K tier
     });
 
     // D6 — tier boundary behavior: 65K → 64K tier, 66K → 128K tier
@@ -360,7 +361,7 @@ void main() {
     // D8 — deobfuscateBlob with too-short data fails
     test('D8: deobfuscateBlob with too-short data fails', () {
       expect(
-        () => service.deobfuscateBlob('dG9vLXNob3J0', mkHex),
+        () => service.deobfuscateBlob(Uint8List.fromList([1, 2, 3]), mkHex),
         throwsA(isA<Exception>()),
       );
     });

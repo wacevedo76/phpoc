@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-07-15
+> **Last updated:** 2026-07-18
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -44,35 +44,17 @@
 
 ---
 
-## 🔜 Phase 1 — Active: Staging Alignment + E2E
+## ✅ Phase 1 — Complete: Staging Alignment + E2E
 
-### 1a. Align web staging sharing with CLI
+### 1a. Align web staging sharing with CLI ✅
 
 **Plan:** `docs/planning/ALIGN_WEB_STAGING_SHARING_WITH_CLI.md`
+**Completed:** Stages 1.1–1.5 all done.
 
-| Stage | What | Files |
-|-------|------|-------|
-| 1.1 | Remove MK bypass: no cookie → always `REAUTH_NEEDED` | `phpoc-web/src/sync/sync.js` ~line 527 |
-| 1.2 | New `ReauthOverlay.jsx` component | New file + `DevModeContext.jsx`, `SyncSettings.jsx`, `App.jsx` |
-| 1.3 | Remove fallback `DeviceCookie.create('local', ...)` | `phpoc-web/src/context/DevModeContext.jsx` ~line 405 |
-| 1.4 | Handle `GENESIS_MISMATCH` in re-auth flow | Integration |
-| 1.5 | Tests — update existing + new overlay tests | 4 test files |
-
-**Next action:** Phase 1 Stage 1.1 — edit `sync.js` line 527, remove the 4-line MK bypass.
-
-### 1b. Browser E2E tests
+### 1b. Browser E2E tests ✅
 
 **Plan:** `docs/planning/BROWSER_E2E_TEST_PLAN.md`
-
-| Test | What |
-|------|------|
-| E2E-03 | Import file upload + same-genesis rejection, auth errors |
-| E2E-04 | Import with wrong passphrase/seed → error display |
-| E2E-05 ✅ | Full roundtrip: export → clear → import → verify (Phases 1-4 done) |
-| E2E-06 | Export with wrong passphrase → error display |
-| E2E-07 ✅ | Onboarding import flow |
-
-**Next action:** After Phase 1a completes.
+**Completed:** E2E-03 (9/9), E2E-04 (4/4), E2E-05 (Phases 1-4), E2E-06 (complete), E2E-07 (13/13) — all 5 E2E tests pass.
 
 ---
 
@@ -270,13 +252,11 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 *After architectural work stabilizes. Cross-client format unification may change serialization paths, so it should land before CLI polish.*
 
-### P1: Canonical cross-client serialization
+### P1: Canonical cross-client serialization ✅
 
 **Problem:** 3 incompatible serializations exist (raw chain, v2 envelope, per-block R2).
-
-**Decision:** Option A1 — Unified canonical JSON serialization (`sort_keys=True`) across all three contexts. 4-phase TDD in progress.
-
-**Phase 1 blueprint:** `docs/planning/CROSS_CLIENT_SERIALIZATION_PHASE1.md` (43 assertions, 6 groups).
+**Decision:** Option A1 — Unified canonical JSON serialization (`sort_keys=True`) across all three contexts.
+**Completed:** Phases 1-4 complete — 43/43 GREEN. `docs/planning/CROSS_CLIENT_SERIALIZATION_PHASE1.md` (43 assertions, 6 groups).
 
 ### Entry hash indent=2 consolidation — ✅ Phase 1-4 complete
 
@@ -316,25 +296,19 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 ---
 
-## 🔵 Phase 8 — Per-Activity Field Encryption
+## ✅ Phase 8 — Per-Activity Field Encryption (Complete)
 
 *Allow users to encrypt title, tags, comment, and duration on a per-activity basis. Default is plaintext (current behavior). Encrypted entries show `[encrypted]` placeholder until user reveals via auth.*
 
-### P6: Encrypt all entry fields — Web (React)
+### P6: Encrypt all entry fields — Web (React) ✅
 
 **Plan:** `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_WEB_PHASE1.md` (61 assertions, 9 groups)
+**Completed:** Phases 1-4 complete — all 61 assertions GREEN. Per-field encryption with `[encrypted]` placeholders.
 
-**Design:** Opt-in encryption at task creation and on sync-tab cards before commit. Master "Encrypt entire activity" checkbox + per-field checkboxes (title, tags, comment). Reveal triggers: global toggle, per-activity click, per date-range.
-
-**Effort:** Medium. **Depends on:** nothing. **Next action:** Phase 2 (RED: 61 test definitions).
-
-### P7: Encrypt all entry fields — CLI (Python)
+### P7: Encrypt all entry fields — CLI (Python) ✅
 
 **Plan:** `docs/planning/ENCRYPT_ALL_ENTRY_FIELDS_CLI_PHASE1.md` (72 assertions, 9 groups)
-
-**Design:** Same opt-in model. Encryptable fields: title, tags, comment, duration. `startTime_enc`/`endTime_enc`/`pauses_enc` already encrypted by default. CLI flag UX deferred to implementation (options: `ph start --encrypt-all`, `ph modify --encrypt-title`, `ph encrypt <title>`).
-
-**Effort:** Medium. **Depends on:** nothing. **Next action:** Phase 2 (RED: 72 test definitions).
+**Completed:** Phases 1-4 complete — 72/72 GREEN. 5 Phase-4 improvements: extracted `_decrypt_staging_field()`, cleaned `_apply_entry_encryption()` API, extracted `_toggle_encryption()`, added `_PER_FIELD_ENCRYPTABLE` list, extracted `_verify_content_hash_v030()`.
 
 ---
 
@@ -343,18 +317,36 @@ cannot actually be rotated — it's all infrastructure and no action.
 | Phase | Items | Status |
 |-------|-------|--------|
 | **0** — Doc fixes | I-08, I-10, I-13, I-14, I-15, I-16 (6) | ✅ Complete 2026-07-15 |
-| **1** — Active | Staging alignment (5 stages) + E2E (5 tests) | ✅ Complete |
+| **1** — Staging + E2E | Staging alignment (5 stages) + E2E (5 tests) | ✅ Complete |
 | **2** — Low-effort code | I-04, I-05, I-06, I-11, I-02a (5) | ✅ Complete |
 | **3** — Encryption gaps | I-03, I-02 (2) | ✅ Complete |
 | **4** — Architectural | I-01, I-01a, I-09, I-12 (4) | ✅ Complete |
 | **5** — Cross-client | P1, indent=2 (2) | ✅ Complete |
 | **6** — CLI polish | P5, P4 (2) | ✅ Complete |
 | **7** — Remote sync | P3 (1) | 🔵 Deferred |
-| **8** — Per-activity encryption | P6 (Web, 61 assertions), P7 (CLI, 72 assertions) | 🔜 Phase 1 done |
+| **8** — Per-activity encryption | P6 (Web, 61), P7 (CLI, 72) | ✅ Complete |
+| **Flutter** — Mobile app | Models (94), Crypto FFI (74), Services (65), Storage (100), Sync Core (106), Screens (109), Ledger Engine (196) — 7 modules, 744 assertions | ✅ Phases 1-4 complete (747/747 GREEN) |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅, I-12 (system architecture doc) ✅ — Canonical Ledger Format, 2026-07-17.
 
 ---
+
+## 🚀 Flutter Mobile App (phpoc-flutter/)
+
+*Riverpod + go_router + SQLite (Drift) — 7 modules, all Phases 1-4 complete (747/747 GREEN).*
+
+| Module | Assertions | Phase 1 doc |
+|--------|-----------|-------------|
+| Models | 94 | `docs/planning/flutter/MODELS_PHASE1.md` |
+| Crypto FFI | 74 | `docs/planning/flutter/CRYPTO_FFI_PHASE1.md` |
+| Services | 65 | `docs/planning/flutter/SERVICES_PHASE1.md` |
+| Storage | 100 | `docs/planning/flutter/STORAGE_PHASE1.md` |
+| Sync Core | 106 | `docs/planning/flutter/SYNC_CORE_PHASE1.md` |
+| Screens | 109 | `docs/planning/flutter/SCREENS_PHASE1.md` |
+| Ledger Engine | 196 | `docs/planning/flutter/LEDGER_PHASE1.md` |
+| **Total** | **744** | |
+
+**Tech:** Flutter 3.44.6, Dart 3.12.2, Rust crypto core (`phpoc-crypto-core`), Riverpod, go_router, Drift/SQLite, SharedPreferences.
 
 ## 🟢 Nice-to-Have — Tooling
 

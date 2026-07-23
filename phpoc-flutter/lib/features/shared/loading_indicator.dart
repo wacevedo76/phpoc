@@ -1,8 +1,51 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/storage/providers.dart' as providers;
+import '../../routing/app_router.dart';
 
 /// Loading screen shown during app boot.
-class LoadingScreen extends StatelessWidget {
+///
+/// Initializes CryptoService and checks for existing data, then transitions
+/// to the appropriate phase: auth (existing data) or landing (new user).
+class LoadingScreen extends ConsumerStatefulWidget {
   const LoadingScreen({super.key});
+
+  @override
+  ConsumerState<LoadingScreen> createState() => _LoadingScreenState();
+}
+
+class _LoadingScreenState extends ConsumerState<LoadingScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      // Initialize crypto (PBKDF2 benchmark, etc.)
+      final crypto = ref.read(providers.cryptoServiceProvider);
+      await crypto.initialize();
+
+      if (!mounted) return;
+
+      // Check for existing data and route accordingly
+      final onboarding = ref.read(providers.onboardingServiceProvider);
+      final hasData = await onboarding.hasExistingData();
+
+      if (!mounted) return;
+
+      if (hasData) {
+        ref.read(appLifecycleProvider.notifier).goToAuth();
+      } else {
+        ref.read(appLifecycleProvider.notifier).goToLanding();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      // If initialization fails, go to landing so user can create a new ledger
+      ref.read(appLifecycleProvider.notifier).goToLanding();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

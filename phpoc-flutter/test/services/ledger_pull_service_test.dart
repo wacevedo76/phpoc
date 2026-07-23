@@ -1,0 +1,899 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/core/models/block.dart';
+import 'package:phpoc_flutter/core/models/pull_result.dart';
+import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/transport.dart';
+import 'package:phpoc_flutter/services/ledger_backup_service.dart';
+import 'package:phpoc_flutter/services/ledger_pull_service.dart';
+
+/// LedgerPullService tests — Groups A, B, C, F (20 assertions).
+///
+/// Blueprint: docs/planning/flutter/WIPE_CLOUD_ONBOARD_PHASE1.md
+///
+/// Covers:
+///   A1–A4:  Construction & API
+///   B1–B6:  Block Pulling from R2
+///   C1–C5:  Import after Pull
+///   F1–F5:  Error Handling
+
+// ── Test constants ─────────────────────────────────────────────
+
+/// Valid 64-char hex master key (32 bytes for AES-128 + HMAC).
+const testMkHex =
+    'abababababababababababababababababababababababababababababababab';
+
+/// Second master key (different from testMkHex) for wrong-key tests.
+const wrongMkHex =
+    'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+
+// ── Fake Transport ─────────────────────────────────────────────
+
+/// In-memory [HttpTransport] fake that serves pre-obfuscated blocks
+/// for pull testing.
+///
+/// [blockStore] — maps path → Uint8List of obfuscated block data.
+/// [hashIndexJson] — plaintext JSON array of block hashes (defaults to empty).
+/// [unreachable] — if true, all operations throw a network error.
+/// [statusOnPath] — maps path → HTTP status code to simulate errors.
+class FakePullTransport implements HttpTransport {
+  @override
+  final String baseUrl;
+
+  @override
+  final String apiKey;
+
+  /// Pre-obfuscated block data, keyed by path.
+  final Map<String, Uint8List> blockStore;
+
+  /// Plaintext hash index JSON to serve on pull('ledger/hash_index.json').
+  String? hashIndexJson;
+
+  /// If true, all operations throw a network error.
+  bool unreachable = false;
+
+  /// Paths that should return a given HTTP status code on pull.
+  final Map<String, int> statusOnPath = {};
+
+  FakePullTransport({
+    this.baseUrl = 'https://test-worker.example.com',
+    this.apiKey = 'fake-api-key',
+    Map<String, Uint8List>? blockStore,
+    this.hashIndexJson,
+  }) : blockStore = blockStore ?? {};
+
+  @override
+  Future<Uint8List?> pull(String path) async {
+    if (unreachable) {
+      throw HttpTransportException('Network unreachable', 0);
+    }
+    final status = statusOnPath[path];
+    if (status != null) {
+      throw HttpTransportException('HTTP $status on pull($path)', status);
+    }
+    // Special case: list query
+    if (path.endsWith('?list') || path.contains('?prefix=')) {
+      return _handleList(path);
+    }
+    if (path == 'ledger/hash_index.json' && hashIndexJson != null) {
+      return Uint8List.fromList(utf8.encode(hashIndexJson!));
+    }
+    return blockStore[path]; // null = 404
+  }
+
+  Uint8List? _handleList(String path) {
+    final prefix = path.replaceFirst(RegExp(r'\?.*'), '');
+    final files = blockStore.keys.where((k) => k.startsWith(prefix)).toList();
+    return Uint8List.fromList(utf8.encode(jsonEncode(files)));
+  }
+
+  @override
+  Future<void> push(String path, Uint8List data) async {
+    if (unreachable) {
+      throw HttpTransportException('Network unreachable', 0);
+    }
+    blockStore[path] = data;
+  }
+
+  @override
+  Future<List<String>> listFiles(String prefix) async {
+    if (unreachable) {
+      throw HttpTransportException('Network unreachable', 0);
+    }
+    return blockStore.keys.where((k) => k.startsWith(prefix)).toList();
+  }
+
+  @override
+  Future<void> healthCheck() async {}
+
+  @override
+  Future<void> delete(String path) async {
+    blockStore.remove(path);
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+
+/// Create a fresh [LedgerPullService] with in-memory DB, initialized
+/// crypto (with test MK cached), fake transport, and backup service.
+Future<LedgerPullService> _makeService({
+  AppDatabase? db,
+  CryptoService? crypto,
+  FakePullTransport? transport,
+  LedgerBackupService? backupService,
+  bool cacheMk = true,
+}) async {
+  final d = db ?? AppDatabase.inMemory();
+  final c = crypto ?? CryptoService();
+  if (!c.isInitialized) {
+    await c.initialize();
+  }
+  if (cacheMk) {
+    c.setMasterKey(testMkHex);
+  }
+  final t = transport ?? FakePullTransport();
+  final b = backupService ?? LedgerBackupService(db: d);
+  return LedgerPullService(
+    db: d,
+    crypto: c,
+    transport: t,
+    backupService: b,
+  );
+}
+
+/// Build an obfuscated block and store it in the fake transport.
+///
+/// Returns the path used to store it.
+String _storeObfuscatedBlock(
+  FakePullTransport transport,
+  CryptoService crypto,
+  int index,
+  Map<String, dynamic> blockJson, {
+  String? mkHex,
+}) {
+  final mk = mkHex ?? testMkHex;
+  final json = jsonEncode(blockJson);
+  final obfuscated = crypto.obfuscateBlob(json, mk);
+  final path = 'ledger/blocks/${index.toString().padLeft(6, '0')}.json';
+  transport.blockStore[path] = obfuscated;
+  return path;
+}
+
+/// Build a minimal genesis block JSON map.
+Map<String, dynamic> _genesisBlockJson({
+  String identitySeal = 'genesis-seal',
+  String prevHash = '0000000000000000000000000000000000000000000000000000000000000000',
+  String blockHash = 'genesis-block-hash',
+  String date = '2026-06-01',
+  List<Map<String, dynamic>>? entries,
+}) =>
+    {
+      'type': 'genesis',
+      'day_index': 0,
+      'date': date,
+      'prev_hash': prevHash,
+      'entries': entries ?? [],
+      'signature': identitySeal,
+      'identity_seal': identitySeal,
+      'block_hash': blockHash,
+    };
+
+/// Build a minimal day block JSON map.
+Map<String, dynamic> _dayBlockJson({
+  required int dayIndex,
+  String prevHash = 'aaaa',
+  String identitySeal = 'day-seal',
+  String blockHash = 'day-block-hash',
+  String date = '2026-06-02',
+  List<Map<String, dynamic>>? entries,
+}) =>
+    {
+      'type': 'day',
+      'day_index': dayIndex,
+      'date': date,
+      'prev_hash': prevHash,
+      'entries': entries ?? [],
+      'signature': identitySeal,
+      'identity_seal': identitySeal,
+      'block_hash': blockHash,
+    };
+
+// ═══════════════════════════════════════════════════════════════
+// Group A: Construction & API
+// ═══════════════════════════════════════════════════════════════
+
+void main() {
+  group('A: LedgerPullService — Construction & API', () {
+    late CryptoService crypto;
+    late FakePullTransport transport;
+    late AppDatabase db;
+    late LedgerBackupService backupService;
+
+    setUp(() async {
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakePullTransport();
+      db = AppDatabase.inMemory();
+      backupService = LedgerBackupService(db: db);
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // A1
+    test('A1: Constructor requires db, crypto, transport, backupService',
+        () async {
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+      expect(service, isA<LedgerPullService>());
+    });
+
+    // A2
+    test('A2: Service exposes pullAll() as single public method', () async {
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+      expect(service.pullAll, isA<Function>());
+    });
+
+    // A3
+    test('A3: pullAll() throws StateError if crypto.hasMasterKey is false',
+        () async {
+      final noMkCrypto = CryptoService();
+      await noMkCrypto.initialize();
+      // Do NOT call setMasterKey
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: noMkCrypto,
+        transport: transport,
+        backupService: backupService,
+      );
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<StateError>()),
+        reason: 'pullAll() must fail fast when no MK is cached',
+      );
+    });
+
+    // A4
+    test('A4: pullAll() with null transport returns empty result (no-op)',
+        () async {
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: null as dynamic,
+        backupService: backupService,
+      );
+
+      // Should not throw — returns empty/success result for local-only mode
+      final result = await service.pullAll();
+      expect(result, isA<PullResult>());
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 0);
+      expect(result.entriesStaged, 0);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group B: Block Pulling from R2
+  // ═════════════════════════════════════════════════════════════
+
+  group('B: LedgerPullService — Block Pulling', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakePullTransport transport;
+    late LedgerBackupService backupService;
+    late LedgerPullService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakePullTransport();
+      backupService = LedgerBackupService(db: db);
+      service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // B1
+    test('B1: Pull ledger/hash_index.json returns JSON array with N entries',
+        () async {
+      // Setup: store hash_index.json with 3 hashes
+      transport.hashIndexJson = jsonEncode(['hash0', 'hash1', 'hash2']);
+      // Store 3 obfuscated blocks
+      for (var i = 0; i < 3; i++) {
+        _storeObfuscatedBlock(
+          transport,
+          crypto,
+          i,
+          i == 0
+              ? _genesisBlockJson(blockHash: 'hash$i', identitySeal: 'hash$i')
+              : _dayBlockJson(
+                  dayIndex: i,
+                  prevHash: 'hash${i - 1}',
+                  blockHash: 'hash$i',
+                  identitySeal: 'hash$i',
+                ),
+        );
+      }
+
+      final result = await service.pullAll();
+
+      expect(result, isA<PullResult>());
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 3,
+          reason: 'Must pull all 3 blocks listed in hash_index');
+    });
+
+    // B2
+    test(
+        'B2: Pull single block → deobfuscate → valid PHPSPEC JSON',
+        () async {
+      transport.hashIndexJson = jsonEncode(['genesis-hash']);
+      final genesisJson = _genesisBlockJson(blockHash: 'genesis-hash',
+          identitySeal: 'genesis-hash');
+      _storeObfuscatedBlock(transport, crypto, 0, genesisJson);
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 1);
+      // Verify the block is in the DB after pull
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 1,
+          reason: 'Single pulled block must be in database');
+      expect(blocks[0].blockType, BlockType.genesis);
+    });
+
+    // B3
+    test('B3: Pull all 31 blocks → assembled into sorted PHPSPEC array',
+        () async {
+      final hashes = List.generate(31, (i) => 'hash-$i');
+      transport.hashIndexJson = jsonEncode(hashes);
+
+      // Store blocks in reverse order to verify sorting
+      for (var i = 30; i >= 0; i--) {
+        final prevHash = i == 0
+            ? '0000000000000000000000000000000000000000000000000000000000000000'
+            : 'hash-${i - 1}';
+        final json = i == 0
+            ? _genesisBlockJson(blockHash: 'hash-$i', identitySeal: 'hash-$i',
+                prevHash: prevHash)
+            : _dayBlockJson(
+                dayIndex: i,
+                prevHash: prevHash,
+                blockHash: 'hash-$i',
+                identitySeal: 'hash-$i',
+              );
+        _storeObfuscatedBlock(transport, crypto, i, json);
+      }
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 31);
+      // Verify blocks are stored sorted by index in DB
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 31);
+      for (var i = 0; i < 31; i++) {
+        expect(blocks[i].blockIndex, i,
+            reason: 'Block at DB position $i must have blockIndex $i');
+      }
+    });
+
+    // B4
+    test('B4: Pull with missing blocks → partial result, failed indices '
+        'reported', () async {
+      transport.hashIndexJson = jsonEncode(['h0', 'h1', 'h2', 'h3']);
+      // Store blocks 0 and 3 only — blocks 1 and 2 are missing (404)
+      _storeObfuscatedBlock(
+          transport, crypto, 0, _genesisBlockJson(blockHash: 'h0',
+              identitySeal: 'h0'));
+      _storeObfuscatedBlock(
+          transport,
+          crypto,
+          3,
+          _dayBlockJson(
+              dayIndex: 3,
+              prevHash: 'h2',
+              blockHash: 'h3',
+              identitySeal: 'h3'));
+
+      final result = await service.pullAll();
+
+      expect(result.success, isFalse,
+          reason: 'Missing blocks must result in failure');
+      expect(result.blocksPulled, 2,
+          reason: 'Only blocks 0 and 3 should be pulled');
+      expect(result.failedBlocks, containsAll([1, 2]),
+          reason: 'Failed indices 1 and 2 must be reported');
+    });
+
+    // B5
+    test('B5: Pull from empty remote (no blocks) → returns empty result',
+        () async {
+      transport.hashIndexJson = jsonEncode([]);
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue,
+          reason: 'Empty remote is not an error');
+      expect(result.blocksPulled, 0);
+      expect(result.entriesStaged, 0);
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks, isEmpty,
+          reason: 'No blocks should be in DB after empty pull');
+    });
+
+    // B6
+    test('B6: Block roundtrip: obfuscate → deobfuscate → JSON matches '
+        'original', () async {
+      final originalJson = _dayBlockJson(
+        dayIndex: 5,
+        prevHash: 'prev-hash',
+        blockHash: 'block-hash-5',
+        identitySeal: 'seal-5',
+        entries: [
+          {
+            'hash': 'entry-hash',
+            'data': {'title': 'Test Entry', 'duration': 3600},
+          },
+        ],
+      );
+
+      // Obfuscate locally, store in fake transport
+      _storeObfuscatedBlock(transport, crypto, 5, originalJson);
+      transport.hashIndexJson = jsonEncode(['block-hash-5']);
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 1);
+      // Verify the block's data survived the roundtrip
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 1);
+      // data_enc should contain the entries
+      final dataEnc = blocks[0].dataEnc;
+      final decoded = jsonDecode(utf8.decode(base64.decode(dataEnc)));
+      expect(decoded, isA<List>());
+      expect((decoded as List).length, 1);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group C: Import after Pull
+  // ═════════════════════════════════════════════════════════════
+
+  group('C: LedgerPullService — Import after Pull', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakePullTransport transport;
+    late LedgerBackupService backupService;
+    late LedgerPullService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakePullTransport();
+      backupService = LedgerBackupService(db: db);
+      service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // C1
+    test('C1: Pull all blocks → import into DB → 31 blocks in database',
+        () async {
+      final hashes = List.generate(31, (i) => 'import-hash-$i');
+      transport.hashIndexJson = jsonEncode(hashes);
+
+      for (var i = 0; i < 31; i++) {
+        final prevHash = i == 0
+            ? '0000000000000000000000000000000000000000000000000000000000000000'
+            : 'import-hash-${i - 1}';
+        final json = i == 0
+            ? _genesisBlockJson(
+                blockHash: 'import-hash-$i', identitySeal: 'import-hash-$i',
+                prevHash: prevHash)
+            : _dayBlockJson(
+                dayIndex: i,
+                prevHash: prevHash,
+                blockHash: 'import-hash-$i',
+                identitySeal: 'import-hash-$i',
+              );
+        _storeObfuscatedBlock(transport, crypto, i, json);
+      }
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 31);
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 31,
+          reason: 'All 31 blocks must be in database after pull+import');
+    });
+
+    // C2
+    test('C2: Genesis block after import → correct identity_seal, '
+        'block_index: 0, prev_hash', () async {
+      transport.hashIndexJson = jsonEncode(['gen-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        0,
+        _genesisBlockJson(
+          blockHash: 'gen-hash',
+          identitySeal: 'genesis-identity-seal-value',
+          prevHash:
+              '0000000000000000000000000000000000000000000000000000000000000000',
+        ),
+      );
+
+      await service.pullAll();
+
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 1);
+      final genesis = blocks[0];
+      expect(genesis.blockIndex, 0,
+          reason: 'Genesis must be at blockIndex 0');
+      expect(genesis.blockType, BlockType.genesis);
+      expect(
+        genesis.prevHash,
+        '0000000000000000000000000000000000000000000000000000000000000000',
+        reason: 'Genesis prev_hash must be 64 zeros',
+      );
+      expect(genesis.identitySeal, 'genesis-identity-seal-value',
+          reason: 'Genesis identity_seal must be preserved');
+    });
+
+    // C3
+    test('C3: Pull + import → staging seeded with entries', () async {
+      transport.hashIndexJson = jsonEncode(['day-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        0,
+        _dayBlockJson(
+          dayIndex: 0,
+          prevHash:
+              '0000000000000000000000000000000000000000000000000000000000000000',
+          blockHash: 'day-hash',
+          identitySeal: 'day-hash',
+          entries: [
+            {
+              'hash': 'e1',
+              'data': {
+                'title': 'Task A',
+                'duration': 1800,
+                'tags': ['work'],
+              },
+            },
+            {
+              'hash': 'e2',
+              'data': {
+                'title': 'Task B',
+                'duration': 3600,
+                'tags': ['personal'],
+              },
+            },
+          ],
+        ),
+      );
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.entriesStaged, 2,
+          reason: 'Two entries must be seeded to staging');
+      expect(result.entriesStaged, greaterThan(0),
+          reason: 'Staging must have entries after pull');
+    });
+
+    // C4
+    test('C4: Pulled blocks match original structure (same entry count '
+        'per block)', () async {
+      // Block 0: genesis with 1 entry
+      transport.hashIndexJson = jsonEncode(['g-hash', 'd-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        0,
+        _genesisBlockJson(
+          blockHash: 'g-hash',
+          identitySeal: 'g-hash',
+          entries: [
+            {
+              'hash': 'e-gen',
+              'data': {'title': 'Genesis Entry', 'duration': 0},
+            },
+          ],
+        ),
+      );
+      // Block 1: day with 3 entries
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        1,
+        _dayBlockJson(
+          dayIndex: 1,
+          prevHash: 'g-hash',
+          blockHash: 'd-hash',
+          identitySeal: 'd-hash',
+          entries: [
+            {
+              'hash': 'e1',
+              'data': {'title': 'Task 1', 'duration': 100},
+            },
+            {
+              'hash': 'e2',
+              'data': {'title': 'Task 2', 'duration': 200},
+            },
+            {
+              'hash': 'e3',
+              'data': {'title': 'Task 3', 'duration': 300},
+            },
+          ],
+        ),
+      );
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      expect(result.entriesStaged, 4,
+          reason: '1 genesis entry + 3 day entries = 4 total staged');
+    });
+
+    // C5
+    test('C5: Import replaces any existing blocks (clear + reimport)',
+        () async {
+      // First, insert a block into the DB manually
+      await db.blockDao.insertBlock(Block(
+        blockId: 'old-block',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: base64.encode(utf8.encode('[]')),
+        identitySeal: 'old-seal',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      // Now pull — it should replace the existing block
+      transport.hashIndexJson = jsonEncode(['new-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        0,
+        _genesisBlockJson(
+          blockHash: 'new-hash',
+          identitySeal: 'new-seal',
+        ),
+      );
+
+      final result = await service.pullAll();
+
+      expect(result.success, isTrue);
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 1,
+          reason: 'Old block should be replaced, not duplicated');
+      expect(blocks[0].identitySeal, 'new-seal',
+          reason: 'Imported block must replace pre-existing block');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group F: Error Handling
+  // ═════════════════════════════════════════════════════════════
+
+  group('F: LedgerPullService — Error Handling', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakePullTransport transport;
+    late LedgerBackupService backupService;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakePullTransport();
+      backupService = LedgerBackupService(db: db);
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // F1
+    test('F1: Pull with unreachable Worker → exception caught, result '
+        'reports failure, genesis preserved locally', () async {
+      // Insert a genesis block locally first
+      await db.blockDao.insertBlock(Block(
+        blockId: 'local-gen',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: base64.encode(utf8.encode('[]')),
+        identitySeal: 'local-gen-seal',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      transport.unreachable = true;
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+
+      final result = await service.pullAll();
+
+      expect(result.success, isFalse,
+          reason: 'Unreachable Worker must report failure');
+      // Local genesis must still exist
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 1,
+          reason: 'Local genesis must be preserved on pull failure');
+      expect(blocks[0].blockId, 'local-gen');
+    });
+
+    // F2
+    test('F2: Pull with wrong MK → CryptoException, no blocks imported',
+        () async {
+      // Obfuscate blocks with testMkHex, then try to pull with wrongMkHex
+      transport.hashIndexJson = jsonEncode(['block-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        0,
+        _genesisBlockJson(blockHash: 'block-hash', identitySeal: 'block-hash'),
+      );
+
+      // Create a crypto service with wrong MK
+      final wrongCrypto = CryptoService();
+      await wrongCrypto.initialize();
+      wrongCrypto.setMasterKey(wrongMkHex);
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: wrongCrypto,
+        transport: transport,
+        backupService: backupService,
+      );
+
+      final result = await service.pullAll();
+
+      expect(result.success, isFalse,
+          reason: 'Wrong MK must cause pull failure');
+      expect(result.errors, isNotEmpty,
+          reason: 'Crypto error must be reported');
+      // No blocks should be imported
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks, isEmpty,
+          reason: 'No blocks should be imported with wrong MK');
+    });
+
+    // F3
+    test('F3: Corrupted block on remote (invalid JSON) → that block '
+        'skipped, others imported', () async {
+      // Store 3 block hashes but make block 1 corrupted (non-JSON data)
+      transport.hashIndexJson = jsonEncode(['h0', 'h1', 'h2']);
+      _storeObfuscatedBlock(
+          transport, crypto, 0, _genesisBlockJson(blockHash: 'h0',
+              identitySeal: 'h0'));
+      // Corrupt block 1: store garbage after obfuscation header
+      final corrupted = crypto.obfuscateBlob('NOT VALID JSON', testMkHex);
+      transport.blockStore['ledger/blocks/000001.json'] = corrupted;
+      _storeObfuscatedBlock(
+          transport,
+          crypto,
+          2,
+          _dayBlockJson(
+              dayIndex: 2,
+              prevHash: 'h1',
+              blockHash: 'h2',
+              identitySeal: 'h2'));
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+      final result = await service.pullAll();
+
+      expect(result.success, isFalse,
+          reason: 'Corrupted block must cause failure report');
+      expect(result.blocksPulled, 2,
+          reason: 'Blocks 0 and 2 should still be imported');
+      expect(result.failedBlocks, contains(1),
+          reason: 'Block 1 must be reported as failed');
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, 2,
+          reason: 'Two valid blocks must be in DB after pull');
+    });
+
+    // F4
+    test('F4: Pull with 401 from Worker → HttpTransportException, result '
+        'reports auth failure', () async {
+      transport.statusOnPath['ledger/hash_index.json'] = 401;
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+      final result = await service.pullAll();
+
+      expect(result.success, isFalse,
+          reason: '401 must cause failure');
+      expect(result.errors.any((e) => e.contains('401')), isTrue,
+          reason: 'Error must reference 401 status');
+    });
+
+    // F5
+    test('F5: Concurrent pullAll() calls — second call waits for first',
+        () async {
+      transport.hashIndexJson = jsonEncode(['h0']);
+      _storeObfuscatedBlock(
+          transport, crypto, 0, _genesisBlockJson(blockHash: 'h0',
+              identitySeal: 'h0'));
+
+      final service = LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+      );
+
+      // Fire two concurrent pullAll() calls
+      final results = await Future.wait([
+        service.pullAll(),
+        service.pullAll(),
+      ]);
+
+      // Both must return PullResult (no crash)
+      expect(results[0], isA<PullResult>());
+      expect(results[1], isA<PullResult>());
+      // At least one should have pulled successfully
+      expect(
+        results.any((r) => r.success),
+        isTrue,
+        reason: 'At least one concurrent call must succeed',
+      );
+    });
+  });
+}

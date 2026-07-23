@@ -105,6 +105,18 @@ class AppPreferences {
     return _prefs!.getString('api_key');
   }
 
+  // ── Pre-resolved instance (set in main.dart before runApp) ─
+
+  /// Set by [setInstance] before [runApp].
+  /// Read by [providers.dart] to decide production vs test.
+  static AppPreferences? preResolvedInstance;
+
+  /// Set the production [AppPreferences] instance before [runApp].
+  /// Call from main() after [AppPreferences.open].
+  static void setInstance(AppPreferences instance) {
+    preResolvedInstance = instance;
+  }
+
   // ── Factories ────────────────────────────────────────────
 
   /// Synchronous test instance backed by an in-memory map.

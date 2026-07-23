@@ -22,6 +22,11 @@ pub mod device;
 
 /// WASM bindings — only compiled when targeting WebAssembly.
 #[cfg(feature = "wasm")]
+/// flutter_rust_bridge generated code — AUTO INJECTED BY flutter_rust_bridge.
+pub mod frb_generated;
+
+/// WASM bindings — only compiled when targeting WebAssembly.
+#[cfg(feature = "wasm")]
 pub mod wasm;
 
 /// Result type alias for crate operations.

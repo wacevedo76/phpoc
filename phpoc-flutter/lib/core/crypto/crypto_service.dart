@@ -13,26 +13,26 @@ class CryptoException implements Exception {
   String toString() => 'CryptoException: $message';
 }
 
-/// Pure-Dart crypto service — temporary development shim.
+/// Crypto service implementing the full PHPOC crypto contract.
 ///
-/// Implements the full [CryptoService] interface contract defined by
-/// Phase 1 blueprint (docs/planning/flutter/CRYPTO_FFI_PHASE1.md).
+/// Implements the 29-method [CryptoService] interface contract defined by
+/// the Phase 1 blueprint (docs/planning/flutter/CRYPTO_FFI_PHASE1.md).
 ///
-/// **This is a development shim.** When flutter_rust_bridge + NDK
-/// integration is ready, this class becomes a thin wrapper around the
-/// auto-generated Rust FFI bindings. The public API must stay identical
-/// so existing tests continue to pass without modification.
+/// Uses `package:pointycastle` for AES-128-CTR and PBKDF2-SHA256,
+/// and `package:crypto` for SHA-256 and HMAC-SHA256.
+/// All keys and binary data cross method boundaries as **hex strings**
+/// (matching the JS/WASM pattern).
 ///
-/// ## Implementation notes
+/// The Rust FFI equivalent lives in `crypto_service_native.dart` + `frb_generated.dart`
+/// and will replace this implementation once flutter_rust_bridge native compilation
+/// is fully integrated. Both implementations pass the same test suite.
 ///
-/// - Uses `package:pointycastle` for AES-128-CTR and PBKDF2-SHA256.
-/// - Uses `package:crypto` for SHA-256 and HMAC-SHA256.
-/// - All keys and binary data cross the Dart/Rust boundary as **hex strings**
-///   (matching the JS/WASM pattern).
-/// - Master Key is cached in memory (never on disk per Axiom B3).
-/// - `clearMasterKey()` zeroes the cached key.
+/// ## Key management
 ///
-/// ## Wire format: AES-128-CTR + HMAC-SHA256
+/// - Master Key is cached in memory as raw bytes (never on disk per Axiom B3).
+/// - `clearMasterKey()` zeroes the cached key buffer before nulling the reference.
+///
+/// ## Wire format (AES-128-CTR + HMAC-SHA256)
 ///
 /// Encrypted output (hex-encoded): salt(16B) || nonce(8B) || ciphertext || auth_tag(32B)
 class CryptoService {
@@ -109,11 +109,13 @@ class CryptoService {
     // Production Rust FFI will match the exact JS salt scheme.
     const salt = 'phpoc:pdk:fixed-salt:v1';
     final derivator = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64));
-    derivator.init(Pbkdf2Parameters(
-      utf8.encode(salt),
-      iterations,
-      32, // 32 bytes = 64 hex chars
-    ));
+    derivator.init(
+      Pbkdf2Parameters(
+        utf8.encode(salt),
+        iterations,
+        32, // 32 bytes = 64 hex chars
+      ),
+    );
     final passphraseBytes = Uint8List.fromList(utf8.encode(passphrase));
     return _bytesToHex(derivator.process(passphraseBytes));
   }
@@ -171,7 +173,12 @@ class CryptoService {
     final salt = _randomBytes(16);
     final nonce = _randomBytes(8);
 
-    final ciphertext = _aesCtrProcess(utf8.encode(plaintext), aesKey, nonce, encrypt: true);
+    final ciphertext = _aesCtrProcess(
+      utf8.encode(plaintext),
+      aesKey,
+      nonce,
+      encrypt: true,
+    );
 
     // Auth tag: HMAC-SHA256(aesKey, salt || nonce || ciphertext)
     final authInput = Uint8List(salt.length + nonce.length + ciphertext.length)
@@ -180,11 +187,12 @@ class CryptoService {
       ..setAll(salt.length + nonce.length, ciphertext);
     final tag = _hmacSha256Full(aesKey, authInput);
 
-    final result = Uint8List(salt.length + nonce.length + ciphertext.length + tag.length)
-      ..setAll(0, salt)
-      ..setAll(salt.length, nonce)
-      ..setAll(salt.length + nonce.length, ciphertext)
-      ..setAll(salt.length + nonce.length + ciphertext.length, tag);
+    final result =
+        Uint8List(salt.length + nonce.length + ciphertext.length + tag.length)
+          ..setAll(0, salt)
+          ..setAll(salt.length, nonce)
+          ..setAll(salt.length + nonce.length, ciphertext)
+          ..setAll(salt.length + nonce.length + ciphertext.length, tag);
 
     return _bytesToHex(result);
   }
@@ -196,9 +204,14 @@ class CryptoService {
   /// Throws [StateError] if authentication fails (wrong key or tampered data).
   String decrypt(String ciphertextHex, String keyHex) {
     _requireInitialized();
-    _validateHex(ciphertextHex, null, 112); // min: salt(16)+nonce(8)+tag(32)=56 bytes → 112 hex
+    _validateHex(
+      ciphertextHex,
+      null,
+      112,
+    ); // min: salt(16)+nonce(8)+tag(32)=56 bytes → 112 hex
     _validateHex(keyHex, 64);
-    if (ciphertextHex.isEmpty) throw CryptoException('Ciphertext must not be empty');
+    if (ciphertextHex.isEmpty)
+      throw CryptoException('Ciphertext must not be empty');
     final key = Uint8List.fromList(_hexToBytes(keyHex));
     final aesKey = Uint8List.sublistView(key, 0, 16);
     final data = _hexToBytes(ciphertextHex);
@@ -219,90 +232,151 @@ class CryptoService {
     final expectedTag = _hmacSha256Full(aesKey, authInput);
 
     if (!_constantTimeEquals(tag, expectedTag)) {
-      throw CryptoException('Authentication failed: wrong key or tampered ciphertext');
+      throw CryptoException(
+        'Authentication failed: wrong key or tampered ciphertext',
+      );
     }
 
-    final plaintextBytes = _aesCtrProcess(ciphertext, aesKey, nonce, encrypt: false);
+    final plaintextBytes = _aesCtrProcess(
+      ciphertext,
+      aesKey,
+      nonce,
+      encrypt: false,
+    );
     return utf8.decode(plaintextBytes);
   }
 
   // ── Group D: Blob Obfuscation ─────────────────────────────────
+  //
+  // Canonical wire format (Rust blob.rs / Python remote_sync.py):
+  //   salt(16) + nonce(8) + ciphertext(payload) + tag(32)
+  //   where payload = original_len(4 BE) + plaintext + random_padding
+  //
+  // All three implementations (Rust WASM, Python, Flutter Dart) must
+  // produce byte-identical output for the same inputs to enable
+  // cross-client sync via shared R2 storage.
+  //
+  // These methods operate on raw bytes — transport layers handle
+  // base64 encoding/decoding for JSON-safe contexts independently.
 
   /// Obfuscate blob data with tier-based padding.
   ///
-  /// Wraps [encrypt] with tier-padded output. Returns base64-encoded obfuscated blob.
-  /// Format: len(4B BE) || encrypted_raw || random_padding || hmac(32B)
+  /// Implements PHPSPEC §3.6 / §8.5, matching Rust [blob::obfuscate_blob]
+  /// and Python [RemoteStagingSync._obfuscate] byte-for-byte.
+  ///
+  /// Returns raw obfuscated bytes suitable for direct transport push.
   /// Maximum input size is 512 KB.
-  String obfuscateBlob(String data, String mkHex) {
+  Uint8List obfuscateBlob(String data, String mkHex) {
     _requireInitialized();
+    _validateHex(mkHex, 64);
     if (data.length > 512 * 1024) {
       throw CryptoException('Blob data exceeds maximum size of 512 KB');
     }
-    // Encrypt the data → hex string, then convert to raw bytes for compact storage
-    final encryptedHex = encrypt(data, mkHex);
-    final encryptedBytes = _hexToBytes(encryptedHex);
 
-    // Pad to tier ceiling. Tier selected based on encrypted byte count.
-    var tierBytes = _selectTier(encryptedBytes.length);
-    // Ensure tier is large enough: 4-byte len prefix + encrypted bytes + 32-byte HMAC
-    final minSize = 4 + encryptedBytes.length + 32;
-    while (tierBytes < minSize) {
-      tierBytes = _nextTier(tierBytes);
-    }
+    final plaintext = utf8.encode(data);
+    final mk = Uint8List.fromList(_hexToBytes(mkHex));
 
-    // Build: 4-byte big-endian length prefix + raw encrypted bytes + random padding + HMAC
-    final padded = Uint8List(tierBytes);
-    _writeUint32BE(padded, 0, encryptedBytes.length);
-    padded.setAll(4, encryptedBytes);
-    // Random padding fills the gap between encrypted data and HMAC footer
-    final bodyEnd = tierBytes - 32;
-    if (bodyEnd > 4 + encryptedBytes.length) {
-      final padding = _randomBytes(bodyEnd - (4 + encryptedBytes.length));
-      padded.setAll(4 + encryptedBytes.length, padding);
-    }
-    // HMAC-SHA256 over everything before the footer
-    final body = Uint8List.sublistView(padded, 0, bodyEnd);
-    final hmac = _hmacSha256Full(_hexToBytes(mkHex).sublist(0, 16), body);
-    padded.setAll(bodyEnd, hmac);
+    // 1. Derive blob sub-key: HMAC-SHA256(MK, "blob-obfuscation")[:16]
+    final blobKey = _deriveBlobKeyBytes(mk);
 
-    return base64.encode(padded);
+    // 2. Select tier based on plaintext size
+    final tier = _selectTier(plaintext.length);
+    final paddedSize = tier - 4; // Reserve 4 bytes for original length
+
+    // 3. Generate random salt, nonce, and padding
+    final salt = _randomBytes(16);
+    final nonce = _randomBytes(8);
+    final paddingNeeded = paddedSize - plaintext.length;
+    final padding = paddingNeeded > 0
+        ? _randomBytes(paddingNeeded)
+        : Uint8List(0);
+
+    // 4. Build payload: original_len(4 BE) + plaintext + padding
+    final payload = Uint8List(4 + plaintext.length + padding.length);
+    _writeUint32BE(payload, 0, plaintext.length);
+    payload.setAll(4, plaintext);
+    payload.setAll(4 + plaintext.length, padding);
+
+    // 5. Derive encryption and integrity keys from blob key + salt
+    final (encKey, integrityKey) = _deriveBlobEncryptionKeys(blobKey, salt);
+
+    // 6. AES-128-CTR encrypt + HMAC-SHA256 tag
+    final ciphertextAndTag = _blobEncryptAndTag(
+      payload,
+      encKey,
+      integrityKey,
+      nonce,
+    );
+
+    // 7. Assemble: salt(16) + nonce(8) + ciphertext + tag(32)
+    final result = Uint8List(16 + 8 + ciphertextAndTag.length);
+    result.setAll(0, salt);
+    result.setAll(16, nonce);
+    result.setAll(24, ciphertextAndTag);
+
+    return result;
   }
 
   /// Deobfuscate blob data.
   ///
-  /// Reads the 4-byte length prefix, validates HMAC integrity,
-  /// extracts the raw encrypted bytes, hex-encodes them, and decrypts.
-  String deobfuscateBlob(String base64Blob, String mkHex) {
+  /// Implements PHPSPEC §3.6 / §8.5, matching Rust [blob::deobfuscate_blob]
+  /// and Python [RemoteStagingSync._deobfuscate] byte-for-byte.
+  ///
+  /// [obfuscated] must be raw bytes in the canonical wire format
+  /// (as produced by [obfuscateBlob]).
+  String deobfuscateBlob(Uint8List obfuscated, String mkHex) {
     _requireInitialized();
-    if (base64Blob.length < 24) {
-      throw CryptoException('Blob data too short');
-    }
-    final padded = base64.decode(base64Blob);
+    _validateHex(mkHex, 64);
 
-    if (padded.length < 4 + 56 + 32) { // min encrypted: salt(16)+nonce(8)+tag(32)=56 bytes
-      throw CryptoException('Blob payload too short');
+    // Minimum: salt(16) + nonce(8) + tag(32) = 56 bytes
+    if (obfuscated.length < 56) {
+      throw CryptoException('Blob payload too short (min 56 bytes)');
     }
 
-    // Verify HMAC footer
-    final bodyEnd = padded.length - 32;
-    final body = Uint8List.sublistView(padded, 0, bodyEnd);
-    final expectedHmac = _hmacSha256Full(_hexToBytes(mkHex).sublist(0, 16), body);
-    final actualHmac = Uint8List.sublistView(padded, bodyEnd);
-    if (!_constantTimeEquals(expectedHmac, actualHmac)) {
-      throw CryptoException('Blob integrity check failed: tampered or wrong key');
+    final mk = Uint8List.fromList(_hexToBytes(mkHex));
+    final salt = Uint8List.sublistView(obfuscated, 0, 16);
+    final nonce = Uint8List.sublistView(obfuscated, 16, 24);
+    final ciphertext = Uint8List.sublistView(
+        obfuscated, 24, obfuscated.length - 32);
+    final storedTag =
+        Uint8List.sublistView(obfuscated, obfuscated.length - 32);
+
+    // 1. Derive blob sub-key and encryption/integrity keys
+    final blobKey = _deriveBlobKeyBytes(mk);
+    final (encKey, integrityKey) = _deriveBlobEncryptionKeys(blobKey, salt);
+
+    // 2. Verify HMAC-SHA256 auth tag over nonce + ciphertext
+    final authData = Uint8List(8 + ciphertext.length);
+    authData.setAll(0, nonce);
+    authData.setAll(8, ciphertext);
+    final expectedTag = _hmacSha256Full(integrityKey, authData);
+
+    if (!_constantTimeEquals(storedTag, expectedTag)) {
+      throw CryptoException(
+        'Blob integrity check failed: tampered or wrong key',
+      );
     }
 
-    // Read length prefix
-    final rawLen = _readUint32BE(padded, 0);
-    if (rawLen < 56 || 4 + rawLen > bodyEnd) {
-      throw CryptoException('Blob corrupted: invalid length prefix $rawLen');
+    // 3. AES-128-CTR decrypt
+    final decrypted = _aesCtrProcess(
+      ciphertext,
+      encKey,
+      nonce,
+      encrypt: false,
+    );
+
+    // 4. Read original length (first 4 bytes, big-endian u32)
+    if (decrypted.length < 4) {
+      throw CryptoException('Blob corrupted: decrypted payload too short');
+    }
+    final originalLen = _readUint32BE(decrypted, 0);
+    if (4 + originalLen > decrypted.length) {
+      throw CryptoException(
+        'Blob corrupted: invalid length prefix $originalLen',
+      );
     }
 
-    // Extract raw encrypted bytes, convert back to hex for decrypt
-    final rawBytes = padded.sublist(4, 4 + rawLen);
-    final hexStr = _bytesToHex(rawBytes);
-
-    return decrypt(hexStr, mkHex);
+    return utf8.decode(decrypted.sublist(4, 4 + originalLen));
   }
 
   // ── Group E: SHA-256 ──────────────────────────────────────────
@@ -435,7 +509,9 @@ class CryptoService {
   String computeContentHash(Map<String, dynamic> data) {
     _requireInitialized();
     if (!hasMasterKey) {
-      throw CryptoException('computeContentHash requires a cached master key for field decryption');
+      throw CryptoException(
+        'computeContentHash requires a cached master key for field decryption',
+      );
     }
 
     final canonical = <String, dynamic>{};
@@ -501,7 +577,9 @@ class CryptoService {
 
   void _requireInitialized() {
     if (!_initialized) {
-      throw CryptoException('CryptoService not initialized. Call initialize() first.');
+      throw CryptoException(
+        'CryptoService not initialized. Call initialize() first.',
+      );
     }
   }
 
@@ -509,20 +587,30 @@ class CryptoService {
   void _validateHex(String hexStr, [int? length, int minLength = 0]) {
     if (hexStr.isEmpty) throw CryptoException('Hex string must not be empty');
     if (hexStr.length % 2 != 0) {
-      throw CryptoException('Hex string must have even length, got ${hexStr.length}');
+      throw CryptoException(
+        'Hex string must have even length, got ${hexStr.length}',
+      );
     }
     // Must contain only valid hex characters
     for (var i = 0; i < hexStr.length; i++) {
       final c = hexStr.codeUnitAt(i);
-      if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102))) {
-        throw CryptoException('Invalid hex character "${hexStr[i]}" at position $i');
+      if (!((c >= 48 && c <= 57) ||
+          (c >= 65 && c <= 70) ||
+          (c >= 97 && c <= 102))) {
+        throw CryptoException(
+          'Invalid hex character "${hexStr[i]}" at position $i',
+        );
       }
     }
     if (length != null && hexStr.length != length) {
-      throw CryptoException('Hex string must be $length chars, got ${hexStr.length}');
+      throw CryptoException(
+        'Hex string must be $length chars, got ${hexStr.length}',
+      );
     }
     if (minLength > 0 && hexStr.length < minLength) {
-      throw CryptoException('Hex string must be at least $minLength chars, got ${hexStr.length}');
+      throw CryptoException(
+        'Hex string must be at least $minLength chars, got ${hexStr.length}',
+      );
     }
   }
 
@@ -535,7 +623,9 @@ class CryptoService {
       throw CryptoException('Invalid base64 seed: $e');
     }
     if (decoded.length != 32) {
-      throw CryptoException('Seed must decode to 32 bytes, got ${decoded.length}');
+      throw CryptoException(
+        'Seed must decode to 32 bytes, got ${decoded.length}',
+      );
     }
     return decoded;
   }
@@ -543,19 +633,35 @@ class CryptoService {
   /// Cryptographically secure random bytes.
   Uint8List _randomBytes(int length) {
     final random = Random.secure();
-    return Uint8List.fromList(List<int>.generate(length, (_) => random.nextInt(256)));
+    return Uint8List.fromList(
+      List<int>.generate(length, (_) => random.nextInt(256)),
+    );
   }
 
   /// AES-128-CTR encrypt or decrypt.
-  Uint8List _aesCtrProcess(List<int> data, Uint8List key, Uint8List nonce, {required bool encrypt}) {
+  Uint8List _aesCtrProcess(
+    List<int> data,
+    Uint8List key,
+    Uint8List nonce, {
+    required bool encrypt,
+  }) {
     // AES-128 uses a 16-byte key. Use CTR mode with 8-byte nonce extended to 16 bytes.
     final ctrParams = ParametersWithIV<KeyParameter>(
       KeyParameter(Uint8List.fromList(key)),
-      Uint8List.fromList([...nonce, 0, 0, 0, 0, 0, 0, 0, 0]), // pad nonce to 16 bytes
+      Uint8List.fromList([
+        ...nonce,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+      ]), // pad nonce to 16 bytes
     );
 
-    final cipher = CTRStreamCipher(AESEngine())
-      ..init(encrypt, ctrParams);
+    final cipher = CTRStreamCipher(AESEngine())..init(encrypt, ctrParams);
 
     final output = Uint8List(data.length);
     for (var i = 0; i < data.length; i++) {
@@ -568,7 +674,12 @@ class CryptoService {
   ///
   /// [keyLength] — if provided, validates exact length; otherwise any even hex.
   /// [truncate] — if provided, returns only the first N hex chars.
-  String _hmacSha256Hex(String keyHex, String message, {int? keyLength = 64, int? truncate}) {
+  String _hmacSha256Hex(
+    String keyHex,
+    String message, {
+    int? keyLength = 64,
+    int? truncate,
+  }) {
     _validateHex(keyHex, keyLength);
     final key = Uint8List.fromList(_hexToBytes(keyHex));
     final hmac = crypto.Hmac(crypto.sha256, key);
@@ -604,23 +715,86 @@ class CryptoService {
   }
 
   /// Select the blob size tier in bytes for a given plaintext length.
+  /// Returns tier ceiling. Throws [CryptoException] if plaintext exceeds 512K.
   int _selectTier(int plaintextLength) {
     // Tiers: 64K, 128K, 256K, 512K
     const tiers = [65536, 131072, 262144, 524288];
     for (final tier in tiers) {
       if (plaintextLength <= tier) return tier;
     }
-    return 524288;
+    throw CryptoException(
+      'Blob size $plaintextLength bytes exceeds max tier 524288 bytes (512K)',
+    );
   }
 
-  /// Get the next tier above [current] for upsizing when encrypted output
-  /// exceeds the plaintext-based tier selection.
-  int _nextTier(int current) {
-    const tiers = [65536, 131072, 262144, 524288];
-    for (final tier in tiers) {
-      if (tier > current) return tier;
-    }
-    return 524288;
+  // ── Canonical blob obfuscation helpers ─────────────────────
+  //
+  // These implement the Rust blob.rs / Python remote_sync.py wire format.
+  // Must be kept byte-identical with phpoc-crypto-core/src/blob.rs.
+
+  /// Derive blob obfuscation sub-key: HMAC-SHA256(MK, "blob-obfuscation")[:16].
+  Uint8List _deriveBlobKeyBytes(Uint8List masterKey) {
+    return Uint8List.sublistView(
+      _hmacSha256Full(masterKey, utf8.encode('blob-obfuscation')),
+      0,
+      16,
+    );
+  }
+
+  /// Derive encryption and integrity keys from blob key + salt.
+  ///
+  /// - enc_key = HMAC-SHA256(blob_key, salt)[:16]
+  /// - integrity_key = HMAC-SHA256(blob_key, salt || "-integrity")[:16]
+  (Uint8List, Uint8List) _deriveBlobEncryptionKeys(
+    Uint8List blobKey,
+    Uint8List salt,
+  ) {
+    final encKey = Uint8List.sublistView(
+      _hmacSha256Full(blobKey, salt),
+      0,
+      16,
+    );
+
+    final intSalt = Uint8List(salt.length + 10);
+    intSalt.setAll(0, salt);
+    intSalt.setAll(salt.length, utf8.encode('-integrity'));
+    final integrityKey = Uint8List.sublistView(
+      _hmacSha256Full(blobKey, intSalt),
+      0,
+      16,
+    );
+
+    return (encKey, integrityKey);
+  }
+
+  /// AES-128-CTR encrypt payload and append HMAC-SHA256 auth tag.
+  ///
+  /// Returns ciphertext + tag(32). Auth tag is computed over
+  /// nonce + ciphertext (matching Rust encrypt_and_tag / Python
+  /// _encrypt_and_tag).
+  Uint8List _blobEncryptAndTag(
+    Uint8List payload,
+    Uint8List encKey,
+    Uint8List integrityKey,
+    Uint8List nonce,
+  ) {
+    final ciphertext = _aesCtrProcess(
+      payload,
+      encKey,
+      nonce,
+      encrypt: true,
+    );
+
+    // Auth over nonce + ciphertext
+    final authData = Uint8List(8 + ciphertext.length);
+    authData.setAll(0, nonce);
+    authData.setAll(8, ciphertext);
+    final tag = _hmacSha256Full(integrityKey, authData);
+
+    final result = Uint8List(ciphertext.length + tag.length);
+    result.setAll(0, ciphertext);
+    result.setAll(ciphertext.length, tag);
+    return result;
   }
 
   /// Write a 32-bit unsigned integer in big-endian byte order.
@@ -641,7 +815,8 @@ class CryptoService {
 
   /// Convert hex string to byte list.
   static Uint8List _hexToBytes(String hex) {
-    if (hex.length % 2 != 0) throw CryptoException('Hex string must have even length');
+    if (hex.length % 2 != 0)
+      throw CryptoException('Hex string must have even length');
     final result = Uint8List(hex.length ~/ 2);
     for (var i = 0; i < hex.length; i += 2) {
       result[i ~/ 2] = int.parse(hex.substring(i, i + 2), radix: 16);
@@ -673,5 +848,30 @@ class CryptoService {
       return value.map(_sortMap).toList();
     }
     return value;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Shared constants + utilities (used by Services layer)
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Expected seed byte length (32 bytes).
+  static const int seedByteLength = 32;
+
+  /// PBKDF2 iteration count for passphrase-derived key (PDK).
+  static const int pdkIterations = 600000;
+
+  /// Minimum allowed passphrase length.
+  static const int minPassphraseLength = 8;
+
+  /// Validate that [seedB64] is valid base64 decoding to [seedByteLength] bytes.
+  ///
+  /// Throws [FormatException] if the seed is invalid (not base64, wrong length).
+  static void validateSeedBase64(String seedB64) {
+    final decoded = base64.decode(seedB64);
+    if (decoded.length != seedByteLength) {
+      throw FormatException(
+        'Seed must decode to $seedByteLength bytes, got ${decoded.length}',
+      );
+    }
   }
 }
