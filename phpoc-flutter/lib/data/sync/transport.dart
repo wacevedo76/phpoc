@@ -42,7 +42,7 @@ class HttpTransport {
   Future<Uint8List?> pull(String path) async {
     final uri = _url(path);
     final headers = <String, String>{
-      'Authorization': 'Bearer $apiKey',
+      'X-Api-Key': apiKey,
     };
 
     final etag = _lastETags[path];
@@ -78,7 +78,7 @@ class HttpTransport {
   Future<void> push(String path, Uint8List data) async {
     final uri = _url(path);
     final headers = <String, String>{
-      'Authorization': 'Bearer $apiKey',
+      'X-Api-Key': apiKey,
       'Content-Type': 'application/octet-stream',
     };
 
@@ -110,7 +110,7 @@ class HttpTransport {
   Future<List<String>> listFiles(String prefix) async {
     final uri = _url('$prefix?list');
     final headers = <String, String>{
-      'Authorization': 'Bearer $apiKey',
+      'X-Api-Key': apiKey,
     };
 
     final response = await http.get(uri, headers: headers);
@@ -136,11 +136,35 @@ class HttpTransport {
     );
   }
 
+  /// Health check — verifies the Worker is reachable.
+  ///
+  /// Throws [HttpTransportException] on connection failure or non-2xx status.
+  Future<void> healthCheck() async {
+    final uri = Uri.parse('$baseUrl/health');
+    final headers = <String, String>{
+      'X-Api-Key': apiKey,
+    };
+
+    final response = await http.get(uri, headers: headers).timeout(
+      const Duration(seconds: 5),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode != 404) {
+        throw HttpTransportException(
+          'Health check failed: HTTP ${response.statusCode}',
+          response.statusCode,
+        );
+      }
+      // 404 is acceptable — not all Workers implement /health
+    }
+  }
+
   /// Delete a remote path. Idempotent — succeeds on 2xx or 404.
   Future<void> delete(String path) async {
     final uri = _url(path);
     final headers = <String, String>{
-      'Authorization': 'Bearer $apiKey',
+      'X-Api-Key': apiKey,
     };
 
     final response = await http.delete(uri, headers: headers);

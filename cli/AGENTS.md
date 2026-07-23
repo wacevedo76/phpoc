@@ -28,6 +28,7 @@ Command-line interface for the PH Ledger — user-facing commands, display logic
 - Follow existing command patterns when adding new subcommands
 - Sync before read commands; sync + auth before write commands
 - Use `_sync_before_command(require_auth=False)` for reads, `True` for writes
+- Remote Worker testing: use credentials from `TEST_CREDENTIALS.md` (gitignored) at repo root
 
 ## Verification
 - Python test suite under `tests/` (test_modular, test_daemon, test_background_sync, etc.)

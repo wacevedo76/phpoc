@@ -104,6 +104,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - **Browser tab reuse on server restart** (2026-06-24): When starting the React dev server (`npx vite --host 0.0.0.0 --port 5173`) or preview server (`npx vite preview --host 0.0.0.0 --port 4173`), connect to the existing Vivaldi browser on port 9222, run `tab list`, find the tab with `localhost:5173` (or `4173`) in its URL, switch to it with `tab t<N>`, and then `snapshot -i`. Do NOT open new tabs — reuse the existing one. After a server restart, Vivaldi may auto-reload the same tab; if it opens a new one instead, find the new tab via `tab list` by URL and use that one going forward. Record the active tab ID in SESSION_HANDOFF.md so the next session can target it directly.
 - **SESSION_HANDOFF.md size limit** (2026-07-04): Keep `SESSION_HANDOFF.md` under 100 lines. At session closeout, if it exceeds this limit, the agent must archive completed sections (`✅` / `🟢` milestones) into `docs/planning/archive/SESSION_HISTORY_YYYY-MM-DD.md` before declaring work done. Prefer one-line summaries over multi-paragraph status blocks for completed milestones. Active work and known issues stay.
 - **No secrets in repo** (2026-07-13): Never save API keys, recovery seeds, passphrases, or other secrets to any file tracked in the repository (including AGENTS.md, SESSION_HANDOFF.md, config files, docs, scripts, or test files). Secrets shared in conversation may be referenced by role (e.g., "the testing Worker API key") but never written to disk within the repo. For test data directories outside the repo (e.g., `/tmp/`), secrets in config files are acceptable only when the user explicitly places them there.
+- **TEST_CREDENTIALS.md** (2026-07-25): `TEST_CREDENTIALS.md` (gitignored, at repo root) is the canonical source for Worker URL, API key, test ledger details, and a verification script. All subsystems that perform remote Worker testing (CLI, web, Flutter, Python tests, Worker integration tests) must reference this file for credentials — never duplicate credentials in other files.
 
 ## Child DOX Index
 
@@ -134,4 +135,5 @@ When the user requests a durable behavior change, record it here or in the relev
 - `compat/` — Backward compatibility shims (2 files, COLD)
 - `scripts/` — Utility scripts (maintenance tools, COLD)
 - `staging_log/` — Trace log files (runtime artifacts, not source)
-- Root-level files (`README.md`, `SESSION_HANDOFF.md`, `LICENSE`, `.gitignore`, `pytest.ini`, `main.py`) — Owned by this root AGENTS.md
+- `testdata/` — Test fixture data: sample ledger, identity, canonical vectors
+- Root-level files (`README.md`, `SESSION_HANDOFF.md`, `LICENSE`, `.gitignore`, `pytest.ini`, `main.py`, `TEST_CREDENTIALS.md`) — Owned by this root AGENTS.md

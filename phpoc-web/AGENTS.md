@@ -39,6 +39,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Node-based tests: `node test/<name>.mjs`
 - Vitest component tests: `npx vitest run test/settings_genesis_component.test.mjs`
 - Smoke tests for WASM integration
+- Remote Worker testing credentials: `TEST_CREDENTIALS.md` at repo root (gitignored)
 
 ## Child DOX Index
 None — flat source structure under `src/`.

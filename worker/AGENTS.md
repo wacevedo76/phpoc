@@ -36,6 +36,7 @@ No decryption or ledger logic — all security is client-side via encryption.
 ## Verification
 - Tests run via `npm test` (vitest) — 104 integration tests against live deployment
 - Deploy test Worker before running tests: `npx wrangler deploy -c wrangler.testing.toml`
+- Remote Worker test credentials: `TEST_CREDENTIALS.md` at repo root (gitignored) — Worker URL, API key, and verification script
 
 ## Child DOX Index
 None.

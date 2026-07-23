@@ -4,77 +4,78 @@
 > Before making edits, consult the Documentation Impact Contract in root `AGENTS.md`.
 > For architectural decisions, read `docs/design/TOP_LEVEL_DIRECTIVES.md` first — D1–D10 are the binding principles.
 >
-> **Full issue queue:** `docs/planning/BACKLOG.md`
-> **Active TDD plan:** `docs/planning/flutter/STORAGE_PHASE1.md` (100 assertions, 11 groups — ✅ Phase 1+2+3+4 complete)  
-> **Active TDD plan:** `docs/planning/flutter/SYNC_CORE_PHASE1.md` (106 assertions, 10 groups — ✅ Phase 1+2+3+4 complete)
+> **Full issue queue:** `docs/planning/BACKLOG.md` (updated 2026-07-18 — authoritative status)
+> **Flutter TDD plans (all 7 complete):**
+> - `docs/planning/flutter/MODELS_PHASE1.md` (94) | `CRYPTO_FFI_PHASE1.md` (74) | `SERVICES_PHASE1.md` (65)
+> - `STORAGE_PHASE1.md` (100) | `SYNC_CORE_PHASE1.md` (106) | `SCREENS_PHASE1.md` (109)
+> - `LEDGER_PHASE1.md` (196) — **all ✅ Phase 1+2+3+4 complete**
+- `CRYPTO_FFI_WIRING_PHASE1.md` (99) — **✅ Phase 1+2+3+4 complete** — flutter_rust_bridge wiring
+
+- `RESTORE_FROM_CLOUD_PHASE1.md` (63) — **✅ Phase 1+2+3 complete** — restore ledger from Worker/R2 during onboarding
+- `WIPE_CLOUD_ONBOARD_PHASE1.md` (38) — **✅ Phase 1+2+3 complete** — Stage 3: push→wipe→restore→pull→verify
 
 ## Current State
 - **Branch:** `feature/flutter-mobile` (merged `feature/flutter-mobile-riverpod`, off `main`)
-- **Last commit:** `f5d3287` — feat(encrypt-fields): per-activity field encryption — CLI + Web, Phases 1-4
-- **CLI:** 2348 PY tests pass (0 failures)  |  **Web:** 74/75 JS test files pass (7 pre-existing vitest env failures: i01_key_rotation, i02_index/staging/field_token, i09_device, onboarding_cloud, worker_connect)
-- **I-01:** ✅ key rotation (95/95 PY + 13/13 JS)  |  **I-01a:** ✅ RotateKeysCommand (141/141 PY)  |  **I-02:** ✅ blind index + staging keys (103/103 PY + 67/67 JS)  |  **I-02a:** ✅ JS field tokens (28+35+32)  |  **I-03:** ✅ staging at rest (52/52 PY + 35/35 web)  |  **I-04:** ✅ HMAC naming  |  **I-05:** ✅ per-user PBKDF2 salt  |  **I-06:** ✅ content_hash required  |  **I-09:** ✅ device attribution (49 assertions, Phases 1-4)  |  **I-11:** ✅ blob obfuscation portability  |  **I-12:** ✅ system architecture doc  |  **Entry Hash Consolidation:** ✅ 17/17 GREEN  |  **P5 CLI Unlock:** ✅ 32/32 GREEN  |  **Web Staging Alignment:** ✅ Phase 1a (Stages 1.1–1.5)  |  **Cross-Client Serialization (P1):** ✅ Phases 1-4 complete — 43/43 GREEN
-- **P4 CLI UX Polish:** ✅ Phases 1-4 complete — 24/24 GREEN. 3 Phase-4 improvements: extracted `_reauth_staging()` (eliminated 6 duplicated re-auth blocks), moved `_list_tags` → `CLIInterface.list_tags()`, explicit `_reauth_notified` init.
-- **Encrypt-all-entry-fields (Web):** ✅ Phases 1-4 complete — all 61 assertions GREEN.
-**Encrypt-all-entry-fields (CLI):** ✅ Phases 1-4 complete — 72/72 GREEN. Phase 4 improvements (5): (1) extracted `_decrypt_staging_field()` helper in cli_view.py — eliminated 10+ duplicate `startswith("plain:")` blocks; (2) cleaned up `_apply_entry_encryption()` API — separate keyword args instead of mixed flag+data dict; (3) extracted `_toggle_encryption()` helper — 4x ~10-line encrypt/decrypt toggle blocks → single parameterized method; (4) `_prepare_entries()` uses `_PER_FIELD_ENCRYPTABLE` list for plaintext removal; (5) extracted `_verify_content_hash_v030()` static method from `_verify_content_hash()` — self-documenting legacy fallback. Full flow: staging cache (A/B/E) → ledger engine (C) → blind index (D) → hash integrity (E) → display (F) → commands (G) → sync (H) → integration (I). Core implementation: `local_cache.py` — `append()` accepts per-field encryption kwargs, `read_entries()` dual-reads _enc fallback, `write_entries()` re-encrypts per-field when `has_encrypted_fields` set; `engine.py` — `_prepare_entries()` re-encrypts per-field for committed blocks, `_compute_content_hash()` strips `_enc` suffix (matching web), `_indexable_title()` skips encrypted titles in blind index, `revert()` decrypts per-field _enc variants; `chain.py` — `_verify_content_hash()` tries both canonical (stripped) and legacy extensible formats, plus legacy v0.3.0 fallback; `cli_view.py` — `render_entry_line()` shows `[encrypted]` placeholder for has_encrypted_fields entries.
-- **Sync Core:** ✅ Phases 1-4 complete — 378/378 GREEN. Phase 4 improvements (6): (1) extracted `_decodePauses()` helper in `local_cache.dart` — eliminated 3× duplicate pause-decrypt+decode blocks; (2) extracted `_buildBlobBytes()` in `sync_service.dart` — deduplicated blob serialization between `_pushBlobOnly` / `pushToRemote`; (3) extracted `_findActiveEntryIndex()` in `sync_service.dart` — eliminated 3× duplicate find-by-title pattern in `end`/`pause`/`unpause`; (4) added `MergeEngine.mergeMaps()` — centralized map-based merge logic, deleted `_mergeEntryMaps` + `_mergeKey` from `sync_service.dart`; (5) made `DeviceCookie._generateSpecifier` static — no instance state dependency; (6) removed silent try/catch from `_makeDeviceProof` — now throws on crypto failure instead of pushing empty proof.
-- **Settings Genesis Component:** ✅ Phase 3 GREEN — `settings_genesis_component.test.mjs`: 26/26. Added `fetch` mock, `reconfigure` to sync mock. Fixed Settings.jsx: only set `genesisStatus='checking'` when URL changed (preserves compatible status on same-URL save).
+- **Last commit:** `1f57f29` — feat(flutter): Sync Core — Phases 1-4 complete (378/378 GREEN)
+- **Flutter test suite:** 1042 total (1042 GREEN, 0 failures, 0 regressions)
+- **Flutter analyzer:** 1 pre-existing info lint (_obscurePassphrase)
+- **Flutter analyzer:** 4 info-level lint from raw sqlite3 API (pre-existing, not actionable)
 
-## C5 File Upload Limitation — RESOLVED (2026-07-16)
-- React 18 native event delegation picks up `new Event('change', {bubbles: true})`
-- Working pattern: `DataTransfer` → `input.files = dt.files` → `dispatchEvent(change/input)`
-- React `onChange` fires, state updates, UI shows selected filename — verified in browser
-- Documented: `docs/planning/BROWSER_E2E_TEST_PLAN.md`, `tests/e2e/E2E-03_*.md`, `tests/e2e/E2E-07_*.md`
+### All Work Complete — Backend (Python + Web JS)
+| Area | Items |
+|------|-------|
+| Doc fixes | I-08, I-10, I-13, I-14, I-15, I-16 |
+| Low-effort | I-04 (HMAC naming), I-05 (PBKDF2 salt), I-06 (content_hash required), I-11 (blob obfuscation), I-02a (JS field tokens) |
+| Encryption | I-03 (staging at rest), I-02 (blind index + staging keys) |
+| Architecture | I-01 (key rotation), I-01a (RotateKeysCommand), I-09 (device attribution), I-12 (system architecture doc) |
+| Cross-client | P1 (canonical serialization), entry hash indent=2 |
+| CLI polish | P4 (UX polish), P5 (unlock latency) |
+| Encrypt fields | P6 (Web, 61 assertions), P7 (CLI, 72 assertions) |
+| Staging + E2E | Web staging alignment (1.1–1.5), browser E2E (E2E-03 through E2E-07) |
+| Misc | B-01 (committed-flag loss), Settings Genesis Component (26/26) |
 
-## Phase 1b: Browser E2E Tests
-- **E2E-03:** ✅ COMPLETE — `tests/e2e/E2E-03_import_file_upload.md` — 9/9 steps pass: file upload, auth errors, field gating
-- **E2E-04:** ✅ COMPLETE — 4/4 steps pass: wrong passphrase/seed → error, modal stays open (results in `docs/planning/BROWSER_E2E_TEST_PLAN.md`)
-- **E2E-05:** ✅ Phases 1-4 complete — seal/hash mismatch resolved, code refactored
-- **E2E-06:** ✅ COMPLETE — JS-layer PBKDF2 passphrase hash, wrong passphrase → error (results in `docs/planning/BROWSER_E2E_TEST_PLAN.md`)
-- **E2E-07:** ✅ COMPLETE — `tests/e2e/E2E-07_onboarding_import.md` — 13/13 steps pass: onboarding import, back nav, auth errors, field gating
+### All Work Complete — Flutter Mobile (7 modules)
+| Module | Assertions | Phase 4 improvements |
+|--------|-----------|---------------------|
+| Models | 94 | — (included with Crypto FFI) |
+| Crypto FFI | 74 | 7 (PBKDF2 benchmark, cleanup) |
+| Services | 65 | 3 (provider cleanup) |
+| Storage | 100 | 5 (dedup _selectOne/Two, rename _execute→_executeAndGetChanges, dedup setClauses.add, safe BlockType parse, 3 analyzer fixes) |
+| Sync Core | 106 | 6 (_decodePauses, _buildBlobBytes, _findActiveEntryIndex, MergeEngine.mergeMaps, static _generateSpecifier, throw on crypto failure) |
+| Screens | 109 | 5 (FormatUtils, dead state removal, _buildEntryDetail, sync status fix, _buildErrorCard) |
+| Ledger Engine | 196 | 8 (jsonEncodeSortedNoSpaces, compareVersions, epochToDate, secretToHex, getBlockHashForBlock, _computeSeal; removed _buildLegacyJson; 11 analyzer warnings) |
+| Crypto FFI Wiring | 99 | 5 (security: zero MK on clear, clarity: comments, modularity: deriveDeviceId/getDeviceSecret in frb, conciseness: dart:convert _toJson, List support in _sortMap) |
+| Restore from Cloud | 63 | 8 (_pullRemoteBlob, _pushCookie, _pushBlobOnly reuse, _touchLocalCookie clarity, RegExp consolidation, _handleServiceError extraction) |
+| Push to R2 | 39 | 4 (shared epochToIsoDate→FormatUtils, removed redundant sealFieldNames, blockId fallback comment, _textBytes helper) |
 
-## Recent UI Changes (2026-07-16)
-- Dashboard: comment field added; Start New Task collapsible to thin bar
-- Sync tab: Sync Now below Commit All; sync-details collapsible to "Sync Status ▸" bar
-- Nav: removed redundant "New" tab (Dashboard covers task creation)
+### Only Deferred Item
+- **P3:** Remote sync (git-based) — infrastructure exists, `init --git-create` remaining. Not needed while Worker sync serves all active use cases.
 
-## Backlog Priority
-| Pri | Phase | Key Items |
-|-----|-------|-----------|
-| 1 | 🟢 Phase 1b | E2E all complete ✅ |
-| 2 | 🔴 Phase 1 | Encrypt-all-entry-fields: Web (61 assertions) + CLI (72 assertions) — Phase 1 blueprints done |
-| 3 | 🔵 Phase 7 | P3 — Remote sync (git-based) — deferred (infra exists, init --git-create remaining) |
-| 4 | 🔴 Phase 4 | I-09✅ device attribution — BACKLOG entry stale, code complete |
-| 5–8 | ✅ Complete | All I-01–I-17, P4, P5, cross-client serialization done |
-
-## Flutter Mobile App — Riverpod Scaffold Complete 🚀
-
-- **Flutter:** 3.44.6 (stable) at `/opt/flutter/bin/flutter` — on PATH
-- **Dart:** 3.12.2 (bundled with Flutter)
-- **Android Studio:** `/opt/android-studio/`
-- **Emulator:** `pixel_6_avg` (API 35, x86_64, Google Play) — created, runs
+## Flutter Mobile App
+- **Flutter:** 3.44.6 (stable) at `/opt/flutter/bin/flutter`
+- **Dart:** 3.12.2 | **Android Studio:** `/opt/android-studio/`
+- **Emulator:** `pixel_6_avg` (API 35, x86_64, Google Play)
 - **Crypto core:** `phpoc-crypto-core/` (Rust, `ring` crate) — ready for `flutter_rust_bridge` FFI
-- **Architecture doc:** `docs/design/FLUTTER_ARCHITECTURE.md` — comparative analysis of web + CLI, key decisions
-- **Scaffold:** `phpoc-flutter/` — Riverpod + go_router + drift (stubs), 21 source files, `flutter analyze` clean, 1 test passes
-- **Dependencies:** flutter_riverpod, go_router, drift, shared_preferences, http, equatable, freezed_annotation
-- **Key decision — State Management:** Riverpod chosen over Bloc for compile-time safety, testability without widget tree, lower boilerplate for singleton services
+- **Architecture doc:** `docs/design/FLUTTER_ARCHITECTURE.md`
+- **Tech stack:** Riverpod + go_router + Drift/SQLite + SharedPreferences
+- **State Management:** Riverpod (compile-time safety, testability, lower boilerplate)
 
 ## Immediate Next Steps 🎯
 
-1. **Next per INITIAL_PLAN.md** — Services → Screens → Ledger Engine → Polish + Release.
-2. **Phase 1 (Storage Layer)** — Riverpod services wrapping Drift DAOs (EntryDao, BlockDao, Preferences, SecurePreferences).
+### 🔜 Stage 3: Phase 4 (REFACTOR)
+- Code review `LedgerPullService.pullAll()` (~195 lines) against modularity, clarity, security, conciseness
+- After Phase 4: re-raise E2E tests (see Known Issues for blockers)
 
-**Sync Core (Phase 4) improvements:**
-| # | File | Category | Change |
-|---|------|----------|--------|
-| 1 | `local_cache.dart` | Conciseness | Extract `_decodePauses()` — 3× duplicate blocks → 1 helper |
-| 2 | `sync_service.dart` | Conciseness | Extract `_buildBlobBytes()` — dedup blob serialization |
-| 3 | `sync_service.dart` | Conciseness | Extract `_findActiveEntryIndex()` — dedup find-by-title |
-| 4 | `merge_engine.dart` | Modularity | Add `mergeMaps()` — centralize map merge; delete `_mergeEntryMaps`+`_mergeKey` from sync_service |
-| 5 | `device_cookie.dart` | Clarity | `_generateSpecifier` instance → static |
-| 6 | `sync_service.dart` | Security | `_makeDeviceProof` throws on failure instead of silent `''` |
+### Deferred
+- **P3 (git sync):** Infrastructure exists, `init --git-create` remaining. Not needed while Worker sync covers all active use cases.
 
 ## Known Issues
-- **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner
+- **7 vitest files fail** with environment/teardown errors (pre-existing): i01_key_rotation, i02_index_encryption, i02_staging_keys, i02a_field_token_wasm, i09_device_attribution, onboarding_cloud_conflict, worker_connect_blocks_format — 61/61 individual tests pass, files marked failed by test runner.
+- **E2E tests (Group E) blocked by two pre-existing design issues (discovered 2026-07-25):**
+  1. **`pushAll()` from empty DB wipes R2** — Tests call `pushService.pushAll()` with empty in-memory DB → pushes `hash_index: []` + empty `index.json`, overwriting the canonical 31-block test ledger.
+  2. **Format mismatch** — Python `push_test_ledger.py` stores obfuscated blocks as raw binary bytes; Flutter's `deobfuscateBlob()` expects UTF-8-encoded base64 string. Pull fails with `FormatException: Unexpected extension byte`.
+  - **Auth fix applied** (2026-07-25): `HttpTransport` now sends `X-Api-Key` header (5 methods), matching Worker expectation. Was sending `Authorization: Bearer` → always 403.
+  - **Resolution options need exploration:** (A) align Python push format with Flutter expectations, or (B) fix tests to not overwrite R2 + handle format gap. Both require design discussion before re-raising E2E.
 
 ## Browser E2E Setup
 - **Browser:** Vivaldi via `agent_browser`, port 9222
