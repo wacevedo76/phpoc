@@ -219,12 +219,15 @@ void main() {
 
       await service.pushAll();
 
+      // Worker ?prefix= API returns paths relative to the prefix.
+      // ?prefix=ledger/ returns entries like 'blocks/000000.json',
+      // 'hash_index.json', 'index.json'.
       final allFiles = await transport.listFiles('ledger/');
-      final hasBlocks = allFiles.any((f) => f.startsWith('ledger/blocks/'));
+      final hasBlocks = allFiles.any((f) => f.startsWith('blocks/'));
       final hasHashIndex =
-          allFiles.any((f) => f == 'ledger/hash_index.json');
+          allFiles.any((f) => f == 'hash_index.json');
       final hasIndex =
-          allFiles.any((f) => f == 'ledger/index.json');
+          allFiles.any((f) => f == 'index.json');
 
       expect(hasBlocks, isTrue,
           reason: 'Must have ledger/blocks/ files');

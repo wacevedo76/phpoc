@@ -22,9 +22,9 @@ class LedgerPullService {
   final HttpTransport? transport;
   final LedgerBackupService backupService;
 
-  /// Regex to parse block index from remote file paths like
-  /// `ledger/blocks/000042.json`.
-  static final _pathRe = RegExp(r'ledger/blocks/(\d+)\.json$');
+  /// Regex to parse block index from filenames returned by listFiles.
+  /// The Worker `?prefix=` API returns bare filenames like `000042.json`.
+  static final _pathRe = RegExp(r'^(\d+)\.json$');
 
   /// Build the remote path for a block file by its index.
   static String _blockPath(int index) =>

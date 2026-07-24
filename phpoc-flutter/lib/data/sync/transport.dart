@@ -105,10 +105,11 @@ class HttpTransport {
 
   /// List files under a remote prefix.
   ///
-  /// Returns a list of file paths (relative to the prefix).
+  /// Uses the Worker's `?prefix=` root-level query parameter.
+  /// Returns a list of file names (relative to the prefix).
   /// Returns an empty list on 404 (no files).
   Future<List<String>> listFiles(String prefix) async {
-    final uri = _url('$prefix?list');
+    final uri = Uri.parse('$baseUrl/?prefix=$prefix');
     final headers = <String, String>{
       'X-Api-Key': apiKey,
     };

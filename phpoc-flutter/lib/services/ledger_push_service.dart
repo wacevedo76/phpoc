@@ -5,6 +5,7 @@ import '../core/crypto/crypto_service.dart';
 import '../core/models/block.dart';
 import '../core/models/push_result.dart';
 import '../core/utils/format_utils.dart';
+import '../data/ledger/helpers.dart' as ledger_helpers;
 import '../data/storage/database.dart';
 import '../data/sync/transport.dart';
 
@@ -124,9 +125,10 @@ class LedgerPushService {
       try {
         await transport.push(path, obfuscated);
         pushedCount++;
-        // Use identitySeal (the computed seal hash) when available;
-        // fall back to blockId for blocks that haven't been sealed yet.
-        blockHashes.add(block.identitySeal ?? block.blockId);
+        // Use blockId (block_hash from canonical JSON) for hash_index.
+        // Matches Python scripts/push_test_ledger.py line 118:
+        //   h = block.get("block_hash") or block.get("day_hash")
+        blockHashes.add(block.blockId);
       } catch (e) {
         failedBlocks.add(block.blockIndex);
         errors.add(e.toString());
@@ -200,7 +202,7 @@ class LedgerPushService {
       _kBlockHash: block.identitySeal ?? block.blockId,
     };
 
-    return jsonEncode(result);
+    return ledger_helpers.jsonEncodeSortedNoSpaces(result);
   }
 
 }

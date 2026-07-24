@@ -103,7 +103,11 @@ class FakePullTransport implements HttpTransport {
     if (unreachable) {
       throw HttpTransportException('Network unreachable', 0);
     }
-    return blockStore.keys.where((k) => k.startsWith(prefix)).toList();
+    // Match real Worker ?prefix= API: return entries relative to prefix
+    return blockStore.keys
+        .where((k) => k.startsWith(prefix))
+        .map((k) => k.substring(prefix.length))
+        .toList();
   }
 
   @override

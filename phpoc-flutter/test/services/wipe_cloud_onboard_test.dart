@@ -67,7 +67,11 @@ class SharedFakeTransport implements HttpTransport {
 
   @override
   Future<List<String>> listFiles(String prefix) async {
-    return store.keys.where((k) => k.startsWith(prefix)).toList();
+    // Match real Worker ?prefix= API: return entries relative to prefix
+    return store.keys
+        .where((k) => k.startsWith(prefix))
+        .map((k) => k.substring(prefix.length))
+        .toList();
   }
 
   @override

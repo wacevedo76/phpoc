@@ -97,7 +97,11 @@ class FakeHttpTransport implements HttpTransport {
     if (unreachable) {
       throw HttpTransportException('Network unreachable', 0);
     }
-    return store.keys.where((k) => k.startsWith(prefix)).toList();
+    // Match real Worker ?prefix= API: return entries relative to prefix
+    return store.keys
+        .where((k) => k.startsWith(prefix))
+        .map((k) => k.substring(prefix.length))
+        .toList();
   }
 
   @override
@@ -735,8 +739,8 @@ void main() {
 
       final hashIndex = transport.store['ledger/hash_index.json'];
       final parsed = jsonDecode(utf8.decode(hashIndex!)) as List;
-      expect(parsed[0], 'genesis-hash-value',
-          reason: 'First hash index entry must be genesis block hash');
+      expect(parsed[0], 'gen-id',
+          reason: 'First hash index entry must be genesis block hash (blockId)');
     });
 
     // E3
@@ -778,7 +782,7 @@ void main() {
       expect(() => jsonDecode(text), returnsNormally);
       final parsed = jsonDecode(text);
       expect(parsed, isA<List>());
-      expect(parsed, contains('test-seal'));
+      expect(parsed, contains('test-id'));
     });
   });
 
@@ -1110,7 +1114,7 @@ void main() {
       final pushed = transport.store['ledger/hash_index.json'];
       expect(pushed, isNotNull);
       final remoteIndex = jsonDecode(utf8.decode(pushed!)) as List;
-      expect(remoteIndex, ['hi-seal-0', 'hi-seal-1']);
+      expect(remoteIndex, ['hi-0', 'hi-1']);
     });
 
     // H4
