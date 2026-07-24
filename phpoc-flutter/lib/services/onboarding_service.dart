@@ -174,8 +174,7 @@ class OnboardingService {
     final mk = crypto.deriveMasterKey(seedB64);
     crypto.setMasterKey(mk);
 
-    // 6-7. Create device identity, set flag (NO genesis creation —
-    //       genesis comes from R2 via ledgerPullService.pullAll()).
+    // 6-7. Create device identity, set flag.
     final uuid = crypto.generateUuid();
     await preferences.setDeviceUuid(uuid);
     await preferences.setHasExistingData(true);
@@ -195,8 +194,23 @@ class OnboardingService {
 
     if (connected && ledgerPullService != null) {
       try {
-        return await ledgerPullService!.pullAll()
+        final pullResult = await ledgerPullService!.pullAll()
             .timeout(const Duration(seconds: 60));
+
+        // Recreate genesis block in Flutter format after successful pull.
+        // The R2 genesis may use cross-client format (identity.recovery_seed_enc)
+        // but AuthService expects data_enc = base64({"seed": encrypt(seed, pdk)}).
+        // Overwrite the imported genesis with the local format so unlock works.
+        if (pullResult.success && pullResult.blocksPulled > 0) {
+          try {
+            await _buildAndPersistGenesis(passphrase, seedB64);
+          } catch (_) {
+            // Non-fatal: genesis creation failure doesn't invalidate the pull.
+            // Auth will need the seed explicitly if genesis recreation fails.
+          }
+        }
+
+        return pullResult;
       } catch (e) {
         if (e is TimeoutException) {
           return PullResult.failure(errors: [
@@ -322,6 +336,10 @@ class OnboardingService {
   /// The genesis stores the seed encrypted with PDK:
   ///   data_enc = base64(json({"seed": encrypt(seedB64, pdk)}))
   ///   identity_seal = HMAC-SHA256(MK, data_enc)
+  ///
+  /// If a genesis block already exists (e.g., imported from R2 in a
+  /// cross-client format), it is replaced so the Flutter-format genesis
+  /// is authoritative for AuthService.reauthenticate().
   Future<void> _buildAndPersistGenesis(
       String passphrase, String seedB64) async {
     // Derive PDK and MK
@@ -341,7 +359,10 @@ class OnboardingService {
     // Generate block ID
     final blockId = crypto.sha256('genesis:$seedB64:${DateTime.now().millisecondsSinceEpoch}');
 
-    // Insert genesis block
+    // Replace any existing genesis block(s) from R2 import with Flutter format.
+    // R2 blocks may use cross-client genesis structures that AuthService can't read.
+    await db.customStatement(
+        'DELETE FROM blocks WHERE block_type = ?', ['genesis']);
     await db.blockDao.insertBlock(Block(
       blockId: blockId,
       blockType: BlockType.genesis,

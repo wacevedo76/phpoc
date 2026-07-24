@@ -23,12 +23,10 @@
 - `5925a27` — fix(flutter): cross-platform E2E sync fixes
 
 ### Active work
-- **🟢 Restore Cloud error surfacing** — Phases 1-4 complete (not yet committed):
-  - `restoreFromCloud` now returns `PullResult` (was void) — errors surfaced to UI
-  - Wrong seed → red error: "Blob integrity check failed: tampered or wrong key"
-  - Wrong URL → red error: "Cannot reach Worker at ..."
-  - Wrong API key → red error surfaced from transport layer (403, etc.)
-  - UI: `_restoreFromCloud` checks `result.success`, shows first error, only navigates on success
+- **🟢 Restore Cloud error surfacing + unlock fix** — not yet committed:
+  - `restoreFromCloud` returns `PullResult` with error messages
+  - `_buildAndPersistGenesis` called after successful pull to recreate genesis in Flutter format
+  - `unlock_screen.dart` now calls `reauthenticate()` (extracts seed from genesis) instead of `unlock()` with hardcoded dummy seed
 
 ### All Work Complete — Backend (Python + Web JS)
 | Area | Items |

@@ -523,8 +523,8 @@ void main() {
     }
 
     // G1
-    test('G1: restoreFromCloud does NOT create a genesis block '
-        '(genesis comes from R2)', () async {
+    test('G1: restoreFromCloud creates genesis block in Flutter format '
+        '(data_enc with PDK-encrypted seed)', () async {
       final db = AppDatabase.inMemory();
       final onboarding = await _makeRestoreOnboarding(db: db);
 
@@ -537,9 +537,17 @@ void main() {
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isEmpty,
-          reason: 'restoreFromCloud must NOT create a local genesis — '
-              'genesis comes from R2 via pullAll');
+      expect(blocks, isNotEmpty,
+          reason: 'restoreFromCloud must create a genesis block '
+              'so AuthService.reauthenticate() can extract the seed '
+              'from data_enc using PDK');
+
+      final genesis = blocks.firstWhere(
+        (b) => b.blockType == BlockType.genesis,
+        orElse: () => blocks.first,
+      );
+      expect(genesis.dataEnc.length, greaterThan(10),
+          reason: 'Genesis data_enc must contain encrypted seed for auth');
     });
 
     // G2

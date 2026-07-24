@@ -50,12 +50,11 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
 
     try {
       final authService = ref.read(authServiceProvider);
-      // Use a default seed for MVP — real seed comes from storage
-      // The auth service validates passphrase against genesis block
-      await authService.unlock(
-        passphrase,
-        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-      );
+      // Extract the real seed from the genesis block using the passphrase.
+      // The seed is encrypted in genesis.data_enc, decryptable with PDK.
+      // This ensures MK is derived from the correct seed regardless of
+      // whether the user created, imported, or restored the ledger.
+      await authService.reauthenticate(passphrase);
 
       if (!mounted) return;
       final lifecycle = ref.read(appLifecycleProvider.notifier);
