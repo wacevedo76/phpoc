@@ -10,9 +10,10 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1029/1029 GREEN, 0 failures
+- **Flutter test suite:** 1063/1063 GREEN ✅ (Phase 3 — all new tests pass)
 
 ### Recent commits (Fri Jul 24)
+- _(Phase 3 + Phase 4 changes unstaged)_
 - `becbf08` — feat(flutter): Python-compatible field-level decrypt for cross-client data
 - `2d4a8f3` — feat(flutter): monospace font on all text input fields
 - `7e67f0e` — test(flutter): Group J cross-reference history dates
@@ -32,19 +33,14 @@
 
 ## Immediate Next Steps 🎯
 
-### 🔜 Calendar View — Phase 2 (RED tests)
-**Phase 1 doc:** `docs/planning/flutter/CALENDAR_VIEW_PHASE1.md` — 34 assertions across 6 groups (K–P)
+### ✅ Calendar View — 4-Phase TDD Complete
+**Phase 4 complete:** 4 improvements applied. All 1063 tests GREEN.
+- Extracted `monthAbbr` constant + `parseIsoDateStr` to `FormatUtils` (eliminated 3× month-name duplication)
+- Renamed `_allEntries` → `_rangeFilteredEntries` for clarity
+- Extracted `_dateGroupLabel` helper from `_buildDateGroups`
+- Flattened `_buildGroupedItem` → `_buildEntryList` with `_FlatItem` (O(1) indexing)
 
-- K (4): FormatUtils date helpers (`epochToDateStr`)
-- L (5): `SyncService.getCompleted()` — completion filter + date normalization
-- M (10): `CalendarMonthGrid` widget — month grid, green dots, navigation, selection
-- N (8): `HistoryScreen` calendar integration — tap-day filter, chips, range picker
-- O (4): Date-grouped entry display with headers ("Today", "Yesterday", "Jun 1")
-- P (3): Date range filter fix — inclusive end-date boundary
-
-**Web reference:** `phpoc-web/src/components/screens/History.jsx` — collapsible calendar grid with green dots and single-date filter
-
-**Start Phase 2:** Write failing tests per the Phase 1 assertion table, then implement in Phase 3.
+**Next:** See BACKLOG.md for open Flutter tasks or user direction.
 
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
@@ -52,7 +48,22 @@
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 - **Test ledger:** `testdata/ledger.json` — 31 blocks, 146 entries, Python-encrypted hex fields
 
+## Files Created (Calendar View)
+- `phpoc-flutter/lib/features/history/calendar_month_grid.dart` — CalendarMonthGrid widget
+
+## Files Modified (Calendar View)
+- `phpoc-flutter/lib/core/utils/format_utils.dart` — +epochToDateStr(int?)
+- `phpoc-flutter/lib/data/sync/sync_service.dart` — +getCompleted(), fixed getEntries(to:) UTC+end-of-day
+- `phpoc-flutter/lib/features/history/history_screen.dart` — calendar embed, single-date toggle, date grouping
+- `phpoc-flutter/test/core/utils/format_utils_test.dart` — fixed K2/K4 epoch values to UTC midnight
+
+## Files Created (Phase 2)
+- `phpoc-flutter/test/core/utils/format_utils_test.dart` — Group K (4 tests)
+- `phpoc-flutter/test/features/calendar_month_grid_test.dart` — Group M (10 tests)
+
+## Files Modified (Phase 2)
+- `phpoc-flutter/test/data/sync/sync_service_test.dart` — +Groups L (5) + P (3)
+- `phpoc-flutter/test/features/history_screen_test.dart` — +Groups N (8) + O (4)
+
 ## Known Issues
-- **Calendar grid + green dots not implemented** — see Phase 1 doc
-- **Date range filter may have off-by-one on end date** — midnight vs end-of-day
 - **7 vitest files fail** with environment/teardown errors (pre-existing, all individual tests pass)

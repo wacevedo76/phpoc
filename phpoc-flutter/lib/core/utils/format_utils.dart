@@ -4,6 +4,24 @@
 class FormatUtils {
   FormatUtils._(); // no instances
 
+  /// Three-letter month abbreviations (Jan–Dec).
+  static const monthAbbr = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// Parse a YYYY-MM-DD date string into (year, month, day).
+  /// Returns null if the string is not a valid ISO date.
+  static ({int year, int month, int day})? parseIsoDateStr(String dateStr) {
+    final parts = dateStr.split('-');
+    if (parts.length != 3) return null;
+    final y = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    final d = int.tryParse(parts[2]);
+    if (y == null || m == null || d == null) return null;
+    return (year: y, month: m, day: d);
+  }
+
   /// Full date-time: "2026-07-21 15:37"
   static String dateTime(DateTime dt) =>
       '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
@@ -12,13 +30,8 @@ class FormatUtils {
       '${dt.minute.toString().padLeft(2, '0')}';
 
   /// Human-friendly date: "Jul 21, 2026"
-  static String date(DateTime dt) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
-  }
+  static String date(DateTime dt) =>
+      '${monthAbbr[dt.month - 1]} ${dt.day}, ${dt.year}';
 
   /// Short numeric date: "7/21/2026"
   static String dateShort(DateTime dt) =>
@@ -45,6 +58,17 @@ class FormatUtils {
       epochSeconds * 1000,
       isUtc: true,
     );
+    return '${dt.year.toString().padLeft(4, '0')}'
+        '-${dt.month.toString().padLeft(2, '0')}'
+        '-${dt.day.toString().padLeft(2, '0')}';
+  }
+
+  /// Convert epoch milliseconds to ISO date string (YYYY-MM-DD).
+  /// Returns "unknown" for null, "1970-01-01" for 0 or negative.
+  static String epochToDateStr(int? epochMs) {
+    if (epochMs == null) return 'unknown';
+    if (epochMs <= 0) return '1970-01-01';
+    final dt = DateTime.fromMillisecondsSinceEpoch(epochMs, isUtc: true);
     return '${dt.year.toString().padLeft(4, '0')}'
         '-${dt.month.toString().padLeft(2, '0')}'
         '-${dt.day.toString().padLeft(2, '0')}';

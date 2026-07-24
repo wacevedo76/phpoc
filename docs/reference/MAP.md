@@ -44,7 +44,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 | File | Temp | Key contents |
 |---|---|---|
-| `lib/core/utils/format_utils.dart` | HOT | **NEW** — Shared date/time/duration formatters used by screens |
+| `lib/core/utils/format_utils.dart` | HOT | Shared date/time/duration formatters: dateTime, date, dateShort, time, duration, epochToIsoDate, epochToDateStr, monthAbbr, parseIsoDateStr |
 | `lib/data/ledger/helpers.dart` | HOT | **NEW** — getBlockHash, computeEntryHash, verifyEntryHashTwoWay, computeContentHash, verifyContentHash |
 | `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain: buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, computeSeal, verifySeal, identity MAC |
 | `lib/data/ledger/engine.dart` | HOT | **NEW** — LedgerEngine: commit, verify, revert, queryIndex, rebuildIndex (coordinates chain + index + staging) |
@@ -55,7 +55,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `lib/features/auth/unlock_screen.dart` | HOT | Unlock screen — passphrase entry, validation, auth flow |
 | `lib/features/onboarding/onboarding_screen.dart` | HOT | Onboarding — create/import/connect sub-flows |
 | `lib/features/dashboard/dashboard_screen.dart` | HOT | Dashboard — active task card, capture, timer |
-| `lib/features/history/history_screen.dart` | HOT | History — entry list, date filter, detail expansion |
+| `lib/features/history/history_screen.dart` | HOT | History — CalendarMonthGrid, entry list grouped by date, single-date toggle + date-range filter, detail expansion |
+| `lib/features/history/calendar_month_grid.dart` | HOT | **NEW (Phase 3)** — CalendarMonthGrid widget: month grid, green dots, prev/next month+year navigation, date selection |
 | `lib/features/sync/sync_screen.dart` | HOT | Sync — status, manual trigger, pending count |
 | `lib/features/settings/settings_screen.dart` | HOT | Settings — Worker config, passphrase change, seed export to file, ledger backup/restore |
 | `lib/features/shared/app_scaffold.dart` | HOT | Bottom-nav shell (Dashboard/History/Sync/Settings) |

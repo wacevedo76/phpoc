@@ -550,4 +550,161 @@ void main() {
       expect(() => svc.pushToRemote(), returnsNormally);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group L: getCompleted() — completed-entries query
+  // ═══════════════════════════════════════════════════════════════
+
+  group('L: SyncService — getCompleted()', () {
+    // L1
+    test('L1: getCompleted() returns only entries with is_active==false',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Active Task');
+      await svc.capture(title: 'Done Task');
+      await svc.end('Done Task', 5000);
+
+      final completed = await svc.getCompleted();
+
+      // Only the ended task (is_active==false) should appear
+      expect(completed.length, 1,
+          reason: 'getCompleted() must exclude active (is_active==true) entries');
+      expect(completed[0]['title'], 'Done Task');
+      expect(completed[0]['is_active'], false);
+    });
+
+    // L2
+    test('L2: each completed entry has a date field (YYYY-MM-DD from start_epoch)',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Dated Task');
+      await svc.end('Dated Task', 5000);
+
+      final completed = await svc.getCompleted();
+
+      expect(completed[0]['date'], isA<String>(),
+          reason: 'Every completed entry must carry a normalized date string');
+      // Must match YYYY-MM-DD pattern
+      expect(completed[0]['date'], matches(r'^\d{4}-\d{2}-\d{2}$'),
+          reason: 'date field must be ISO format YYYY-MM-DD');
+    });
+
+    // L3
+    test('L3: entries with start_epoch==0 get date="unknown"', () async {
+      final svc = await _makeSync();
+      // Capture and end an entry, then manually set start_epoch to 0
+      await svc.capture(title: 'Zero Epoch');
+      await svc.end('Zero Epoch', 5000);
+      await svc.modify(0, {'start_epoch': 0});
+
+      final completed = await svc.getCompleted();
+
+      expect(completed[0]['date'], 'unknown',
+          reason: 'Degraded data (epoch=0) must produce "unknown" date, not crash');
+    });
+
+    // L4
+    test('L4: getCompleted() returns entries sorted by start_epoch descending',
+        () async {
+      final svc = await _makeSync();
+      // Create entries with known timestamps
+      await svc.capture(title: 'Oldest');
+      await svc.modify(0, {'start_epoch': 1000});
+      await svc.end('Oldest', 2000);
+
+      await svc.capture(title: 'Middle');
+      await svc.modify(1, {'start_epoch': 2000});
+      await svc.end('Middle', 3000);
+
+      await svc.capture(title: 'Newest');
+      await svc.modify(2, {'start_epoch': 3000});
+      await svc.end('Newest', 4000);
+
+      final completed = await svc.getCompleted();
+
+      expect(completed.length, 3);
+      expect(completed[0]['title'], 'Newest',
+          reason: 'Most recent entry (highest start_epoch) must be first');
+      expect(completed[1]['title'], 'Middle');
+      expect(completed[2]['title'], 'Oldest',
+          reason: 'Oldest entry (lowest start_epoch) must be last');
+    });
+
+    // L5
+    test('L5: getCompleted() returns empty list when staging is empty',
+        () async {
+      final svc = await _makeSync();
+
+      final completed = await svc.getCompleted();
+
+      expect(completed, isEmpty,
+          reason: 'Empty staging must return empty list, not null or throw');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group P: Date range filter fix
+  // ═══════════════════════════════════════════════════════════════
+
+  group('P: SyncService — Date range filter fix', () {
+    // Helper: create an entry at a specific epoch and end it
+    Future<SyncService> _seededSync(
+        String title, int startEpoch, int endEpoch) async {
+      final svc = await _makeSync();
+      await svc.capture(title: title);
+      await svc.modify(0, {'start_epoch': startEpoch});
+      await svc.end(title, endEpoch);
+      return svc;
+    }
+
+    // P1
+    test('P1: getEntries(to: date) includes entries ON the end date', () async {
+      // Entry at noon on June 15
+      final jun15Noon = DateTime.utc(2026, 6, 15, 12, 0, 0).millisecondsSinceEpoch;
+      final svc = await _seededSync('Midday Entry', jun15Noon, jun15Noon + 1000);
+
+      // to: midnight June 15 — entry at noon should still be included
+      final toDate = DateTime.utc(2026, 6, 15); // midnight
+      final entries = await svc.getEntries(to: toDate);
+
+      expect(entries.length, 1,
+          reason: 'Entry at noon on June 15 must be included when to=midnight June 15 '
+              '(end date must be inclusive)');
+      expect(entries[0]['title'], 'Midday Entry');
+    });
+
+    // P2
+    test('P2: getEntries(from: date) includes entries ON the start date',
+        () async {
+      final jun15Midnight =
+          DateTime.utc(2026, 6, 15).millisecondsSinceEpoch;
+      final svc = await _seededSync(
+          'Midnight Entry', jun15Midnight, jun15Midnight + 1000);
+
+      final fromDate = DateTime.utc(2026, 6, 15); // midnight
+      final entries = await svc.getEntries(from: fromDate);
+
+      expect(entries.length, 1,
+          reason: 'Entry at midnight on June 15 must be included when from=midnight June 15 '
+              '(start date must be inclusive)');
+      expect(entries[0]['title'], 'Midnight Entry');
+    });
+
+    // P3
+    test('P3: range filter uses end-of-day for to boundary (entries at 11 PM pass)',
+        () async {
+      // Entry at 11 PM on June 15
+      final jun15Late = DateTime.utc(2026, 6, 15, 23, 0, 0).millisecondsSinceEpoch;
+      final svc = await _seededSync('Late Entry', jun15Late, jun15Late + 1000);
+
+      // to: midnight June 15 — but entry at 11 PM should still be included
+      final toDate = DateTime.utc(2026, 6, 15); // midnight
+      final entries = await svc.getEntries(to: toDate);
+
+      expect(entries.length, 1,
+          reason: 'Entry at 11 PM on June 15 must pass when to=midnight June 15. '
+              'The to boundary must use end-of-day, not midnight, to avoid the off-by-one bug');
+      expect(entries[0]['title'], 'Late Entry');
+    });
+  });
 }

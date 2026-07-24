@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/sync_result.dart';
+import '../../core/utils/format_utils.dart';
 import 'device_cookie.dart';
 import 'genesis_gate.dart';
 import 'local_cache.dart';
@@ -134,6 +135,7 @@ class SyncService {
   }
 
   /// Get all staging entries, optionally filtered by date range.
+  /// [from] is inclusive (start of day). [to] is inclusive (end of day).
   Future<List<Map<String, dynamic>>> getEntries({
     DateTime? from,
     DateTime? to,
@@ -143,11 +145,41 @@ class SyncService {
 
     return entries.where((entry) {
       final startEpoch = entry['start_epoch'] as int? ?? 0;
-      final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
+      final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch, isUtc: true);
       if (from != null && startDt.isBefore(from)) return false;
-      if (to != null && startDt.isAfter(to)) return false;
+      if (to != null) {
+        // End-of-day boundary for inclusive to-date matching
+        final toEndOfDay = DateTime.utc(to.year, to.month, to.day, 23, 59, 59, 999);
+        if (startDt.isAfter(toEndOfDay)) return false;
+      }
       return true;
     }).toList();
+  }
+
+  /// Get completed (is_active==false) entries with normalized date field,
+  /// sorted by start_epoch descending.
+  Future<List<Map<String, dynamic>>> getCompleted() async {
+    final entries = await _local.readEntries();
+    final completed = entries.where((e) => e['is_active'] != true).map((e) {
+      final startEpoch = e['start_epoch'] as int?;
+      // start_epoch==0 means missing/unknown — use "unknown"
+      final dateStr = (startEpoch != null && startEpoch > 0)
+          ? FormatUtils.epochToDateStr(startEpoch)
+          : 'unknown';
+      return {
+        ...e,
+        'date': dateStr,
+      };
+    }).toList();
+
+    // Sort by start_epoch descending (most recent first)
+    completed.sort((a, b) {
+      final aEpoch = a['start_epoch'] as int? ?? 0;
+      final bEpoch = b['start_epoch'] as int? ?? 0;
+      return bEpoch.compareTo(aEpoch);
+    });
+
+    return completed;
   }
 
   // ═════════════════════════════════════════════════════════════
