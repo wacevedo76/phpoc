@@ -297,23 +297,26 @@ class LedgerPullService {
         if (entryData['is_paused'] == true) continue;
 
         // Build the {hash, data: {...}} raw format that LocalCache expects.
-        // Use plain: prefix for fields that _rawToDto decrypts.
+        // Encrypted fields (startTime_enc, endTime_enc, pauses_enc, metadata_enc)
+        // are passed through as-is from the block data — LocalCache._rawToDto
+        // decrypts them with the MK. Fields not present in block entries use
+        // plain: prefix for zero-cost passthrough.
         final data = <String, dynamic>{
           'entry_id': eid ?? '',
           'title': entryData['title'] ?? '',
-          'startTime_enc': 'plain:${entryData['start_epoch'] ?? 0}',
+          'startTime_enc': entryData['startTime_enc'] ?? 'plain:0',
           'duration': entryData['duration'] ?? 0,
           'is_active': false,
           'is_paused': false,
-          'pauses_enc':
-              'plain:${jsonEncode(entryData['pauses'] ?? <dynamic>[])}',
+          'pauses_enc': entryData['pauses_enc'] ??
+              'plain:${jsonEncode(<dynamic>[])}',
           'tags': entryData['tags'] ?? <dynamic>[],
           'device_uuid_enc': 'plain:${entryData['device_uuid'] ?? ''}',
           'end_device_uuid_enc': 'plain:${entryData['end_device_uuid'] ?? ''}',
-          'metadata_enc': 'plain:{}',
+          'metadata_enc': entryData['metadata_enc'] ?? 'plain:{}',
         };
-        if (entryData['end_epoch'] != null) {
-          data['endTime_enc'] = 'plain:${entryData['end_epoch']}';
+        if (entryData['endTime_enc'] != null) {
+          data['endTime_enc'] = entryData['endTime_enc'];
         }
         if (entryData['comment'] != null) {
           data['comment'] = entryData['comment'];
