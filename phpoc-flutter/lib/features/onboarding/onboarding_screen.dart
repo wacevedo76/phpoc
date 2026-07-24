@@ -611,6 +611,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         TextField(
           controller: _seedController,
           maxLines: 2,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'Recovery Seed',
             hintText: 'Paste your base64 recovery seed',
@@ -622,6 +623,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         TextField(
           controller: _passphraseController,
           obscureText: _obscurePassphrase,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: InputDecoration(
             labelText: 'New Passphrase',
             hintText: 'At least 8 characters',
@@ -667,6 +669,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         TextField(
           controller: _workerUrlController,
           autofocus: true,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'Worker URL',
             hintText: 'https://worker.example.com',
@@ -677,6 +680,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         const SizedBox(height: 16),
         TextField(
           controller: _workerApiKeyController,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'API Key',
             hintText: 'Your Worker API key',
@@ -738,6 +742,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           autofocus: true,
           enabled: !_isLoading,
           maxLines: 2,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'Recovery Seed',
             hintText: 'Paste your base64 recovery seed',
@@ -750,6 +755,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           controller: _passphraseController,
           obscureText: _obscurePassphrase,
           enabled: !_isLoading,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'Passphrase',
             hintText: 'At least 8 characters',
@@ -761,6 +767,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         TextField(
           controller: _workerUrlController,
           enabled: !_isLoading,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'Worker URL',
             hintText: 'https://worker.example.com',
@@ -772,6 +779,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         TextField(
           controller: _workerApiKeyController,
           enabled: !_isLoading,
+          style: const TextStyle(fontFamily: 'monospace'),
           decoration: const InputDecoration(
             labelText: 'API Key',
             hintText: 'Your Worker API key',

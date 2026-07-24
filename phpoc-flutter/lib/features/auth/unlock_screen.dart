@@ -116,6 +116,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                   onChanged: _onPassphraseChanged,
                   onSubmitted: (_) => _unlock(),
                   autofocus: true,
+                  style: const TextStyle(fontFamily: 'monospace'),
                   decoration: InputDecoration(
                     labelText: 'Passphrase',
                     hintText: 'Enter your passphrase',

@@ -26,6 +26,7 @@ class AppTheme {
     inputDecorationTheme: InputDecorationTheme(
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      hintStyle: TextStyle(fontFamily: 'monospace', color: Colors.grey.shade600),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
@@ -54,6 +55,7 @@ class AppTheme {
     inputDecorationTheme: InputDecorationTheme(
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      hintStyle: TextStyle(fontFamily: 'monospace', color: Colors.grey.shade500),
     ),
   );
 }
