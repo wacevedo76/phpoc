@@ -23,6 +23,15 @@ class AppLifecycleState {
       AppLifecycleState(phase: phase ?? this.phase);
 }
 
+/// A [ValueNotifier] that tracks the current app phase.
+///
+/// Updated by [AppLifecycleNotifier] on every state transition so that
+/// [GoRouter.redirect] can read the current phase without recreating the
+/// router on every lifecycle change.  Recreating the GoRouter while
+/// InheritedWidget dependents are still active triggers Flutter's
+/// `_dependents.isEmpty` assertion.
+final appPhaseNotifier = ValueNotifier<AppPhase>(AppPhase.boot);
+
 /// The app lifecycle provider — drives navigation.
 final appLifecycleProvider =
     StateNotifierProvider<AppLifecycleNotifier, AppLifecycleState>((ref) {
@@ -30,7 +39,12 @@ final appLifecycleProvider =
 });
 
 class AppLifecycleNotifier extends StateNotifier<AppLifecycleState> {
-  AppLifecycleNotifier() : super(const AppLifecycleState());
+  AppLifecycleNotifier() : super(const AppLifecycleState()) {
+    // Keep the GoRouter-redirect ValueNotifier in sync with every state change.
+    addListener((state) {
+      appPhaseNotifier.value = state.phase;
+    });
+  }
 
   void goToLanding() => state = state.copyWith(phase: AppPhase.landing);
   void goToOnboarding() => state = state.copyWith(phase: AppPhase.onboarding);
@@ -38,35 +52,38 @@ class AppLifecycleNotifier extends StateNotifier<AppLifecycleState> {
   void goToReady() => state = state.copyWith(phase: AppPhase.ready);
 }
 
-/// go_router provider — rebuilds when lifecycle phase changes.
+/// go_router provider — created once, stable across lifecycle changes.
+///
+/// Reads [appPhaseNotifier] inside [GoRouter.redirect] so navigation
+/// guards respect the current phase without recreating the router.
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final lifecycle = ref.watch(appLifecycleProvider);
-
   return GoRouter(
+    refreshListenable: appPhaseNotifier,
     initialLocation: '/loading',
     redirect: (context, state) {
+      final phase = appPhaseNotifier.value;
       final loc = state.matchedLocation;
 
       // Boot → stay on loading
-      if (lifecycle.phase == AppPhase.boot) {
+      if (phase == AppPhase.boot) {
         if (loc != '/loading') return '/loading';
         return null;
       }
 
       // Landing → onboarding or auth
-      if (lifecycle.phase == AppPhase.landing) {
+      if (phase == AppPhase.landing) {
         if (loc == '/loading') return '/landing';
         return null;
       }
 
       // Auth → unlock screen
-      if (lifecycle.phase == AppPhase.auth) {
+      if (phase == AppPhase.auth) {
         if (loc != '/unlock') return '/unlock';
         return null;
       }
 
       // Ready → main shell (block auth routes)
-      if (lifecycle.phase == AppPhase.ready) {
+      if (phase == AppPhase.ready) {
         if (loc == '/loading' || loc == '/landing' || loc == '/unlock') {
           return '/';
         }

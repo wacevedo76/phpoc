@@ -221,21 +221,20 @@ class SyncService {
             await _pushBlobOnly();
             return SyncCheckResult.ready;
           } else {
-            // Different device → requires re-auth
+            // Different device → clear stale local cookie, re-auth needed
+            await _cookie.destroyLocally(storage);
             return SyncCheckResult.reauthNeeded;
           }
         }
-        // No remote cookie → fall through to auth gate
+        // No remote cookie → fall through to reconcile (first push wins)
       } catch (_) {
         // Network error during cookie pull → offline
         return SyncCheckResult.offline;
       }
-    } else {
-      // No valid local cookie → reauth needed
-      return SyncCheckResult.reauthNeeded;
     }
 
-    // Auth gate: MK available, reconcile
+    // No valid local cookie (first sync or expired) + MK available → reconcile.
+    // This creates a cookie and pushes the merged staging blob.
     try {
       await _reconcileAndClaim();
       return SyncCheckResult.ready;

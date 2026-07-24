@@ -5,8 +5,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart'
-    show authServiceProvider, ledgerBackupServiceProvider,
-    onboardingServiceProvider, syncServiceProvider;
+    show appPreferencesProvider, authServiceProvider, ledgerBackupServiceProvider,
+    onboardingServiceProvider, securePreferencesProvider, syncServiceProvider;
+import 'package:phpoc_flutter/data/sync/transport.dart' show HttpTransport;
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 
@@ -58,10 +59,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _loadStatus() {
     final sync = ref.read(syncServiceProvider);
-    setState(() {
-      _workerConnected = sync.isRemoteAvailable;
-      _workerUrl = _workerConnected ? 'Configured' : 'Not configured';
+    final prefs = ref.read(appPreferencesProvider);
+    final securePrefs = ref.read(securePreferencesProvider);
+
+    // Restore transport from saved credentials if not already wired
+    if (!sync.isRemoteAvailable) {
+      _restoreTransport(prefs, securePrefs, sync);
+    }
+
+    // Read saved URL for display (fire-and-forget — updates after async I/O)
+    prefs.getWorkerUrl().then((savedUrl) {
+      if (!mounted) return;
+      setState(() {
+        _workerUrl = (savedUrl != null && savedUrl.isNotEmpty)
+            ? savedUrl
+            : 'Not configured';
+        _workerConnected = sync.isRemoteAvailable;
+      });
     });
+  }
+
+  /// Wire up [HttpTransport] from saved [AppPreferences] and
+  /// [SecurePreferences] when credentials exist but transport is null
+  /// (fresh app start after onboarding / settings restore).
+  Future<void> _restoreTransport(
+    dynamic prefs,
+    dynamic securePrefs,
+    dynamic sync,
+  ) async {
+    try {
+      final url = await prefs.getWorkerUrl();
+      final apiKey = await securePrefs.getApiKey();
+      if (url != null && url.isNotEmpty && apiKey != null && apiKey.isNotEmpty) {
+        sync.transport = HttpTransport(baseUrl: url, apiKey: apiKey);
+        if (mounted) {
+          setState(() => _workerConnected = true);
+        }
+      }
+    } catch (_) {
+      // Ignore — transport restore is best-effort; user can re-enter
+    }
   }
 
   // ── Worker Config ────────────────────────────────────────────
