@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/core/utils/format_utils.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' show syncServiceProvider;
-import 'package:phpoc_flutter/data/sync/sync_service.dart';
 
-/// Dashboard — active task card, quick capture, recent entries.
+/// Dashboard — active task card, uncommitted entries, collapsible new task.
 ///
-/// The primary user-facing screen after unlock. Shows live active task
-/// with duration timer, a "Start New Task" form, and recent entries.
+/// Shows only running activities and completed-but-uncommitted entries.
+/// A collapsed "New Task" bar sits at the bottom; tap to expand with
+/// title, tags, comment, and an encrypt-fields toggle.
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -16,17 +16,29 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  // ── Task capture form ──────────────────────────────────────
+
   final _titleController = TextEditingController();
-  String? _errorMessage;
+  final _tagsController = TextEditingController();
+  final _commentController = TextEditingController();
+  bool _encryptTitle = false;
+  bool _encryptTags = false;
+  bool _encryptComment = false;
   bool _isCapturing = false;
+  bool _formExpanded = false;
+  String? _errorMessage;
+
+  // ── Data state ─────────────────────────────────────────────
 
   Map<String, dynamic>? _activeTask;
-  List<Map<String, dynamic>> _recentEntries = [];
+  List<Map<String, dynamic>> _uncommittedEntries = [];
   bool _isLoading = true;
 
   @override
   void dispose() {
     _titleController.dispose();
+    _tagsController.dispose();
+    _commentController.dispose();
     super.dispose();
   }
 
@@ -43,10 +55,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     if (mounted) {
       setState(() {
         _activeTask = active;
-        _recentEntries = entries.where((e) => e['is_active'] != true).toList();
+        _uncommittedEntries = entries
+            .where((e) => e['is_active'] != true && e['committed'] != true)
+            .toList();
         _isLoading = false;
       });
     }
+  }
+
+  // ── Capture ────────────────────────────────────────────────
+
+  List<String> _parseTags() {
+    final raw = _tagsController.text.trim();
+    if (raw.isEmpty) return [];
+    return raw
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .where((t) => t.isNotEmpty)
+        .toSet()
+        .toList();
   }
 
   Future<void> _capture() async {
@@ -63,12 +90,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     try {
       final sync = ref.read(syncServiceProvider);
-      await sync.capture(title: title);
+
+      final encrypted = <String>{};
+      if (_encryptTitle) encrypted.add('title');
+      if (_encryptTags) encrypted.add('tags');
+      if (_encryptComment) encrypted.add('comment');
+
+      await sync.capture(
+        title: title,
+        tags: _parseTags(),
+        comment: _commentController.text.trim().isEmpty
+            ? null
+            : _commentController.text.trim(),
+        encryptFields: encrypted,
+      );
       _titleController.clear();
+      _tagsController.clear();
+      _commentController.clear();
+      setState(() => _formExpanded = false);
       await _loadData();
-      if (mounted) {
-        setState(() => _isCapturing = false);
-      }
+      if (mounted) setState(() => _isCapturing = false);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -78,6 +119,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       }
     }
   }
+
+  // ── Task actions ───────────────────────────────────────────
 
   Future<void> _endTask(String title) async {
     try {
@@ -100,6 +143,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     } catch (_) {}
   }
 
+  // ── Build ──────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -108,64 +153,66 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadData,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // Start New Task form
-                  _buildCaptureForm(),
-                  const SizedBox(height: 16),
-                  // Active task card
-                  if (_activeTask != null) ...[
-                    _buildActiveTaskCard(),
-                    const SizedBox(height: 16),
-                  ],
-                  // Recent entries
-                  _buildRecentEntries(),
-                ],
-              ),
+              child: _buildContent(),
             ),
+      bottomSheet: _buildNewTaskPanel(),
     );
   }
 
-  Widget _buildCaptureForm() {
-    return Card(
-      child: Padding(
+  Widget _buildContent() {
+    final hasActive = _activeTask != null;
+    final hasUncommitted = _uncommittedEntries.isNotEmpty;
+
+    if (!hasActive && !hasUncommitted) {
+      return ListView(
         padding: const EdgeInsets.all(16),
+        children: [_buildEmptyState()],
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+      children: [
+        // Running activity
+        if (_activeTask != null) ...[
+          _buildSectionHeader('Running', Icons.play_circle_outline),
+          _buildActiveTaskCard(),
+        ],
+        // Uncommitted completed entries
+        if (hasUncommitted) ...[
+          if (_activeTask != null) const SizedBox(height: 16),
+          _buildSectionHeader('Pending Commit', Icons.cloud_upload_outlined),
+          const SizedBox(height: 8),
+          ..._uncommittedEntries.map(_buildUncommittedCard),
+        ],
+      ],
+    );
+  }
+
+  // ── Empty state ────────────────────────────────────────────
+
+  Widget _buildEmptyState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      child: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'New Task',
-              style: Theme.of(context).textTheme.titleMedium,
+            Icon(
+              Icons.inbox_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _titleController,
-                    decoration: InputDecoration(
-                      hintText: 'What are you working on?',
-                      errorText: _errorMessage,
-                      border: const OutlineInputBorder(),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10,
-                      ),
-                    ),
+            Text(
+              'No activities yet',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _isCapturing ? null : _capture,
-                  icon: _isCapturing
-                      ? const SizedBox(
-                          width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.play_arrow),
-                  label: const Text('Start'),
-                ),
-              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Tap "+ New Task" below to start tracking',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
         ),
@@ -173,11 +220,33 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
+  // ── Section header ─────────────────────────────────────────
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+      ],
+    );
+  }
+
+  // ── Active task card ───────────────────────────────────────
+
   Widget _buildActiveTaskCard() {
     final task = _activeTask!;
     final title = task['title'] as String? ?? 'Untitled';
     final startEpoch = task['start_epoch'] as int? ?? 0;
     final isPaused = task['is_paused'] == true;
+    final tags = (task['tags'] as List?)?.cast<String>() ?? [];
+    final comment = task['comment'] as String?;
     final elapsed = DateTime.now().difference(
       DateTime.fromMillisecondsSinceEpoch(startEpoch),
     );
@@ -189,6 +258,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Title row
             Row(
               children: [
                 Icon(Icons.play_circle_fill,
@@ -204,36 +274,62 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
                 if (isPaused)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.errorContainer,
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: const Text('Paused', style: TextStyle(fontSize: 12)),
+                    child:
+                        const Text('Paused', style: TextStyle(fontSize: 12)),
                   ),
               ],
             ),
+            // Tags
+            if (tags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: tags.map((t) {
+                  return Chip(
+                    label: Text(t, style: const TextStyle(fontSize: 12)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  );
+                }).toList(),
+              ),
+            ],
+            // Comment
+            if (comment != null && comment.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                comment,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
             const SizedBox(height: 8),
+            // Timestamps
             Text(
-              'Started: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(startEpoch))}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            Text(
+              'Started: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(startEpoch))}  ·  '
               'Elapsed: ${FormatUtils.duration(elapsed)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
+            // Actions
             Row(
               children: [
-                // Pause / Resume
                 OutlinedButton.icon(
                   onPressed: () => _togglePause(title, isPaused),
                   icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
                   label: Text(isPaused ? 'Resume' : 'Pause'),
                 ),
                 const SizedBox(width: 8),
-                // End
                 FilledButton.icon(
                   onPressed: () => _endTask(title),
                   icon: const Icon(Icons.stop),
@@ -250,58 +346,61 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  Widget _buildRecentEntries() {
-    final recent = _recentEntries.take(10).toList();
+  // ── Uncommitted entry card ─────────────────────────────────
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Recent Tasks',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 8),
-        if (recent.isEmpty && _activeTask == null)
-          _buildEmptyState()
-        else if (recent.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Center(
-              child: Text(
-                'No completed tasks yet',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-            ),
-          )
-        else
-          ...recent.map(_buildEntryCard),
-      ],
-    );
-  }
+  Widget _buildUncommittedCard(Map<String, dynamic> entry) {
+    final title = entry['title'] as String? ?? 'Untitled';
+    final startEpoch = entry['start_epoch'] as int? ?? 0;
+    final duration = entry['duration'] as int? ?? 0;
+    final tags = (entry['tags'] as List?)?.cast<String>() ?? [];
+    final comment = entry['comment'] as String?;
+    final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
 
-  Widget _buildEmptyState() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 32),
-      child: Center(
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              Icons.inbox_outlined,
-              size: 64,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            Row(
+              children: [
+                Icon(Icons.check_circle_outline,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(child: Text(title, style: Theme.of(context).textTheme.bodyLarge)),
+              ],
             ),
-            const SizedBox(height: 8),
+            if (tags.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: tags.map((t) {
+                  return Chip(
+                    label: Text(t, style: const TextStyle(fontSize: 11)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  );
+                }).toList(),
+              ),
+            ],
+            if (comment != null && comment.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                comment,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const SizedBox(height: 6),
             Text(
-              'No tasks yet',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Tap "Start New Task" to begin tracking your time',
+              '${FormatUtils.date(startDt)}  ·  ${FormatUtils.duration(Duration(milliseconds: duration))}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -310,29 +409,245 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  Widget _buildEntryCard(Map<String, dynamic> entry) {
-    final title = entry['title'] as String? ?? 'Untitled';
-    final startEpoch = entry['start_epoch'] as int? ?? 0;
-    final duration = entry['duration'] as int? ?? 0;
-    final endEpoch = entry['end_epoch'] as int?;
-    final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
+  // ═════════════════════════════════════════════════════════════
+  // Bottom "New Task" panel
+  // ═════════════════════════════════════════════════════════════
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: const Icon(Icons.check_circle_outline),
-        title: Text(title),
-        subtitle: Text(
-          '${FormatUtils.date(startDt)} · ${FormatUtils.duration(Duration(milliseconds: duration))}',
+  Widget _buildNewTaskPanel() {
+    return AnimatedCrossFade(
+      firstChild: _buildCollapsedBar(),
+      secondChild: _buildExpandedForm(),
+      crossFadeState: _formExpanded
+          ? CrossFadeState.showSecond
+          : CrossFadeState.showFirst,
+      duration: const Duration(milliseconds: 250),
+    );
+  }
+
+  /// Collapsed: a tappable bar showing "+ New Task".
+  Widget _buildCollapsedBar() {
+    return InkWell(
+      onTap: () => setState(() => _formExpanded = true),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          border: Border(
+            top: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+              width: 0.5,
+            ),
+          ),
         ),
-        trailing:
-            endEpoch != null ? const Icon(Icons.chevron_right) : null,
-        onTap: () {
-          // Navigate to history filtered by this date
-        },
+        child: SafeArea(
+          top: false,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_circle_outline,
+                  size: 20, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                'New Task',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
+  /// Expanded: title + encrypt ☑, tags + encrypt ☑, comment + encrypt ☑,
+  /// "Encrypt all fields" toggle, Cancel, Start.
+  Widget _buildExpandedForm() {
+    final allOn = _encryptTitle && _encryptTags && _encryptComment;
 
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).colorScheme.outlineVariant,
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Title + encrypt toggle
+            _buildFieldRow(
+              controller: _titleController,
+              hintText: 'What are you working on?',
+              encryptValue: _encryptTitle,
+              onEncryptChanged: (v) => setState(() => _encryptTitle = v),
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+            const SizedBox(height: 8),
+            // Tags + encrypt toggle
+            _buildFieldRow(
+              controller: _tagsController,
+              hintText: 'Tags (comma-separated)',
+              prefixIcon: const Icon(Icons.label_outline, size: 20),
+              encryptValue: _encryptTags,
+              onEncryptChanged: (v) => setState(() => _encryptTags = v),
+            ),
+            const SizedBox(height: 8),
+            // Comment + encrypt toggle
+            _buildFieldRow(
+              controller: _commentController,
+              hintText: 'Comment (optional)',
+              prefixIcon: const Icon(Icons.notes, size: 20),
+              encryptValue: _encryptComment,
+              onEncryptChanged: (v) => setState(() => _encryptComment = v),
+              maxLines: 2,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _errorMessage!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            // Encrypt all fields + action buttons
+            Row(
+              children: [
+                // "Encrypt all fields" toggle
+                Expanded(
+                  child: FilterChip(
+                    selected: allOn,
+                    onSelected: (v) {
+                      setState(() {
+                        _encryptTitle = v;
+                        _encryptTags = v;
+                        _encryptComment = v;
+                      });
+                    },
+                    avatar: Icon(
+                      allOn ? Icons.lock : Icons.lock_open,
+                      size: 16,
+                    ),
+                    label: const Text('Encrypt all fields'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Cancel
+                SmallOutlinedButton(
+                  onPressed: () {
+                    setState(() {
+                      _formExpanded = false;
+                      _errorMessage = null;
+                    });
+                  },
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                // Start
+                FilledButton.icon(
+                  onPressed: _isCapturing ? null : _capture,
+                  icon: _isCapturing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Start'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A text field with an encryption ☑ checkbox on the right.
+  Widget _buildFieldRow({
+    required TextEditingController controller,
+    required String hintText,
+    Widget? prefixIcon,
+    required bool encryptValue,
+    required ValueChanged<bool> onEncryptChanged,
+    bool autofocus = false,
+    int? maxLines,
+    TextCapitalization textCapitalization = TextCapitalization.none,
+  }) {
+    return Row(
+      crossAxisAlignment: maxLines != null && maxLines > 1
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: controller,
+            autofocus: autofocus,
+            textCapitalization: textCapitalization,
+            maxLines: maxLines ?? 1,
+            decoration: InputDecoration(
+              hintText: hintText,
+              prefixIcon: prefixIcon,
+              border: const OutlineInputBorder(),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              isDense: true,
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Tooltip(
+          message: encryptValue ? 'Field is encrypted' : 'Field is stored plain',
+          child: InkWell(
+            onTap: () => onEncryptChanged(!encryptValue),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(
+                encryptValue ? Icons.lock : Icons.lock_open,
+                size: 18,
+                color: encryptValue
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Thin outlined button matching the visual density of the form row.
+class SmallOutlinedButton extends StatelessWidget {
+  final VoidCallback? onPressed;
+  final Widget child;
+  const SmallOutlinedButton({super.key, this.onPressed, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: child,
+    );
+  }
 }

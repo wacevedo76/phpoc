@@ -36,6 +36,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   @override
   void initState() {
     super.initState();
+    // Default view: only today's entries.
+    final today = DateTime.now();
+    _selectedCalendarDate =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     _loadEntries();
   }
 

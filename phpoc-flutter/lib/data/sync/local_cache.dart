@@ -36,7 +36,8 @@ class LocalCache {
 
   // ── Encrypt/Decrypt helpers ────────────────────────────────────
 
-  String _encrypt(dynamic value) {
+  String _encrypt(dynamic value, {bool forcePlain = false}) {
+    if (forcePlain) return 'plain:${value.toString()}';
     if (!crypto.hasMasterKey) {
       return 'plain:${value.toString()}';
     }
@@ -164,20 +165,20 @@ class LocalCache {
   }
 
   /// Convert a flat DTO to raw {hash, data: {...}} format.
-  Map<String, dynamic> _dtoToRaw(Map<String, dynamic> dto) {
+  Map<String, dynamic> _dtoToRaw(Map<String, dynamic> dto, {bool forcePlain = false}) {
     final data = <String, dynamic>{
       'entry_id': dto['entry_id'] ?? '',
       'title': dto['title'] ?? '',
-      'startTime_enc': _encrypt(dto['start_epoch'] ?? 0),
-      'endTime_enc': dto['end_epoch'] != null ? _encrypt(dto['end_epoch']) : null,
+      'startTime_enc': _encrypt(dto['start_epoch'] ?? 0, forcePlain: forcePlain),
+      'endTime_enc': dto['end_epoch'] != null ? _encrypt(dto['end_epoch'], forcePlain: forcePlain) : null,
       'duration': dto['duration'] ?? 0,
       'is_active': dto['is_active'] ?? true,
       'is_paused': dto['is_paused'] ?? false,
-      'pauses_enc': _encrypt(json.encode(dto['pauses'] ?? [])),
+      'pauses_enc': _encrypt(json.encode(dto['pauses'] ?? []), forcePlain: forcePlain),
       'tags': dto['tags'] ?? [],
-      'device_uuid_enc': _encrypt(dto['device_uuid'] ?? ''),
-      'end_device_uuid_enc': _encrypt(dto['end_device_uuid'] ?? ''),
-      'metadata_enc': _encrypt(json.encode(dto['metadata'] ?? {})),
+      'device_uuid_enc': _encrypt(dto['device_uuid'] ?? '', forcePlain: forcePlain),
+      'end_device_uuid_enc': _encrypt(dto['end_device_uuid'] ?? '', forcePlain: forcePlain),
+      'metadata_enc': _encrypt(json.encode(dto['metadata'] ?? {}), forcePlain: forcePlain),
     };
     if (dto['comment'] != null) data['comment'] = dto['comment'];
 
@@ -212,6 +213,10 @@ class LocalCache {
   /// Append a new staging entry. Returns the entry hash prefix (10 chars).
   ///
   /// [startEpoch] — ms timestamp. Throws on collision (same start_epoch).
+  /// [encryptFields] controls per-field encryption for title/tags/comment:
+  /// - default (empty or omitted) → only epoch timestamps are encrypted
+  /// - set of field names (e.g. `{'title', 'tags', 'comment'}`) →
+  ///   those fields are encrypted in addition to always-encrypted timestamps
   Future<String> append({
     required String title,
     required int startEpoch,
@@ -220,6 +225,7 @@ class LocalCache {
     List<String>? tags,
     String? comment,
     String? deviceUuid,
+    Set<String> encryptFields = const {},
   }) async {
     final entries = (await storage.get('entries') as List?) ?? [];
 
@@ -238,6 +244,10 @@ class LocalCache {
     final normalizedTags = _normalizeTags(tags);
     final entryId = crypto.generateUuid();
 
+    // Per-field encryption: timestamps always encrypted;
+    // title/tags/comment only encrypted when in encryptFields set
+    bool shouldEncrypt(String field) => encryptFields.contains(field);
+
     final data = <String, dynamic>{
       'entry_id': entryId,
       'title': title,
@@ -252,7 +262,15 @@ class LocalCache {
       'end_device_uuid_enc': _encrypt(''),
       'metadata_enc': _encrypt('{}'),
     };
-    if (comment != null) data['comment'] = comment;
+    // Per-field encryptable fields (title, tags, comment)
+    if (!shouldEncrypt('title')) data['title_enc'] = _encrypt(title, forcePlain: true);
+    if (!shouldEncrypt('tags')) data['tags_enc'] = _encrypt(json.encode(normalizedTags), forcePlain: true);
+    if (comment != null) {
+      data['comment'] = comment;
+      if (!shouldEncrypt('comment')) {
+        data['comment_enc'] = _encrypt(comment, forcePlain: true);
+      }
+    }
     data.removeWhere((_, v) => v == null);
 
     final hash = _computeEntryHash({
@@ -289,7 +307,9 @@ class LocalCache {
   ///
   /// [fields] uses DTO field names (e.g., 'title', 'end_epoch', 'is_active').
   /// No-op on committed entries.
-  Future<void> update(int index, Map<String, dynamic> fields) async {
+  /// [encryptFields] controls per-field encryption for title/tags/comment
+  /// (default empty = only timestamps encrypted).
+  Future<void> update(int index, Map<String, dynamic> fields, {Set<String> encryptFields = const {}}) async {
     final rawEntries = (await storage.get('entries') as List?) ?? [];
     if (index < 0 || index >= rawEntries.length) return;
 
@@ -299,6 +319,8 @@ class LocalCache {
     if (raw['committed'] == true) return;
 
     final data = Map<String, dynamic>.from(raw['data'] as Map? ?? {});
+
+    bool shouldEncrypt(String field) => encryptFields.contains(field);
 
     // Apply field updates mapping DTO names to _enc names
     if (fields.containsKey('title')) data['title'] = fields['title'];
@@ -310,8 +332,24 @@ class LocalCache {
     }
     if (fields.containsKey('is_active')) data['is_active'] = fields['is_active'];
     if (fields.containsKey('is_paused')) data['is_paused'] = fields['is_paused'];
-    if (fields.containsKey('tags')) data['tags'] = _normalizeTags(fields['tags']);
-    if (fields.containsKey('comment')) data['comment'] = fields['comment'];
+    if (fields.containsKey('tags')) {
+      final norm = _normalizeTags(fields['tags']);
+      data['tags'] = norm;
+      // Remove stale encrypted copy when switching to plain
+      if (!shouldEncrypt('tags')) {
+        data['tags_enc'] = _encrypt(json.encode(norm), forcePlain: true);
+      } else {
+        data.remove('tags_enc');
+      }
+    }
+    if (fields.containsKey('comment')) {
+      data['comment'] = fields['comment'];
+      if (!shouldEncrypt('comment')) {
+        data['comment_enc'] = _encrypt(fields['comment'], forcePlain: true);
+      } else {
+        data.remove('comment_enc');
+      }
+    }
     if (fields.containsKey('duration')) data['duration'] = fields['duration'];
     if (fields.containsKey('start_epoch')) {
       data['startTime_enc'] = _encrypt(fields['start_epoch']);

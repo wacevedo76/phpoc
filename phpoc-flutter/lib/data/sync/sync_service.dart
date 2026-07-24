@@ -43,14 +43,26 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
 
   /// Capture a new task. Returns the entry hash prefix.
-  Future<String> capture({required String title}) async {
+  ///
+  /// [encryptFields] controls per-field encryption for title/tags/comment.
+  /// Only epoch timestamps are encrypted by default; add field names to the
+  /// set to also encrypt those fields (e.g. `{'title', 'tags', 'comment'}`).
+  Future<String> capture({
+    required String title,
+    List<String>? tags,
+    String? comment,
+    Set<String> encryptFields = const {},
+  }) async {
     final startEpoch = DateTime.now().millisecondsSinceEpoch;
     final deviceUuid = _getDeviceUuid();
     final hash = await _local.append(
       title: title,
       startEpoch: startEpoch,
       isActive: true,
+      tags: tags,
+      comment: comment,
       deviceUuid: deviceUuid,
+      encryptFields: encryptFields,
     );
     await _touchLocalCookie();
     return hash;
@@ -108,8 +120,11 @@ class SyncService {
   }
 
   /// Modify a staged entry's fields in-place.
-  Future<void> modify(int index, Map<String, dynamic> fields) async {
-    await _local.update(index, fields);
+  ///
+  /// [encryptFields] controls per-field encryption for title/tags/comment
+  /// (default empty = only timestamps encrypted).
+  Future<void> modify(int index, Map<String, dynamic> fields, {Set<String> encryptFields = const {}}) async {
+    await _local.update(index, fields, encryptFields: encryptFields);
     await _touchLocalCookie();
   }
 
