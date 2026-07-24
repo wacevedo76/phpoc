@@ -97,6 +97,18 @@ class CryptoService {
     return decrypt(ciphertext, _bytesToHex(_masterKey!));
   }
 
+  /// Python-compatible field-level decrypt with cached master key.
+  ///
+  /// Uses HMAC-sub-key derivation (Python CryptoManager._derive_sub_key)
+  /// instead of raw key bytes. Use when decrypting field values produced
+  /// by the Python CLI (e.g., [startTime_enc], [endTime_enc]).
+  String decryptFieldValueWithCachedKey(String ciphertext) {
+    if (!hasMasterKey) {
+      throw CryptoException('No master key cached. Call setMasterKey() first.');
+    }
+    return decryptFieldValue(ciphertext, _bytesToHex(_masterKey!));
+  }
+
   // ── Group B: Key Derivation ───────────────────────────────────
 
   /// PBKDF2-SHA256 passphrase derivation.
@@ -246,6 +258,68 @@ class CryptoService {
     );
     return utf8.decode(plaintextBytes);
   }
+
+  /// Python/CryptoManager-compatible field-level decrypt.
+  ///
+  /// Python's [CryptoManager.decrypt] uses HMAC-sub-key derivation
+  /// instead of raw key bytes:
+  ///   - aes_key  = HMAC-SHA256(mk, salt)[:16]
+  ///   - int_key  = HMAC-SHA256(mk, salt + b"-integrity")[:32]
+  ///   - tag      = HMAC-SHA256(int_key, nonce + ciphertext)
+  ///
+  /// This differs from [decrypt] which uses raw mk[:16] and a
+  /// different auth-tag construction. Use this method when the
+  /// ciphertext was produced by Python's CryptoManager (CLI / testdata).
+  ///
+  /// [ciphertextHex] — hex-encoded: salt(16B) + nonce(8B) + ciphertext + tag(32B).
+  /// [keyHex] — 64-char hex master key.
+  String decryptFieldValue(String ciphertextHex, String keyHex) {
+    _requireInitialized();
+    _validateHex(ciphertextHex, null, 112);
+    _validateHex(keyHex, 64);
+    if (ciphertextHex.isEmpty)
+      throw CryptoException('Ciphertext must not be empty');
+    final mk = Uint8List.fromList(_hexToBytes(keyHex));
+    final data = _hexToBytes(ciphertextHex);
+
+    if (data.length < 56) throw CryptoException('Ciphertext too short');
+
+    final salt = Uint8List.sublistView(data, 0, 16);
+    final nonce = Uint8List.sublistView(data, 16, 24);
+    final tag = Uint8List.sublistView(data, data.length - 32);
+    final ciphertext = Uint8List.sublistView(data, 24, data.length - 32);
+
+    // Derive sub-keys (Python CryptoManager._derive_sub_key)
+    //   aes_key       = HMAC-SHA256(mk, salt)[:16]
+    //   integrity_key = HMAC-SHA256(mk, salt + "-integrity")[:32]
+    final aesKey = _hmacSha256Truncate(mk, salt, 16);
+    final intSalt = Uint8List(salt.length + 10)
+      ..setAll(0, salt)
+      ..setAll(salt.length, utf8.encode('-integrity'));
+    final integrityKey = _hmacSha256Truncate(mk, intSalt, 32);
+
+    // Verify auth tag: HMAC-SHA256(integrity_key, nonce + ciphertext)
+    final authInput = Uint8List(nonce.length + ciphertext.length)
+      ..setAll(0, nonce)
+      ..setAll(nonce.length, ciphertext);
+    final expectedTag = _hmacSha256Full(integrityKey, authInput);
+
+    if (!_constantTimeEquals(tag, expectedTag)) {
+      throw CryptoException(
+        'Authentication failed: wrong key or tampered ciphertext',
+      );
+    }
+
+    final plaintextBytes = _aesCtrProcess(
+      ciphertext,
+      aesKey,
+      nonce,
+      encrypt: false,
+    );
+    return utf8.decode(plaintextBytes);
+  }
+
+  /// HMAC-SHA256(key, msg) truncated to [length] bytes.
 
   // ── Group D: Blob Obfuscation ─────────────────────────────────
   //
@@ -693,6 +767,13 @@ class CryptoService {
     final hmac = crypto.Hmac(crypto.sha256, key);
     final digest = hmac.convert(data);
     return Uint8List.fromList(digest.bytes);
+  }
+
+  /// HMAC-SHA256(key, msg) truncated to [length] bytes.
+  Uint8List _hmacSha256Truncate(Uint8List key, Uint8List data, int length) {
+    final hmac = crypto.Hmac(crypto.sha256, key);
+    final digest = hmac.convert(data);
+    return Uint8List.fromList(digest.bytes.take(length).toList());
   }
 
   /// Constant-time comparison of two byte lists.
