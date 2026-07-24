@@ -244,11 +244,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     try {
       final onboarding = ref.read(onboardingServiceProvider);
-      await onboarding.restoreFromCloud(seed, passphrase, url, apiKey, wipeExisting: true);
+      final result = await onboarding.restoreFromCloud(
+          seed, passphrase, url, apiKey, wipeExisting: true);
 
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ref.read(appLifecycleProvider.notifier).goToAuth();
+
+      if (result.success) {
+        ref.read(appLifecycleProvider.notifier).goToAuth();
+      } else {
+        // Surface the first error to the user
+        final message = result.errors.isNotEmpty
+            ? result.errors.first
+            : 'Restore failed — no blocks were pulled.';
+        setState(() => _errorMessage = message);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);

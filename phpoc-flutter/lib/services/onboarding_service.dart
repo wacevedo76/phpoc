@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
+import '../../core/models/pull_result.dart';
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
@@ -120,21 +122,22 @@ class OnboardingService {
 
   /// Restore a ledger from a recovery seed and pull data from the cloud.
   ///
-  /// Combines importFromSeed + connectWorker + initial sync pull into one
+  /// Combines importFromSeed + connectWorker + sync pull into one
   /// atomic onboarding flow. Derives the master key from the seed, builds
   /// a genesis block, creates device identity, connects to the Worker, and
-  /// pulls any existing staging data (best-effort).
+  /// pulls any existing data.
+  ///
+  /// Returns a [PullResult] indicating success/failure with detailed
+  /// error messages. Validation errors (invalid seed, short passphrase,
+  /// injection characters in URL) still throw synchronously to fail fast
+  /// before any DB write.
   ///
   /// If [wipeExisting] is true, clears all existing data before restoring.
   /// Throws [LedgerExistsException] if data already exists and
   /// [wipeExisting] is false.
   /// Throws validation error if [seedB64] is invalid, [passphrase] is too
   /// short, or [workerUrl] contains injection characters.
-  ///
-  /// Worker connection and sync pull are best-effort — restore succeeds
-  /// with local genesis only if the Worker is unreachable or the URL is
-  /// malformed.
-  Future<void> restoreFromCloud(
+  Future<PullResult> restoreFromCloud(
     String seedB64,
     String passphrase,
     String workerUrl,
@@ -178,24 +181,39 @@ class OnboardingService {
     await preferences.setHasExistingData(true);
 
     // 9. Connect Worker + pull ledger blocks.
-    //    ledgerPullService is optional — when absent (test / no transport),
-    //    the restore creates local identity only.
+    //    Connection/pull errors are surfaced via PullResult, not thrown.
+    //    ledgerPullService is optional — when absent, returns empty success.
+    String? connectError;
+    bool connected = false;
     try {
       await connectWorker(workerUrl, apiKey)
           .timeout(const Duration(seconds: 10));
-
-      if (ledgerPullService != null) {
-        try {
-          await ledgerPullService!.pullAll()
-              .timeout(const Duration(seconds: 60));
-        } catch (_) {
-          // Best-effort: pull failure doesn't block restore (A5, A10, H5)
-        }
-      }
-    } catch (_) {
-      // Best-effort: Worker connection failure doesn't block restore
-      // MK stays cached (D4)
+      connected = true;
+    } catch (e) {
+      connectError = 'Cannot reach Worker at $workerUrl: $e';
     }
+
+    if (connected && ledgerPullService != null) {
+      try {
+        return await ledgerPullService!.pullAll()
+            .timeout(const Duration(seconds: 60));
+      } catch (e) {
+        if (e is TimeoutException) {
+          return PullResult.failure(errors: [
+            'Connection timed out while pulling blocks. '
+                'Check the Worker URL and try again.',
+          ]);
+        }
+        return PullResult.failure(errors: ['Pull failed: $e']);
+      }
+    }
+
+    if (connectError != null) {
+      return PullResult.failure(errors: [connectError!]);
+    }
+
+    // No transport configured — nothing to pull
+    return PullResult.ok(blocksPulled: 0, entriesStaged: 0);
   }
 
   /// Connect to a Cloudflare Worker for remote sync.

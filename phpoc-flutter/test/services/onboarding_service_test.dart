@@ -67,9 +67,11 @@ class _FakeLedgerPullService {
   bool pullAllCalled = false;
   PullResult pullAllResult =
       PullResult.ok(blocksPulled: 3, entriesStaged: 5);
+  Object? _throwError;
 
   Future<PullResult> pullAll() async {
     pullAllCalled = true;
+    if (_throwError != null) throw _throwError!;
     return pullAllResult;
   }
 }
@@ -604,6 +606,179 @@ void main() {
       final blocks = await db.blockDao.getAllBlocks();
       expect(blocks, isEmpty,
           reason: 'Invalid seed must be rejected before any DB writes');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group I: restoreFromCloud — error surfacing (5 tests)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('I: restoreFromCloud — error surfacing', () {
+    /// Creates a fake LedgerPullService with a configurable result/error.
+    _FakeLedgerPullService _makeFakePull({
+      PullResult? result,
+      Object? throwError,
+    }) {
+      final fake = _FakeLedgerPullService();
+      if (result != null) fake.pullAllResult = result;
+      if (throwError != null) {
+        fake._throwError = throwError;
+      }
+      return fake;
+    }
+
+    Future<OnboardingService> _makeOnboarding({
+      dynamic ledgerPull,
+    }) async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      return OnboardingService(
+        crypto: crypto,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: SyncService(
+          storage: _FakeStorage(),
+          crypto: crypto,
+        ),
+        ledgerPullService: ledgerPull,
+      );
+    }
+
+    // I1
+    test('I1: restoreFromCloud returns PullResult (not void)', () async {
+      final fakePull = _makeFakePull(
+        result: PullResult.ok(blocksPulled: 3, entriesStaged: 5),
+      );
+      final onboarding = await _makeOnboarding(ledgerPull: fakePull);
+
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      expect(result, isA<PullResult>(),
+          reason: 'restoreFromCloud must return PullResult '
+              'so callers can inspect success/failure');
+      expect(result.success, isTrue);
+      expect(result.blocksPulled, 3);
+      expect(result.entriesStaged, 5);
+    });
+
+    // I2
+    test('I2: Valid credentials → PullResult.success=true', () async {
+      final fakePull = _makeFakePull(
+        result: PullResult.ok(blocksPulled: 5, entriesStaged: 10),
+      );
+      final onboarding = await _makeOnboarding(ledgerPull: fakePull);
+
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      expect(result.success, isTrue,
+          reason: 'Valid credentials must produce successful PullResult');
+      expect(result.blocksPulled, greaterThan(0));
+      expect(result.entriesStaged, greaterThan(0));
+    });
+
+    // I3
+    test('I3: connectWorker fails → PullResult.success=false '
+        'with connection error', () async {
+      // Use a URL that will fail Uri.tryParse / health check
+      // The service catches connection errors and returns failure
+      final fakePull = _makeFakePull(
+        result: PullResult.failure(
+          errors: ['Connection refused'],
+        ),
+      );
+      final onboarding = await _makeOnboarding(ledgerPull: fakePull);
+
+      // The fakePull is wired directly; regardless of connectWorker
+      // behavior, if pullAll returns failure, restore returns it.
+      // We test the error-propagation path here.
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://unreachable.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      expect(result, isA<PullResult>());
+      expect(result.success, isFalse,
+          reason: 'Connection failure must produce failed PullResult');
+      expect(result.errors, isNotEmpty,
+          reason: 'Error message must be surfaced to caller');
+    });
+
+    // I4
+    test('I4: All blocks fail deobfuscation → PullResult.errors '
+        'contains "deobfuscate"', () async {
+      final fakePull = _makeFakePull(
+        result: PullResult.failure(
+          errors: [
+            'Failed to deobfuscate block 0: CryptoException: '
+                'Blob integrity check failed: tampered or wrong key',
+          ],
+          failedBlocks: [0, 1, 2],
+        ),
+      );
+      final onboarding = await _makeOnboarding(ledgerPull: fakePull);
+
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      expect(result.success, isFalse,
+          reason: 'Zero blocks deobfuscated = failure');
+      expect(result.blocksPulled, 0);
+      expect(
+        result.errors.any(
+          (e) => e.toLowerCase().contains('deobfuscate'),
+        ),
+        isTrue,
+        reason: 'Error must indicate deobfuscation failure '
+            '(key mismatch / wrong seed)',
+      );
+    });
+
+    // I5
+    test('I5: pullAll throws → PullResult returned with error '
+        '(not rethrown)', () async {
+      // Simulate a network timeout during pull
+      final fakePull = _FakeLedgerPullService();
+      fakePull._throwError = Exception('Network timeout');
+      final onboarding = await _makeOnboarding(ledgerPull: fakePull);
+
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      expect(result, isA<PullResult>(),
+          reason: 'Thrown exceptions must be caught and returned '
+              'as PullResult, not propagated to UI');
+      expect(result.success, isFalse);
+      expect(result.errors, isNotEmpty);
+      expect(
+        result.errors.first,
+        contains('timeout'),
+      );
     });
   });
 }

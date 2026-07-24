@@ -16,13 +16,19 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1022 total (1022 GREEN, 0 failures, 0 regressions)
+- **Flutter test suite:** 1027 total (1027 GREEN, 0 failures, 0 regressions)
 
-### Recent fixes (not yet committed)
-- **`deriveMasterKey` fix:** Changed from `HMAC-SHA256(seed, "phpoc:master-key")` to raw seed bytes — matches Python's `base64.b64decode(seed)` byte-for-byte. This was the root cause of all 31 blocks failing deobfuscation. Blocks on R2 were pushed by Python CLI using seed-as-MK; Flutter was using HMAC-derived MK → key mismatch.
-- **Staging format fix:** `_seedStagingFromBlocks` now writes entries in `{hash, data: {...}}` raw format that `LocalCache._rawToDto` expects (was writing flat DTOs → all fields resolved to empty/zero).
-- **Restore-from-Cloud fix:** `restoreFromCloud()` no longer creates a local genesis — blocks pulled from R2 via `LedgerPullService.pullAll()`. Staging entries seeded from imported blocks. Timeout increased to 60s.
-- **R2 blocks re-pushed** with correct key (seed-as-MK)
+### Recent commits
+- `ebbcb37` — fix(flutter): restore-from-cloud — deriveMasterKey, staging format, no local genesis
+- `5925a27` — fix(flutter): cross-platform E2E sync fixes
+
+### Active work
+- **🟢 Restore Cloud error surfacing** — Phases 1-4 complete (not yet committed):
+  - `restoreFromCloud` now returns `PullResult` (was void) — errors surfaced to UI
+  - Wrong seed → red error: "Blob integrity check failed: tampered or wrong key"
+  - Wrong URL → red error: "Cannot reach Worker at ..."
+  - Wrong API key → red error surfaced from transport layer (403, etc.)
+  - UI: `_restoreFromCloud` checks `result.success`, shows first error, only navigates on success
 
 ### All Work Complete — Backend (Python + Web JS)
 | Area | Items |
