@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/crypto/crypto_service.dart';
 import '../../data/sync/staging_storage.dart';
 import '../../data/sync/sync_service.dart';
+import '../../data/sync/transport.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
+import '../../services/ledger_pull_service.dart';
 import '../../services/onboarding_service.dart';
 import 'database.dart';
 import 'preferences.dart';
@@ -87,12 +89,14 @@ final onboardingServiceProvider = Provider<OnboardingService>((ref) {
   final prefs = ref.watch(appPreferencesProvider);
   final securePrefs = ref.watch(securePreferencesProvider);
   final sync = ref.watch(syncServiceProvider);
+  final ledgerPull = ref.watch(ledgerPullServiceProvider);
   return OnboardingService(
     crypto: crypto,
     db: db,
     preferences: prefs,
     securePreferences: securePrefs,
     syncService: sync,
+    ledgerPullService: ledgerPull,
   );
 });
 
@@ -100,4 +104,19 @@ final onboardingServiceProvider = Provider<OnboardingService>((ref) {
 final ledgerBackupServiceProvider = Provider<LedgerBackupService>((ref) {
   final db = ref.watch(databaseProvider);
   return LedgerBackupService(db: db);
+});
+
+/// Ledger pull service provider — injects crypto, db, backup.
+/// Transport is wired lazily by OnboardingService.connectWorker().
+final ledgerPullServiceProvider = Provider<LedgerPullService>((ref) {
+  final db = ref.watch(databaseProvider);
+  final crypto = ref.watch(cryptoServiceProvider);
+
+  return LedgerPullService(
+    db: db,
+    crypto: crypto,
+    transport: null, // Wired later by connectWorker
+    backupService: ref.watch(ledgerBackupServiceProvider),
+    stagingStorage: StagingStorage(db),
+  );
 });

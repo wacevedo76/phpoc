@@ -7,6 +7,7 @@ import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
 import '../../data/sync/sync_service.dart';
 import '../../data/sync/transport.dart';
+import 'ledger_pull_service.dart';
 
 /// Onboarding service — genesis creation, import, and Worker connection.
 ///
@@ -18,6 +19,9 @@ class OnboardingService {
   final AppPreferences preferences;
   final SecurePreferences securePreferences;
   final SyncService syncService;
+  /// Ledger pull service for restore-from-cloud. Set by provider injection.
+  /// May be a [LedgerPullService] instance or a test-compatible substitute.
+  dynamic ledgerPullService;
 
   OnboardingService({
     required this.crypto,
@@ -25,6 +29,7 @@ class OnboardingService {
     required this.preferences,
     required this.securePreferences,
     required this.syncService,
+    this.ledgerPullService,
   });
 
   /// Create a new ledger with a fresh genesis block.
@@ -166,30 +171,23 @@ class OnboardingService {
     final mk = crypto.deriveMasterKey(seedB64);
     crypto.setMasterKey(mk);
 
-    // 6-8. Build genesis, create device identity, set flag.
-    //      On failure after MK cache, clear MK for security (D5).
-    try {
-      await _buildAndPersistGenesis(passphrase, seedB64);
+    // 6-7. Create device identity, set flag (NO genesis creation —
+    //       genesis comes from R2 via ledgerPullService.pullAll()).
+    final uuid = crypto.generateUuid();
+    await preferences.setDeviceUuid(uuid);
+    await preferences.setHasExistingData(true);
 
-      final uuid = crypto.generateUuid();
-      await preferences.setDeviceUuid(uuid);
-
-      await preferences.setHasExistingData(true);
-    } catch (e) {
-      crypto.clearMasterKey();
-      rethrow;
-    }
-
-    // 9. Connect Worker + initial sync pull (best-effort: A6, A9, H5).
-    //    Use a short timeout so unroutable addresses don't hang the UI.
+    // 9. Connect Worker + pull ledger blocks.
+    //    ledgerPullService is optional — when absent (test / no transport),
+    //    the restore creates local identity only.
     try {
       await connectWorker(workerUrl, apiKey)
-          .timeout(const Duration(seconds: 3));
+          .timeout(const Duration(seconds: 10));
 
-      if (syncService.isRemoteAvailable) {
+      if (ledgerPullService != null) {
         try {
-          await syncService.initialPull()
-              .timeout(const Duration(seconds: 10));
+          await ledgerPullService!.pullAll()
+              .timeout(const Duration(seconds: 60));
         } catch (_) {
           // Best-effort: pull failure doesn't block restore (A5, A10, H5)
         }
@@ -223,9 +221,19 @@ class OnboardingService {
     // 4. Store API key in secure preferences
     await securePreferences.setApiKey(apiKey);
 
-    // 5. Create HttpTransport and wire into SyncService
+    // 5. Create HttpTransport and wire into SyncService + LedgerPullService
     final transport = HttpTransport(baseUrl: url, apiKey: apiKey);
     syncService.transport = transport;
+    final pull = ledgerPullService;
+    if (pull != null && pull is LedgerPullService) {
+      ledgerPullService = LedgerPullService(
+        db: pull.db,
+        crypto: pull.crypto,
+        transport: transport,
+        backupService: pull.backupService,
+        stagingStorage: pull.stagingStorage,
+      );
+    }
 
     // 6. Verify connectivity (best-effort health check)
     // In MVP, connectivity check is non-blocking — configuration is

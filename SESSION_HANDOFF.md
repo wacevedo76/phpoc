@@ -15,11 +15,14 @@
 - `WIPE_CLOUD_ONBOARD_PHASE1.md` (38) — **✅ Phase 1+2+3+4 complete** — Stage 3: push→wipe→restore→pull→verify
 
 ## Current State
-- **Branch:** `feature/flutter-mobile` (merged `feature/flutter-mobile-riverpod`, off `main`)
-- **Last commit:** `1f57f29` — feat(flutter): Sync Core — Phases 1-4 complete (378/378 GREEN)
-- **Flutter test suite:** 1013 total (1013 GREEN, 0 failures, 0 regressions)
-- **Flutter analyzer:** 1 pre-existing info lint (_obscurePassphrase)
-- **Flutter analyzer:** 4 info-level lint from raw sqlite3 API (pre-existing, not actionable)
+- **Branch:** `feature/flutter-mobile`
+- **Flutter test suite:** 1022 total (1022 GREEN, 0 failures, 0 regressions)
+
+### Recent fixes (not yet committed)
+- **`deriveMasterKey` fix:** Changed from `HMAC-SHA256(seed, "phpoc:master-key")` to raw seed bytes — matches Python's `base64.b64decode(seed)` byte-for-byte. This was the root cause of all 31 blocks failing deobfuscation. Blocks on R2 were pushed by Python CLI using seed-as-MK; Flutter was using HMAC-derived MK → key mismatch.
+- **Staging format fix:** `_seedStagingFromBlocks` now writes entries in `{hash, data: {...}}` raw format that `LocalCache._rawToDto` expects (was writing flat DTOs → all fields resolved to empty/zero).
+- **Restore-from-Cloud fix:** `restoreFromCloud()` no longer creates a local genesis — blocks pulled from R2 via `LedgerPullService.pullAll()`. Staging entries seeded from imported blocks. Timeout increased to 60s.
+- **R2 blocks re-pushed** with correct key (seed-as-MK)
 
 ### All Work Complete — Backend (Python + Web JS)
 | Area | Items |

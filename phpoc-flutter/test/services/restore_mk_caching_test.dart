@@ -23,8 +23,8 @@ const validPassphrase = 'CorrectHorseBatteryStaple42!';
 /// 32 bytes of 0x42 = base64.
 const validSeedB64 = 'QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=';
 
-/// Known MK for validSeedB64: HMAC-SHA256(32*0x42, "phpoc:master-key")
-const knownMK = 'acaeca953d7bc0cbb524dbd94046b9fc9072c570a6c8aed32a73009e7489d84d';
+/// Known MK for validSeedB64: hex of raw seed bytes (32×0x42)
+const knownMK = '4242424242424242424242424242424242424242424242424242424242424242';
 
 // ── Helpers ────────────────────────────────────────────────────
 

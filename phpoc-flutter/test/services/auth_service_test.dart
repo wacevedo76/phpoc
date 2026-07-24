@@ -22,8 +22,8 @@ const validSeedB64 = 'QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=';
 /// 44-char base64, 32 bytes — a different valid seed (0x21 = '!').
 const altSeedB64 = 'ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE=';
 
-/// Known MK for validSeedB64: HMAC-SHA256(32*0x42, "phpoc:master-key")
-const knownMK = 'acaeca953d7bc0cbb524dbd94046b9fc9072c570a6c8aed32a73009e7489d84d';
+/// Known MK for validSeedB64: hex of raw seed bytes (32×0x42)
+const knownMK = '4242424242424242424242424242424242424242424242424242424242424242';
 
 /// A valid passphrase (≥8 chars).
 const validPassphrase = 'CorrectHorseBatteryStaple42!';

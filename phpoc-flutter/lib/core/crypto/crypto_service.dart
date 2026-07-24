@@ -122,15 +122,16 @@ class CryptoService {
 
   /// Derive the master key (32 bytes) from a base64-encoded 32-byte seed.
   ///
+  /// The seed IS the master key (matching Python's
+  /// ``base64.b64decode(seed)``). This is the canonical key from which
+  /// all sub-keys (blob, seal, device, etc.) are derived.
+  ///
   /// Throws [FormatException] if [seed] is not valid base64.
   /// Throws [ArgumentError] if decoded seed is not exactly 32 bytes.
   String deriveMasterKey(String seed) {
     _requireInitialized();
     final seedBytes = _decodeBase64Seed(seed);
-    // HMAC-SHA256(seed, "phpoc:master-key") → 32 bytes
-    final hmac = crypto.Hmac(crypto.sha256, seedBytes);
-    final digest = hmac.convert(utf8.encode('phpoc:master-key'));
-    return digest.toString();
+    return _bytesToHex(seedBytes);
   }
 
   /// Derive blob obfuscation sub-key (16 bytes = 32 hex chars).

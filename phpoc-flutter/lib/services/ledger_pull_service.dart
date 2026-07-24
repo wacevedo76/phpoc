@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../core/crypto/crypto_service.dart';
 import '../core/models/pull_result.dart';
 import '../data/storage/database.dart';
+import '../data/sync/staging_storage.dart';
 import '../data/sync/transport.dart';
 import 'ledger_backup_service.dart';
 
@@ -21,6 +22,7 @@ class LedgerPullService {
   final CryptoService crypto;
   final HttpTransport? transport;
   final LedgerBackupService backupService;
+  final StagingStorage stagingStorage;
 
   /// Regex to parse block index from filenames returned by listFiles.
   /// The Worker `?prefix=` API returns bare filenames like `000042.json`.
@@ -38,6 +40,7 @@ class LedgerPullService {
     required this.crypto,
     required this.transport,
     required this.backupService,
+    required this.stagingStorage,
   });
 
   /// Pull all blocks + import + seed staging from the remote Worker.
@@ -159,6 +162,9 @@ class LedgerPullService {
       try {
         final jsonArray = const JsonEncoder().convert(blocks);
         await backupService.importFromJson(jsonArray);
+        // Seed staging entries from imported blocks so Dashboard/History
+        // can display committed entries without a separate sync step.
+        await _seedStagingFromBlocks(blocks);
       } catch (e) {
         errors.add('Failed to import blocks: $e');
         return PullResult.failure(
@@ -236,6 +242,95 @@ class LedgerPullService {
       errors.add('Failed to parse block $index: $e');
       failedBlocks.add(index);
       return null;
+    }
+  }
+
+  /// Seed staging storage with entries from imported blocks.
+  ///
+  /// Extracts entries from each block's `entries` array and writes them
+  /// to the staging store in the `{hash, data: {...}}` raw format that
+  /// [LocalCache._rawToDto] expects, so Dashboard/History screens can
+  /// display committed ledger entries.
+  ///
+  /// Encryptable fields use `plain:` prefix (no MK-based encryption)
+  /// since these entries are already cryptographically secured by the
+  /// ledger chain. [LocalCache._decrypt] handles the `plain:` prefix.
+  ///
+  /// Entries already present in staging (matched by entry_id) are not
+  /// duplicated. Best-effort — staging write failures are logged but
+  /// never block the pull result.
+  Future<void> _seedStagingFromBlocks(
+      List<Map<String, dynamic>> blocks) async {
+    final existingEntries = await stagingStorage.get('entries');
+    final stagingList = (existingEntries is List)
+        ? List<Map<String, dynamic>>.from(existingEntries)
+        : <Map<String, dynamic>>[];
+
+    // Collect existing entry_ids from staging (ids live in .data.entry_id)
+    final existingIds = <String>{};
+    for (final raw in stagingList) {
+      if (raw is! Map<String, dynamic>) continue;
+      final data = raw['data'] as Map<String, dynamic>?;
+      if (data == null) continue;
+      final eid = data['entry_id'] as String?;
+      if (eid != null) existingIds.add(eid);
+    }
+
+    for (final block in blocks) {
+      final blockEntries = block['entries'] as List<dynamic>?;
+      if (blockEntries == null) continue;
+      for (final raw in blockEntries) {
+        if (raw is! Map<String, dynamic>) continue;
+
+        // Extract entry data: PHPSPEC format wraps in {hash, data: {...}}
+        final entryData = raw['data'] as Map<String, dynamic>? ?? raw;
+        final eid = entryData['entry_id'] as String?;
+
+        // Dedup: skip if already in staging
+        if (eid != null && existingIds.contains(eid)) continue;
+        if (eid != null) existingIds.add(eid);
+
+        // Skip active / paused entries (they belong in active task slot,
+        // not the completed-entries list)
+        final isActive = entryData['is_active'] as bool? ?? false;
+        if (isActive) continue;
+        if (entryData['is_paused'] == true) continue;
+
+        // Build the {hash, data: {...}} raw format that LocalCache expects.
+        // Use plain: prefix for fields that _rawToDto decrypts.
+        final data = <String, dynamic>{
+          'entry_id': eid ?? '',
+          'title': entryData['title'] ?? '',
+          'startTime_enc': 'plain:${entryData['start_epoch'] ?? 0}',
+          'duration': entryData['duration'] ?? 0,
+          'is_active': false,
+          'is_paused': false,
+          'pauses_enc':
+              'plain:${jsonEncode(entryData['pauses'] ?? <dynamic>[])}',
+          'tags': entryData['tags'] ?? <dynamic>[],
+          'device_uuid_enc': 'plain:${entryData['device_uuid'] ?? ''}',
+          'end_device_uuid_enc': 'plain:${entryData['end_device_uuid'] ?? ''}',
+          'metadata_enc': 'plain:{}',
+        };
+        if (entryData['end_epoch'] != null) {
+          data['endTime_enc'] = 'plain:${entryData['end_epoch']}';
+        }
+        if (entryData['comment'] != null) {
+          data['comment'] = entryData['comment'];
+        }
+
+        stagingList.add({
+          'hash': raw['hash'] ?? '',
+          'data': data,
+          'committed': true,
+        });
+      }
+    }
+
+    try {
+      await stagingStorage.set('entries', stagingList);
+    } catch (_) {
+      // Best-effort: staging seed failure does not block pull result
     }
   }
 

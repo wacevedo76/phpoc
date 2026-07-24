@@ -120,10 +120,12 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // Genesis must exist
-      final blocksB = await dbB.blockDao.getAllBlocks();
-      expect(blocksB, isNotEmpty,
-          reason: 'Genesis must exist after cross-device restore');
+      // Genesis comes from R2 via pullAll, not created locally
+      // (no mock transport = pullAll does nothing)
+      expect(await prefsB.hasExistingData(), isTrue,
+          reason: 'Device identity must be set after restore');
+      expect(await prefsB.getDeviceUuid(), isNotEmpty,
+          reason: 'Device UUID must be set');
 
       // Phase 3: add mock transport to verify entries appear
       final entriesB = await syncB.getEntries();
@@ -154,7 +156,7 @@ void main() {
     });
 
     // G3
-    test('G3: restore with Worker down → genesis built, staging empty, '
+    test('G3: restore with Worker down → identity set, staging empty, '
         'error logged but app proceeds', () async {
       // RED: Offline resilience — Worker down must not block onboarding.
       final db = AppDatabase.inMemory();
@@ -168,10 +170,10 @@ void main() {
         validApiKey,
       );
 
-      // Genesis must be built despite network failure
+      // No local genesis — genesis comes from R2
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis must exist even when Worker is unreachable');
+      expect(blocks, isEmpty,
+          reason: 'Genesis comes from R2 via pullAll, not created locally');
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid after offline restore');
 
@@ -256,8 +258,8 @@ void main() {
 
     // G8
     test('G8: restoreFromCloud with valid inputs but 401 from Worker → '
-        'transport exception, genesis still built', () async {
-      // RED: Auth failure on Worker (bad API key) must not destroy local state.
+        'transport exception, identity still set', () async {
+      // Auth failure on Worker (bad API key) must not destroy local state.
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -266,10 +268,10 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, 'bad-api-key',
       );
 
-      // Genesis must still exist — auth failure on remote is non-fatal
+      // No local genesis — genesis comes from R2
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis must exist even if Worker returns 401');
+      expect(blocks, isEmpty,
+          reason: 'Genesis comes from R2 via pullAll, not created locally');
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid despite remote auth failure');
     });

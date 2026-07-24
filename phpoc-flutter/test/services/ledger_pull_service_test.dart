@@ -6,6 +6,8 @@ import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/core/models/pull_result.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/staging_storage.dart';
+import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 import 'package:phpoc_flutter/services/ledger_pull_service.dart';
@@ -128,6 +130,7 @@ Future<LedgerPullService> _makeService({
   CryptoService? crypto,
   FakePullTransport? transport,
   LedgerBackupService? backupService,
+  StagingStorage? stagingStorage,
   bool cacheMk = true,
 }) async {
   final d = db ?? AppDatabase.inMemory();
@@ -140,11 +143,13 @@ Future<LedgerPullService> _makeService({
   }
   final t = transport ?? FakePullTransport();
   final b = backupService ?? LedgerBackupService(db: d);
+  final s = stagingStorage ?? StagingStorage(d);
   return LedgerPullService(
     db: d,
     crypto: c,
     transport: t,
     backupService: b,
+    stagingStorage: s,
   );
 }
 
@@ -215,6 +220,7 @@ void main() {
     late FakePullTransport transport;
     late AppDatabase db;
     late LedgerBackupService backupService;
+    late StagingStorage stagingStorage;
 
     setUp(() async {
       crypto = CryptoService();
@@ -223,6 +229,7 @@ void main() {
       transport = FakePullTransport();
       db = AppDatabase.inMemory();
       backupService = LedgerBackupService(db: db);
+      stagingStorage = StagingStorage(db);
     });
 
     tearDown(() async {
@@ -237,6 +244,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
       expect(service, isA<LedgerPullService>());
     });
@@ -248,6 +256,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
       expect(service.pullAll, isA<Function>());
     });
@@ -264,6 +273,7 @@ void main() {
         crypto: noMkCrypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
 
       expect(
@@ -281,6 +291,7 @@ void main() {
         crypto: crypto,
         transport: null as dynamic,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
 
       // Should not throw — returns empty/success result for local-only mode
@@ -301,6 +312,7 @@ void main() {
     late CryptoService crypto;
     late FakePullTransport transport;
     late LedgerBackupService backupService;
+    late StagingStorage stagingStorage;
     late LedgerPullService service;
 
     setUp(() async {
@@ -310,11 +322,13 @@ void main() {
       crypto.setMasterKey(testMkHex);
       transport = FakePullTransport();
       backupService = LedgerBackupService(db: db);
+      stagingStorage = StagingStorage(db);
       service = LedgerPullService(
         db: db,
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
     });
 
@@ -496,6 +510,7 @@ void main() {
     late CryptoService crypto;
     late FakePullTransport transport;
     late LedgerBackupService backupService;
+    late StagingStorage stagingStorage;
     late LedgerPullService service;
 
     setUp(() async {
@@ -505,11 +520,13 @@ void main() {
       crypto.setMasterKey(testMkHex);
       transport = FakePullTransport();
       backupService = LedgerBackupService(db: db);
+      stagingStorage = StagingStorage(db);
       service = LedgerPullService(
         db: db,
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
     });
 
@@ -725,6 +742,7 @@ void main() {
     late CryptoService crypto;
     late FakePullTransport transport;
     late LedgerBackupService backupService;
+    late StagingStorage stagingStorage;
 
     setUp(() async {
       db = AppDatabase.inMemory();
@@ -733,6 +751,7 @@ void main() {
       crypto.setMasterKey(testMkHex);
       transport = FakePullTransport();
       backupService = LedgerBackupService(db: db);
+      stagingStorage = StagingStorage(db);
     });
 
     tearDown(() async {
@@ -760,6 +779,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
 
       final result = await service.pullAll();
@@ -795,6 +815,7 @@ void main() {
         crypto: wrongCrypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
 
       final result = await service.pullAll();
@@ -835,6 +856,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
       final result = await service.pullAll();
 
@@ -859,6 +881,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
       final result = await service.pullAll();
 
@@ -866,6 +889,142 @@ void main() {
           reason: '401 must cause failure');
       expect(result.errors.any((e) => e.contains('401')), isTrue,
           reason: 'Error must reference 401 status');
+    });
+
+    // ══════════════════════════════════════════════════════════
+    // Group H: LedgerPullService — seeds staging after import
+    // ══════════════════════════════════════════════════════════
+
+    group('H: LedgerPullService — seeds staging after import', () {
+      late AppDatabase db;
+      late CryptoService crypto;
+      late FakePullTransport transport;
+      late LedgerBackupService backupService;
+      late StagingStorage stagingStorage;
+      late SyncService syncService;
+
+      setUp(() async {
+        db = AppDatabase.inMemory();
+        crypto = CryptoService();
+        await crypto.initialize();
+        crypto.setMasterKey(testMkHex);
+        transport = FakePullTransport(
+          baseUrl: 'https://worker.example.com',
+          apiKey: 'test-key',
+        );
+        backupService = LedgerBackupService(db: db);
+        stagingStorage = StagingStorage(db);
+        syncService = SyncService(storage: stagingStorage, crypto: crypto);
+      });
+
+      LedgerPullService _makeService() => LedgerPullService(
+            db: db,
+            crypto: crypto,
+            transport: transport,
+            backupService: backupService,
+            stagingStorage: stagingStorage,
+          );
+
+      // H1
+      test('H1: pullAll inserts entries into staging after block import',
+          () async {
+        transport.hashIndexJson = jsonEncode(['h0']);
+        _storeObfuscatedBlock(
+            transport, crypto, 0,
+            _genesisBlockJson(blockHash: 'h0', identitySeal: 'h0', entries: [
+              {'entry_id': 'e1', 'title': 'Test Activity', 'start_epoch': 1717200000000,
+               'end_epoch': 1717203600000, 'duration': 3600000, 'is_active': false,
+               'is_paused': false, 'tags': ['work'], 'date': '2024-06-01',
+               'hash': 'abc123'},
+            ]));
+
+        final service = _makeService();
+        final result = await service.pullAll();
+
+        expect(result.success, isTrue);
+        expect(result.entriesStaged, greaterThan(0),
+            reason: 'Entries from imported blocks must be seeded into staging');
+
+        // Verify staging has entries
+        final stagingEntries = await syncService.getEntries();
+        expect(stagingEntries, isNotEmpty,
+            reason: 'Staging must contain entries after pullAll');
+      });
+
+      // H2
+      test('H2: pullAll does NOT duplicate entries already in staging',
+          () async {
+        transport.hashIndexJson = jsonEncode(['h0']);
+        _storeObfuscatedBlock(
+            transport, crypto, 0,
+            _genesisBlockJson(blockHash: 'h0', identitySeal: 'h0', entries: [
+              {'entry_id': 'dup1', 'title': 'Activity 1',
+               'start_epoch': 1717200000000, 'end_epoch': 1717203600000,
+               'duration': 3600000, 'is_active': false, 'is_paused': false,
+               'tags': [], 'date': '2024-06-01', 'hash': 'dup1'},
+            ]));
+
+        final service = _makeService();
+
+        // First pull
+        await service.pullAll();
+        final countAfterFirst = (await syncService.getEntries()).length;
+
+        // Second pull — same blocks
+        await service.pullAll();
+        final countAfterSecond = (await syncService.getEntries()).length;
+
+        expect(countAfterSecond, countAfterFirst,
+            reason: 'Second pullAll must not duplicate staging entries');
+      });
+
+      // H3
+      test('H3: pullAll with empty remote does not crash', () async {
+        // No hash_index.json → empty remote
+        transport.hashIndexJson = null;
+
+        final service = _makeService();
+        final result = await service.pullAll();
+
+        expect(result.success, isTrue);
+        expect(result.blocksPulled, 0);
+        // Should not crash or throw
+        final stagingEntries = await syncService.getEntries();
+        expect(stagingEntries, isEmpty,
+            reason: 'Empty remote → no staging entries');
+      });
+
+      // H4
+      test('H4: Staging entries have correct fields for UI rendering',
+          () async {
+        transport.hashIndexJson = jsonEncode(['h0']);
+        _storeObfuscatedBlock(
+            transport, crypto, 0,
+            _genesisBlockJson(blockHash: 'h0', identitySeal: 'h0', entries: [
+              {'entry_id': 'e2', 'title': 'UI Test Activity',
+               'start_epoch': 1717200000000, 'end_epoch': 1717203600000,
+               'duration': 3600000, 'is_active': false, 'is_paused': false,
+               'tags': ['ui', 'test'], 'date': '2024-06-01',
+               'hash': 'def456'},
+            ]));
+
+        final service = _makeService();
+        await service.pullAll();
+
+        final entries = await syncService.getEntries();
+        expect(entries, isNotEmpty);
+        for (final entry in entries) {
+          // Required fields for Dashboard/History rendering
+          expect(entry.containsKey('title'), isTrue,
+              reason: 'Entry must have title for UI rendering');
+          expect(entry.containsKey('start_epoch'), isTrue,
+              reason: 'Entry must have start_epoch for date display');
+          expect(entry.containsKey('duration'), isTrue,
+              reason: 'Entry must have duration for time display');
+          expect(entry.containsKey('tags'), isTrue,
+              reason: 'Entry must have tags list');
+        }
+      });
     });
 
     // F5
@@ -881,6 +1040,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: stagingStorage,
       );
 
       // Fire two concurrent pullAll() calls

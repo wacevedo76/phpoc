@@ -6,6 +6,7 @@ import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
+import 'package:phpoc_flutter/data/sync/staging_storage.dart';
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 import 'package:phpoc_flutter/services/ledger_pull_service.dart';
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
@@ -275,6 +276,7 @@ void main() {
         crypto: crypto,
         transport: transport,
         backupService: backupService,
+        stagingStorage: StagingStorage(db),
       );
       miniLedger = _buildMiniLedgerBlocks(crypto, transport);
 

@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
+import 'package:phpoc_flutter/core/models/pull_result.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
+import 'package:phpoc_flutter/services/ledger_pull_service.dart';
 import 'package:phpoc_flutter/services/onboarding_service.dart';
 
 /// OnboardingService tests — Groups C (9) + D (7) + E (6) + F (4) = 26 assertions.
@@ -58,6 +60,18 @@ Future<OnboardingService> _makeOnboarding({
     securePreferences: s,
     syncService: sync,
   );
+}
+
+/// Fake LedgerPullService for restoreFromCloud testing.
+class _FakeLedgerPullService {
+  bool pullAllCalled = false;
+  PullResult pullAllResult =
+      PullResult.ok(blocksPulled: 3, entriesStaged: 5);
+
+  Future<PullResult> pullAll() async {
+    pullAllCalled = true;
+    return pullAllResult;
+  }
 }
 
 void main() {
@@ -471,6 +485,125 @@ void main() {
       // The flag should now be true (healed)
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Preferences flag must be restored after auto-heal');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group G: OnboardingService — restoreFromCloud (5 tests)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('G: OnboardingService — restoreFromCloud', () {
+    Future<OnboardingService> _makeRestoreOnboarding({
+      CryptoService? crypto,
+      AppDatabase? db,
+      AppPreferences? prefs,
+      SecurePreferences? securePrefs,
+      dynamic ledgerPull,
+    }) async {
+      final c = crypto ?? (CryptoService()..initialize());
+      final d = db ?? AppDatabase.inMemory();
+      final p = prefs ?? AppPreferences.testInstance();
+      final s = securePrefs ?? SecurePreferences.testInstance();
+      final storage = _FakeStorage();
+      final sync = SyncService(storage: storage, crypto: c);
+      final pull = ledgerPull ?? _FakeLedgerPullService();
+
+      if (crypto == null) await c.initialize();
+
+      return OnboardingService(
+        crypto: c,
+        db: d,
+        preferences: p,
+        securePreferences: s,
+        syncService: sync,
+        ledgerPullService: pull,
+      );
+    }
+
+    // G1
+    test('G1: restoreFromCloud does NOT create a genesis block '
+        '(genesis comes from R2)', () async {
+      final db = AppDatabase.inMemory();
+      final onboarding = await _makeRestoreOnboarding(db: db);
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks, isEmpty,
+          reason: 'restoreFromCloud must NOT create a local genesis — '
+              'genesis comes from R2 via pullAll');
+    });
+
+    // G2
+    test('G2: restoreFromCloud calls LedgerPullService.pullAll()', () async {
+      final mockPull = _FakeLedgerPullService();
+      final onboarding = await _makeRestoreOnboarding(ledgerPull: mockPull);
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+      );
+
+      expect(mockPull.pullAllCalled, isTrue,
+          reason: 'restoreFromCloud must pull ledger blocks via '
+              'LedgerPullService.pullAll');
+    });
+
+    // G3
+    test('G3: restoreFromCloud pullAll result reports entries staged',
+        () async {
+      final fakePull = _FakeLedgerPullService();
+      fakePull.pullAllResult =
+          PullResult.ok(blocksPulled: 5, entriesStaged: 12);
+
+      final db = AppDatabase.inMemory();
+      final onboarding = await _makeRestoreOnboarding(
+          db: db, ledgerPull: fakePull);
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://worker.example.com',
+        'test-key',
+        wipeExisting: true,
+      );
+
+      // Pull was called and returned entriesStaged > 0
+      expect(fakePull.pullAllCalled, isTrue);
+      expect(fakePull.pullAllResult.entriesStaged, greaterThan(0),
+          reason: 'Pull result must report entries staged from pulled blocks');
+    });
+
+    // G4
+    test('G4: restoreFromCloud validates seed before any DB writes', () async {
+      final db = AppDatabase.inMemory();
+      final onboarding = await _makeRestoreOnboarding(db: db);
+
+      // Invalid seed — must fail before writing anything
+      try {
+        await onboarding.restoreFromCloud(
+          '!!!bad-seed!!!',
+          validPassphrase,
+          'https://worker.example.com',
+          'test-key',
+        );
+        fail('Expected exception for invalid seed');
+      } catch (_) {
+        // Expected — invalid seed rejected
+      }
+
+      // No blocks should have been written
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks, isEmpty,
+          reason: 'Invalid seed must be rejected before any DB writes');
     });
   });
 }

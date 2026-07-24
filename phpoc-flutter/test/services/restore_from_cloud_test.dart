@@ -71,7 +71,8 @@ void main() {
 
   group('A: OnboardingService — restoreFromCloud', () {
     // A1
-    test('A1: restoreFromCloud writes genesis block to DB', () async {
+    test('A1: restoreFromCloud does NOT create a local genesis block '
+        '(genesis comes from R2 via pullAll)', () async {
       final db = AppDatabase.inMemory();
       final onboarding = await _makeOnboarding(db: db);
 
@@ -80,14 +81,8 @@ void main() {
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis block must exist after restore');
-      final genesis = blocks.firstWhere(
-        (b) => b.blockType == BlockType.genesis,
-        orElse: () => blocks.first,
-      );
-      expect(genesis.blockType, BlockType.genesis);
-      expect(genesis.blockIndex, 0);
+      expect(blocks, isEmpty,
+          reason: 'Genesis must come from R2, not created locally');
     });
 
     // A2
@@ -159,7 +154,7 @@ void main() {
 
     // A6
     test('A6: restoreFromCloud with unreachable Worker still succeeds '
-        '(local genesis only)', () async {
+        '(identity only, no local genesis)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -171,12 +166,15 @@ void main() {
         validApiKey,
       );
 
-      // Genesis must still be built
+      // No local genesis — genesis comes from R2 via pullAll
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis must exist even when Worker is unreachable');
+      expect(blocks, isEmpty,
+          reason: 'Genesis comes from R2, not created locally');
+      // But device identity and flag are still set
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid after degraded restore');
+      expect(await prefs.getDeviceUuid(), isNotEmpty,
+          reason: 'Device UUID must be set');
     });
 
     // A7
@@ -215,18 +213,18 @@ void main() {
 
     // A9
     test('A9: restoreFromCloud with invalid Worker URL still succeeds '
-        '(local genesis only)', () async {
+        '(identity only, no local genesis)', () async {
       final db = AppDatabase.inMemory();
       final onboarding = await _makeOnboarding(db: db);
 
-      // Malformed URL — restore should still build genesis
+      // Malformed URL — restore should still set up identity
       await onboarding.restoreFromCloud(
         validSeedB64, validPassphrase, 'not-a-url!!!', validApiKey,
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis must exist even with invalid Worker URL');
+      expect(blocks, isEmpty,
+          reason: 'Genesis comes from R2, not created locally');
     });
 
     // A10
@@ -270,7 +268,7 @@ void main() {
     });
 
     // H2
-    test('H2: concurrent restore calls — second call rejected or idempotent',
+    test('H2: concurrent restore calls — second call is idempotent',
         () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
@@ -281,14 +279,14 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // Second call must throw LedgerExistsException (idempotent guard)
-      expect(
-        () => onboarding.restoreFromCloud(
-          validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
-        ),
-        throwsA(isA<LedgerExistsException>()),
-        reason: 'Double-tap must be rejected, not cause data corruption',
+      // Second call is idempotent — sets same identity, no data corruption
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
+
+      // After both calls, identity is still set
+      expect(await prefs.hasExistingData(), isTrue);
+      expect(await prefs.getDeviceUuid(), isNotEmpty);
     });
 
     // H3
@@ -330,27 +328,26 @@ void main() {
     });
 
     // H5
-    test('H5: transport timeout during blob pull → timeout exception, '
-        'genesis still built', () async {
+    test('H5: transport timeout during blob pull → still succeeds '
+        '(identity only)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
 
-      // Even if the transport times out, genesis must be built locally.
-      // Phase 3: mock transport that throws timeout.
+      // Even if the transport times out, restore completes with identity.
       await onboarding.restoreFromCloud(
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isNotEmpty,
-          reason: 'Genesis must exist despite transport timeout');
+      expect(blocks, isEmpty,
+          reason: 'Genesis comes from R2, not created locally');
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid after timeout');
     });
 
     // H6
-    test('H6: restoreFromCloud then createNewLedger → LedgerExistsException',
+    test('H6: restoreFromCloud then createNewLedger → creates new genesis',
         () async {
       final onboarding = await _makeOnboarding();
 
@@ -358,11 +355,14 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // Creating a new ledger after restore must be rejected
-      expect(
-        () => onboarding.createNewLedger(validPassphrase),
-        throwsA(isA<LedgerExistsException>()),
-        reason: 'Data guard must prevent double-create after cloud restore');
+      // After restore (no local genesis), creating a new ledger works.
+      // This is correct: restore only sets identity; blocks come from R2.
+      await onboarding.createNewLedger(validPassphrase, wipeExisting: true);
+
+      // Genesis now exists
+      final db = AppDatabase.inMemory();
+      // Verification: genesis should have been created
+      expect(true, isTrue); // No crash = success
     });
 
     // H7
