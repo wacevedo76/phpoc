@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/crypto/crypto_service.dart';
 import '../../data/sync/staging_storage.dart';
 import '../../data/sync/sync_service.dart';
-import '../../data/sync/transport.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
 import '../../services/ledger_pull_service.dart';

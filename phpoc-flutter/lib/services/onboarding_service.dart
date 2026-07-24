@@ -22,7 +22,11 @@ class OnboardingService {
   final SecurePreferences securePreferences;
   final SyncService syncService;
   /// Ledger pull service for restore-from-cloud. Set by provider injection.
-  /// May be a [LedgerPullService] instance or a test-compatible substitute.
+  ///
+  /// Typed as dynamic because test mocks substitute non-LedgerPullService
+  /// objects (e.g., _FakeLedgerPullService). All callers use null-checks and
+  /// runtime type checks before accessing LedgerPullService members.
+  // ignore: use_dynamic_as_type
   dynamic ledgerPullService;
 
   OnboardingService({
@@ -223,7 +227,7 @@ class OnboardingService {
     }
 
     if (connectError != null) {
-      return PullResult.failure(errors: [connectError!]);
+      return PullResult.failure(errors: [connectError]);
     }
 
     // No transport configured — nothing to pull

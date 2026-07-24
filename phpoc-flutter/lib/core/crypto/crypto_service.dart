@@ -223,8 +223,9 @@ class CryptoService {
       112,
     ); // min: salt(16)+nonce(8)+tag(32)=56 bytes → 112 hex
     _validateHex(keyHex, 64);
-    if (ciphertextHex.isEmpty)
+    if (ciphertextHex.isEmpty) {
       throw CryptoException('Ciphertext must not be empty');
+    }
     final key = Uint8List.fromList(_hexToBytes(keyHex));
     final aesKey = Uint8List.sublistView(key, 0, 16);
     final data = _hexToBytes(ciphertextHex);
@@ -277,8 +278,9 @@ class CryptoService {
     _requireInitialized();
     _validateHex(ciphertextHex, null, 112);
     _validateHex(keyHex, 64);
-    if (ciphertextHex.isEmpty)
+    if (ciphertextHex.isEmpty) {
       throw CryptoException('Ciphertext must not be empty');
+    }
     final mk = Uint8List.fromList(_hexToBytes(keyHex));
     final data = _hexToBytes(ciphertextHex);
 
@@ -897,8 +899,9 @@ class CryptoService {
 
   /// Convert hex string to byte list.
   static Uint8List _hexToBytes(String hex) {
-    if (hex.length % 2 != 0)
+    if (hex.length % 2 != 0) {
       throw CryptoException('Hex string must have even length');
+    }
     final result = Uint8List(hex.length ~/ 2);
     for (var i = 0; i < hex.length; i += 2) {
       result[i ~/ 2] = int.parse(hex.substring(i, i + 2), radix: 16);

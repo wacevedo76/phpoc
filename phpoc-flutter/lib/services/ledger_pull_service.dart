@@ -269,7 +269,6 @@ class LedgerPullService {
     // Collect existing entry_ids from staging (ids live in .data.entry_id)
     final existingIds = <String>{};
     for (final raw in stagingList) {
-      if (raw is! Map<String, dynamic>) continue;
       final data = raw['data'] as Map<String, dynamic>?;
       if (data == null) continue;
       final eid = data['entry_id'] as String?;
