@@ -5,10 +5,7 @@ import 'package:phpoc_flutter/core/utils/format_utils.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider, syncServiceProvider;
 import 'package:phpoc_flutter/services/auth_service.dart';
 
-/// Sync — sync status, manual trigger, pending count.
-///
-/// Displays sync state (Ready/Offline/Syncing/Error), a "Sync Now" button,
-/// pending entry count, and a commit-entry placeholder for Phase 7.
+/// Sync — uncommitted tasks, pending count, manual sync, thin status bar.
 class SyncScreen extends ConsumerStatefulWidget {
   const SyncScreen({super.key});
 
@@ -22,6 +19,19 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   int? _lastSyncAt;
   String? _errorMessage;
   bool _isSyncing = false;
+  List<Map<String, dynamic>> _uncommittedEntries = [];
+  final Set<int> _expandedUncommitted = {};
+  bool _committing = false;
+  final Map<int, _CardEditState> _editStates = {};
+  final Set<int> _saving = {};
+
+  bool get _canCommit => _uncommittedEntries.isNotEmpty && !_committing;
+
+  Widget _loadingSpinner() => const SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
 
   @override
   void initState() {
@@ -31,13 +41,43 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
   Future<void> _refreshStatus() async {
     final sync = ref.read(syncServiceProvider);
+    final entries = await sync.getEntries();
+    if (!mounted) return;
     setState(() {
       if (!sync.isRemoteAvailable) {
         _status = SyncCheckResult.offline;
       } else {
         _status = SyncCheckResult.ready;
       }
+      _pendingCount = entries
+          .where((e) => e['is_active'] != true && e['committed'] != true)
+          .length;
+      _uncommittedEntries = entries
+          .where((e) => e['is_active'] != true && e['committed'] != true)
+          .toList();
     });
+  }
+
+  Future<void> _commitToLedger() async {
+    setState(() => _committing = true);
+    try {
+      final sync = ref.read(syncServiceProvider);
+      final hash = await sync.commitEntries();
+      if (!mounted) return;
+      if (hash != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Committed — $hash')),
+        );
+      }
+      await _refreshStatus();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Commit failed — please try again')),
+      );
+    } finally {
+      if (mounted) setState(() => _committing = false);
+    }
   }
 
   Future<void> _syncNow() async {
@@ -48,17 +88,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
     try {
       final sync = ref.read(syncServiceProvider);
-      // Sync is a multi-step operation handled by SyncService
       final result = await sync.checkAndSync();
 
       if (!mounted) return;
 
       if (result == SyncCheckResult.reauthNeeded) {
-        // Instead of showing an error, prompt for passphrase
         setState(() => _isSyncing = false);
         final reauthOk = await _promptReauth();
         if (reauthOk == true && mounted) {
-          // Retry sync after successful re-auth
           _syncNow();
         }
         return;
@@ -77,6 +114,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           _errorMessage = 'Sync failed — could not reach remote';
         }
       });
+
+      await _refreshStatus();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -139,7 +178,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
     controller.dispose();
 
-    if (result == null) return false; // User canceled
+    if (result == null) return false;
 
     try {
       final auth = ref.read(authServiceProvider);
@@ -155,66 +194,428 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     }
   }
 
+  // ── Build ──────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Sync')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Status indicator card
-          _buildStatusCard(),
-          const SizedBox(height: 16),
-          // Sync Now button
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton.icon(
-              onPressed: _isSyncing ? null : _syncNow,
-              icon: _isSyncing
-                  ? const SizedBox(
-                      width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.sync),
-              label: Text(_isSyncing ? 'Syncing…' : 'Sync Now'),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Error message with retry
-          if (_errorMessage != null) _buildErrorCard(),
-          const SizedBox(height: 24),
-          // Last sync timestamp
-          if (_lastSyncAt != null) ...[
-            _buildInfoRow(
-              Icons.access_time,
-              'Last synced: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(_lastSyncAt!))}',
-            ),
-            const SizedBox(height: 8),
-          ],
-          // Pending entries
-          _buildInfoRow(
+      body: _buildBody(),
+      bottomSheet: _buildStatusBar(),
+    );
+  }
+
+  Widget _buildBody() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      children: [
+        if (_uncommittedEntries.isNotEmpty) ...[
+          _buildSectionHeader(
+            'Ready to Commit',
             Icons.cloud_upload_outlined,
-            'Pending entries: $_pendingCount',
           ),
-          const SizedBox(height: 24),
-          // Commit-entry placeholder (Phase 7)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 4),
+          ..._uncommittedEntries.asMap().entries.map((e) =>
+              _buildUncommittedCard(e.value, e.key)),
+          const SizedBox(height: 16),
+        ],
+        _buildPendingCount(),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          // T8: Commits all completed (is_active=false) uncommitted entries to
+          // the local ledger via SyncService.commitEntries(). Hash shown on success.
+          child: ElevatedButton.icon(
+            onPressed: _canCommit ? _commitToLedger : null,
+            icon: _committing ? _loadingSpinner() : const Icon(Icons.lock_outline),
+            label: Text(_committing ? 'Committing…' : 'Commit to Local Ledger'),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _isSyncing ? null : _syncNow,
+            icon: _isSyncing ? _loadingSpinner() : const Icon(Icons.sync),
+            label: Text(_isSyncing ? 'Syncing…' : 'Sync to Remote'),
+          ),
+        ),
+        if (_errorMessage != null) ...[
+          const SizedBox(height: 8),
+          _buildErrorRow(),
+        ],
+        if (_lastSyncAt != null) ...[
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            Icons.access_time,
+            'Last synced: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(_lastSyncAt!))}',
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPendingCount() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_upload_outlined,
+              size: 20, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            '$_pendingCount entry${_pendingCount == 1 ? '' : 's'} pending sync',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const Spacer(),
+          if (_pendingCount > 0)
+            Icon(Icons.arrow_upward,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Card edit state helpers ────────────────────────────────
+
+  _CardEditState _ensureEditState(int idx) {
+    if (!_editStates.containsKey(idx)) {
+      final entry = _uncommittedEntries[idx];
+      _editStates[idx] = _CardEditState(
+        title: entry['title'] as String? ?? '',
+        comment: entry['comment'] as String?,
+        tags: List<String>.from((entry['tags'] as List?)?.cast<String>() ?? []),
+        encryptTitle: entry['title_encrypted'] == true,
+        encryptTags: entry['tags_encrypted'] == true,
+        encryptComment: entry['comment_encrypted'] == true,
+        endEpoch: entry['end_epoch'] as int?,
+        pauses: List<Map<String, dynamic>>.from(
+            (entry['pauses'] as List?)?.cast<Map>() ?? []),
+      );
+    }
+    return _editStates[idx]!;
+  }
+
+  void _disposeEditState(int idx) {
+    _editStates.remove(idx)?.dispose();
+  }
+
+  Future<void> _saveEntry(int idx) async {
+    final es = _editStates[idx];
+    if (es == null) return;
+    setState(() => _saving.add(idx));
+    try {
+      final sync = ref.read(syncServiceProvider);
+      final originalIdx = _uncommittedEntries[idx]['entry_index'] as int? ?? idx;
+      final encryptFields = <String>{};
+      if (es.encryptTitle) encryptFields.add('title');
+      if (es.encryptTags) encryptFields.add('tags');
+      if (es.encryptComment) encryptFields.add('comment');
+
+      final fields = <String, dynamic>{
+        'title': es.titleController.text,
+        'tags': es.tags,
+        'pauses': es.pauses,
+      };
+      if (es.commentController.text.isNotEmpty) {
+        fields['comment'] = es.commentController.text;
+      } else {
+        fields['comment'] = null;
+      }
+      if (es.endEpoch != null) {
+        fields['end_epoch'] = es.endEpoch;
+      }
+
+      // Recompute duration from new end time and pauses
+      fields['duration'] = _computeDuration(
+        startEpoch: _uncommittedEntries[idx]['start_epoch'] as int? ?? 0,
+        endEpoch: es.endEpoch,
+        pauses: es.pauses,
+      );
+
+      await sync.modify(originalIdx, fields, encryptFields: encryptFields);
+
+      await _refreshStatus();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Entry saved')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Save failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving.remove(idx));
+    }
+  }
+
+  // ── Uncommitted card (collapsible, orange border) ──────────
+
+  Widget _buildUncommittedCard(Map<String, dynamic> entry, int idx) {
+    final isExpanded = _expandedUncommitted.contains(idx);
+    final es = isExpanded ? _ensureEditState(idx) : null;
+
+    final title = entry['title'] as String? ?? 'Untitled';
+    final startEpoch = entry['start_epoch'] as int? ?? 0;
+    final storedDurationMs = entry['duration'] as int? ?? 0;
+    final tags = (entry['tags'] as List?)?.cast<String>() ?? [];
+    final comment = entry['comment'] as String?;
+    final pauses =
+        (entry['pauses'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
+
+    // Live duration: use edit state values when expanded, stored otherwise
+    final displayDurationMs = isExpanded && es != null
+        ? _computeDuration(
+            startEpoch: startEpoch,
+            endEpoch: es.endEpoch,
+            pauses: es.pauses,
+          )
+        : storedDurationMs;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 6),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Colors.orange, width: 2),
+      ),
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (isExpanded) {
+              _expandedUncommitted.remove(idx);
+              _disposeEditState(idx);
+            } else {
+              _expandedUncommitted.add(idx);
+              _ensureEditState(idx);
+            }
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Text('Commit to Ledger',
-                      style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
+                  Icon(Icons.check_circle_outline,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  ),
                   Text(
-                    'Coming in a future update',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    FormatUtils.duration(Duration(milliseconds: displayDurationMs)),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.bold,
                         ),
                   ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                FormatUtils.date(startDt),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              AnimatedCrossFade(
+                firstChild: const SizedBox.shrink(),
+                secondChild: isExpanded && es != null
+                    ? _buildEditDetail(idx, es)
+                    : _buildReadOnlyDetail(tags, comment, pauses),
+                crossFadeState: isExpanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 200),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Read-only detail (collapsed card fallback) ────────────
+
+  Widget _buildReadOnlyDetail(
+    List<String> tags,
+    String? comment,
+    List<Map<String, dynamic>> pauses,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (tags.isNotEmpty) ...[
+            Wrap(
+              spacing: 4,
+              runSpacing: 2,
+              children: tags.map((t) {
+                return Chip(
+                  label: Text(t, style: const TextStyle(fontSize: 10)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (comment != null && comment.isNotEmpty) ...[
+            Text(
+              comment,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                  ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (pauses.isNotEmpty) ...[
+            Text(
+              'Pauses',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 2),
+            ...pauses.map((p) {
+              final pStart = p['start_epoch'] as int? ?? 0;
+              final pEnd = p['end_epoch'] as int?;
+              final pStartDt = DateTime.fromMillisecondsSinceEpoch(pStart);
+              final pEndDt =
+                  pEnd != null ? DateTime.fromMillisecondsSinceEpoch(pEnd) : null;
+              final pDuration = pEndDt != null
+                  ? pEndDt.difference(pStartDt)
+                  : DateTime.now().difference(pStartDt);
+              return Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 2),
+                child: Text(
+                  pEndDt != null
+                      ? '${FormatUtils.time(pStartDt)} \u2013 ${FormatUtils.time(pEndDt)}  (${FormatUtils.duration(pDuration)})'
+                      : '${FormatUtils.time(pStartDt)} \u2013 ongoing  (${FormatUtils.duration(pDuration)})',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Editable detail (expanded card) ───────────────────────
+
+  Widget _buildEditDetail(int idx, _CardEditState es) {
+    final theme = Theme.of(context);
+    final isSaving = _saving.contains(idx);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Title ──────────────────────────────────────────
+          TextField(
+            controller: es.titleController,
+            decoration: InputDecoration(
+              labelText: 'Title',
+              isDense: true,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 10),
+
+          // ── Comment ────────────────────────────────────────
+          TextField(
+            controller: es.commentController,
+            decoration: InputDecoration(
+              labelText: 'Comment',
+              isDense: true,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            style: theme.textTheme.bodySmall,
+            maxLines: 2,
+            minLines: 1,
+          ),
+          const SizedBox(height: 10),
+
+          // ── Tags ───────────────────────────────────────────
+          _buildEditTags(idx, es),
+          const SizedBox(height: 10),
+
+          // ── End Time ───────────────────────────────────────
+          _buildEditEndTime(idx, es),
+          const SizedBox(height: 10),
+
+          // ── Pauses ─────────────────────────────────────────
+          _buildEditPauses(idx, es),
+          const SizedBox(height: 12),
+
+          // ── Encryption toggles ─────────────────────────────
+          _buildEncryptionToggles(es),
+          const SizedBox(height: 10),
+
+          // ── Save button ────────────────────────────────────
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: isSaving ? null : () => _saveEntry(idx),
+              icon: isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child:
+                          CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save, size: 18),
+              label: Text(isSaving ? 'Saving…' : 'Save'),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
               ),
             ),
           ),
@@ -223,13 +624,443 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  Widget _buildStatusCard() {
-    final (statusText, icon, color) = switch (_status) {
-      SyncCheckResult.ready => (
-          'Ready',
-          Icons.check_circle,
-          Colors.green,
+  // ── Tags editor ───────────────────────────────────────────
+
+  Widget _buildEditTags(int idx, _CardEditState es) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Tags', style: theme.textTheme.labelSmall),
+        const SizedBox(height: 4),
+        if (es.tags.isNotEmpty)
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: es.tags.asMap().entries.map((t) {
+              return InputChip(
+                label: Text(t.value,
+                    style: const TextStyle(fontSize: 11)),
+                onDeleted: () {
+                  setState(() => es.tags.removeAt(t.key));
+                },
+                materialTapTargetSize:
+                    MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                deleteIcon: const Icon(Icons.close, size: 14),
+              );
+            }).toList(),
+          ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: es.tagInputController,
+                decoration: InputDecoration(
+                  hintText: 'Add tag…',
+                  isDense: true,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                style: theme.textTheme.bodySmall,
+                onSubmitted: (_) => _addTag(es),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: () => _addTag(es),
+              icon: const Icon(Icons.add_circle_outline, size: 22),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ],
         ),
+      ],
+    );
+  }
+
+  void _addTag(_CardEditState es) {
+    final raw = es.tagInputController.text.trim().toLowerCase();
+    if (raw.isEmpty) return;
+    if (!es.tags.contains(raw)) {
+      setState(() {
+        es.tags.add(raw);
+        es.tags.sort();
+      });
+    }
+    es.tagInputController.clear();
+  }
+
+  /// Compute duration (ms) from start, end, and pauses in staging format.
+  int _computeDuration({
+    required int startEpoch,
+    int? endEpoch,
+    required List<Map<String, dynamic>> pauses,
+  }) {
+    if (endEpoch == null) return 0;
+    int totalPauseMs = 0;
+    for (final p in pauses) {
+      final start = p['pause_start'] as int?;
+      final stop = p['pause_stop'] as int?;
+      if (start != null && stop != null) {
+        totalPauseMs += stop - start;
+      }
+    }
+    final result = endEpoch - startEpoch - totalPauseMs;
+    return result < 0 ? 0 : result;
+  }
+
+  // ── End time editor ───────────────────────────────────────
+
+  Widget _buildEditEndTime(int idx, _CardEditState es) {
+    final theme = Theme.of(context);
+    final endDt = es.endEpoch != null
+        ? DateTime.fromMillisecondsSinceEpoch(es.endEpoch!)
+        : null;
+
+    return InkWell(
+      onTap: () => _pickEndDateTime(idx, es),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.schedule,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Text(
+              endDt != null
+                  ? 'End: ${FormatUtils.dateTime(endDt)}'
+                  : 'End time (tap to set)',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: endDt != null
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+            if (es.endEpoch != null)
+              IconButton(
+                onPressed: () => setState(() => es.endEpoch = null),
+                icon: const Icon(Icons.close, size: 16),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickEndDateTime(int idx, _CardEditState es) async {
+    final now = DateTime.now();
+    final initial = es.endEpoch != null
+        ? DateTime.fromMillisecondsSinceEpoch(es.endEpoch!)
+        : now;
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: now.add(const Duration(days: 1)),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted) return;
+
+    final combined = DateTime(
+      date.year, date.month, date.day, time.hour, time.minute);
+    setState(() => es.endEpoch = combined.millisecondsSinceEpoch);
+  }
+
+  // ── Pauses editor ─────────────────────────────────────────
+
+  Widget _buildEditPauses(int idx, _CardEditState es) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Pauses', style: theme.textTheme.labelSmall),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _addPause(es),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+          ],
+        ),
+        if (es.pauses.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          ...es.pauses.asMap().entries.map((p) {
+            final pStart =
+                p.value['pause_start'] as int? ?? 0;
+            final pEnd = p.value['pause_stop'] as int?;
+            final pStartDt =
+                DateTime.fromMillisecondsSinceEpoch(pStart);
+            final pEndDt = pEnd != null
+                ? DateTime.fromMillisecondsSinceEpoch(pEnd)
+                : null;
+            final pDuration = pEndDt != null
+                ? pEndDt.difference(pStartDt)
+                : DateTime.now().difference(pStartDt);
+            return Padding(
+              padding:
+                  const EdgeInsets.only(left: 4, bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => _pickPauseTime(
+                          es, p.key, isStart: true),
+                      borderRadius:
+                          BorderRadius.circular(6),
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: theme
+                                  .colorScheme.outline
+                                  .withValues(alpha: 0.4)),
+                          borderRadius:
+                              BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          FormatUtils.time(pStartDt),
+                          style:
+                              theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6),
+                    child: Text('\u2013',
+                        style: theme.textTheme.bodySmall),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => _pickPauseTime(
+                          es, p.key, isStart: false),
+                      borderRadius:
+                          BorderRadius.circular(6),
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: theme
+                                  .colorScheme.outline
+                                  .withValues(alpha: 0.4)),
+                          borderRadius:
+                              BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          pEndDt != null
+                              ? FormatUtils.time(pEndDt)
+                              : 'ongoing',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    ' (${FormatUtils.duration(pDuration)})',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  IconButton(
+                    onPressed: () => setState(
+                        () => es.pauses.removeAt(p.key)),
+                    icon: const Icon(Icons.close,
+                        size: 16),
+                    visualDensity:
+                        VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
+  void _addPause(_CardEditState es) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    setState(() {
+      es.pauses.add({
+        'pause_start': now,
+        'pause_stop': now + 600000, // default 10 min
+      });
+    });
+  }
+
+  Future<void> _pickPauseTime(
+      _CardEditState es, int pauseIdx,
+      {required bool isStart}) async {
+    final pause = es.pauses[pauseIdx];
+    final epoch = (isStart
+            ? pause['pause_start']
+            : pause['pause_stop']) as int? ??
+        DateTime.now().millisecondsSinceEpoch;
+    final initial = DateTime.fromMillisecondsSinceEpoch(epoch);
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted) return;
+
+    final combined = DateTime(
+        date.year, date.month, date.day, time.hour, time.minute);
+    setState(() {
+      es.pauses[pauseIdx][isStart ? 'pause_start' : 'pause_stop'] =
+          combined.millisecondsSinceEpoch;
+    });
+  }
+
+  // ── Encryption toggles ────────────────────────────────────
+
+  Widget _buildEncryptionToggles(_CardEditState es) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Encrypt Fields',
+              style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 2),
+          _encryptSwitch(
+            'Title',
+            es.encryptTitle,
+            (v) => setState(() => es.encryptTitle = v),
+          ),
+          _encryptSwitch(
+            'Tags',
+            es.encryptTags,
+            (v) => setState(() => es.encryptTags = v),
+          ),
+          _encryptSwitch(
+            'Comment',
+            es.encryptComment,
+            (v) => setState(() => es.encryptComment = v),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _encryptSwitch(
+      String label, bool value, ValueChanged<bool> onChanged) {
+    return Row(
+      children: [
+        Icon(
+          value ? Icons.lock : Icons.lock_open,
+          size: 14,
+          color: value
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: 6),
+        Text(label,
+            style: Theme.of(context).textTheme.bodySmall),
+        const Spacer(),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          materialTapTargetSize:
+              MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
+    );
+  }
+
+  // ── Status bar (thin, above NavigationBar) ─────────────────
+
+  Widget _buildStatusBar() {
+    final (label, icon, color) = _statusInfo();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).colorScheme.outlineVariant,
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  (String, IconData, Color) _statusInfo() {
+    if (_isSyncing) {
+      return ('Syncing…', Icons.sync, Theme.of(context).colorScheme.primary);
+    }
+    return switch (_status) {
+      SyncCheckResult.ready => ('Ready', Icons.check_circle, Colors.green),
       SyncCheckResult.offline => (
           'Offline',
           Icons.cloud_off,
@@ -246,36 +1077,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           Theme.of(context).colorScheme.error,
         ),
     };
-
-    // Override: show "Syncing…" while in progress
-    final displayText = _isSyncing ? 'Syncing…' : statusText;
-    final displayIcon = _isSyncing ? Icons.sync : icon;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(displayIcon, size: 32, color: color),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Sync Status',
-                    style: Theme.of(context).textTheme.bodySmall),
-                Text(
-                  displayText,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: color,
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildInfoRow(IconData icon, String text) {
@@ -289,41 +1090,72 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  Widget _buildErrorCard() {
-    return Card(
-      color: Theme.of(context).colorScheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.error_outline,
-                    color: Theme.of(context).colorScheme.error),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _errorMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: _syncNow,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Retry'),
+  Widget _buildErrorRow() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline,
+              size: 18, color: Theme.of(context).colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _errorMessage!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 13,
               ),
             ),
-          ],
-        ),
+          ),
+          TextButton(
+            onPressed: _syncNow,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: const Text('Retry', style: TextStyle(fontSize: 12)),
+          ),
+        ],
       ),
     );
+  }
+}
+
+// ── Per-card editing state ──────────────────────────────────
+
+class _CardEditState {
+  final TextEditingController titleController;
+  final TextEditingController commentController;
+  final TextEditingController tagInputController;
+  List<String> tags;
+  bool encryptTitle;
+  bool encryptTags;
+  bool encryptComment;
+  int? endEpoch;
+  List<Map<String, dynamic>> pauses;
+
+  _CardEditState({
+    required String title,
+    String? comment,
+    required List<String> tags,
+    required this.encryptTitle,
+    required this.encryptTags,
+    required this.encryptComment,
+    this.endEpoch,
+    required List<Map<String, dynamic>> pauses,
+  })  : titleController = TextEditingController(text: title),
+        commentController = TextEditingController(text: comment ?? ''),
+        tagInputController = TextEditingController(),
+        tags = List<String>.from(tags),
+        pauses = List<Map<String, dynamic>>.from(pauses);
+
+  void dispose() {
+    titleController.dispose();
+    commentController.dispose();
+    tagInputController.dispose();
   }
 }

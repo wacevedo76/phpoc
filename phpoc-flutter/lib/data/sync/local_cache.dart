@@ -161,6 +161,10 @@ class LocalCache {
       'hash': raw['hash'] ?? '',
       'entry_index': idx,
       'committed': raw['committed'] ?? false,
+      'has_encrypted_fields': data['has_encrypted_fields'] ?? false,
+      'title_encrypted': !data.containsKey('title_enc'),
+      'tags_encrypted': !data.containsKey('tags_enc'),
+      'comment_encrypted': !data.containsKey('comment_enc'),
     };
   }
 
@@ -273,6 +277,10 @@ class LocalCache {
     }
     data.removeWhere((_, v) => v == null);
 
+    if (encryptFields.isNotEmpty) {
+      data['has_encrypted_fields'] = true;
+    }
+
     final hash = _computeEntryHash({
       'title': title,
       'start_epoch': startEpoch,
@@ -301,6 +309,30 @@ class LocalCache {
     return hash.substring(0, 10);
   }
 
+  // ── Encryptable-field update helper ───────────────────────────
+
+  /// Set [field] on [data] and manage its `_enc` variant.
+  ///
+  /// When [encrypt] is false, writes a `plain:` prefixed copy to
+  /// `{field}_enc`. When true, removes any existing `{field}_enc`.
+  /// [encode] allows custom serialization for storage (e.g., JSON for lists).
+  void _upsertEncryptableField(
+    Map<String, dynamic> data,
+    String field,
+    dynamic value, {
+    required bool encrypt,
+    String Function(dynamic)? encode,
+  }) {
+    data[field] = value;
+    final encKey = '${field}_enc';
+    if (!encrypt) {
+      final encoded = encode != null ? encode(value) : value.toString();
+      data[encKey] = _encrypt(encoded, forcePlain: true);
+    } else {
+      data.remove(encKey);
+    }
+  }
+
   // ── update ────────────────────────────────────────────────────
 
   /// Update specific fields on an entry at the given index.
@@ -318,44 +350,58 @@ class LocalCache {
     // Guard: refuse to modify committed entries
     if (raw['committed'] == true) return;
 
+    // Handle committed flag (raw-level metadata, not in data dict)
+    if (fields.containsKey('committed')) {
+      raw['committed'] = fields['committed'];
+    }
+
     final data = Map<String, dynamic>.from(raw['data'] as Map? ?? {});
 
     bool shouldEncrypt(String field) => encryptFields.contains(field);
 
-    // Apply field updates mapping DTO names to _enc names
-    if (fields.containsKey('title')) data['title'] = fields['title'];
+    // ── Per-field encryptable: title, tags, comment (plain + _enc) ─
+    if (fields.containsKey('title')) {
+      _upsertEncryptableField(data, 'title', fields['title'], encrypt: shouldEncrypt('title'));
+    }
+    if (fields.containsKey('tags')) {
+      final norm = _normalizeTags(fields['tags']);
+      _upsertEncryptableField(data, 'tags', norm, encrypt: shouldEncrypt('tags'), encode: json.encode);
+    }
+    if (fields.containsKey('comment')) {
+      if (fields['comment'] == null) {
+        data.remove('comment');
+        data.remove('comment_enc');
+      } else {
+        _upsertEncryptableField(data, 'comment', fields['comment'], encrypt: shouldEncrypt('comment'));
+      }
+    }
+
+    // ── Always-encrypted fields (only _enc, no plain copy) ────────
     if (fields.containsKey('end_epoch')) {
       data['endTime_enc'] = _encrypt(fields['end_epoch']);
     }
-    if (fields.containsKey('end_device_uuid')) {
-      data['end_device_uuid_enc'] = _encrypt(fields['end_device_uuid']);
-    }
-    if (fields.containsKey('is_active')) data['is_active'] = fields['is_active'];
-    if (fields.containsKey('is_paused')) data['is_paused'] = fields['is_paused'];
-    if (fields.containsKey('tags')) {
-      final norm = _normalizeTags(fields['tags']);
-      data['tags'] = norm;
-      // Remove stale encrypted copy when switching to plain
-      if (!shouldEncrypt('tags')) {
-        data['tags_enc'] = _encrypt(json.encode(norm), forcePlain: true);
-      } else {
-        data.remove('tags_enc');
-      }
-    }
-    if (fields.containsKey('comment')) {
-      data['comment'] = fields['comment'];
-      if (!shouldEncrypt('comment')) {
-        data['comment_enc'] = _encrypt(fields['comment'], forcePlain: true);
-      } else {
-        data.remove('comment_enc');
-      }
-    }
-    if (fields.containsKey('duration')) data['duration'] = fields['duration'];
     if (fields.containsKey('start_epoch')) {
       data['startTime_enc'] = _encrypt(fields['start_epoch']);
     }
     if (fields.containsKey('device_uuid')) {
       data['device_uuid_enc'] = _encrypt(fields['device_uuid']);
+    }
+    if (fields.containsKey('end_device_uuid')) {
+      data['end_device_uuid_enc'] = _encrypt(fields['end_device_uuid']);
+    }
+
+    // ── Pauses (encrypted JSON blob) ────────────────────────────
+    if (fields.containsKey('pauses')) {
+      data['pauses_enc'] = _encrypt(json.encode(fields['pauses'] ?? []));
+    }
+
+    // ── Plain-only fields (no encryption) ─────────────────────────
+    if (fields.containsKey('is_active')) data['is_active'] = fields['is_active'];
+    if (fields.containsKey('is_paused')) data['is_paused'] = fields['is_paused'];
+    if (fields.containsKey('duration')) data['duration'] = fields['duration'];
+
+    if (encryptFields.isNotEmpty) {
+      data['has_encrypted_fields'] = true;
     }
 
     raw['data'] = data;
@@ -449,14 +495,15 @@ class LocalCache {
   // ── markCommitted ─────────────────────────────────────────────
 
   /// Mark one or more entries as committed to the ledger.
-  Future<void> markCommitted(List<String> entryIds, int blockIndex) async {
+  Future<void> markCommitted(List<String> entryIds) async {
     if (entryIds.isEmpty) return;
+    final idSet = entryIds.toSet();
     final rawEntries = (await storage.get('entries') as List?) ?? [];
     bool changed = false;
     for (final raw in rawEntries) {
       if (raw is Map) {
         final data = raw['data'] as Map<String, dynamic>?;
-        if (data != null && entryIds.contains(data['entry_id'])) {
+        if (data != null && idSet.contains(data['entry_id'])) {
           raw['committed'] = true;
           changed = true;
         }
