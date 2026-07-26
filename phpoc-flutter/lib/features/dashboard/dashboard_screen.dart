@@ -555,8 +555,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
             const SizedBox(height: 2),
             ...pauses.map((p) {
-              final pStart = p['start_epoch'] as int? ?? 0;
-              final pEnd = p['end_epoch'] as int?;
+              final pStart = p['pause_start'] as int? ?? 0;
+              final pEnd = p['pause_stop'] as int?;
               final pStartDt = DateTime.fromMillisecondsSinceEpoch(pStart);
               final pEndDt =
                   pEnd != null ? DateTime.fromMillisecondsSinceEpoch(pEnd) : null;

@@ -10,7 +10,7 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1107/1115 GREEN (8 pre-existing failures, 3 just fixed — see below)
+- **Flutter test suite:** 1109/1115 GREEN (6 pre-existing failures)
 
 ### Recent commits (Fri Jul 24)
 - _(Phase 3 + Phase 4 changes unstaged)_
@@ -89,12 +89,12 @@
 
 ## Immediate Next Steps 🎯
 
-### 🔜 F-06: Dashboard E3 (or F-01/F-07 quick wins)
+### 🔜 F-06: Dashboard E3
 - F-06: Dashboard empty-title validation (~15 min)
-- F-01/F-02: CRUD modify→end cascade (~30 min)
-- F-07: local_cache_test stale signature (5 min)
+
+### 🔜 R1–R5: SyncScreen Commit Button
+- R1–R5: SyncScreen "Commit to Ledger" button wiring (~1 hr)
 
 ## Known Issues
-- **8 Flutter test failures** (pre-existing, 7 root causes — see BACKLOG.md §Active Issues)
-- **E3** (Dashboard empty-title validation), **R1/R2/R3** (SyncScreen commit button), **F3/L1** (flaky), **E13/E16** (CRUD modify→end), **local_cache_test:187** (stale signature)
-- 3 just fixed: History G2, G3, G4 (F-03)
+- **6 Flutter test failures** (pre-existing — see BACKLOG.md §Active Issues)
+- **E3** (Dashboard empty-title validation), **R1/R2/R3/R4/R5** (SyncScreen commit button), **F3/L1** (flaky)
