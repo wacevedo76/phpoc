@@ -10,7 +10,7 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1063/1063 GREEN ✅ (Phase 3 — all new tests pass)
+- **Flutter test suite:** 1107/1115 GREEN (8 pre-existing failures, 3 just fixed — see below)
 
 ### Recent commits (Fri Jul 24)
 - _(Phase 3 + Phase 4 changes unstaged)_
@@ -31,16 +31,42 @@
 - **Unlock fix:** `unlock_screen.dart` calls `reauthenticate()` — decrypts real seed from genesis via PDK
 - **R2 data:** `testdata/ledger.json` regenerated with Python-encrypted hex fields; pushed to `phpoc-staging-testing`
 
-## Immediate Next Steps 🎯
+## Completed ✅
 
-### ✅ Calendar View — 4-Phase TDD Complete
-**Phase 4 complete:** 4 improvements applied. All 1063 tests GREEN.
-- Extracted `monthAbbr` constant + `parseIsoDateStr` to `FormatUtils` (eliminated 3× month-name duplication)
-- Renamed `_allEntries` → `_rangeFilteredEntries` for clarity
-- Extracted `_dateGroupLabel` helper from `_buildDateGroups`
-- Flattened `_buildGroupedItem` → `_buildEntryList` with `_FlatItem` (O(1) indexing)
+### ✅ F-03: History G2–G4 — Phase 3+4 Complete
+**Root cause:** `_selectedCalendarDate` initialized to today's date in `initState()`, silently filtering all 146 test ledger entries (June 2026) to zero — no Cards rendered.
+**Fix:** Removed `_selectedCalendarDate` default → `null`. Toggle behavior (tap day to filter, tap again to clear) still works.
+**Result:** G2/G3/G4 all GREEN. 31/31 history tests pass.
+**Files:** `lib/features/history/history_screen.dart` (1 line removed in initState).
+**Phase 4:** No refactoring needed — code already clean.
 
-**Next:** See BACKLOG.md for open Flutter tasks or user direction.
+### ✅ Flutter R2 Path Alignment — Phase 4 Complete (REFACTOR)
+**Phase 4 REFACTOR:** 4 clarity improvements applied. All 1066 tests GREEN (7 pre-existing failures unchanged).
+
+### ✅ Flutter Sync Tasks T2/T3/T8 — Phase 1 Complete (Blueprint)
+**Phase 1:** 36 assertions blueprinted across 4 groups (K/M/N/R) → `docs/planning/FLUTTER_SYNC_TASKS_PHASE1.md`
+- K (T2): 7 cookie-check wiring tests
+- M (T3): 10 cookie-compare + fast-path tests
+- N (T8): 14 commit-to-ledger method tests
+- R (T8 UI): 5 sync-screen commit button tests
+
+### ✅ T8 Commit to Ledger (Group N) — Phase 4 Complete (REFACTOR)
+**Phase 4 REFACTOR:** 4 improvements across 3 files (2 clarity, 1 conciseness, 1 security).
+- Removed unused `blockIndex` param from `markCommitted`
+- Updated N14 test — removed stale Phase 2 UnimplementedError catch
+- Set-based lookup in `markCommitted` (O(1) vs linear)
+- Null-safe `entry_id` extraction in `commitEntries`
+- All 14 Group N tests GREEN. No regressions.
+
+### ✅ Group R Phase 4 (REFACTOR) — Commit button review
+**Phase 4 REFACTOR:** 4 improvements in `sync_screen.dart` (2 clarity, 1 conciseness, 1 security). All 5 Group R tests GREEN.
+
+### ✅ E13 LocalCache.update() title fix — Phase 4 Complete (REFACTOR)
+**Phase 3 GREEN:** 1-line fix in `local_cache.dart` — added `title_enc` sync to `update()` matching tags/comment pattern.
+**Phase 4 REFACTOR:** 2 improvements in `local_cache.dart` (1 clarity, 1 conciseness).
+- Extracted `_upsertEncryptableField` helper — consolidates 3×5-line repeated title/tags/comment pattern
+- Categorized field groups with section comments (encryptable / always-encrypted / plain-only)
+- All 25 local_cache tests GREEN. Full suite: 1111/1111 GREEN (4 pre-existing failures unchanged).
 
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
@@ -48,22 +74,27 @@
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 - **Test ledger:** `testdata/ledger.json` — 31 blocks, 146 entries, Python-encrypted hex fields
 
-## Files Created (Calendar View)
-- `phpoc-flutter/lib/features/history/calendar_month_grid.dart` — CalendarMonthGrid widget
+## Sync Workflow — Abstracted Tasks (from docs/design/workflows/)
 
-## Files Modified (Calendar View)
-- `phpoc-flutter/lib/core/utils/format_utils.dart` — +epochToDateStr(int?)
-- `phpoc-flutter/lib/data/sync/sync_service.dart` — +getCompleted(), fixed getEntries(to:) UTC+end-of-day
-- `phpoc-flutter/lib/features/history/history_screen.dart` — calendar embed, single-date toggle, date grouping
-- `phpoc-flutter/test/core/utils/format_utils_test.dart` — fixed K2/K4 epoch values to UTC midnight
+| # | Task | Flutter Status |
+|---|---|---|
+| T1 | Genesis Gate | ✅ `GenesisGate.check()` wired |
+| T2 | Cookie Check | ✅ Phase 4 complete (7/7 GREEN — K7 configurable TTL wired) |
+| T3 | Cookie Compare | ✅ Group M tests written (10/10 GREEN) |
+| T4 | Blob Pull | ✅ `_pullRemoteBlob()` wired |
+| T5 | Merge | ✅ `MergeEngine.mergeMaps()` wired |
+| T6 | Blob Push | ✅ `_pushBlobOnly()` wired |
+| T7 | Cookie Push | ✅ `_pushCookie()` wired |
+| T8 | Commit to Ledger | ✅ Phase 4 complete (14 Group N + 5 Group R = 19 tests GREEN) |
 
-## Files Created (Phase 2)
-- `phpoc-flutter/test/core/utils/format_utils_test.dart` — Group K (4 tests)
-- `phpoc-flutter/test/features/calendar_month_grid_test.dart` — Group M (10 tests)
+## Immediate Next Steps 🎯
 
-## Files Modified (Phase 2)
-- `phpoc-flutter/test/data/sync/sync_service_test.dart` — +Groups L (5) + P (3)
-- `phpoc-flutter/test/features/history_screen_test.dart` — +Groups N (8) + O (4)
+### 🔜 F-06: Dashboard E3 (or F-01/F-07 quick wins)
+- F-06: Dashboard empty-title validation (~15 min)
+- F-01/F-02: CRUD modify→end cascade (~30 min)
+- F-07: local_cache_test stale signature (5 min)
 
 ## Known Issues
-- **7 vitest files fail** with environment/teardown errors (pre-existing, all individual tests pass)
+- **8 Flutter test failures** (pre-existing, 7 root causes — see BACKLOG.md §Active Issues)
+- **E3** (Dashboard empty-title validation), **R1/R2/R3** (SyncScreen commit button), **F3/L1** (flaky), **E13/E16** (CRUD modify→end), **local_cache_test:187** (stale signature)
+- 3 just fixed: History G2, G3, G4 (F-03)

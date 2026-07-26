@@ -59,7 +59,7 @@ void main() {
 
   group('B: SyncService — initial restore pull', () {
     // B1
-    test('B1: _reconcileAndClaim() pulls staging/blob.bin via transport',
+    test('B1: _reconcileAndClaim() pulls remote staging blob via transport',
         () async {
       // RED: The reconcile method must pull the remote blob.
       // This test defines the contract — Phase 3 must either make

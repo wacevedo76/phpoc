@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/sync_result.dart';
 import '../../core/utils/format_utils.dart';
+import '../ledger/engine.dart';
 import 'device_cookie.dart';
+import 'staging_paths.dart';
 import 'genesis_gate.dart';
 import 'local_cache.dart';
 import 'merge_engine.dart';
@@ -21,6 +23,7 @@ class SyncService {
   final LocalCache _local;
   final DeviceCookie _cookie;
   final GenesisGate _genesisGate;
+  LedgerEngine? ledgerEngine;
 
   int _lastPushAt = 0;
   String? _cachedDeviceUuid;
@@ -29,6 +32,7 @@ class SyncService {
     required this.storage,
     required this.crypto,
     this.transport,
+    this.ledgerEngine,
   })  : _local = LocalCache(storage: storage, crypto: crypto),
         _cookie = DeviceCookie(),
         _genesisGate = GenesisGate();
@@ -202,7 +206,11 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
 
   /// Check remote sync status and reconcile if possible.
-  Future<SyncCheckResult> checkAndSync() async {
+  ///
+  /// [cookieTtlMinutes] controls the local device cookie validity window
+  /// (default 30). Cookies older than this trigger full reconcile instead of
+  /// the fast path.
+  Future<SyncCheckResult> checkAndSync({int cookieTtlMinutes = 30}) async {
     // No transport → local-only mode
     if (transport == null) return SyncCheckResult.ready;
 
@@ -222,12 +230,12 @@ class SyncService {
     }
 
     // Fast path: local cookie valid?
-    final localCookie = await _cookie.isValidLocally(storage, ttlMinutes: 30);
+    final localCookie = await _cookie.isValidLocally(storage, ttlMinutes: cookieTtlMinutes);
 
     if (localCookie != null) {
       // Pull remote cookie and compare
       try {
-        final remoteCookieBytes = await transport!.pull('device_cookie.bin');
+        final remoteCookieBytes = await transport!.pull(StagingPaths.remoteDeviceCookie);
         final remoteCookie = _cookie.parseRemote(remoteCookieBytes);
 
         if (remoteCookie != null) {
@@ -271,7 +279,7 @@ class SyncService {
   /// Returns list of entry maps, or empty list on any failure.
   Future<List<Map<String, dynamic>>> _pullRemoteBlob() async {
     try {
-      final blob = await transport!.pull('staging/blob.bin');
+      final blob = await transport!.pull(StagingPaths.remoteStagingBlob);
       if (blob == null || !crypto.hasMasterKey) return [];
 
       final jsonStr = crypto.deobfuscateBlob(
@@ -296,7 +304,7 @@ class SyncService {
     if (cookie != null) {
       final cookieJson = json.encode(cookie);
       await transport!.push(
-        'device_cookie.bin',
+        StagingPaths.remoteDeviceCookie,
         Uint8List.fromList(cookieJson.codeUnits),
       );
     }
@@ -348,7 +356,7 @@ class SyncService {
       if (hashIndex.isNotEmpty) {
         final indexJson = json.encode(hashIndex);
         await transport!.push(
-          'staging_hash_index.json',
+          StagingPaths.remoteStagingHashIndex,
           Uint8List.fromList(indexJson.codeUnits),
         );
       }
@@ -360,7 +368,7 @@ class SyncService {
     final blobBytes = await _buildBlobBytes();
     if (blobBytes == null) return;
 
-    await transport!.push('staging/blob.bin', blobBytes);
+    await transport!.push(StagingPaths.remoteStagingBlob, blobBytes);
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -422,6 +430,49 @@ class SyncService {
 
   String _makeDeviceProof(String deviceId) {
     return crypto.deviceProof(crypto.getMasterKey()!, deviceId);
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // Commit to Ledger (T8)
+  // ═════════════════════════════════════════════════════════════
+
+  /// Commit completed staging entries to the ledger.
+  ///
+  /// Filters to entries where `is_active==false` and `committed!=true`.
+  /// Delegates to [LedgerEngine.commit], marks entries committed in staging,
+  /// and returns the hash prefix (first 10 chars of last block hash).
+  /// Returns null if no entries to commit.
+  Future<String?> commitEntries() async {
+    // Read staging entries
+    final allEntries = await _local.readEntries();
+
+    // Filter: only completed (is_active==false) and not yet committed
+    final toCommit = allEntries
+        .where((e) => e['is_active'] != true && e['committed'] != true)
+        .toList();
+
+    // No-op when nothing to commit
+    if (toCommit.isEmpty) return null;
+
+    // LedgerEngine is required for commit
+    if (ledgerEngine == null) {
+      throw Exception(
+        'LedgerEngine not configured — complete onboarding first',
+      );
+    }
+
+    // Delegate to LedgerEngine
+    final hashPrefix = ledgerEngine!.commit(toCommit);
+
+    // Mark entries as committed in staging
+    final entryIds = toCommit
+        .map((e) => e['entry_id'] as String?)
+        .where((id) => id != null)
+        .cast<String>()
+        .toList();
+    await _local.markCommitted(entryIds);
+
+    return hashPrefix;
   }
 
   static Map<String, dynamic>? _safeJsonDecode(String str) {

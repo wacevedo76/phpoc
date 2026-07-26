@@ -184,7 +184,7 @@ void main() {
       final entryId = entries[0]['entry_id'] as String;
 
       // Mark as committed
-      await cache.markCommitted([entryId], 0);
+      await cache.markCommitted([entryId]);
 
       // Attempting update on committed entry should be no-op
       // (the entry at index 0 is now committed)
@@ -196,6 +196,101 @@ void main() {
       final entriesAfter = await cache.readEntries();
       expect(entriesAfter[0]['title'], titleBefore,
           reason: 'Committed entries must be immutable');
+    });
+
+    // A2 — per-field encryptFields: {'title'} path
+    test('A2: update() syncs title_enc on title with encryptFields', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Original', startEpoch: 1000);
+
+      await cache.update(0, {'title': 'Encrypted Title'}, encryptFields: {'title'});
+
+      final entries = await cache.readEntries();
+      expect(entries[0]['title'], 'Encrypted Title');
+    });
+
+    // A3 — partial update (end_epoch only) must not corrupt title
+    test('A3: update() does not corrupt title on partial update', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Original', startEpoch: 1000);
+
+      await cache.update(0, {'end_epoch': 5000});
+
+      final entries = await cache.readEntries();
+      expect(entries[0]['title'], 'Original',
+          reason: 'Updating end_epoch alone must not touch title or title_enc');
+      expect(entries[0]['end_epoch'], 5000);
+    });
+
+    // A4 — multi-field update with title + tags
+    test('A4: update() syncs title + tags together', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Original', startEpoch: 1000, tags: ['old']);
+
+      await cache.update(0, {'title': 'New Title', 'tags': ['new', 'tag']});
+
+      final entries = await cache.readEntries();
+      expect(entries[0]['title'], 'New Title');
+      expect(entries[0]['tags'], containsAll(['new', 'tag']));
+    });
+
+    // B1 — duration update (no _enc variant)
+    test('B1: update() modifies duration (no _enc variant in append)', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Task', startEpoch: 1000);
+
+      await cache.update(0, {'duration': 99});
+
+      final entries = await cache.readEntries();
+      expect(entries[0]['duration'], 99);
+    });
+
+    // C1 — committed guard for title update
+    test('C1: update() on committed entry is no-op for title', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Committed Title', startEpoch: 1000);
+      final entries = await cache.readEntries();
+      final entryId = entries[0]['entry_id'] as String;
+
+      await cache.markCommitted([entryId]);
+
+      await cache.update(0, {'title': 'Should Not Change'});
+
+      final entriesAfter = await cache.readEntries();
+      expect(entriesAfter[0]['title'], 'Committed Title',
+          reason: 'Committed entries must be immutable — title update must be no-op');
+    });
+
+    // C2 — out-of-range index is safe no-op
+    test('C2: update() on out-of-range index is safe no-op', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Only Entry', startEpoch: 1000);
+
+      // Update at out-of-range index must not crash
+      await cache.update(999, {'title': 'No Crash'});
+
+      final entries = await cache.readEntries();
+      expect(entries.length, 1);
+      expect(entries[0]['title'], 'Only Entry',
+          reason: 'Out-of-range update must not corrupt storage');
     });
   });
 

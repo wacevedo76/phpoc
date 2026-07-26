@@ -8,7 +8,7 @@ import 'calendar_month_grid.dart';
 ///
 /// Displays all completed entries grouped by date with a calendar
 /// month grid at the top. Supports single-date and date-range filtering,
-/// inline detail expansion, and green-dot calendar indicators.
+/// inline detail expansion, and orange borders on uncommitted entries.
 class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
 
@@ -22,10 +22,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   bool _isLoading = true;
   DateTime? _filterFrom;
   DateTime? _filterTo;
-  String? _selectedCalendarDate; // YYYY-MM-DD from calendar tap
+  String? _selectedCalendarDate;
   int? _expandedIndex;
 
-  // Calendar navigation state
   int _calendarMonth;
   int _calendarYear;
 
@@ -36,10 +35,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   @override
   void initState() {
     super.initState();
-    // Default view: only today's entries.
-    final today = DateTime.now();
-    _selectedCalendarDate =
-        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     _loadEntries();
   }
 
@@ -62,7 +57,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
   }
 
-  /// Apply the calendar single-date filter on top of range filter.
   void _applyFilters() {
     if (_selectedCalendarDate != null) {
       _filtered = _rangeFilteredEntries.where((e) {
@@ -74,13 +68,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
   }
 
-  /// Extract YYYY-MM-DD date string from an entry.
   String _entryDateStr(Map<String, dynamic> entry) {
     final startEpoch = entry['start_epoch'] as int?;
     return FormatUtils.epochToDateStr(startEpoch);
   }
 
-  /// Compute dates with entries for the currently displayed month.
   Set<String> _datesWithEntries() {
     final prefix =
         '$_calendarYear-${_calendarMonth.toString().padLeft(2, '0')}-';
@@ -94,11 +86,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     return dates;
   }
 
-  /// Handle calendar day tap — toggle single-date filter.
   void _onCalendarDateSelected(String dateStr) {
     setState(() {
       if (_selectedCalendarDate == dateStr) {
-        // Toggle off
         _selectedCalendarDate = null;
       } else {
         _selectedCalendarDate = dateStr;
@@ -107,7 +97,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     });
   }
 
-  /// Clear the calendar single-date filter.
   void _clearCalendarFilter() {
     setState(() {
       _selectedCalendarDate = null;
@@ -173,7 +162,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     setState(() => _calendarYear += delta);
   }
 
-  /// Build date-grouped entries with headers.
   List<_DateGroup> _buildDateGroups() {
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final entry in _filtered) {
@@ -186,7 +174,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final yesterdayStr = FormatUtils.epochToDateStr(
         now.subtract(const Duration(days: 1)).millisecondsSinceEpoch);
 
-    // Sort keys descending
     final keys = groups.keys.toList()
       ..sort((a, b) => b.compareTo(a));
 
@@ -196,7 +183,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }).toList();
   }
 
-  /// Human-readable label for a date group header.
   String _dateGroupLabel(String dateStr, String todayStr, String yesterdayStr) {
     if (dateStr == todayStr) return 'Today';
     if (dateStr == yesterdayStr) return 'Yesterday';
@@ -232,7 +218,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
     return Column(
       children: [
-        // Calendar month grid (shown when entries exist)
         if (_rangeFilteredEntries.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -247,7 +232,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               onYearChanged: _onYearChanged,
             ),
           ),
-        // Active filters row
         if (_filterFrom != null || _selectedCalendarDate != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -256,7 +240,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 if (_filterFrom != null && _filterTo != null) ...[
                   Chip(
                     label: Text(
-                      '${FormatUtils.dateShort(_filterFrom!)} – ${FormatUtils.dateShort(_filterTo!)}',
+                      '${FormatUtils.dateShort(_filterFrom!)} \u2013 ${FormatUtils.dateShort(_filterTo!)}',
                       style: const TextStyle(fontSize: 12),
                     ),
                     onDeleted: _clearRangeFilter,
@@ -279,7 +263,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               ],
             ),
           ),
-        // Entry list (grouped by date)
         Expanded(
           child: _filtered.isEmpty
               ? Center(
@@ -294,7 +277,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
-  /// Format a date chip label like "Jun 15, 2026".
   String _formatCalendarChipLabel(String dateStr) {
     final parsed = FormatUtils.parseIsoDateStr(dateStr);
     if (parsed != null) {
@@ -303,8 +285,6 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     return dateStr;
   }
 
-  /// Build a scrollable entry list from date-grouped entries.
-  /// Flattens groups into a linear list for O(1) index lookup.
   Widget _buildEntryList(List<_DateGroup> groups) {
     final flatItems = <_FlatItem>[];
     for (final group in groups) {
@@ -369,28 +349,37 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
   }
 
+  // ── Entry tile (collapsible, orange border if uncommitted) ──
+
   Widget _buildEntryTile(int index, {Map<String, dynamic>? entry}) {
     final e = entry ?? _filtered[index];
     final title = e['title'] as String? ?? 'Untitled';
     final startEpoch = e['start_epoch'] as int? ?? 0;
     final duration = e['duration'] as int? ?? 0;
-    final tags = e['tags'] as List?;
-    final pauses = e['pauses'] as List?;
+    final tags = (e['tags'] as List?)?.cast<String>() ?? [];
+    final comment = e['comment'] as String?;
+    final pauses = (e['pauses'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final committed = e['committed'] == true;
     final isExpanded = _expandedIndex == index;
-
     final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: committed
+            ? BorderSide.none
+            : const BorderSide(color: Colors.orange, width: 2),
+      ),
       child: InkWell(
         onTap: () {
           setState(() {
             _expandedIndex = isExpanded ? null : index;
           });
         },
-        borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -410,37 +399,30 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                   ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ],
               ),
-              const SizedBox(height: 4),
-              // Date + tags
-              Row(
-                children: [
-                  Icon(Icons.calendar_today, size: 14,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 4),
-                  Text(
-                    FormatUtils.dateTime(startDt),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  if (tags != null && tags.isNotEmpty) ...[
-                    const SizedBox(width: 12),
-                    ...tags.take(3).map((t) => Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Chip(
-                            label: Text(t.toString(), style: const TextStyle(fontSize: 10)),
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                          ),
-                        )),
-                  ],
-                ],
+              const SizedBox(height: 2),
+              // Date
+              Text(
+                FormatUtils.dateTime(startDt),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
               // Expanded detail
-              if (isExpanded)
-                _buildEntryDetail(e, pauses),
+              AnimatedCrossFade(
+                firstChild: const SizedBox.shrink(),
+                secondChild:
+                    _buildEntryDetail(tags, comment, pauses),
+                crossFadeState: isExpanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 200),
+              ),
             ],
           ),
         ),
@@ -449,72 +431,89 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   Widget _buildEntryDetail(
-      Map<String, dynamic> entry, List<dynamic>? pauses) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Divider(height: 20),
-        if (pauses != null && pauses.isNotEmpty) ...[
-          Text('Pauses',
+    List<String> tags,
+    String? comment,
+    List<Map<String, dynamic>> pauses,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (tags.isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: tags.map((t) {
+                return Chip(
+                  label: Text(t, style: const TextStyle(fontSize: 10)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (comment != null && comment.isNotEmpty) ...[
+            Text(
+              comment,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                  ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (pauses.isNotEmpty) ...[
+            const Divider(height: 16),
+            Text(
+              'Pauses',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     fontWeight: FontWeight.bold,
-                  )),
-          const SizedBox(height: 4),
-          ...pauses.map((p) {
-            final pauseStart = p['start_epoch'] as int? ?? 0;
-            final pauseEnd = p['end_epoch'] as int?;
-            final pStartDt =
-                DateTime.fromMillisecondsSinceEpoch(pauseStart);
-            final pEndDt = pauseEnd != null
-                ? DateTime.fromMillisecondsSinceEpoch(pauseEnd)
-                : null;
-            return Padding(
-              padding: const EdgeInsets.only(left: 8, bottom: 2),
-              child: Text(
-                pEndDt != null
-                    ? '${FormatUtils.time(pStartDt)} – ${FormatUtils.time(pEndDt)}'
-                    : '${FormatUtils.time(pStartDt)} – ongoing',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            );
-          }),
+                  ),
+            ),
+            const SizedBox(height: 2),
+            ...pauses.map((p) {
+              final pStart = p['start_epoch'] as int? ?? 0;
+              final pEnd = p['end_epoch'] as int?;
+              final pStartDt = DateTime.fromMillisecondsSinceEpoch(pStart);
+              final pEndDt =
+                  pEnd != null ? DateTime.fromMillisecondsSinceEpoch(pEnd) : null;
+              final pDuration = pEndDt != null
+                  ? pEndDt.difference(pStartDt)
+                  : DateTime.now().difference(pStartDt);
+              return Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 2),
+                child: Text(
+                  pEndDt != null
+                      ? '${FormatUtils.time(pStartDt)} \u2013 ${FormatUtils.time(pEndDt)}  (${FormatUtils.duration(pDuration)})'
+                      : '${FormatUtils.time(pStartDt)} \u2013 ongoing  (${FormatUtils.duration(pDuration)})',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              );
+            }),
+          ],
         ],
-        if (entry['metadata_enc'] != null) ...[
-          const SizedBox(height: 8),
-          Text('Metadata',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  )),
-          const SizedBox(height: 4),
-          Text(
-            entry['metadata_enc'].toString(),
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-      ],
+      ),
     );
   }
 }
 
-/// Groups entries by date for display with a label header.
 class _DateGroup {
   final String label;
   final List<Map<String, dynamic>> entries;
-
   const _DateGroup(this.label, this.entries);
 }
 
-/// A flattened list item: either a date header or an entry.
 class _FlatItem {
   final bool isHeader;
   final String? label;
   final Map<String, dynamic>? entry;
-
   const _FlatItem._({required this.isHeader, this.label, this.entry});
-
   factory _FlatItem.header(String label) =>
       _FlatItem._(isHeader: true, label: label);
-
   factory _FlatItem.entry(Map<String, dynamic> entry) =>
       _FlatItem._(isHeader: false, entry: entry);
 }

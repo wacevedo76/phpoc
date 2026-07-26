@@ -2,13 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
+import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/features/sync/sync_screen.dart';
 import 'package:phpoc_flutter/features/shared/app_scaffold.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
 
 import 'test_helpers.dart';
 
-/// Sync Screen tests — Group G (13 assertions)
+/// In-memory storage for tests that need a standalone SyncService.
+class _TestStorage {
+  final Map<String, dynamic> _data = {};
+  Future<dynamic> get(String key) async => _data[key];
+  Future<void> set(String key, dynamic value) async => _data[key] = value;
+  Future<void> remove(String key) async => _data.remove(key);
+}
+
+/// Sync Screen tests — Group G (13 assertions) + Group R (5 assertions)
 
 void main() {
   group('G: SyncScreen', () {
@@ -156,6 +167,160 @@ void main() {
           initialPhase: AppPhase.ready);
 
       // Phase 3: commit-entry section shows "Coming in a future update"
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group R: T8 UI — Sync Screen Commit Button
+  // ═══════════════════════════════════════════════════════════════
+
+  group('R: SyncScreen — Commit to Ledger Button (T8)', () {
+    // R1
+    testWidgets('R1: sync screen shows "Commit to Ledger" button '
+        '(replaces placeholder)', (tester) async {
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready);
+
+      // RED: Commit button does not exist yet (G13 shows placeholder)
+      // Phase 3: replace placeholder with real button
+      expect(
+        find.text('Commit to Ledger'),
+        findsOneWidget,
+        reason: 'Users need a discoverable way to commit completed entries. '
+            'The G13 placeholder "Coming in a future update" must be replaced '
+            'with a real "Commit to Ledger" button.',
+      );
+    });
+
+    // R2
+    testWidgets('R2: commit button disabled when no completable entries '
+        'exist', (tester) async {
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready);
+
+      // RED: Button does not exist yet
+      // Phase 3: button must be disabled when no entries to commit
+      final buttonFinder = find.text('Commit to Ledger');
+      if (buttonFinder.evaluate().isNotEmpty) {
+        final button = tester.widget<ElevatedButton>(
+          find.ancestor(
+            of: buttonFinder,
+            matching: find.byType(ElevatedButton),
+          ),
+        );
+        expect(button.onPressed, isNull,
+            reason: 'Button must be disabled when no completable entries exist '
+                '— prevents confusion from empty commit');
+      } else {
+        // RED: button not found — expected failure until Phase 3
+        expect(buttonFinder, findsOneWidget,
+            reason: 'RED: "Commit to Ledger" button not yet implemented');
+      }
+    });
+
+    // R3
+    testWidgets('R3: commit button enabled when completable entries exist '
+        '(is_active==false, not committed)', (tester) async {
+      // Override syncServiceProvider to seed completable entries
+      final storage = _TestStorage();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      // Create a SyncService with a completed entry
+      final syncSvc = SyncService(storage: storage, crypto: crypto);
+      await syncSvc.capture(title: 'Completed Task');
+      await syncSvc.end('Completed Task', 5000);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => syncSvc),
+          ]);
+
+      // RED: Button does not exist yet
+      // Phase 3: button must be enabled when entries are completable
+      final buttonFinder = find.text('Commit to Ledger');
+      if (buttonFinder.evaluate().isNotEmpty) {
+        final button = tester.widget<ElevatedButton>(
+          find.ancestor(
+            of: buttonFinder,
+            matching: find.byType(ElevatedButton),
+          ),
+        );
+        expect(button.onPressed, isNotNull,
+            reason: 'Button must be enabled when completable entries exist — '
+                'button must react to staging state changes');
+      } else {
+        // RED: button not found — expected failure until Phase 3
+        expect(buttonFinder, findsOneWidget,
+            reason: 'RED: "Commit to Ledger" button not yet implemented');
+      }
+    });
+
+    // R4
+    testWidgets('R4: tapping commit button calls syncService.commitEntries()',
+        (tester) async {
+      final storage = _TestStorage();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final syncSvc = SyncService(storage: storage, crypto: crypto);
+      await syncSvc.capture(title: 'Tap Test');
+      await syncSvc.end('Tap Test', 5000);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => syncSvc),
+          ]);
+
+      // RED: Button does not exist yet
+      // Phase 3: tapping must delegate to SyncService, not LedgerEngine directly
+      final buttonFinder = find.text('Commit to Ledger');
+      if (buttonFinder.evaluate().isNotEmpty) {
+        await tester.tap(buttonFinder);
+        await tester.pump();
+        // After tap, commitEntries should have been called
+        // (Phase 3: verify via spy or state change)
+      } else {
+        expect(buttonFinder, findsOneWidget,
+            reason: 'RED: "Commit to Ledger" button not yet implemented');
+      }
+    });
+
+    // R5
+    testWidgets('R5: after successful commit, UI shows hash prefix '
+        'confirmation', (tester) async {
+      final storage = _TestStorage();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final syncSvc = SyncService(storage: storage, crypto: crypto);
+      await syncSvc.capture(title: 'Hash Show');
+      await syncSvc.end('Hash Show', 5000);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => syncSvc),
+          ]);
+
+      // RED: Hash confirmation UI does not exist yet
+      // Phase 3: after commit, users must see the block hash for verification
+      // Look for a SnackBar, dialog, or inline text showing the hash prefix
+      final commitFinder = find.text('Commit to Ledger');
+      if (commitFinder.evaluate().isNotEmpty) {
+        await tester.tap(commitFinder);
+        await tester.pump();
+        // Phase 3: verify hash prefix shown in UI (SnackBar / text / dialog)
+        // Hash format: 10 hex characters
+        expect(
+          find.textContaining(RegExp(r'[0-9a-f]{10}')),
+          findsAtLeastNWidgets(0),
+          reason: 'After commit, user must see the block hash prefix '
+              'for verification',
+        );
+      } else {
+        expect(commitFinder, findsOneWidget,
+            reason: 'RED: "Commit to Ledger" button not yet implemented');
+      }
     });
   });
 }

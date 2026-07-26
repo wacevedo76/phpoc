@@ -55,8 +55,8 @@ void main() {
     // E2
     test('E2: device cookie is pushed to Worker as part of reconcile',
         () async {
-      // RED: The cookie must be pushed to the Worker after blob pull.
-      // Phase 3: mock transport and verify push('device_cookie.bin', ...)
+      // Cookie must be pushed to the Worker after blob pull.
+      // Mock transport verifies push(StagingPaths.remoteDeviceCookie, ...)
       // is called with the correct JSON payload.
       final cookie = DeviceCookie();
       final storage = _FakeStorage();

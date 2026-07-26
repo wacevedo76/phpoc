@@ -15,7 +15,8 @@ class DashboardScreen extends ConsumerStatefulWidget {
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+class _DashboardScreenState extends ConsumerState<DashboardScreen>
+    with SingleTickerProviderStateMixin {
   // ── Task capture form ──────────────────────────────────────
 
   final _titleController = TextEditingController();
@@ -28,6 +29,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _formExpanded = false;
   String? _errorMessage;
 
+  // ── Active card state ─────────────────────────────────────
+
+  bool _activeCardExpanded = false;
+  late final AnimationController _pulseController;
+  late final Animation<Color?> _pulseColor;
+
   // ── Data state ─────────────────────────────────────────────
 
   Map<String, dynamic>? _activeTask;
@@ -35,17 +42,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _isLoading = true;
 
   @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _pulseColor = ColorTween(
+      begin: Colors.amber,
+      end: Colors.deepOrange,
+    ).animate(_pulseController)
+      ..addListener(() => setState(() {}));
+    _loadData();
+  }
+
+  @override
   void dispose() {
+    _pulseController.dispose();
     _titleController.dispose();
     _tagsController.dispose();
     _commentController.dispose();
     super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
   }
 
   Future<void> _loadData() async {
@@ -53,6 +70,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final active = await sync.getActive();
     final entries = await sync.getEntries();
     if (mounted) {
+      final nowPaused = active?['is_paused'] == true;
       setState(() {
         _activeTask = active;
         _uncommittedEntries = entries
@@ -60,6 +78,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             .toList();
         _isLoading = false;
       });
+      // Pulse animation: start when paused, stop when not
+      if (nowPaused && !_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      } else if (!nowPaused && _pulseController.isAnimating) {
+        _pulseController.stop();
+      }
     }
   }
 
@@ -238,7 +262,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  // ── Active task card ───────────────────────────────────────
+  // ── Active task card (collapsible, icon-only buttons) ──────
 
   Widget _buildActiveTaskCard() {
     final task = _activeTask!;
@@ -251,160 +275,306 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       DateTime.fromMillisecondsSinceEpoch(startEpoch),
     );
 
+    final pauseColor =
+        isPaused ? (_pulseColor.value ?? Colors.amber) : Colors.amber;
+
     return Card(
       color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Title row
-            Row(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Header (tappable to expand/collapse) ────────────
+          InkWell(
+            onTap: () =>
+                setState(() => _activeCardExpanded = !_activeCardExpanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.play_circle_fill,
+                      color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style:
+                          Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                    ),
+                  ),
+                  if (isPaused)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(Icons.pause_circle_filled,
+                          size: 18, color: pauseColor),
+                    ),
+                  Icon(
+                    _activeCardExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // ── Elapsed + action buttons (same row) ─────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
+            child: Row(
               children: [
-                Icon(Icons.play_circle_fill,
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                Text(
+                  'Elapsed: ${FormatUtils.duration(elapsed)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const Spacer(),
+                // Pause / Resume — filled yellow, black icon
+                SizedBox(
+                  width: 32,
+                  height: 28,
+                  child: FilledButton(
+                    onPressed: () => _togglePause(title, isPaused),
+                    style: FilledButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      backgroundColor: pauseColor,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6)),
+                    ),
+                    child: Icon(
+                      isPaused ? Icons.play_arrow : Icons.pause,
+                      size: 16,
+                      color: Colors.black,
+                    ),
                   ),
                 ),
-                if (isPaused)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      borderRadius: BorderRadius.circular(4),
+                const SizedBox(width: 6),
+                // End — red fill, white icon
+                SizedBox(
+                  width: 32,
+                  height: 28,
+                  child: FilledButton(
+                    onPressed: () => _endTask(title),
+                    style: FilledButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6)),
                     ),
-                    child:
-                        const Text('Paused', style: TextStyle(fontSize: 12)),
+                    child: const Icon(Icons.stop, size: 16),
                   ),
+                ),
               ],
             ),
-            // Tags
-            if (tags.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: tags.map((t) {
-                  return Chip(
-                    label: Text(t, style: const TextStyle(fontSize: 12)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                  );
-                }).toList(),
-              ),
-            ],
-            // Comment
-            if (comment != null && comment.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                comment,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontStyle: FontStyle.italic,
-                    ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-            const SizedBox(height: 8),
-            // Timestamps
-            Text(
-              'Started: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(startEpoch))}  ·  '
-              'Elapsed: ${FormatUtils.duration(elapsed)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            // Actions
-            Row(
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () => _togglePause(title, isPaused),
-                  icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-                  label: Text(isPaused ? 'Resume' : 'Pause'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: () => _endTask(title),
-                  icon: const Icon(Icons.stop),
-                  label: const Text('End'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+          ),
+          // ── Expanded body ────────────────────────────────────
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: _buildExpandedBody(tags, comment, startEpoch),
+            crossFadeState: _activeCardExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
       ),
     );
   }
 
-  // ── Uncommitted entry card ─────────────────────────────────
+  Widget _buildExpandedBody(
+    List<String> tags,
+    String? comment,
+    int startEpoch,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (tags.isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: tags.map((t) {
+                return Chip(
+                  label: Text(t, style: const TextStyle(fontSize: 12)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (comment != null && comment.isNotEmpty) ...[
+            Text(
+              comment,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                  ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            'Started: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(startEpoch))}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Uncommitted entry card (collapsible, orange border) ───
+
+  final Set<int> _expandedUncommitted = {};
 
   Widget _buildUncommittedCard(Map<String, dynamic> entry) {
+    final entryIdx = _uncommittedEntries.indexOf(entry);
+    final isExpanded = _expandedUncommitted.contains(entryIdx);
+
     final title = entry['title'] as String? ?? 'Untitled';
     final startEpoch = entry['start_epoch'] as int? ?? 0;
     final duration = entry['duration'] as int? ?? 0;
     final tags = (entry['tags'] as List?)?.cast<String>() ?? [];
     final comment = entry['comment'] as String?;
+    final pauses = (entry['pauses'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.check_circle_outline,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Colors.orange, width: 2),
+      ),
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (isExpanded) {
+              _expandedUncommitted.remove(entryIdx);
+            } else {
+              _expandedUncommitted.add(entryIdx);
+            }
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.check_circle_outline,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(title,
+                        style: Theme.of(context).textTheme.bodyLarge),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    FormatUtils.duration(Duration(milliseconds: duration)),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
                     size: 20,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(child: Text(title, style: Theme.of(context).textTheme.bodyLarge)),
-              ],
-            ),
-            if (tags.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: tags.map((t) {
-                  return Chip(
-                    label: Text(t, style: const TextStyle(fontSize: 11)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                  );
-                }).toList(),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ],
               ),
-            ],
-            if (comment != null && comment.isNotEmpty) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 2),
               Text(
-                comment,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontStyle: FontStyle.italic,
-                    ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                FormatUtils.date(startDt),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              AnimatedCrossFade(
+                firstChild: const SizedBox.shrink(),
+                secondChild: _buildUncommittedDetail(tags, comment, pauses),
+                crossFadeState: isExpanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 200),
               ),
             ],
-            const SizedBox(height: 6),
-            Text(
-              '${FormatUtils.date(startDt)}  ·  ${FormatUtils.duration(Duration(milliseconds: duration))}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildUncommittedDetail(
+    List<String> tags,
+    String? comment,
+    List<Map<String, dynamic>> pauses,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (tags.isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: tags.map((t) {
+                return Chip(
+                  label: Text(t, style: const TextStyle(fontSize: 11)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (comment != null && comment.isNotEmpty) ...[
+            Text(
+              comment,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                  ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (pauses.isNotEmpty) ...[
+            Text(
+              'Pauses',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 2),
+            ...pauses.map((p) {
+              final pStart = p['start_epoch'] as int? ?? 0;
+              final pEnd = p['end_epoch'] as int?;
+              final pStartDt = DateTime.fromMillisecondsSinceEpoch(pStart);
+              final pEndDt =
+                  pEnd != null ? DateTime.fromMillisecondsSinceEpoch(pEnd) : null;
+              final pDuration = pEndDt != null
+                  ? pEndDt.difference(pStartDt)
+                  : DateTime.now().difference(pStartDt);
+              return Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 2),
+                child: Text(
+                  pEndDt != null
+                      ? '${FormatUtils.time(pStartDt)} \u2013 ${FormatUtils.time(pEndDt)}  (${FormatUtils.duration(pDuration)})'
+                      : '${FormatUtils.time(pStartDt)} \u2013 ongoing  (${FormatUtils.duration(pDuration)})',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              );
+            }),
+          ],
+        ],
       ),
     );
   }
@@ -484,7 +654,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Title + encrypt toggle
             _buildFieldRow(
               controller: _titleController,
               hintText: 'What are you working on?',
@@ -494,7 +663,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               textCapitalization: TextCapitalization.sentences,
             ),
             const SizedBox(height: 8),
-            // Tags + encrypt toggle
             _buildFieldRow(
               controller: _tagsController,
               hintText: 'Tags (comma-separated)',
@@ -503,7 +671,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               onEncryptChanged: (v) => setState(() => _encryptTags = v),
             ),
             const SizedBox(height: 8),
-            // Comment + encrypt toggle
             _buildFieldRow(
               controller: _commentController,
               hintText: 'Comment (optional)',
@@ -524,10 +691,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             ],
             const SizedBox(height: 8),
-            // Encrypt all fields + action buttons
             Row(
               children: [
-                // "Encrypt all fields" toggle
                 Expanded(
                   child: FilterChip(
                     selected: allOn,
@@ -547,7 +712,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Cancel
                 SmallOutlinedButton(
                   onPressed: () {
                     setState(() {
@@ -558,7 +722,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   child: const Text('Cancel'),
                 ),
                 const SizedBox(width: 8),
-                // Start
                 FilledButton.icon(
                   onPressed: _isCapturing ? null : _capture,
                   icon: _isCapturing
@@ -612,7 +775,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
         const SizedBox(width: 4),
         Tooltip(
-          message: encryptValue ? 'Field is encrypted' : 'Field is stored plain',
+          message:
+              encryptValue ? 'Field is encrypted' : 'Field is stored plain',
           child: InkWell(
             onTap: () => onEncryptChanged(!encryptValue),
             borderRadius: BorderRadius.circular(4),

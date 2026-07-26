@@ -334,6 +334,7 @@ cannot actually be rotated — it's all infrastructure and no action.
 ## 🚀 Flutter Mobile App (phpoc-flutter/)
 
 *Riverpod + go_router + SQLite (Drift) — 7 modules, all Phases 1-4 complete (747/747 GREEN).*
+*Current suite: 1084/1091 GREEN — 7 pre-existing failures below.*
 
 | Module | Assertions | Phase 1 doc |
 |--------|-----------|-------------|
@@ -347,6 +348,76 @@ cannot actually be rotated — it's all infrastructure and no action.
 | **Total** | **744** | |
 
 **Tech:** Flutter 3.44.6, Dart 3.12.2, Rust crypto core (`phpoc-crypto-core`), Riverpod, go_router, Drift/SQLite, SharedPreferences.
+
+### 🟠 Active Issues — 7 Test Failures (5 Root Causes)
+
+*Ordered by dependency chain + impact. Each chain's blocker comes first — fixing one often fixes its dependents.*
+
+---
+
+#### 🔗 Chain A: CRUD Modify → End Cascade (2 tests, 1 root cause)
+
+**Root cause:** `LocalCache.update()` doesn't apply field changes (like `title`) to stored entries. When `SyncService.modify()` delegates to it, the rename silently fails.
+
+| # | ID | Test | Symptom | Priority |
+|---|-----|------|---------|----------|
+| **F-01** | **E13** | `sync_service_test.dart:375` | `modify(0, {'title': 'X'})` — `entries[0]['title']` stays `'Modify Me'` instead of `'Modified Title'` | 🔴 **Blocker** |
+| F-02 | E16 | `sync_service_test.dart:416` | `end('Offline Modified')` throws — can't find entry because E13 rename never happened | 🟠 Downstream of F-01 |
+
+**Fix:** `LocalCache.update()` in `lib/data/sync/local_cache.dart`. After fixing F-01, re-run E16 — it should go GREEN automatically. **Effort:** ~30 min.
+
+---
+
+#### ✅ Chain B: History Screen — Imported Ledger Rendering (3 tests, 1 root cause) — FIXED
+
+**Root cause:** `_selectedCalendarDate` was initialized to today's date in `HistoryScreen.initState()`. `_applyFilters()` filtered all 146 test ledger entries (June 2026) to zero — no Cards rendered.
+
+**Fix:** Removed `_selectedCalendarDate` default → `null`. Toggle-on/toggle-off behavior preserved.
+
+| # | ID | Test | Symptom | Status |
+|---|-----|------|---------|--------|
+| **F-03** | **G2** | `history_screen_test.dart:394` | `findsAtLeastNWidgets(1)` for Card — zero cards visible | ✅ Fixed |
+| F-04 | G3 | `history_screen_test.dart:438` | `findsWidgets` for `'Working on Project Alpha'` | ✅ Fixed (cascaded) |
+| F-05 | G4 | `history_screen_test.dart:480` | `findsWidgets` for `'coding'` tag | ✅ Fixed (cascaded) |
+
+**File:** `lib/features/history/history_screen.dart` — removed `_selectedCalendarDate` default from `initState()`.
+
+---
+
+#### 🔗 Chain C: Dashboard Validation Gap (1 test, independent)
+
+**Root cause:** `DashboardScreen` doesn't validate empty titles before calling `capture()`. No error SnackBar or inline validation message appears.
+
+| # | ID | Test | Symptom | Priority |
+|---|-----|------|---------|----------|
+| **F-06** | **Dashboard E3** | `dashboard_screen_test.dart:79` | Empty title + tap "Start" → no validation error containing `'title'` | 🟡 Independent |
+
+**Fix:** Add empty-title guard in `DashboardScreen` (SnackBar or TextField validator) before calling `syncService.capture()`. **Effort:** ~15 min.
+
+---
+
+#### 🔗 Chain D: Stale Test Signature (1 test, independent)
+
+**Root cause:** Phase 4 refactor of Group N (T8 Commit to Ledger) removed the `blockIndex` parameter from `LocalCache.markCommitted()`. The test at line 187 still calls `markCommitted([entryId], 0)` with the old 2-arg signature.
+
+| # | ID | Test | Symptom | Priority |
+|---|-----|------|---------|----------|
+| **F-07** | **local_cache_test** | `local_cache_test.dart:187` | Compilation error: `Too many positional arguments: 1 allowed, but 2 found` — entire test file fails to load | 🟡 Independent |
+
+**Fix:** Change `markCommitted([entryId], 0)` → `markCommitted([entryId])` at line 187. One-line fix. **Effort:** ~5 min.
+
+---
+
+### Recommended Attack Order
+
+| Order | Chain | Items | Impact | Effort |
+|-------|-------|-------|--------|--------|
+| 1 | D | F-07 | Unblocks entire `local_cache_test.dart` file | 5 min |
+| 2 | A | F-01 → F-02 | Fixes core CRUD bug + cascades to end() | 30 min |
+| ~~3~~ | ~~B~~ | ~~F-03 → F-05~~ | ~~History screen rendering~~ | ✅ Done |
+| 3 | C | F-06 | Adds empty-title validation to dashboard | 15 min |
+
+**Total:** ~1 hour to zero failures (remaining).
 
 ## 🟢 Nice-to-Have — Tooling
 

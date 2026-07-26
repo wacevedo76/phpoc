@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:phpoc_flutter/data/sync/staging_paths.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 
 /// HttpTransport tests — Group A (10 assertions).
@@ -48,7 +49,7 @@ void main() {
       );
       // API contract: pull returns Future<Uint8List?>
       // Example.com returns 404 for random paths → null is valid
-      final result = await transport.pull('staging/blob.bin');
+      final result = await transport.pull(StagingPaths.remoteStagingBlob);
       // The method compiled, executed without throwing, and returned null (404)
       // API contract: pull(path) returns Future<Uint8List?>, null on 404
       expect(result, isNull);
@@ -73,7 +74,7 @@ void main() {
       );
       // Unreachable host should throw
       expect(
-        () => transport.pull('staging/blob.bin'),
+        () => transport.pull(StagingPaths.remoteStagingBlob),
         throwsA(anything),
       );
     });

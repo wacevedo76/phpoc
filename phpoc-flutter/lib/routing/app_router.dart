@@ -70,9 +70,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return null;
       }
 
-      // Landing → onboarding or auth
+      // Landing → force navigation to landing screen, allow onboarding
       if (phase == AppPhase.landing) {
-        if (loc == '/loading') return '/landing';
+        if (loc != '/landing' && loc != '/onboarding') return '/landing';
+        return null;
+      }
+
+      // Onboarding → force navigation to create/restore flow, allow landing
+      if (phase == AppPhase.onboarding) {
+        if (loc != '/onboarding' && loc != '/landing') return '/onboarding';
         return null;
       }
 
