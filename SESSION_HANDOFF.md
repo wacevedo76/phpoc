@@ -33,6 +33,11 @@
 
 ## Completed ✅
 
+### ✅ Sync-to-remote _dependents.isEmpty assertion (2026-07-28)
+- **Root cause:** `_buildPushToCloudButton()` used `ref.watch(ledgerPushServiceProvider)` inside `build()`. After `checkAndSync()` completed, cascading provider invalidation coincided with the rebuild cycle, leaving a live dependency on the old InheritedElement during its disposal.
+- **Fix:** Changed `ref.watch` → `ref.read` (1 line). The button doesn't need reactive rebuild.
+- **Test:** L6 regression test (24/24 GREEN): sync → rebuild → push button still visible + functional.
+
 ### ✅ Flutter File Import — 4-Phase TDD Complete (2026-07-28)
 - 20 assertions (L1–L10 service, M1–M10 UI) → 20 GREEN.
 - Phase 4: 3 improvements (1 modularity: extracted `_writeStagingEntries` to deduplicate v1/v2 staging loops; 2 clarity: renamed `// ── Import from File ──` to `// ── Seed File Picker ──` before `_pickSeedFile`, added comment explaining Python/Flutter field name dual-key resolution in `_mapStagingEntry`).
@@ -68,12 +73,10 @@
 
 ## Immediate Next Steps 🎯
 
-### 1. Fix sync-to-remote framework assertion crash
-- **Symptom:** Syncing to remote triggers `'_dependents.isEmpty': is not true` at `framework.dart:6268`
-- **Likely cause:** InheritedWidget/InheritedNotifier dependency still registered when a widget is being disposed — often a provider accessed during or after disposal in the sync flow
-- **Repro:** Onboarding → connect Worker → tap sync → error appears
-- **Direction:** Add mounted checks or move provider reads earlier in sync widget lifecycle
+### 1. B-03: Flutter Staging Schema Overhaul — Phase 2 (RED)
+- Blueprint complete: `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups A–K)
+- Subsumes B-02 (auto-push folded into mutation wrappers, Group D–E)
+- Phase 2: Write 110 RED tests across activity_id, staging_store, migration, sync mutations, debounce, commit-and-clean, offline queue, hash index, sync screen UI, merge engine, legacy compat
 
 ## Known Issues
 - 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation
-- **Sync-to-remote framework assertion** (2026-07-28): `_dependents.isEmpty` assertion at `framework.dart:6268` when syncing to remote. Likely InheritedWidget/InheritedNotifier dependency still live during disposal in the sync flow.

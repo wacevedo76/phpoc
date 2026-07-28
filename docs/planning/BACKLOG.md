@@ -13,6 +13,35 @@
 
 ---
 
+## 🔴 B-03: Flutter — Staging Schema Overhaul
+
+**Plan:** `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups)
+
+**Problem:** Flutter staging uses a monolithic `entries` JSON array blob with positional indexing and no activity IDs. This prevents auto-push (no stable keys for diffing), leaves committed tombstones in staging indefinitely, requires 3 separate buttons (Commit, Push Ledger, Sync to Remote), and has no offline resilience.
+
+**Scope:** Complete staging rework — activity IDs, row-per-activity schema, migration, auto-push, commit-and-clean pipeline, offline queue, visual sync indicator.
+
+**Deliverables:**
+1. `ActivityIdGenerator` — 10-char CSPRNG activity_id generation
+2. `StagingStore` — row-per-activity SQLite table (activity_id, activity_status, activity, updated_at)
+3. Migration — old `entries` blob → new `staging` rows (preserving existing entries)
+4. Auto-push — debounced fire-and-forget push on every mutation (subsumes B-02)
+5. Commit-and-Clean — commit → remove from staging by activity_id → push ledger + staging
+6. Offline queue — persist pending pushes, flush on reconnect
+7. Sync status indicator — 🟢 in-sync / 🟡 pending / 🔴 error on tab icon
+
+**Next action:** Phase 2 (RED: test definition) — 110 tests across 11 groups.
+
+**Severity:** 🟠 High (architectural gap — staging schema affects cross-client sync integrity)
+
+---
+
+## ~~🔴 B-02: Flutter — Auto-push staging blob on every mutation~~ (subsumed by B-03)
+
+B-02's scope (debounced auto-push on mutation) is folded into B-03 deliverable #4. The broader architectural changes (activity IDs, row schema, commit-and-clean) make B-03 the correct tracking unit.
+
+---
+
 ## ✅ Completed: Web Staging Committed-Flag Loss
 
 ### B-01: Committed ledger entries duplicated as staging (web sync) ✅
