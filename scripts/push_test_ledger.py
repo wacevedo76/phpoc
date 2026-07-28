@@ -83,7 +83,8 @@ def obfuscate_blob(data: dict, master_key: bytes) -> bytes:
 def main():
     parser = argparse.ArgumentParser(description="Push test ledger to Worker")
     parser.add_argument(
-        "--ledger", type=str, default="/tmp/phpoc_test_ledger/ledger.json",
+        "--ledger", type=str,
+        default=str(PROJECT_ROOT / "testdata" / "ledger.json"),
         help="Path to ledger.json"
     )
     parser.add_argument(

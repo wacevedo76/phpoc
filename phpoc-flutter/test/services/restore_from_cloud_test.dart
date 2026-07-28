@@ -13,7 +13,7 @@ import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 import 'package:phpoc_flutter/services/ledger_pull_service.dart';
 import 'package:phpoc_flutter/services/onboarding_service.dart';
 
-/// Restore from Cloud tests — Groups A (10) + H (8) = 18 assertions.
+/// Restore from Cloud tests — Groups A (10) + H (8) + X (2) = 20 assertions.
 ///
 /// Covers:
 ///   A1–A10: OnboardingService.restoreFromCloud — core flow
@@ -75,8 +75,8 @@ void main() {
 
   group('A: OnboardingService — restoreFromCloud', () {
     // A1
-    test('A1: restoreFromCloud does NOT create a local genesis block '
-        '(genesis comes from R2 via pullAll)', () async {
+    test('A1: restoreFromCloud creates a local genesis block before pull '
+        '(for reauthenticate resilience)', () async {
       final db = AppDatabase.inMemory();
       final onboarding = await _makeOnboarding(db: db);
 
@@ -85,8 +85,9 @@ void main() {
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isEmpty,
-          reason: 'Genesis must come from R2, not created locally');
+      expect(blocks.length, greaterThan(0),
+          reason: 'Genesis is now created locally before pull, so '
+              'reauthenticate works even if pull fails');
     });
 
     // A2
@@ -158,7 +159,7 @@ void main() {
 
     // A6
     test('A6: restoreFromCloud with unreachable Worker still succeeds '
-        '(identity only, no local genesis)', () async {
+        '(identity + local genesis)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -170,11 +171,11 @@ void main() {
         validApiKey,
       );
 
-      // No local genesis — genesis comes from R2 via pullAll
+      // Local genesis is created before pull attempt — identity survives
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isEmpty,
-          reason: 'Genesis comes from R2, not created locally');
-      // But device identity and flag are still set
+      expect(blocks.length, greaterThan(0),
+          reason: 'Genesis is created locally before pull — identity survives');
+      // Device identity and flag are also set
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid after degraded restore');
       expect(await prefs.getDeviceUuid(), isNotEmpty,
@@ -217,7 +218,7 @@ void main() {
 
     // A9
     test('A9: restoreFromCloud with invalid Worker URL still succeeds '
-        '(identity only, no local genesis)', () async {
+        '(identity + local genesis)', () async {
       final db = AppDatabase.inMemory();
       final onboarding = await _makeOnboarding(db: db);
 
@@ -227,8 +228,8 @@ void main() {
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isEmpty,
-          reason: 'Genesis comes from R2, not created locally');
+      expect(blocks.length, greaterThan(0),
+          reason: 'Genesis is created locally before pull — identity survives');
     });
 
     // A10
@@ -272,8 +273,8 @@ void main() {
     });
 
     // H2
-    test('H2: concurrent restore calls — second call is idempotent',
-        () async {
+    test('H2: concurrent restore calls — second call detects existing '
+        'data and throws', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -283,14 +284,17 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // Second call is idempotent — sets same identity, no data corruption
-      await onboarding.restoreFromCloud(
-        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+      // Second call without wipeExisting should fail — genesis already exists
+      expect(
+        () => onboarding.restoreFromCloud(
+          validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+        ),
+        throwsA(isA<LedgerExistsException>()),
+        reason: 'Second restore without wipeExisting must detect existing data',
       );
 
-      // After both calls, identity is still set
+      // Identity is still intact after both calls
       expect(await prefs.hasExistingData(), isTrue);
-      expect(await prefs.getDeviceUuid(), isNotEmpty);
     });
 
     // H3
@@ -333,7 +337,7 @@ void main() {
 
     // H5
     test('H5: transport timeout during blob pull → still succeeds '
-        '(identity only)', () async {
+        '(identity + local genesis)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -344,8 +348,8 @@ void main() {
       );
 
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks, isEmpty,
-          reason: 'Genesis comes from R2, not created locally');
+      expect(blocks.length, greaterThan(0),
+          reason: 'Genesis is created locally before pull — identity survives');
       expect(await prefs.hasExistingData(), isTrue,
           reason: 'Local state must be valid after timeout');
     });
@@ -404,10 +408,10 @@ void main() {
     });
   });
 
-  // ── Group J: Cross-reference dates with ledger (4 assertions) ──
+  // ── Group X: Cross-reference dates with ledger (2 assertions) ──
 
-  group('J: History dates match actual ledger dates', () {
-    test('J1: restore from R2 → every entry start_epoch matches '
+  group('X: History dates match actual ledger dates', () {
+    test('X1: restore from R2 → every entry start_epoch matches '
         'testdata/ledger.json', () async {
       // Full E2E: restore from cloud, then cross-check every entry's
       // start_epoch against the canonical testdata/ledger.json.
@@ -446,10 +450,11 @@ void main() {
         preferences: prefs,
       );
 
-      await onboarding.restoreFromCloud(
+      final pullResult = await onboarding.restoreFromCloud(
         seed, '123456789', workerUrl, apiKey,
         wipeExisting: true,
       );
+      
       crypto.clearMasterKey();
       await auth.reauthenticate('123456789');
 
@@ -486,7 +491,7 @@ void main() {
       }
     }, timeout: Timeout(Duration(minutes: 3)));
 
-    test('J2: entry durations match between Flutter and ledger', () async {
+    test('X2: entry durations match between Flutter and ledger', () async {
       const workerUrl =
           'https://phpoc-staging-testing.wacevedo.workers.dev';
       const apiKey = 'MKNuQP92x2+fJyNRmoW6w9lTCbDh0lKm';

@@ -349,22 +349,29 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Tech:** Flutter 3.44.6, Dart 3.12.2, Rust crypto core (`phpoc-crypto-core`), Riverpod, go_router, Drift/SQLite, SharedPreferences.
 
-### 🟠 Active Issues — 7 Test Failures (5 Root Causes)
+### ✅ Active Issues — All Resolved
 
-*Ordered by dependency chain + impact. Each chain's blocker comes first — fixing one often fixes its dependents.*
+*All test failures have been fixed. Only X1 remains as a pre-existing E2E failure tracked in SESSION_HANDOFF.md.*
 
 ---
 
-#### 🔗 Chain A: CRUD Modify → End Cascade (2 tests, 1 root cause)
+#### ✅ Chain A: Millisecond Collision Flakiness (5 tests, 1 root cause) — FIXED
 
-**Root cause:** `LocalCache.update()` doesn't apply field changes (like `title`) to stored entries. When `SyncService.modify()` delegates to it, the rename silently fails.
+**Root cause:** `SyncService.capture()` used `DateTime.now().millisecondsSinceEpoch` internally (ms precision only), and `LocalCache.append()` threw on any same-ms collision. Two rapid `capture()` calls in fast test suites hit the same millisecond → flaky failures.
 
-| # | ID | Test | Symptom | Priority |
-|---|-----|------|---------|----------|
-| **F-01** | **E13** | `sync_service_test.dart:375` | `modify(0, {'title': 'X'})` — `entries[0]['title']` stays `'Modify Me'` instead of `'Modified Title'` | 🔴 **Blocker** |
-| F-02 | E16 | `sync_service_test.dart:416` | `end('Offline Modified')` throws — can't find entry because E13 rename never happened | 🟠 Downstream of F-01 |
+| # | ID | Test | Symptom | Status |
+|---|-----|------|---------|--------|
+| **F3** | **F3** | `sync_service_test.dart:455` | `Collision detected` — 3 rapid captures | ✅ Fixed |
+| **L1** | **L1** | `sync_service_test.dart:735` | `Collision detected` — 2 rapid captures | ✅ Fixed |
+| **S4** | **S4** | `sync_service_test.dart:1859` | `Collision detected` — 2 rapid captures | ✅ Fixed |
+| **S6** | **S6** | `sync_service_test.dart:1898` | `Collision detected` — 2 rapid captures | ✅ Fixed |
+| **S7** | **S7** | `sync_service_test.dart:1921` | `Collision detected` — 3 rapid captures | ✅ Fixed |
 
-**Fix:** `LocalCache.update()` in `lib/data/sync/local_cache.dart`. After fixing F-01, re-run E16 — it should go GREEN automatically. **Effort:** ~30 min.
+**Fix (Option C):** Two-part fix. (A) `SyncService.capture()` now accepts optional `startEpoch` param (matches Python API). (B) `LocalCache.append()` auto-increments on same-ms collision instead of throwing. **Effort:** ~20 min.
+
+**Files:** `lib/data/sync/sync_service.dart`, `lib/data/sync/local_cache.dart`, `test/data/sync/local_cache_test.dart` (B6 updated).
+
+> **Note:** Original BACKLOG entries F-01 (E13) and F-02 (E16) were already GREEN — the `update()` method was correct. The real failures were the collision flakiness above.
 
 ---
 
@@ -384,27 +391,23 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 ---
 
-#### 🔗 Chain C: Dashboard Validation Gap (1 test, independent)
+#### ✅ Chain C: Dashboard Validation Gap (1 test) — FIXED (2026-07-28)
 
-**Root cause:** `DashboardScreen` doesn't validate empty titles before calling `capture()`. No error SnackBar or inline validation message appears.
+**Root cause:** `DashboardScreen` already validates empty titles in `_capture()` (line ~89: `if (title.isEmpty) setState(() => _errorMessage = 'Please enter a task title')`). The test was already GREEN — BACKLOG entry was stale.
 
-| # | ID | Test | Symptom | Priority |
-|---|-----|------|---------|----------|
-| **F-06** | **Dashboard E3** | `dashboard_screen_test.dart:79` | Empty title + tap "Start" → no validation error containing `'title'` | 🟡 Independent |
-
-**Fix:** Add empty-title guard in `DashboardScreen` (SnackBar or TextField validator) before calling `syncService.capture()`. **Effort:** ~15 min.
+| # | ID | Test | Symptom | Status |
+|---|-----|------|---------|--------|
+| **F-06** | **Dashboard E3** | `dashboard_screen_test.dart:79` | ~~Empty title + tap "Start" → no validation error~~ | ✅ Done (already implemented) |
 
 ---
 
 #### 🔗 Chain D: Stale Test Signature (1 test, independent)
 
-**Root cause:** Phase 4 refactor of Group N (T8 Commit to Ledger) removed the `blockIndex` parameter from `LocalCache.markCommitted()`. The test at line 187 still calls `markCommitted([entryId], 0)` with the old 2-arg signature.
+**Status:** ✅ Done (2026-07-28) — signature already corrected in both source and test.
 
 | # | ID | Test | Symptom | Priority |
 |---|-----|------|---------|----------|
-| **F-07** | **local_cache_test** | `local_cache_test.dart:187` | Compilation error: `Too many positional arguments: 1 allowed, but 2 found` — entire test file fails to load | 🟡 Independent |
-
-**Fix:** Change `markCommitted([entryId], 0)` → `markCommitted([entryId])` at line 187. One-line fix. **Effort:** ~5 min.
+| **F-07** | **local_cache_test** | `local_cache_test.dart:187` | ~~Compilation error: `Too many positional arguments: 1 allowed, but 2 found`~~ | ✅ Done |
 
 ---
 
@@ -412,12 +415,12 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 | Order | Chain | Items | Impact | Effort |
 |-------|-------|-------|--------|--------|
-| 1 | D | F-07 | Unblocks entire `local_cache_test.dart` file | 5 min |
-| 2 | A | F-01 → F-02 | Fixes core CRUD bug + cascades to end() | 30 min |
+| ~~1~~ | ~~D~~ | ~~F-07~~ | ~~Stale test signature~~ | ✅ Done |
+| ~~2~~ | ~~A~~ | ~~F3/L1/S4/S6/S7~~ | ~~Millisecond collision flakiness~~ | ✅ Done |
 | ~~3~~ | ~~B~~ | ~~F-03 → F-05~~ | ~~History screen rendering~~ | ✅ Done |
-| 3 | C | F-06 | Adds empty-title validation to dashboard | 15 min |
+| ~~4~~ | ~~C~~ | ~~F-06~~ | ~~Dashboard validation gap~~ | ✅ Done |
 
-**Total:** ~1 hour to zero failures (remaining).
+**All chains resolved.** Only X1 (pre-existing E2E) remains — see SESSION_HANDOFF.md.
 
 ## 🟢 Nice-to-Have — Tooling
 

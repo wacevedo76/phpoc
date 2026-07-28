@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +21,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-enum _OnboardingStep { main, createPassphrase, seedDisplay, importSeed, workerConnect, restoreCloud }
+enum _OnboardingStep { main, createPassphrase, seedDisplay, importSeed, workerConnect, restoreCloud, importFile }
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   _OnboardingStep _step = _OnboardingStep.main;
@@ -35,6 +36,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   bool _isLoading = false;
   String? _errorMessage;
   String? _displayedSeed;
+  String? _importFilePath;
+  String? _importFileName;
 
   @override
   void dispose() {
@@ -209,6 +212,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         _errorMessage = null;
         _isLoading = false;
       });
+      // Debug-mode pre-fill from TEST_CREDENTIALS.md (stripped in release builds)
+      if (kDebugMode) {
+        _seedController.text = 'RtwewIHiZc9fCSUb8HRATJ8T8X5+9CNN1pzMJpFJAl0=';
+        _passphraseController.text = '123456789';
+        _workerUrlController.text = 'https://phpoc-staging-testing.wacevedo.workers.dev';
+        _workerApiKeyController.text = 'MKNuQP92x2+fJyNRmoW6w9lTCbDh0lKm';
+      }
     }
   }
 
@@ -266,7 +276,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
   }
 
-  // ── Import from File ───────────────────────────────────────
+  // ── Seed File Picker (for Import from Recovery Seed flow) ──
 
   Future<void> _pickSeedFile() async {
     try {
@@ -306,6 +316,89 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       });
     } catch (e) {
       setState(() => _errorMessage = 'Failed to read file: $e');
+    }
+  }
+
+  // ── Import from File ───────────────────────────────────────
+
+  Future<void> _startImportFileFlow() async {
+    final confirmed = await _confirmWipeExistingData();
+    if (!mounted) return;
+    if (confirmed) {
+      setState(() {
+        _passphraseController.clear();
+        _seedController.clear();
+        _importFilePath = null;
+        _importFileName = null;
+        _errorMessage = null;
+        _isLoading = false;
+        _step = _OnboardingStep.importFile;
+      });
+    }
+  }
+
+  Future<void> _pickImportFile() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (result == null || result.files.isEmpty) return; // User canceled
+
+      final file = result.files.first;
+      if (file.path == null) {
+        setState(() => _errorMessage = 'Could not read file path.');
+        return;
+      }
+
+      setState(() {
+        _importFilePath = file.path;
+        _importFileName = file.name;
+        _errorMessage = null;
+      });
+    } catch (e) {
+      setState(() => _errorMessage = 'Failed to pick file: $e');
+    }
+  }
+
+  Future<void> _importFromFile() async {
+    final filePath = _importFilePath;
+    final seed = _seedController.text.trim();
+    final passphrase = _passphraseController.text.trim();
+
+    if (filePath == null || filePath.isEmpty) {
+      setState(() => _errorMessage = 'Please select a ledger export file');
+      return;
+    }
+
+    if (seed.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your recovery seed');
+      return;
+    }
+
+    if (passphrase.length < 8) {
+      setState(() => _errorMessage = 'Passphrase must be at least 8 characters');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final onboarding = ref.read(onboardingServiceProvider);
+      await onboarding.importFromFile(filePath, seed, passphrase,
+          wipeExisting: true);
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ref.read(appLifecycleProvider.notifier).goToAuth();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _handleServiceError(e, 'Failed to import');
     }
   }
 
@@ -394,6 +487,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         return _buildWorkerConnect();
       case _OnboardingStep.restoreCloud:
         return _buildRestoreCloud();
+      case _OnboardingStep.importFile:
+        return _buildImportFile();
     }
   }
 
@@ -405,22 +500,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       children: [
         Icon(
           Icons.auto_stories,
-          size: 72,
+          size: 48,
           color: Theme.of(context).colorScheme.primary,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Text(
           'Let\'s get started',
           style: Theme.of(context).textTheme.headlineSmall,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Text(
           'Choose how you want to set up PH Ledger',
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 32),
+        const SizedBox(height: 16),
         // Create New Ledger
         Card(
           child: ListTile(
@@ -431,7 +526,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             onTap: _startCreateFlow,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         // Import from Recovery Seed
         Card(
           child: ListTile(
@@ -442,7 +537,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             onTap: _startImportFlow,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         // Connect to Worker
         Card(
           child: ListTile(
@@ -453,7 +548,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             onTap: _startWorkerFlow,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         // Restore from Cloud
         Card(
           child: ListTile(
@@ -462,6 +557,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             subtitle: const Text('Restore your ledger from seed and cloud backup'),
             trailing: const Icon(Icons.chevron_right),
             onTap: _startRestoreCloudFlow,
+          ),
+        ),
+        const SizedBox(height: 4),
+        // Import Ledger from File
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.file_open, size: 32),
+            title: const Text('Import Ledger from File'),
+            subtitle: const Text('Import a ledger export from a local JSON file'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _startImportFileFlow,
           ),
         ),
       ],
@@ -806,6 +912,93 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Text('Restore'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _isLoading ? null : _goBack,
+            child: const Text('Cancel'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Import from File Form ───────────────────────────────────
+
+  Widget _buildImportFile() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Import Ledger from File',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Select a ledger export file (JSON) and enter your recovery seed '
+          'and passphrase to import your ledger.',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 24),
+        // File picker
+        OutlinedButton.icon(
+          onPressed: _isLoading ? null : _pickImportFile,
+          icon: const Icon(Icons.file_open),
+          label: Text(_importFileName ?? 'Select File'),
+        ),
+        if (_importFileName != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Selected: $_importFileName',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        const SizedBox(height: 16),
+        // Seed field
+        TextField(
+          controller: _seedController,
+          enabled: !_isLoading,
+          maxLines: 2,
+          style: const TextStyle(fontFamily: 'monospace'),
+          decoration: const InputDecoration(
+            labelText: 'Recovery Seed',
+            hintText: 'Paste your base64 recovery seed',
+            prefixIcon: Icon(Icons.vpn_key),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Passphrase field
+        TextField(
+          controller: _passphraseController,
+          obscureText: _obscurePassphrase,
+          enabled: !_isLoading,
+          decoration: InputDecoration(
+            labelText: 'Passphrase',
+            hintText: 'At least 8 characters',
+            prefixIcon: const Icon(Icons.key),
+            errorText: _errorMessage,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 24),
+        // Import button
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _isLoading || _importFilePath == null
+                ? null
+                : _importFromFile,
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Import'),
           ),
         ),
         const SizedBox(height: 12),

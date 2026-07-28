@@ -65,23 +65,25 @@ void main() {
       await pumpScreenWidget(tester, const DashboardScreen(),
           initialPhase: AppPhase.ready);
 
-      final captureButton = find.textContaining('Start', findRichText: true);
-      if (captureButton.evaluate().isNotEmpty) {
-        final textFields = find.byType(TextField);
-        if (textFields.evaluate().isNotEmpty) {
-          await tester.enterText(textFields.first, '');
-          await tester.pump();
-        }
+      // Expand the new-task form
+      await tester.tap(find.text('New Task'));
+      await tester.pumpAndSettle();
 
-        await tester.tap(captureButton.first);
-        await tester.pump();
+      // Scroll the expanded form into view; the Start button is below the
+      // default 800×600 viewport when all fields are shown.
+      await tester.ensureVisible(find.text('Start'));
+      await tester.pumpAndSettle();
 
-        expect(
-          find.textContaining('title', findRichText: true),
-          findsAtLeastNWidgets(1),
-          reason: 'Must prevent empty-title entries',
-        );
-      }
+      // Tap Start with an empty title (text field defaults to empty)
+      await tester.tap(find.text('Start'));
+      await tester.pumpAndSettle();
+
+      // Validation error must appear with the exact error message
+      expect(
+        find.text('Please enter a task title'),
+        findsOneWidget,
+        reason: 'Must prevent empty-title entries',
+      );
     });
 
     // E4 — Valid title + capture → calls syncService.capture()
@@ -200,6 +202,379 @@ void main() {
           initialPhase: AppPhase.ready);
 
       // Phase 3: active task card refreshes elapsed time periodically
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group T: DashboardScreen — Multi-Active UI
+  // ═══════════════════════════════════════════════════════════════
+
+  group('T: DashboardScreen — Multi-Active UI', () {
+    /// Helper: capture a task through the UI form.
+    Future<void> _captureTask(WidgetTester tester, String title,
+        {String tags = ''}) async {
+      // Expand the new task form
+      await tester.tap(find.text('New Task'));
+      await tester.pumpAndSettle();
+
+      // Find the title TextField and enter text
+      final titleFields = find.byType(TextField);
+      await tester.enterText(titleFields.at(0), title);
+      await tester.pumpAndSettle();
+
+      // If tags provided, enter them
+      if (tags.isNotEmpty && titleFields.evaluate().length > 1) {
+        await tester.enterText(titleFields.at(1), tags);
+        await tester.pumpAndSettle();
+      }
+
+      // Ensure Start button is visible and tap it
+      await tester.ensureVisible(find.text('Start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start'));
+      await tester.pumpAndSettle();
+    }
+
+    // T1 — Dashboard renders one card per active task
+    testWidgets('T1: captures 2 tasks → dashboard shows 2 active cards',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Concurrent A');
+      await _captureTask(tester, 'Concurrent B');
+
+      // Both task titles must be visible simultaneously
+      expect(find.text('Concurrent A'), findsOneWidget,
+          reason: 'First active task must remain visible after second capture');
+      expect(find.text('Concurrent B'), findsOneWidget,
+          reason: 'Second captured task must be shown as its own active card');
+    });
+
+    // T2 — Each active card displays its own title
+    testWidgets('T2: each active card shows its own distinct title',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Alpha');
+      await _captureTask(tester, 'Beta');
+
+      expect(find.text('Alpha'), findsOneWidget,
+          reason: 'First card must show its title');
+      expect(find.text('Beta'), findsOneWidget,
+          reason: 'Second card must show its title');
+    });
+
+    // T3 — Each active card has independent elapsed time
+    testWidgets('T3: each active card shows independent elapsed time',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'First');
+      // Small delay so second task has different elapsed
+      await tester.pump(const Duration(seconds: 1));
+      await _captureTask(tester, 'Second');
+
+      // Each card must show "Elapsed:" text
+      expect(find.textContaining('Elapsed:', findRichText: true),
+          findsAtLeastNWidgets(2),
+          reason: 'Each active task card must show its own elapsed time');
+    });
+
+    // T4 — Each active card has its own Pause/Resume button
+    testWidgets('T4: each active card has independent Pause/Resume button',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Pausable A');
+      await _captureTask(tester, 'Pausable B');
+
+      // Each card should have a button with Icons.pause (not paused yet)
+      expect(find.byIcon(Icons.pause), findsAtLeastNWidgets(2),
+          reason: 'Each active task must have its own Pause button');
+    });
+
+    // T5 — Each active card has its own End button
+    testWidgets('T5: each active card has independent End button',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Endable A');
+      await _captureTask(tester, 'Endable B');
+
+      // Each card should have a button with Icons.stop
+      expect(find.byIcon(Icons.stop), findsAtLeastNWidgets(2),
+          reason: 'Each active task must have its own End button');
+    });
+
+    // T6 — Ending one active task removes its active card, others remain.
+    // Ended tasks move to Pending Commit section.
+    testWidgets('T6: ending one task removes its active card, other cards stay',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Will End');
+      await _captureTask(tester, 'Will Stay');
+
+      // Tap the End (stop) button on the "Will End" card.
+      await tester.tap(find.byIcon(Icons.stop).first);
+      await tester.pumpAndSettle();
+
+      // "Will End" moves to Pending Commit — still visible
+      expect(find.text('Will End'), findsOneWidget,
+          reason: 'Ended task moves to Pending Commit section');
+      // Only one active card remains (one play_circle_fill icon in Running)
+      expect(find.byIcon(Icons.play_circle_fill), findsOneWidget,
+          reason: 'Only one active task card remains');
+      expect(find.text('Will Stay'), findsOneWidget,
+          reason: 'Un-ended task card must remain visible');
+    });
+
+    // T7 — Ending last active task → task moves to Pending Commit.
+    // The dashboard still shows content (no empty state).
+    testWidgets(
+        'T7: ending last active task moves it to Pending Commit section',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Last One');
+
+      // End it
+      await tester.tap(find.byIcon(Icons.stop).first);
+      await tester.pumpAndSettle();
+
+      // Ended task appears in Pending Commit
+      expect(find.text('Last One'), findsOneWidget,
+          reason: 'Ended task moves to Pending Commit, still visible');
+      // No active tasks remain — no running section
+      expect(find.text('Running'), findsNothing,
+          reason: 'No active tasks remain');
+    });
+
+    // T8 — "New Task" button available while tasks are running
+    testWidgets('T8: New Task button available while tasks are running',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Running Task');
+
+      expect(find.text('New Task'), findsOneWidget,
+          reason: 'Users must be able to start new tasks regardless of '
+              'active count');
+    });
+
+    // T9 — Capturing new task while one active → second card appears
+    testWidgets('T9: capturing new task while one active adds a card',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Existing');
+      await _captureTask(tester, 'Just Added');
+
+      // The "Running" section header should appear once (not duplicated)
+      expect(find.text('Running'), findsOneWidget,
+          reason: 'Running section header should not be duplicated');
+      // Both tasks visible
+      expect(find.text('Existing'), findsOneWidget);
+      expect(find.text('Just Added'), findsOneWidget);
+    });
+
+    // T10 — All active cards visible within scrollable viewport
+    testWidgets(
+        'T10: multiple active cards are all reachable via scroll',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      // Capture 3 tasks to test scrolling
+      await _captureTask(tester, 'Scroll A');
+      await _captureTask(tester, 'Scroll B');
+      await _captureTask(tester, 'Scroll C');
+
+      // All three cards must be findable in the widget tree
+      expect(find.text('Scroll A'), findsOneWidget);
+      expect(find.text('Scroll B'), findsOneWidget);
+      expect(find.text('Scroll C'), findsOneWidget);
+    });
+
+    // T11 — Pausing one task does not affect elapsed of other
+    testWidgets(
+        'T11: pausing one task does not affect the other task elapsed',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Pause Me');
+      await _captureTask(tester, 'Keep Running');
+
+      // Tap pause on the first card
+      await tester.tap(find.byIcon(Icons.pause).first);
+      await tester.pumpAndSettle();
+
+      // After pause, the first card should show Resume (play_arrow) icon.
+      // Note: the expanded new-task form (hidden via AnimatedCrossFade) also
+      // contains a play_arrow icon, so we use atLeast.
+      expect(find.byIcon(Icons.play_arrow), findsAtLeastNWidgets(1),
+          reason: 'Paused task must show resume (play) button on its card');
+      // The second card should still show pause icon
+      expect(find.byIcon(Icons.pause), findsOneWidget,
+          reason: 'Unpaused task must still show pause button on its card');
+    });
+
+    // T12 — Section header "Running" exists when tasks are active
+    testWidgets('T12: Running section header shown for active tasks',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      await _captureTask(tester, 'Header Test');
+
+      expect(find.text('Running'), findsOneWidget,
+          reason: 'Section header must label the active tasks area');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group U: DashboardScreen — Multi-Active Integration
+  // ═══════════════════════════════════════════════════════════════
+
+  group('U: Dashboard — Multi-Active Integration', () {
+    // U1 — Full lifecycle: 2 tasks → end one → end last → empty
+    testWidgets('U1: full lifecycle — start 2, end 1, end last, empty state',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      // Helper inline for brevity
+      Future<void> capture(String title) async {
+        await tester.tap(find.text('New Task'));
+        await tester.pumpAndSettle();
+        final fields = find.byType(TextField);
+        await tester.enterText(fields.at(0), title);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Start'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+      }
+
+      await capture('Lifecycle A');
+      await capture('Lifecycle B');
+
+      expect(find.text('Lifecycle A'), findsOneWidget);
+      expect(find.text('Lifecycle B'), findsOneWidget);
+
+      // End Lifecycle B (second task's stop button)
+      await tester.tap(find.byIcon(Icons.stop).last);
+      await tester.pumpAndSettle();
+
+      // Lifecycle B moves to Pending Commit — still visible
+      expect(find.text('Lifecycle B'), findsOneWidget,
+          reason: 'Ended task B moves to Pending Commit section');
+      expect(find.text('Lifecycle A'), findsOneWidget,
+          reason: 'Task A must still be active');
+
+      // End Lifecycle A
+      await tester.tap(find.byIcon(Icons.stop).first);
+      await tester.pumpAndSettle();
+
+      // Both tasks now in Pending Commit — still visible
+      expect(find.text('Lifecycle A'), findsOneWidget,
+          reason: 'Ended task A moves to Pending Commit section');
+      expect(find.text('Lifecycle B'), findsOneWidget,
+          reason: 'Ended task B stays in Pending Commit section');
+      // No active tasks remain
+      expect(find.text('Running'), findsNothing,
+          reason: 'No active tasks after both ended');
+    });
+
+    // U2 — Pause isolation: pause first, second keeps ticking
+    testWidgets(
+        'U2: pausing first task freezes its elapsed, second keeps ticking',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      // Capture two tasks
+      Future<void> capture(String title) async {
+        await tester.tap(find.text('New Task'));
+        await tester.pumpAndSettle();
+        final fields = find.byType(TextField);
+        await tester.enterText(fields.at(0), title);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Start'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+      }
+
+      await capture('Freeze');
+      // Small delay so elapsed differs
+      await tester.pump(const Duration(seconds: 1));
+      await capture('Tick');
+
+      // Pause the first task (Freeze)
+      await tester.tap(find.byIcon(Icons.pause).first);
+      await tester.pumpAndSettle();
+
+      // After pause: Freeze card should show play_arrow, Tick card should show pause.
+      // Note: the hidden expanded form also has a play_arrow icon.
+      expect(find.byIcon(Icons.play_arrow), findsAtLeastNWidgets(1),
+          reason: 'Paused task must show resume icon');
+      expect(find.byIcon(Icons.pause), findsOneWidget,
+          reason: 'Running task must still show pause icon');
+    });
+
+    // U3 — Start 3 tasks, end all, verify data consistency
+    testWidgets('U3: start 3 tasks, end all, no active entries remain',
+        (tester) async {
+      await pumpScreenWidget(tester, const DashboardScreen(),
+          initialPhase: AppPhase.ready);
+
+      Future<void> capture(String title) async {
+        await tester.tap(find.text('New Task'));
+        await tester.pumpAndSettle();
+        final fields = find.byType(TextField);
+        await tester.enterText(fields.at(0), title);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Start'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+      }
+
+      await capture('Triple 1');
+      await capture('Triple 2');
+      await capture('Triple 3');
+
+      expect(find.text('Triple 1'), findsOneWidget);
+      expect(find.text('Triple 2'), findsOneWidget);
+      expect(find.text('Triple 3'), findsOneWidget);
+
+      // End all three (stop buttons are rendered in order)
+      for (int i = 0; i < 3; i++) {
+        await tester.tap(find.byIcon(Icons.stop).first);
+        await tester.pumpAndSettle();
+      }
+
+      // All ended tasks move to Pending Commit — still visible
+      expect(find.text('Triple 1'), findsOneWidget,
+          reason: 'Ended task 1 moves to Pending Commit section');
+      expect(find.text('Triple 2'), findsOneWidget,
+          reason: 'Ended task 2 moves to Pending Commit section');
+      expect(find.text('Triple 3'), findsOneWidget,
+          reason: 'Ended task 3 moves to Pending Commit section');
+      // No active tasks remain
+      expect(find.text('Running'), findsNothing,
+          reason: 'No active tasks after all ended');
     });
   });
 }

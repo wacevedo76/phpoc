@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import '../core/crypto/crypto_service.dart';
 import '../core/models/block.dart';
 import '../core/models/push_result.dart';
-import '../core/utils/format_utils.dart';
+import '../core/utils/phpsec_format.dart';
 import '../data/ledger/helpers.dart' as ledger_helpers;
 import '../data/storage/database.dart';
 import '../data/sync/transport.dart';
@@ -25,33 +25,10 @@ class LedgerPushService {
   /// Guard against concurrent [pushAll] calls.
   Future<PushResult>? _pendingPush;
 
-  // ── PHPSPEC field name constants ─────────────────────────────
-
-  static const _kType = 'type';
-  static const _kDayIndex = 'day_index';
-  static const _kDate = 'date';
-  static const _kPrevHash = 'prev_hash';
-  static const _kEntries = 'entries';
-  static const _kBlockHash = 'block_hash';
-
-  static const _typeGenesis = 'genesis';
-  static const _typeDay = 'day';
-  static const _typeYearSummary = 'year_summary';
-  static const _typeMonthSummary = 'month_summary';
-
-  // Only genesis and day use 'day_hash'; others follow the
-  // '${typeStr}_hash' fallback in _blockToPhpSpecJson.
-  static const _sealFieldNames = {
-    _typeGenesis: 'day_hash',
-    _typeDay: 'day_hash',
-  };
-
-  static const _blockTypeToPhpSpec = {
-    BlockType.genesis: _typeGenesis,
-    BlockType.day: _typeDay,
-    BlockType.year: _typeYearSummary,
-    BlockType.month: _typeMonthSummary,
-  };
+  // ── PHPSPEC format ───────────────────────────────────────────
+  // Uses shared PhpSpecFormat constants (seal field names, type
+  // mappings, entry extraction) to stay consistent with
+  // LedgerBackupService. See lib/core/utils/phpsec_format.dart.
 
   LedgerPushService({
     required this.db,
@@ -125,8 +102,8 @@ class LedgerPushService {
       try {
         await transport.push(path, obfuscated);
         pushedCount++;
-        // Use blockId (block_hash from canonical JSON) for hash_index.
-        // Matches Python scripts/push_test_ledger.py line 118:
+        // Use blockId (block_hash) for hash_index — matches
+        // Python scripts/push_test_ledger.py:
         //   h = block.get("block_hash") or block.get("day_hash")
         blockHashes.add(block.blockId);
       } catch (e) {
@@ -153,7 +130,8 @@ class LedgerPushService {
     }
 
     if (failedBlocks.isEmpty && errors.isEmpty) {
-      return PushResult.ok(pushedCount);
+      return PushResult.ok(pushedCount,
+          hashPrefix: blockHashes.isNotEmpty ? blockHashes.first : null);
     }
     return PushResult.failure(
       blocksPushed: pushedCount,
@@ -172,36 +150,11 @@ class LedgerPushService {
 
   /// Serialize a [Block] to PHPSPEC JSON string.
   ///
-  /// Matches the format produced by [LedgerBackupService.exportToJson]
-  /// (same field names, same date/entries extraction).
+  /// Delegates to [PhpSpecFormat.blockToMap] for the common fields
+  /// shared with [LedgerBackupService._blockToPhpSpec]. Uses sorted,
+  /// space-free JSON encoding for compact transport.
   String _blockToPhpSpecJson(Block block) {
-    final typeStr =
-        _blockTypeToPhpSpec[block.blockType] ?? block.blockType.name;
-    final sealField = _sealFieldNames[typeStr] ?? '${typeStr}_hash';
-
-    // Decode data_enc to extract entries array
-    List<dynamic> entries;
-    try {
-      final decoded = utf8.decode(base64.decode(block.dataEnc));
-      entries = jsonDecode(decoded) as List<dynamic>;
-    } catch (_) {
-      // data_enc is opaque or malformed — emit empty entries
-      entries = [];
-    }
-
-    // Parse createdAt epoch → ISO date string
-    final dateStr = FormatUtils.epochToIsoDate(block.createdAt);
-
-    final result = <String, dynamic>{
-      _kType: typeStr,
-      _kDayIndex: block.blockIndex,
-      _kDate: dateStr,
-      _kPrevHash: block.prevHash,
-      _kEntries: entries,
-      sealField: block.identitySeal,
-      _kBlockHash: block.identitySeal ?? block.blockId,
-    };
-
+    final result = PhpSpecFormat.blockToMap(block);
     return ledger_helpers.jsonEncodeSortedNoSpaces(result);
   }
 

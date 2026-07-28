@@ -51,17 +51,21 @@ class SyncService {
   /// [encryptFields] controls per-field encryption for title/tags/comment.
   /// Only epoch timestamps are encrypted by default; add field names to the
   /// set to also encrypt those fields (e.g. `{'title', 'tags', 'comment'}`).
+  /// If [startEpoch] is provided it is used as-is (useful for tests);
+  /// otherwise the current wall-clock millisecond is used.
+  /// [LocalCache.append] auto-increments on same-millisecond collision.
   Future<String> capture({
     required String title,
     List<String>? tags,
     String? comment,
     Set<String> encryptFields = const {},
+    int? startEpoch,
   }) async {
-    final startEpoch = DateTime.now().millisecondsSinceEpoch;
+    final resolvedEpoch = startEpoch ?? DateTime.now().millisecondsSinceEpoch;
     final deviceUuid = _getDeviceUuid();
     final hash = await _local.append(
       title: title,
-      startEpoch: startEpoch,
+      startEpoch: resolvedEpoch,
       isActive: true,
       tags: tags,
       comment: comment,
@@ -73,54 +77,33 @@ class SyncService {
   }
 
   /// End a running task by title.
-  /// Auto-closes any open pause before ending.
+  /// Delegates to [endByEntryId] after resolving the entry_id.
   /// Throws if no active task matches [title].
   Future<void> end(String title, int endEpoch) async {
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndex(entries, title);
-    final entry = entries[foundIndex];
-
-    // Auto-unpause if currently paused
-    if (entry['is_paused'] == true) {
-      await _local.closePause(foundIndex, endEpoch);
-    }
-
-    final endDeviceUuid = _getDeviceUuid();
-    await _local.update(foundIndex, {
-      'end_epoch': endEpoch,
-      'is_active': false,
-      'end_device_uuid': endDeviceUuid,
-    });
-
-    // Recompute duration
-    final updated = await _local.readEntries();
-    final e = updated[foundIndex];
-    final duration = LocalCache.computeDuration(
-      e['start_epoch'],
-      endEpoch,
-      e['pauses'] as List,
-    );
-    await _local.update(foundIndex, {'duration': duration});
-
-    await _touchLocalCookie();
+    final entryId = entries[foundIndex]['entry_id'] as String;
+    await endByEntryId(entryId, endEpoch);
   }
 
   /// Pause an active task by title.
+  /// Delegates to [pauseByEntryId] after resolving the entry_id.
   /// Throws if no active task matches [title].
   Future<void> pause(String title, int pauseEpoch) async {
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndex(entries, title);
-    await _local.addPause(foundIndex, pauseEpoch);
-    await _touchLocalCookie();
+    final entryId = entries[foundIndex]['entry_id'] as String;
+    await pauseByEntryId(entryId, pauseEpoch);
   }
 
   /// Unpause (resume) a paused task by title.
+  /// Delegates to [unpauseByEntryId] after resolving the entry_id.
   /// Throws if no active task matches [title].
   Future<void> unpause(String title, int unpauseEpoch) async {
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndex(entries, title);
-    await _local.closePause(foundIndex, unpauseEpoch);
-    await _touchLocalCookie();
+    final entryId = entries[foundIndex]['entry_id'] as String;
+    await unpauseByEntryId(entryId, unpauseEpoch);
   }
 
   /// Modify a staged entry's fields in-place.
@@ -142,15 +125,10 @@ class SyncService {
   // Queries (no remote calls)
   // ═════════════════════════════════════════════════════════════
 
-  /// Get the single active (running) task, or null if none.
-  Future<Map<String, dynamic>?> getActive() async {
+  /// Get all active (is_active==true) entries.
+  Future<List<Map<String, dynamic>>> getActive() async {
     final entries = await _local.readEntries();
-    for (final entry in entries) {
-      if (entry['is_active'] == true) {
-        return entry;
-      }
-    }
-    return null;
+    return entries.where((e) => e['is_active'] == true).toList();
   }
 
   /// Get all staging entries, optionally filtered by date range.
@@ -336,6 +314,61 @@ class SyncService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // Task actions by entry_id (multi-active support)
+  // ═════════════════════════════════════════════════════════════
+
+  /// End a running task by entry_id.
+  /// Auto-closes any open pause before ending.
+  /// Throws if no active task matches [entryId].
+  Future<void> endByEntryId(String entryId, int endEpoch) async {
+    final entries = await _local.readEntries();
+    final foundIndex = _findActiveEntryIndexById(entries, entryId);
+    final entry = entries[foundIndex];
+
+    // Auto-unpause if currently paused
+    if (entry['is_paused'] == true) {
+      await _local.closePause(foundIndex, endEpoch);
+    }
+
+    final endDeviceUuid = _getDeviceUuid();
+    await _local.update(foundIndex, {
+      'end_epoch': endEpoch,
+      'is_active': false,
+      'end_device_uuid': endDeviceUuid,
+    });
+
+    // Recompute duration
+    final updated = await _local.readEntries();
+    final e = updated[foundIndex];
+    final duration = LocalCache.computeDuration(
+      e['start_epoch'],
+      endEpoch,
+      e['pauses'] as List,
+    );
+    await _local.update(foundIndex, {'duration': duration});
+
+    await _touchLocalCookie();
+  }
+
+  /// Pause an active task by entry_id.
+  /// Throws if no active task matches [entryId].
+  Future<void> pauseByEntryId(String entryId, int pauseEpoch) async {
+    final entries = await _local.readEntries();
+    final foundIndex = _findActiveEntryIndexById(entries, entryId);
+    await _local.addPause(foundIndex, pauseEpoch);
+    await _touchLocalCookie();
+  }
+
+  /// Unpause (resume) a paused task by entry_id.
+  /// Throws if no active task matches [entryId].
+  Future<void> unpauseByEntryId(String entryId, int unpauseEpoch) async {
+    final entries = await _local.readEntries();
+    final foundIndex = _findActiveEntryIndexById(entries, entryId);
+    await _local.closePause(foundIndex, unpauseEpoch);
+    await _touchLocalCookie();
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // Push Operations
   // ═════════════════════════════════════════════════════════════
 
@@ -406,6 +439,18 @@ class SyncService {
     );
     if (idx == -1) {
       throw Exception('No active task found for: $title');
+    }
+    return idx;
+  }
+
+  /// Find index of an active entry by entry_id. Throws if not found.
+  int _findActiveEntryIndexById(
+      List<Map<String, dynamic>> entries, String entryId) {
+    final idx = entries.indexWhere(
+      (e) => e['entry_id'] == entryId && e['is_active'] == true,
+    );
+    if (idx == -1) {
+      throw Exception('No active task found for id: $entryId');
     }
     return idx;
   }

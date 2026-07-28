@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/core/utils/format_utils.dart';
@@ -15,8 +16,7 @@ class DashboardScreen extends ConsumerStatefulWidget {
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends ConsumerState<DashboardScreen>
-    with SingleTickerProviderStateMixin {
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // ── Task capture form ──────────────────────────────────────
 
   final _titleController = TextEditingController();
@@ -31,34 +31,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   // ── Active card state ─────────────────────────────────────
 
-  bool _activeCardExpanded = false;
-  late final AnimationController _pulseController;
-  late final Animation<Color?> _pulseColor;
+  final Set<String> _expandedActiveIds = {};
 
   // ── Data state ─────────────────────────────────────────────
 
-  Map<String, dynamic>? _activeTask;
+  List<Map<String, dynamic>> _activeTasks = [];
   List<Map<String, dynamic>> _uncommittedEntries = [];
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    _pulseColor = ColorTween(
-      begin: Colors.amber,
-      end: Colors.deepOrange,
-    ).animate(_pulseController)
-      ..addListener(() => setState(() {}));
     _loadData();
   }
 
   @override
   void dispose() {
-    _pulseController.dispose();
     _titleController.dispose();
     _tagsController.dispose();
     _commentController.dispose();
@@ -67,23 +55,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   Future<void> _loadData() async {
     final sync = ref.read(syncServiceProvider);
-    final active = await sync.getActive();
+    final activeList = await sync.getActive();
     final entries = await sync.getEntries();
     if (mounted) {
-      final nowPaused = active?['is_paused'] == true;
       setState(() {
-        _activeTask = active;
+        _activeTasks = activeList;
         _uncommittedEntries = entries
             .where((e) => e['is_active'] != true && e['committed'] != true)
             .toList();
         _isLoading = false;
       });
-      // Pulse animation: start when paused, stop when not
-      if (nowPaused && !_pulseController.isAnimating) {
-        _pulseController.repeat(reverse: true);
-      } else if (!nowPaused && _pulseController.isAnimating) {
-        _pulseController.stop();
-      }
     }
   }
 
@@ -146,25 +127,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   // ── Task actions ───────────────────────────────────────────
 
-  Future<void> _endTask(String title) async {
+  Future<void> _endTask(String entryId) async {
     try {
       final sync = ref.read(syncServiceProvider);
-      await sync.end(title, DateTime.now().millisecondsSinceEpoch);
+      await sync.endByEntryId(entryId, DateTime.now().millisecondsSinceEpoch);
       await _loadData();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Dashboard: _endTask failed for $entryId: $e');
+    }
   }
 
-  Future<void> _togglePause(String title, bool isPaused) async {
+  Future<void> _togglePause(String entryId, bool isPaused) async {
     try {
       final sync = ref.read(syncServiceProvider);
       final now = DateTime.now().millisecondsSinceEpoch;
       if (isPaused) {
-        await sync.unpause(title, now);
+        await sync.unpauseByEntryId(entryId, now);
       } else {
-        await sync.pause(title, now);
+        await sync.pauseByEntryId(entryId, now);
       }
       await _loadData();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Dashboard: _togglePause failed for $entryId: $e');
+    }
   }
 
   // ── Build ──────────────────────────────────────────────────
@@ -184,7 +169,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   Widget _buildContent() {
-    final hasActive = _activeTask != null;
+    final hasActive = _activeTasks.isNotEmpty;
     final hasUncommitted = _uncommittedEntries.isNotEmpty;
 
     if (!hasActive && !hasUncommitted) {
@@ -197,14 +182,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
-        // Running activity
-        if (_activeTask != null) ...[
+        // Running activities
+        if (hasActive) ...[
           _buildSectionHeader('Running', Icons.play_circle_outline),
-          _buildActiveTaskCard(),
+          ..._activeTasks.map((task) => _buildActiveTaskCard(task)),
         ],
         // Uncommitted completed entries
         if (hasUncommitted) ...[
-          if (_activeTask != null) const SizedBox(height: 16),
+          if (hasActive) const SizedBox(height: 16),
           _buildSectionHeader('Pending Commit', Icons.cloud_upload_outlined),
           const SizedBox(height: 8),
           ..._uncommittedEntries.map(_buildUncommittedCard),
@@ -264,8 +249,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   // ── Active task card (collapsible, icon-only buttons) ──────
 
-  Widget _buildActiveTaskCard() {
-    final task = _activeTask!;
+  Widget _buildActiveTaskCard(Map<String, dynamic> task) {
+    final entryId = task['entry_id'] as String? ?? '';
     final title = task['title'] as String? ?? 'Untitled';
     final startEpoch = task['start_epoch'] as int? ?? 0;
     final isPaused = task['is_paused'] == true;
@@ -274,9 +259,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final elapsed = DateTime.now().difference(
       DateTime.fromMillisecondsSinceEpoch(startEpoch),
     );
-
-    final pauseColor =
-        isPaused ? (_pulseColor.value ?? Colors.amber) : Colors.amber;
+    final cardExpanded = _expandedActiveIds.contains(entryId);
 
     return Card(
       color: Theme.of(context).colorScheme.primaryContainer,
@@ -286,8 +269,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         children: [
           // ── Header (tappable to expand/collapse) ────────────
           InkWell(
-            onTap: () =>
-                setState(() => _activeCardExpanded = !_activeCardExpanded),
+            onTap: () {
+              setState(() {
+                if (cardExpanded) {
+                  _expandedActiveIds.remove(entryId);
+                } else {
+                  _expandedActiveIds.add(entryId);
+                }
+              });
+            },
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Row(
@@ -307,11 +297,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   if (isPaused)
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
-                      child: Icon(Icons.pause_circle_filled,
-                          size: 18, color: pauseColor),
+                      child: const Icon(Icons.pause_circle_filled,
+                          size: 18, color: Colors.amber),
                     ),
                   Icon(
-                    _activeCardExpanded
+                    cardExpanded
                         ? Icons.expand_less
                         : Icons.expand_more,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -320,59 +310,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
           ),
-          // ── Elapsed + action buttons (same row) ─────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
-            child: Row(
-              children: [
-                Text(
-                  'Elapsed: ${FormatUtils.duration(elapsed)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const Spacer(),
-                // Pause / Resume — filled yellow, black icon
-                SizedBox(
-                  width: 32,
-                  height: 28,
-                  child: FilledButton(
-                    onPressed: () => _togglePause(title, isPaused),
-                    style: FilledButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      backgroundColor: pauseColor,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6)),
-                    ),
-                    child: Icon(
-                      isPaused ? Icons.play_arrow : Icons.pause,
-                      size: 16,
-                      color: Colors.black,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                // End — red fill, white icon
-                SizedBox(
-                  width: 32,
-                  height: 28,
-                  child: FilledButton(
-                    onPressed: () => _endTask(title),
-                    style: FilledButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6)),
-                    ),
-                    child: const Icon(Icons.stop, size: 16),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _buildActiveCardActions(entryId, isPaused, elapsed),
           // ── Expanded body ────────────────────────────────────
           AnimatedCrossFade(
             firstChild: const SizedBox.shrink(),
             secondChild: _buildExpandedBody(tags, comment, startEpoch),
-            crossFadeState: _activeCardExpanded
+            crossFadeState: cardExpanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
             duration: const Duration(milliseconds: 200),
@@ -396,14 +339,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             Wrap(
               spacing: 6,
               runSpacing: 4,
-              children: tags.map((t) {
-                return Chip(
-                  label: Text(t, style: const TextStyle(fontSize: 12)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                );
-              }).toList(),
+              children: tags
+                  .map((t) => Chip(
+                        label:
+                            Text(t, style: const TextStyle(fontSize: 12)),
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ))
+                  .toList(),
             ),
             const SizedBox(height: 8),
           ],
@@ -427,7 +372,65 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     );
   }
 
+  /// Pause/Resume and End action buttons for an active task card.
+  Widget _buildActiveCardActions(
+    String entryId,
+    bool isPaused,
+    Duration elapsed,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
+      child: Row(
+        children: [
+          Text(
+            'Elapsed: ${FormatUtils.duration(elapsed)}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const Spacer(),
+          // Pause / Resume — filled yellow, black icon
+          SizedBox(
+            width: 32,
+            height: 28,
+            child: FilledButton(
+              onPressed: () => _togglePause(entryId, isPaused),
+              style: FilledButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: Colors.amber,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+              ),
+              child: Icon(
+                isPaused ? Icons.play_arrow : Icons.pause,
+                size: 16,
+                color: Colors.black,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // End — red fill, white icon
+          SizedBox(
+            width: 32,
+            height: 28,
+            child: FilledButton(
+              onPressed: () => _endTask(entryId),
+              style: FilledButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: Theme.of(context).colorScheme.error,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+              ),
+              child: const Icon(Icons.stop, size: 16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Uncommitted entry card (collapsible, orange border) ───
+  //
+  // Keys are list indices (uncommitted entries may not have stable
+  // entry IDs, so we use index-based tracking for expand/collapse state).
 
   final Set<int> _expandedUncommitted = {};
 
@@ -524,14 +527,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             Wrap(
               spacing: 6,
               runSpacing: 4,
-              children: tags.map((t) {
-                return Chip(
-                  label: Text(t, style: const TextStyle(fontSize: 11)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                );
-              }).toList(),
+              children: tags
+                  .map((t) => Chip(
+                        label:
+                            Text(t, style: const TextStyle(fontSize: 11)),
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ))
+                  .toList(),
             ),
             const SizedBox(height: 6),
           ],

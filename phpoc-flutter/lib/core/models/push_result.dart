@@ -12,17 +12,22 @@ class PushResult {
   /// Error messages for each failure (empty on full success).
   final List<String> errors;
 
+  /// First block hash prefix (for UI confirmation display).
+  final String? hashPrefix;
+
   const PushResult({
     required this.success,
     required this.blocksPushed,
     this.failedBlocks = const [],
     this.errors = const [],
+    this.hashPrefix,
   });
 
   /// Convenience factory for a completely successful push.
-  factory PushResult.ok(int blocksPushed) => PushResult(
+  factory PushResult.ok(int blocksPushed, {String? hashPrefix}) => PushResult(
         success: true,
         blocksPushed: blocksPushed,
+        hashPrefix: hashPrefix,
       );
 
   /// Convenience factory for a failed push.
@@ -30,13 +35,22 @@ class PushResult {
     int blocksPushed = 0,
     List<int> failedBlocks = const [],
     List<String> errors = const [],
+    String? hashPrefix,
   }) =>
       PushResult(
         success: false,
         blocksPushed: blocksPushed,
         failedBlocks: failedBlocks,
         errors: errors,
+        hashPrefix: hashPrefix,
       );
+
+  String get hashPrefixDisplay {
+    if (hashPrefix == null || hashPrefix!.isEmpty) return '';
+    return hashPrefix!.length >= 10
+        ? hashPrefix!.substring(0, 10)
+        : hashPrefix!;
+  }
 
   @override
   String toString() => 'PushResult(success: $success, pushed: $blocksPushed'
@@ -49,6 +63,7 @@ class PushResult {
       other is PushResult &&
           success == other.success &&
           blocksPushed == other.blocksPushed &&
+          hashPrefix == other.hashPrefix &&
           _listEquals(failedBlocks, other.failedBlocks) &&
           _listEquals(errors, other.errors);
 
@@ -56,6 +71,7 @@ class PushResult {
   int get hashCode => Object.hash(
         success,
         blocksPushed,
+        hashPrefix,
         Object.hashAll(failedBlocks),
         Object.hashAll(errors),
       );

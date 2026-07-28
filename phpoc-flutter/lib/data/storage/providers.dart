@@ -1,11 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/crypto/crypto_service.dart';
+import '../../data/ledger/engine.dart';
+import '../../data/ledger/store_adapters.dart';
 import '../../data/sync/staging_storage.dart';
 import '../../data/sync/sync_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
 import '../../services/ledger_pull_service.dart';
+import '../../services/ledger_push_service.dart';
 import '../../services/onboarding_service.dart';
 import 'database.dart';
 import 'preferences.dart';
@@ -65,12 +68,18 @@ final securePreferencesProvider = Provider<SecurePreferences>((ref) {
   return SecurePreferences();
 });
 
-/// Sync service provider — uses SQLite-backed staging storage.
+/// Sync service provider — uses SQLite-backed staging storage
+/// and LedgerEngine for commit operations.
 final syncServiceProvider = Provider<SyncService>((ref) {
   final crypto = ref.watch(cryptoServiceProvider);
   final db = ref.watch(databaseProvider);
   final storage = StagingStorage(db);
-  return SyncService(storage: storage, crypto: crypto);
+  final engine = ref.watch(ledgerEngineProvider);
+  return SyncService(
+    storage: storage,
+    crypto: crypto,
+    ledgerEngine: engine,
+  );
 });
 
 /// Auth service provider — injects crypto, db, preferences.
@@ -99,6 +108,24 @@ final onboardingServiceProvider = Provider<OnboardingService>((ref) {
   );
 });
 
+/// Ledger engine provider — wraps BlockDao + in-memory index store.
+/// Identity secret is optional; blocks are built without identity seals
+/// when null (restored from onboarding flow later).
+final ledgerEngineProvider = Provider<LedgerEngine>((ref) {
+  final crypto = ref.watch(cryptoServiceProvider);
+  final db = ref.watch(databaseProvider);
+  final store = LedgerBlockStore(db.blockDao);
+  final indexStore = LedgerIndexStore();
+  final stagingStorage = StagingStorage(db);
+  // TODO: derive identitySecret from genesis block once onboarding is complete
+  return LedgerEngine(
+    crypto: crypto,
+    store: store,
+    indexStore: indexStore,
+    stagingStore: stagingStorage,
+  );
+});
+
 /// Ledger backup service provider — injects database.
 final ledgerBackupServiceProvider = Provider<LedgerBackupService>((ref) {
   final db = ref.watch(databaseProvider);
@@ -118,4 +145,16 @@ final ledgerPullServiceProvider = Provider<LedgerPullService>((ref) {
     backupService: ref.watch(ledgerBackupServiceProvider),
     stagingStorage: StagingStorage(db),
   );
+});
+
+/// Ledger push service provider — null when no transport configured.
+/// Pushes the full ledger chain to the remote Worker/R2 blob store.
+/// Watched by [SyncScreen] for the "Push Ledger to Cloud" button.
+final ledgerPushServiceProvider = Provider<LedgerPushService?>((ref) {
+  final sync = ref.watch(syncServiceProvider);
+  if (!sync.isRemoteAvailable) return null;
+  final crypto = ref.watch(cryptoServiceProvider);
+  final db = ref.watch(databaseProvider);
+  return LedgerPushService(
+      db: db, crypto: crypto, transport: sync.transport!);
 });

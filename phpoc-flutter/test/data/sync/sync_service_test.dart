@@ -3,11 +3,15 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/core/models/block.dart';
+import 'package:phpoc_flutter/core/models/push_result.dart';
 import 'package:phpoc_flutter/core/models/sync_result.dart';
 import 'package:phpoc_flutter/data/ledger/engine.dart';
+import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/staging_paths.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
+import 'package:phpoc_flutter/services/ledger_push_service.dart';
 
 /// SyncService tests — Groups E (16) + F (5) + G (18) + H (8) = 47 assertions.
 ///
@@ -225,9 +229,9 @@ void main() {
       await svc.capture(title: 'New Task');
 
       final active = await svc.getActive();
-      expect(active, isNotNull);
-      expect(active!['title'], 'New Task');
-      expect(active['is_active'], true);
+      expect(active, isNotEmpty);
+      expect(active[0]['title'], 'New Task');
+      expect(active[0]['is_active'], true);
     });
 
     // E2
@@ -321,7 +325,7 @@ void main() {
       await svc.pause('Pause Task', 2000);
 
       final active = await svc.getActive();
-      expect(active!['is_paused'], true,
+      expect(active[0]['is_paused'], true,
           reason: 'Task should be marked as paused');
 
       final entries = await svc.getEntries();
@@ -348,7 +352,7 @@ void main() {
       await svc.unpause('Unpause Task', 3000);
 
       final active = await svc.getActive();
-      expect(active!['is_paused'], false,
+      expect(active[0]['is_paused'], false,
           reason: 'Task should be resumed after unpause');
 
       final entries = await svc.getEntries();
@@ -435,15 +439,16 @@ void main() {
       await svc.end('Done', 2000);
 
       final active = await svc.getActive();
-      expect(active, isNotNull);
-      expect(active!['title'], 'Active');
+      expect(active, isNotEmpty);
+      expect(active[0]['title'], 'Active');
     });
 
     // F2
-    test('F2: getActive() returns null when no active entries', () async {
+    test('F2: getActive() returns empty list when no active entries', () async {
       final svc = await _makeSync();
       final active = await svc.getActive();
-      expect(active, isNull);
+      expect(active, isA<List>());
+      expect(active, isEmpty);
     });
 
     // F3
@@ -1682,4 +1687,283 @@ void main() {
               'so other devices can detect cookie presence.');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group S: SyncService ↔ LedgerPushService Integration — K1–K4
+  // ═══════════════════════════════════════════════════════════════
+
+  group('S: SyncService ↔ LedgerPushService Integration', () {
+    /// Create a LedgerPushService backed by an in-memory DB with a seeded
+    /// block, a CryptoService with MK, and a spy transport.
+    Future<(LedgerPushService, _SpyTransport, AppDatabase)> _makePushService({
+      bool withMk = true,
+      _SpyTransport? transport,
+    }) async {
+      final db = AppDatabase.inMemory();
+      final crypto = await _makeCrypto();
+      if (!withMk) {
+        crypto.clearMasterKey();
+      }
+      final spy = transport ?? _SpyTransport();
+      final pushSvc = LedgerPushService(db: db, crypto: crypto, transport: spy);
+      return (pushSvc, spy, db);
+    }
+
+    /// Insert a single day block into the DB for push tests.
+    Future<void> _seedBlock(AppDatabase db, {int index = 1}) async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'test-block-00$index',
+        blockType: BlockType.day,
+        blockIndex: index,
+        dataEnc: 'eyJ0ZXN0IjogdHJ1ZX0=', // base64({"test": true})
+        prevHash: Block.genesisPrevHash,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ));
+    }
+
+    // K1 (mapped from blueprint K1): commitEntries → pushAll end-to-end
+    test('K1: commitEntries() followed by pushAll() — committed block '
+        'appears at ledger/blocks/NNNNNN.json on fake transport', () async {
+      final (pushSvc, spy, db) = await _makePushService();
+
+      // Seed a block (simulating what commitEntries() writes to DB).
+      // In Phase 3, commitEntries() will write blocks to the same
+      // AppDatabase that LedgerPushService reads from.
+      await _seedBlock(db, index: 1);
+
+      final result = await pushSvc.pushAll();
+
+      expect(result.success, isTrue,
+          reason: 'Push must succeed with seeded block');
+      expect(result.blocksPushed, 1,
+          reason: 'One block pushed to remote');
+      expect(spy.pushPaths,
+          contains('ledger/blocks/000001.json'),
+          reason: 'Block file must be at canonical path — '
+              'blockIndex 1 → 000001.json');
+    });
+
+    // K2: push idempotency
+    test('K2: pushAll() with no new commits is idempotent — second push '
+        'overwrites same blocks, remote state unchanged', () async {
+      final (pushSvc, spy, db) = await _makePushService();
+      await _seedBlock(db);
+
+      // First push
+      final r1 = await pushSvc.pushAll();
+      expect(r1.success, isTrue);
+      expect(r1.blocksPushed, 1);
+
+      // Second push (no new blocks)
+      final r2 = await pushSvc.pushAll();
+      expect(r2.success, isTrue,
+          reason: 'Re-push must succeed — idempotent design');
+      expect(r2.blocksPushed, 1,
+          reason: 'Same block count on re-push — no duplication');
+
+      // Both pushes go to the same paths
+      final blockPaths =
+          spy.pushPaths.where((p) => p.startsWith('ledger/blocks/')).toList();
+      expect(blockPaths.length, 2,
+          reason: 'Both pushes write to the same block path — '
+              'idempotent overwrite, not new files');
+    });
+
+    // K3: offline / transport failure
+    test('K3: pushAll() after transport disconnect returns PushResult.failure, '
+        'does not throw unhandled exception', () async {
+      // Transport that throws on push
+      final failingTransport = _FailingTransport();
+      final crypto = await _makeCrypto();
+      final db = AppDatabase.inMemory();
+      final pushSvc =
+          LedgerPushService(db: db, crypto: crypto, transport: failingTransport);
+      await _seedBlock(db);
+
+      // Must not throw — returns structured failure
+      final result = await pushSvc.pushAll();
+
+      expect(result.success, isFalse,
+          reason: 'Network failures must produce PushResult.failure, '
+              'not crashes — the UI catches PushResult');
+      expect(result.failedBlocks, isNotEmpty,
+          reason: 'Failed block indices must be reported');
+      expect(result.errors, isNotEmpty,
+          reason: 'Error messages must be surfaced for debugging');
+    });
+
+    // K4: no MK guard
+    test('K4: pushAll() without cached MK throws StateError with '
+        'descriptive message', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = await _makeCrypto();
+      crypto.clearMasterKey();
+      final pushSvc =
+          LedgerPushService(db: db, crypto: crypto, transport: _SpyTransport());
+      await _seedBlock(db);
+
+      expect(
+        () => pushSvc.pushAll(),
+        throwsA(isA<StateError>()),
+        reason: 'Must refuse to push without master key — '
+            'user must authenticate before pushing ledger blocks',
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group S: Multi-Active Support
+  // ═══════════════════════════════════════════════════════════════
+
+  group('S: SyncService — Multi-Active', () {
+    // S1 — getActive() returns list when multiple active entries exist
+    test('S1: getActive() returns list of 2 when 2 active entries exist',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Task A');
+      await svc.capture(title: 'Task B');
+
+      final active = await svc.getActive();
+      expect(active, isA<List>(),
+          reason: 'getActive() must return List<Map> for multi-active support');
+      expect(active.length, 2,
+          reason: 'Both captured tasks should remain active');
+      expect(active[0]['title'], 'Task A');
+      expect(active[1]['title'], 'Task B');
+    });
+
+    // S2 — getActive() returns empty list when no active entries
+    test('S2: getActive() returns empty list when no active entries', () async {
+      final svc = await _makeSync();
+      final active = await svc.getActive();
+      expect(active, isA<List>(),
+          reason: 'getActive() must return List, not null');
+      expect(active, isEmpty,
+          reason: 'Empty list indicates no active tasks');
+    });
+
+    // S3 — capture() does not deactivate existing active entries
+    test('S3: capture() does not deactivate existing active entries', () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Task A');
+      await svc.capture(title: 'Task B');
+
+      final entries = await svc.getEntries();
+      final activeCount = entries.where((e) => e['is_active'] == true).length;
+      expect(activeCount, 2,
+          reason: 'capture() must not set is_active=false on existing entries');
+    });
+
+    // S4 — capture() appends new active entry while existing stays active
+    test(
+        'S4: capture() appends entry alongside existing active, both stay active',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'First');
+      await svc.capture(title: 'Second');
+
+      final entries = await svc.getEntries();
+      expect(entries.length, 2);
+      expect(entries[0]['is_active'], true,
+          reason: 'First entry must still be active after second capture');
+      expect(entries[1]['is_active'], true,
+          reason: 'Second entry must be created as active');
+    });
+
+    // S5 — endByEntryId(entryId, endEpoch) ends correct entry among 2 active
+    test('S5: endByEntryId() ends correct entry among 2 active tasks', () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Task A');
+      await svc.capture(title: 'Task B');
+
+      final active = await svc.getActive();
+      final targetId = active[1]['entry_id'] as String;
+
+      await svc.endByEntryId(targetId, 5000);
+
+      final afterEnd = await svc.getActive();
+      expect(afterEnd.length, 1,
+          reason: 'Only the targeted entry should be ended');
+      expect(afterEnd[0]['entry_id'], active[0]['entry_id'],
+          reason: 'Untargeted entry must remain active');
+
+      final entries = await svc.getEntries();
+      final ended = entries.firstWhere((e) => e['entry_id'] == targetId);
+      expect(ended['is_active'], false,
+          reason: 'Targeted entry must have is_active=false');
+      expect(ended['end_epoch'], 5000);
+    });
+
+    // S6 — pauseByEntryId(entryId, epoch) pauses correct entry among 2 active
+    test('S6: pauseByEntryId() pauses correct entry among 2 active tasks',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Task A');
+      await svc.capture(title: 'Task B');
+
+      final active = await svc.getActive();
+      final targetId = active[0]['entry_id'] as String;
+
+      await svc.pauseByEntryId(targetId, 3000);
+
+      // Read fresh state
+      final entries = await svc.getEntries();
+      final paused = entries.firstWhere((e) => e['entry_id'] == targetId);
+      final unpaused = entries.firstWhere((e) => e['entry_id'] != targetId && e['is_active'] == true);
+
+      expect(paused['is_paused'], true,
+          reason: 'Targeted entry must be paused');
+      expect(unpaused['is_paused'], false,
+          reason: 'Untargeted entry must remain unpaused');
+    });
+
+    // S7 — unpauseByEntryId(entryId, epoch) unpauses correct entry
+    test('S7: unpauseByEntryId() unpauses correct entry among 2 active',
+        () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Task A');
+      await svc.capture(title: 'Task B');
+
+      final active = await svc.getActive();
+      final targetId = active[0]['entry_id'] as String;
+
+      await svc.pauseByEntryId(targetId, 3000);
+      await svc.unpauseByEntryId(targetId, 5000);
+
+      final entries = await svc.getEntries();
+      final task = entries.firstWhere((e) => e['entry_id'] == targetId);
+      expect(task['is_paused'], false,
+          reason: 'Entry must be unpaused after unpauseByEntryId()');
+    });
+
+    // S8 — Existing end(title) still works (backward compat)
+    test('S8: end(title) still works with single active entry', () async {
+      final svc = await _makeSync();
+      await svc.capture(title: 'Old Style');
+      await svc.end('Old Style', 3000);
+
+      final entries = await svc.getEntries();
+      expect(entries[0]['is_active'], false,
+          reason: 'end(title) must still work for backward compatibility');
+      expect(entries[0]['end_epoch'], 3000);
+    });
+  });
+}
+
+/// Transport that throws on push/pull for failure-path tests.
+class _FailingTransport extends HttpTransport {
+  _FailingTransport()
+      : super(baseUrl: 'https://fail.example.com', apiKey: 'fail-key');
+  @override
+  Future<Uint8List?> pull(String path) async {
+    throw Exception('Simulated network failure');
+  }
+  @override
+  Future<void> push(String path, Uint8List data) async {
+    throw Exception('Simulated network failure on push');
+  }
+  @override
+  Future<List<String>> listFiles(String prefix) async => [];
+  @override
+  Future<void> delete(String path) async {}
 }

@@ -9,19 +9,24 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
 
-/// LedgerPushService tests — Groups A–H (39 assertions).
+/// LedgerPushService tests — Groups A–L (58 assertions).
 ///
 /// Blueprint: docs/planning/flutter/PUSH_TO_R2_PHASE1.md
+/// Blueprint: docs/planning/flutter/PUSH_SEAL_FIX_PHASE1.md
 ///
 /// Covers:
 ///   A1–A5:  Construction & API
 ///   B1–B5:  Block Serialization
 ///   C1–C4:  Obfuscation
-///   D1–D6:  Push Operations
+///   D1–D7:  Push Operations
 ///   E1–E4:  Hash Index
 ///   F1–F4:  Push Result
 ///   G1–G6:  Error Handling
 ///   H1–H5:  Integration
+///   I1–I8:  Seal Field Serialization (blockId ≠ identitySeal)
+///   J1–J3:  Hash Index Correctness
+///   K1–K2:  Entry Decoding (defense-in-depth)
+///   L1–L5:  Genesis Push Correctness (seal field + no excess fields)
 
 // ── Test constants ─────────────────────────────────────────────
 
@@ -609,7 +614,7 @@ void main() {
 
       expect(restoredJson['type'], 'day');
       expect(restoredJson['day_index'], 1);
-      expect(restoredJson['day_hash'], 'seal-verify');
+      expect(restoredJson['day_hash'], 'verify-me');
       expect(restoredJson['entries'], isA<List>());
     });
 
@@ -729,18 +734,19 @@ void main() {
     // E2
     test('E2: Hash index entry [0] is the genesis block hash', () async {
       await _insertBlock(db,
-        blockId: 'gen-id', type: BlockType.genesis, blockIndex: 0,
-        identitySeal: 'genesis-hash-value');
+        blockId: 'genesis-block-hash', type: BlockType.genesis, blockIndex: 0,
+        identitySeal: 'genesis-identity-seal');
       await _insertBlock(db,
         blockId: 'd1', type: BlockType.day, blockIndex: 1,
-        prevHash: 'genesis-hash-value');
+        prevHash: 'genesis-block-hash');
 
       await service.pushAll();
 
       final hashIndex = transport.store['ledger/hash_index.json'];
       final parsed = jsonDecode(utf8.decode(hashIndex!)) as List;
-      expect(parsed[0], 'gen-id',
-          reason: 'First hash index entry must be genesis block hash (blockId)');
+      expect(parsed[0], 'genesis-block-hash',
+          reason: 'First hash index entry must be genesis blockId (block_hash), '
+              'not identitySeal');
     });
 
     // E3
@@ -1093,7 +1099,7 @@ void main() {
       final json = jsonDecode(deobfuscated) as Map<String, dynamic>;
 
       expect(json['type'], 'day');
-      expect(json['day_hash'], 'seal-rt');
+      expect(json['day_hash'], 'rt-block');
       expect(json['entries'], isA<List>());
       expect((json['entries'] as List).length, 1);
     });
@@ -1106,7 +1112,7 @@ void main() {
         identitySeal: 'hi-seal-0');
       await _insertBlock(db,
         blockId: 'hi-1', type: BlockType.day, blockIndex: 1,
-        identitySeal: 'hi-seal-1', prevHash: 'hi-seal-0');
+        identitySeal: 'hi-seal-1', prevHash: 'hi-0');
 
       await service.pushAll();
 
@@ -1141,6 +1147,763 @@ void main() {
       // and confirm all existing 918 tests still pass.
       expect(true, isTrue,
           reason: 'Meta-test: run full flutter test suite after Phase 3');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group I: Seal Field Serialization (blockId ≠ identitySeal)
+  // ═════════════════════════════════════════════════════════════
+  //
+  // These tests verify the fix: seal fields (day_hash, year_hash,
+  // month_hash) and block_hash must use blockId — NOT identitySeal.
+  // The existing helper _insertBlock() defaults identitySeal ?? blockId,
+  // which masks this bug. Tests here explicitly pass distinct values.
+
+  group('I: Seal field — blockId vs identitySeal', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakeHttpTransport transport;
+    late LedgerPushService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakeHttpTransport();
+      service = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    /// Helper: insert block with explicit, distinct blockId + identitySeal.
+    /// Unlike the top-level _insertBlock (which defaults identitySeal ?? blockId),
+    /// this never conflates the two values.
+    Future<Block> _insertDistinct(
+      AppDatabase db, {
+      required String blockId,
+      required BlockType type,
+      required int blockIndex,
+      required String? identitySeal,
+      String dataEnc = 'eyJ0aXRsZSI6InRlc3QifQ==',
+      String? prevHash,
+      int? createdAt,
+    }) async {
+      final block = Block(
+        blockId: blockId,
+        blockType: type,
+        blockIndex: blockIndex,
+        dataEnc: dataEnc,
+        identitySeal: identitySeal,
+        prevHash: prevHash ?? Block.genesisPrevHash,
+        createdAt: createdAt ?? 1_000_000,
+      );
+      await db.blockDao.insertBlock(block);
+      return block;
+    }
+
+    /// Helper: push → pull back → deobfuscate → return parsed JSON.
+    Future<Map<String, dynamic>> _pushAndDeobfuscate(
+      int blockIndex,
+    ) async {
+      await service.pushAll();
+      final path =
+          'ledger/blocks/${blockIndex.toString().padLeft(6, '0')}.json';
+      final pushed = transport.store[path];
+      if (pushed == null) {
+        throw StateError('Block $blockIndex not found in transport store');
+      }
+      final deobfuscated = crypto.deobfuscateBlob(pushed, testMkHex);
+      return jsonDecode(deobfuscated) as Map<String, dynamic>;
+    }
+
+    // I1
+    test('I1: Genesis with blockId ≠ identitySeal — day_hash = blockId',
+        () async {
+      await _insertDistinct(db,
+        blockId: 'genesis-block-hash-aaa',
+        type: BlockType.genesis,
+        blockIndex: 0,
+        identitySeal: 'genesis-identity-proof-zzz',
+      );
+
+      final json = await _pushAndDeobfuscate(0);
+      // Genesis uses block_hash (I-17), not day_hash
+      expect(json['block_hash'], equals('genesis-block-hash-aaa'),
+          reason: 'Genesis seal field (block_hash) must be the block hash '
+              '(blockId), not the identity proof (identitySeal)');
+      expect(json.containsKey('day_hash'), isFalse,
+          reason: 'Genesis must not emit day_hash');
+      expect(json['block_hash'], isNot(equals('genesis-identity-proof-zzz')),
+          reason: 'Identity seal must not leak into the seal hash field');
+    });
+
+    // I2
+    test('I2: Day block with blockId ≠ identitySeal — day_hash = blockId',
+        () async {
+      await _insertDistinct(db,
+        blockId: 'day-block-hash-bbb',
+        type: BlockType.day,
+        blockIndex: 1,
+        identitySeal: 'day-identity-ccc',
+        prevHash: 'aaaa',
+      );
+
+      final json = await _pushAndDeobfuscate(1);
+      expect(json['day_hash'], equals('day-block-hash-bbb'),
+          reason: 'Day block seal field (day_hash) must use blockId');
+      expect(json['day_hash'], isNot(equals('day-identity-ccc')),
+          reason: 'Identity seal must not overwrite day_hash');
+    });
+
+    // I3
+    test('I3: Year summary with blockId ≠ identitySeal — year_hash = blockId',
+        () async {
+      await _insertDistinct(db,
+        blockId: 'year-block-hash-ddd',
+        type: BlockType.year,
+        blockIndex: 1,
+        identitySeal: 'year-identity-eee',
+        prevHash: '0000',
+      );
+
+      final json = await _pushAndDeobfuscate(1);
+      expect(json['year_hash'], equals('year-block-hash-ddd'),
+          reason: 'Year summary seal field (year_hash) must use blockId');
+      expect(json['year_hash'], isNot(equals('year-identity-eee')),
+          reason: 'Identity seal must not overwrite year_hash');
+      // Verify the correct field name is used (not a fallback like
+      // 'year_summary_hash')
+      expect(json.containsKey('year_hash'), isTrue,
+          reason: 'Year summary must emit "year_hash" field name, '
+              'not a type-concatenated fallback');
+    });
+
+    // I4
+    test('I4: Month summary with blockId ≠ identitySeal — month_hash = '
+        'blockId', () async {
+      await _insertDistinct(db,
+        blockId: 'month-block-hash-fff',
+        type: BlockType.month,
+        blockIndex: 1,
+        identitySeal: 'month-identity-ggg',
+        prevHash: '1111',
+      );
+
+      final json = await _pushAndDeobfuscate(1);
+      expect(json['month_hash'], equals('month-block-hash-fff'),
+          reason: 'Month summary seal field (month_hash) must use blockId');
+      expect(json['month_hash'], isNot(equals('month-identity-ggg')),
+          reason: 'Identity seal must not overwrite month_hash');
+      expect(json.containsKey('month_hash'), isTrue,
+          reason: 'Month summary must emit "month_hash" field name, '
+              'not a type-concatenated fallback');
+    });
+
+    // I5
+    test('I5: block_hash field = blockId regardless of identitySeal value',
+        () async {
+      await _insertDistinct(db,
+        blockId: 'block-hash-real-111',
+        type: BlockType.day,
+        blockIndex: 1,
+        identitySeal: 'identity-seal-different-222',
+        prevHash: 'aaaa',
+      );
+
+      final json = await _pushAndDeobfuscate(1);
+      expect(json['block_hash'], equals('block-hash-real-111'),
+          reason: 'block_hash convenience field must always be blockId, '
+              'not identitySeal');
+      expect(json['block_hash'], isNot(equals('identity-seal-different-222')),
+          reason: 'block_hash must NOT be identitySeal even when non-null');
+    });
+
+    // I6
+    test('I6: identity_seal preserved as separate field when non-null',
+        () async {
+      await _insertDistinct(db,
+        blockId: 'block-id-aaa',
+        type: BlockType.genesis,
+        blockIndex: 0,
+        identitySeal: 'identity-proof-bbb',
+      );
+
+      final json = await _pushAndDeobfuscate(0);
+      expect(json['identity_seal'], equals('identity-proof-bbb'),
+          reason: 'identity_seal must be preserved as a separate field '
+              'alongside the seal hash (which uses blockId)');
+      // Verify both fields coexist with correct values
+      // Genesis seal field is block_hash (I-17)
+      expect(json['block_hash'], equals('block-id-aaa'));
+      expect(json.containsKey('day_hash'), isFalse,
+          reason: 'Genesis must not emit day_hash');
+      expect(json['identity_seal'], isNot(equals(json['block_hash'])),
+          reason: 'identity_seal and seal hash must be distinct values');
+    });
+
+    // I7
+    test('I7: identity_seal omitted from serialized JSON when null', () async {
+      await _insertDistinct(db,
+        blockId: 'day-block-no-ident',
+        type: BlockType.day,
+        blockIndex: 1,
+        identitySeal: null,
+        prevHash: 'aaaa',
+      );
+
+      final json = await _pushAndDeobfuscate(1);
+      expect(json.containsKey('identity_seal'), isFalse,
+          reason: 'Null identity_seal must not emit the field in JSON — '
+              'absent fields mean no identity proof present');
+      // day_hash must still be present and use blockId
+      expect(json['day_hash'], equals('day-block-no-ident'),
+          reason: 'day_hash must still use blockId when identitySeal is null');
+    });
+
+    // I8
+    test('I8: All four block types round-trip push→deobfuscate→verify '
+        'seal fields', () async {
+      // Insert one of each block type, all with distinct blockId vs identitySeal
+      await _insertDistinct(db,
+        blockId: 'all-gen-hash',
+        type: BlockType.genesis,
+        blockIndex: 0,
+        identitySeal: 'all-gen-ident',
+      );
+      await _insertDistinct(db,
+        blockId: 'all-year-hash',
+        type: BlockType.year,
+        blockIndex: 1,
+        identitySeal: 'all-year-ident',
+        prevHash: 'all-gen-hash',
+      );
+      await _insertDistinct(db,
+        blockId: 'all-month-hash',
+        type: BlockType.month,
+        blockIndex: 2,
+        identitySeal: 'all-month-ident',
+        prevHash: 'all-year-hash',
+      );
+      await _insertDistinct(db,
+        blockId: 'all-day-hash',
+        type: BlockType.day,
+        blockIndex: 3,
+        identitySeal: null,
+        prevHash: 'all-month-hash',
+      );
+
+      await service.pushAll();
+
+      // Deobfuscate each block and verify
+      final g = await _pushAndDeobfuscate(0);
+      // Genesis uses block_hash (I-17), not day_hash
+      expect(g.containsKey('day_hash'), isFalse,
+          reason: 'Genesis must not emit day_hash');
+      expect(g['block_hash'], 'all-gen-hash');
+      expect(g['identity_seal'], 'all-gen-ident');
+
+      final y = await _pushAndDeobfuscate(1);
+      expect(y['year_hash'], 'all-year-hash');
+      expect(y['block_hash'], 'all-year-hash');
+      expect(y['identity_seal'], 'all-year-ident');
+
+      final m = await _pushAndDeobfuscate(2);
+      expect(m['month_hash'], 'all-month-hash');
+      expect(m['block_hash'], 'all-month-hash');
+      expect(m['identity_seal'], 'all-month-ident');
+
+      final d = await _pushAndDeobfuscate(3);
+      expect(d['day_hash'], 'all-day-hash');
+      expect(d['block_hash'], 'all-day-hash');
+      expect(d.containsKey('identity_seal'), isFalse,
+          reason: 'Null identity_seal must be absent from JSON');
+
+      // Verify hash_index contains all blockIds
+      final hashIndexRaw = transport.store['ledger/hash_index.json'];
+      final hashIndex = jsonDecode(utf8.decode(hashIndexRaw!)) as List;
+      expect(hashIndex, [
+        'all-gen-hash',
+        'all-year-hash',
+        'all-month-hash',
+        'all-day-hash',
+      ]);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group J: Hash Index Correctness
+  // ═════════════════════════════════════════════════════════════
+
+  group('J: Hash index — blockId vs identitySeal', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakeHttpTransport transport;
+    late LedgerPushService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakeHttpTransport();
+      service = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // J1
+    test('J1: Hash index uses blockId when blockId ≠ identitySeal',
+        () async {
+      // Insert blocks where blockId and identitySeal differ
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hash-gen-block',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ident-gen-token',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hash-day-block',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ident-day-token',
+        prevHash: 'hash-gen-block',
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      final hashIndexRaw = transport.store['ledger/hash_index.json'];
+      final hashIndex = jsonDecode(utf8.decode(hashIndexRaw!)) as List;
+      expect(hashIndex[0], 'hash-gen-block',
+          reason: 'Hash index must contain blockId, not identitySeal');
+      expect(hashIndex[1], 'hash-day-block',
+          reason: 'Hash index must contain blockId, not identitySeal');
+      expect(hashIndex, isNot(contains('ident-gen-token')),
+          reason: 'identitySeal values must NOT appear in hash index');
+    });
+
+    // J2
+    test('J2: Hash index contains blockId for all block types', () async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hj-gen',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ign-gen',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hj-year',
+        blockType: BlockType.year,
+        blockIndex: 1,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ign-year',
+        prevHash: 'hj-gen',
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hj-month',
+        blockType: BlockType.month,
+        blockIndex: 2,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ign-month',
+        prevHash: 'hj-year',
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hj-day',
+        blockType: BlockType.day,
+        blockIndex: 3,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'ign-day',
+        prevHash: 'hj-month',
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      final hashIndexRaw = transport.store['ledger/hash_index.json'];
+      final hashIndex = jsonDecode(utf8.decode(hashIndexRaw!)) as List;
+      expect(hashIndex, ['hj-gen', 'hj-year', 'hj-month', 'hj-day'],
+          reason: 'All four block types must contribute their blockId '
+              'to hash_index.json in correct order');
+    });
+
+    // J3
+    test('J3: Hash index entry matches block_hash field in pushed block',
+        () async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'cross-ref-hash',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'cross-ref-ident',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      // Deobfuscate the block
+      final pushed = transport.store['ledger/blocks/000000.json'];
+      final deobfuscated = crypto.deobfuscateBlob(pushed!, testMkHex);
+      final blockJson = jsonDecode(deobfuscated) as Map<String, dynamic>;
+
+      // Read hash index
+      final hashIndexRaw = transport.store['ledger/hash_index.json'];
+      final hashIndex = jsonDecode(utf8.decode(hashIndexRaw!)) as List;
+
+      // hash_index[0] must match block_hash inside the block JSON
+      expect(hashIndex[0], equals(blockJson['block_hash']),
+          reason: 'hash_index entry must match block_hash field '
+              'inside the deobfuscated block');
+      // Neither should be the identitySeal
+      expect(hashIndex[0], isNot(equals('cross-ref-ident')),
+          reason: 'Neither hash_index nor block_hash should be identitySeal');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group K: Entry Decoding (defense-in-depth)
+  // ═════════════════════════════════════════════════════════════
+  //
+  // Verify the map-format and legacy list-format data_enc decoding
+  // paths both work correctly. These paths were recently changed from
+  // `as List` only to map-first decoding, matching LedgerBackupService.
+
+  group('K: Entry decoding — data_enc formats', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakeHttpTransport transport;
+    late LedgerPushService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakeHttpTransport();
+      service = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    // K1
+    test('K1: Block with data_enc as map {"entries": [...]} decodes '
+        'entries correctly', () async {
+      final entries = [
+        {'hash': 'e1', 'data': {'title': 'Task A'}},
+        {'hash': 'e2', 'data': {'title': 'Task B'}},
+      ];
+      final dataEnc = base64.encode(utf8.encode(jsonEncode({
+        'type': 'day',
+        'entries': entries,
+        'prev_hash': 'aaaa',
+      })));
+
+      await db.blockDao.insertBlock(Block(
+        blockId: 'map-format-block',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        dataEnc: dataEnc,
+        identitySeal: null,
+        prevHash: 'aaaa',
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      // Deobfuscate and verify entries
+      final pushed = transport.store['ledger/blocks/000001.json'];
+      final deobfuscated = crypto.deobfuscateBlob(pushed!, testMkHex);
+      final json = jsonDecode(deobfuscated) as Map<String, dynamic>;
+
+      expect(json['entries'], isA<List>());
+      final decoded = json['entries'] as List;
+      expect(decoded.length, 2,
+          reason: 'Map-format data_enc must decode both entries');
+      expect(decoded[0]['hash'], 'e1');
+      expect(decoded[1]['hash'], 'e2');
+    });
+
+    // K2
+    test('K2: Block with data_enc as legacy list [...] decodes entries '
+        'correctly', () async {
+      final entries = [
+        {'hash': 'legacy-e1', 'data': {'title': 'Old Task'}},
+      ];
+      final dataEnc = base64.encode(utf8.encode(jsonEncode(entries)));
+
+      await db.blockDao.insertBlock(Block(
+        blockId: 'list-format-block',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        dataEnc: dataEnc,
+        identitySeal: null,
+        prevHash: 'aaaa',
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      // Deobfuscate and verify entries
+      final pushed = transport.store['ledger/blocks/000001.json'];
+      final deobfuscated = crypto.deobfuscateBlob(pushed!, testMkHex);
+      final json = jsonDecode(deobfuscated) as Map<String, dynamic>;
+
+      expect(json['entries'], isA<List>());
+      final decoded = json['entries'] as List;
+      expect(decoded.length, 1,
+          reason: 'Legacy list-format data_enc must decode the entry');
+      expect(decoded[0]['hash'], 'legacy-e1');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group L: Genesis Push Correctness
+  // ═════════════════════════════════════════════════════════════
+  //
+  // I-17: Both Python and Flutter chain implementations use
+  // `block_hash` as the genesis seal field, not `day_hash`.
+  //
+  // Flutter genesis blocks do NOT include a `date` field in their
+  // sealed data. Adding `date` during export changes the seal
+  // computation domain, breaking cross-client verification.
+  //
+  // For cross-client compatibility, genesis push MUST:
+  //   1. Use `block_hash` as the seal field (not `day_hash`)
+  //   2. NOT add a `date` field (not in original sealed data)
+
+  group('L: Genesis push — seal field + no excess fields', () {
+    late AppDatabase db;
+    late CryptoService crypto;
+    late FakeHttpTransport transport;
+    late LedgerPushService service;
+
+    setUp(() async {
+      db = AppDatabase.inMemory();
+      crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(testMkHex);
+      transport = FakeHttpTransport();
+      service = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+      );
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    /// Helper: push → pull back → deobfuscate → return parsed JSON.
+    Future<Map<String, dynamic>> _deobfuscateBlock(int blockIndex) async {
+      await service.pushAll();
+      final path =
+          'ledger/blocks/${blockIndex.toString().padLeft(6, '0')}.json';
+      final pushed = transport.store[path];
+      if (pushed == null) {
+        throw StateError('Block $blockIndex not found in transport store');
+      }
+      final deobfuscated = crypto.deobfuscateBlob(pushed, testMkHex);
+      return jsonDecode(deobfuscated) as Map<String, dynamic>;
+    }
+
+    // L1
+    test('L1: Genesis push uses block_hash as seal field, day_hash is '
+        'NOT present', () async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'gen-block-hash-aaa',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'gen-identity-zzz',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      final json = await _deobfuscateBlock(0);
+
+      // block_hash must be present and contain blockId
+      expect(json['block_hash'], equals('gen-block-hash-aaa'),
+          reason: 'Genesis seal field must be block_hash (I-17), '
+              'matching both Python and Flutter chain implementations');
+
+      // day_hash MUST NOT be present
+      expect(json.containsKey('day_hash'), isFalse,
+          reason: 'Genesis must NOT emit day_hash — the seal was computed '
+              'without it. Adding it breaks cross-client seal verification '
+              'because Python and Web verifiers include all non-excluded '
+              'fields in the seal HMAC computation.');
+
+      // Value must be blockId, not identitySeal
+      expect(json['block_hash'], isNot(equals('gen-identity-zzz')),
+          reason: 'block_hash must be blockId, not identitySeal');
+    });
+
+    // L2
+    test('L2: Genesis push does NOT add a date field (not in original '
+        'sealed data)', () async {
+      // Flutter genesis blocks are sealed WITHOUT a date field.
+      // The sealed fields are: type, day_index, prev_hash, entries,
+      // format_version, key_version, username, email, recovery_seed_enc,
+      // identity_pub_key, identity_secret_enc_fallback.
+      // Adding date to the push would break seal verification on
+      // Python CLI and Web import.
+      await db.blockDao.insertBlock(Block(
+        blockId: 'gen-no-date-push',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'seal-push',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_700_000_000,
+      ));
+
+      final json = await _deobfuscateBlock(0);
+
+      // date must NOT be present on genesis
+      expect(json.containsKey('date'), isFalse,
+          reason: 'Genesis push must not add a date field — '
+              'Flutter genesis blocks are sealed without date. '
+              'Adding it breaks cross-client seal verification.');
+
+      // block_hash must still be present
+      expect(json.containsKey('block_hash'), isTrue,
+          reason: 'block_hash must still be present when date is omitted');
+      expect(json['block_hash'], equals('gen-no-date-push'),
+          reason: 'block_hash value must equal blockId');
+    });
+
+    // L3
+    test('L3: Non-genesis pushed blocks still use correct seal field '
+        'names', () async {
+      // Regression guard: genesis fix must not affect day/year/month
+      // seal field names.
+      await db.blockDao.insertBlock(Block(
+        blockId: 'day-hash-push',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'day-ident-push',
+        prevHash: 'aaaa',
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'year-hash-push',
+        blockType: BlockType.year,
+        blockIndex: 2,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'year-ident-push',
+        prevHash: 'day-hash-push',
+        createdAt: 1_000_000,
+      ));
+      await db.blockDao.insertBlock(Block(
+        blockId: 'month-hash-push',
+        blockType: BlockType.month,
+        blockIndex: 3,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'month-ident-push',
+        prevHash: 'year-hash-push',
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      // Deobfuscate each block
+      final dayJson = await _deobfuscateBlock(1);
+      final yearJson = await _deobfuscateBlock(2);
+      final monthJson = await _deobfuscateBlock(3);
+
+      expect(dayJson['day_hash'], equals('day-hash-push'),
+          reason: 'Day blocks must use day_hash (unchanged)');
+      expect(dayJson['block_hash'], equals('day-hash-push'));
+
+      expect(yearJson['year_hash'], equals('year-hash-push'),
+          reason: 'Year summary blocks must use year_hash (unchanged)');
+      expect(yearJson['block_hash'], equals('year-hash-push'));
+
+      expect(monthJson['month_hash'], equals('month-hash-push'),
+          reason: 'Month summary blocks must use month_hash (unchanged)');
+      expect(monthJson['block_hash'], equals('month-hash-push'));
+    });
+
+    // L4
+    test('L4: Genesis identity_seal preserved as separate field '
+        'alongside block_hash in push', () async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'gen-block-push',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'gen-ident-push',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      final json = await _deobfuscateBlock(0);
+
+      // block_hash = seal hash
+      expect(json['block_hash'], equals('gen-block-push'),
+          reason: 'block_hash = blockId (the cryptographic seal hash)');
+
+      // identity_seal = identity proof
+      expect(json['identity_seal'], equals('gen-ident-push'),
+          reason: 'identity_seal must be a separate field from block_hash');
+
+      // Must be distinct
+      expect(json['block_hash'], isNot(equals(json['identity_seal'])),
+          reason: 'block_hash and identity_seal must not be conflated');
+    });
+
+    // L5
+    test('L5: Genesis push hash_index entry = blockId, not identitySeal',
+        () async {
+      await db.blockDao.insertBlock(Block(
+        blockId: 'hi-gen-block',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        dataEnc: 'eyJ0aXRsZSI6InRlc3QifQ==',
+        identitySeal: 'hi-gen-ident',
+        prevHash: Block.genesisPrevHash,
+        createdAt: 1_000_000,
+      ));
+
+      await service.pushAll();
+
+      final hashIndexRaw = transport.store['ledger/hash_index.json'];
+      final hashIndex = jsonDecode(utf8.decode(hashIndexRaw!)) as List;
+
+      expect(hashIndex[0], equals('hi-gen-block'),
+          reason: 'hash_index must contain blockId (block_hash value), '
+              'not identitySeal');
+      expect(hashIndex[0], isNot(equals('hi-gen-ident')),
+          reason: 'identitySeal must not leak into hash_index');
     });
   });
 }

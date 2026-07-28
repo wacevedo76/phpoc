@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phpoc_flutter/core/models/push_result.dart';
 import 'package:phpoc_flutter/core/models/sync_result.dart';
 import 'package:phpoc_flutter/core/utils/format_utils.dart';
-import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider, syncServiceProvider;
+import 'package:phpoc_flutter/data/storage/providers.dart'
+    show authServiceProvider, ledgerPushServiceProvider, syncServiceProvider;
 import 'package:phpoc_flutter/services/auth_service.dart';
+import 'package:phpoc_flutter/services/ledger_push_service.dart';
 
 /// Sync — uncommitted tasks, pending count, manual sync, thin status bar.
 class SyncScreen extends ConsumerStatefulWidget {
@@ -22,6 +25,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   List<Map<String, dynamic>> _uncommittedEntries = [];
   final Set<int> _expandedUncommitted = {};
   bool _committing = false;
+  bool _pushing = false;
   final Map<int, _CardEditState> _editStates = {};
   final Set<int> _saving = {};
 
@@ -73,10 +77,70 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Commit failed — please try again')),
+        SnackBar(content: Text('Commit failed: $e')),
       );
     } finally {
       if (mounted) setState(() => _committing = false);
+    }
+  }
+
+  /// Renders the "Push Ledger to Cloud" button when a transport is configured.
+  /// Hidden (SizedBox.shrink) when [ledgerPushServiceProvider] returns null
+  /// (local-only mode / no Worker URL configured).
+  Widget _buildPushToCloudButton() {
+    final pushSvc = ref.watch(ledgerPushServiceProvider);
+    if (pushSvc == null) return const SizedBox.shrink();
+
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: _pushing ? null : _pushToCloud,
+        icon: _pushing
+            ? _loadingSpinner()
+            : const Icon(Icons.cloud_upload),
+        label: Text(_pushing ? 'Pushing…' : 'Push Ledger to Cloud'),
+      ),
+    );
+  }
+
+  /// Calls [LedgerPushService.pushAll] to push the full ledger chain to the
+  /// remote Worker. Shows a success SnackBar with block count + hash prefix,
+  /// or an error SnackBar with the failure reason. Sets [_pushing] to true
+  /// during the operation (disables the button and shows a spinner).
+  Future<void> _pushToCloud() async {
+    final pushSvc = ref.read(ledgerPushServiceProvider);
+    // Defensive: button is hidden when pushSvc is null, but guard against
+    // race conditions where the transport is disconnected between render
+    // and tap.
+    if (pushSvc == null) return;
+
+    setState(() => _pushing = true);
+    try {
+      final result = await pushSvc.pushAll();
+      if (!mounted) return;
+      if (result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pushed ${result.blocksPushed} blocks'
+                '${result.hashPrefixDisplay.isNotEmpty ? ' — ${result.hashPrefixDisplay}' : ''}'),
+          ),
+        );
+      } else {
+        final reason = result.errors.isNotEmpty
+            ? result.errors.first
+            : 'Push completed with errors';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Push failed: $reason')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Push failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _pushing = false);
     }
   }
 
@@ -232,6 +296,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             label: Text(_committing ? 'Committing…' : 'Commit to Local Ledger'),
           ),
         ),
+        const SizedBox(height: 16),
+        // Push Ledger to Cloud button (only when transport configured)
+        _buildPushToCloudButton(),
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,

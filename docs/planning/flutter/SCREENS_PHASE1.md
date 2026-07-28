@@ -2,8 +2,8 @@
 
 > **Plan:** `docs/planning/flutter/INITIAL_PLAN.md` §Phase 6
 > **Purpose:** Blueprint of all needed test assertions before writing any screen test code.
-> **Status:** ✅ Phase 1+2+3+4 complete (109/109 GREEN)
-> **Next Phase:** N/A (all phases complete)
+> **Status:** ✅ Phase 1 complete (blueprint). Groups E, H, T, U implemented. 13/13 settings tests GREEN.
+> **Next Phase:** Settings Phase 3 GREEN (fix 2 known source bugs). Other groups: N/A (complete).
 
 ## Architecture Overview
 
@@ -96,21 +96,24 @@ All screens are currently stubs with `const Center(child: Text('... — coming s
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
 | E1 | `DashboardScreen` renders without error within `AppScaffold` | Widget smoke test | Must render inside the bottom-nav shell |
-| E2 | `DashboardScreen` shows "Start New Task" form with title input | Core capture UI | Users need to create tasks from the dashboard |
-| E3 | Tapping capture button with empty title shows validation error | Input validation | Prevent empty-title entries |
-| E4 | Tapping capture button with valid title calls `syncService.capture()` | Happy path | Core capture flow |
-| E5 | After capture, active task card appears with title | Active task display | User confirmation that task was created |
-| E6 | Active task card shows elapsed time / start time | Duration feedback | Users need to know how long a task has been running |
-| E7 | Active task card has "End" button → calls `syncService.end()` | Task completion | Core end-task action |
-| E8 | After ending, active task card disappears and "No active tasks" shows | State cleanup | Completed tasks move to history |
-| E9 | Active task card has "Pause" / "Resume" toggle button | Pause/resume | Core pause/unpause actions (Axiom A5) |
-| E10 | Pausing calls `syncService.pause()`, resuming calls `syncService.unpause()` | Correct delegation | Screen delegates to sync service |
-| E11 | Recent entries list shown below active task card (or full-width when no active) | History preview | Quick access to recent task context |
-| E12 | Recent entries show title, date, and duration | Entry summary | Minimal info for quick scan |
-| E13 | Tapping a recent entry navigates to `/history` (filtered to that date) | Cross-screen navigation | Deep-link from dashboard to history |
-| E14 | Empty state: no active task AND no recent entries → "No tasks yet" message | Empty state UX | Clear feedback that the app is working but empty |
-| E15 | Capture failure shows error via SnackBar or inline message | Error feedback | `SyncService` errors must be surfaced to user |
-| E16 | Active task card updates duration live (periodic timer) | Real-time feedback | Running task timer — key UX differentiator |
+| E2 | `DashboardScreen` shows collapsed "New Task" bar at bottom; tap to expand form | Core capture UI | Users need to create tasks from the dashboard |
+| E3 | Expanding form and tapping "Start" with empty title shows "Please enter a task title" | Input validation | Prevent empty-title entries |
+| E4 | Tapping "Start" with valid title + tags/comment calls `syncService.capture()` | Happy path | Core capture flow with optional encrypted fields |
+| E5 | Capturing 2 tasks → dashboard shows 2 active cards simultaneously (T1) | Multi-active display | Users can run multiple tasks concurrently |
+| E6 | Each active card shows its own distinct title (T2) | Per-card identity | Cards are visually independent |
+| E7 | Each active card shows its own elapsed time label (T3) | Per-card timing | Independent timers per running task |
+| E8 | Each active card has its own Pause/Resume icon button (amber fill) (T4) | Per-card pause | Independent pause control per task |
+| E9 | Each active card has its own End icon button (red fill, stop icon) (T5) | Per-card end | Independent end control per task |
+| E10 | Ending one task: active card removed, other cards stay; ended task moves to "Pending Commit" section (T6) | Section transition | Ended tasks appear in Pending Commit, not history |
+| E11 | Ending last active task: no "Running" section, task moves to "Pending Commit" (T7) | Empty-running state | Dashboard still shows content (not empty state) |
+| E12 | "New Task" collapsed bar always visible while tasks are running (T8) | Concurrent capture | Users can start new tasks regardless of active count |
+| E13 | Capturing new task while one active adds card; "Running" header shown once (T9) | Section dedup | Section header does not duplicate |
+| E14 | Multiple active cards all reachable via scrollable `ListView` (T10) | Scroll viewport | Dashboard scrolls when cards exceed screen |
+| E15 | Pausing one task: its card shows resume icon; other card keeps pause icon (T11) | Pause isolation | Pausing one task does not affect sibling elapsed |
+| E16 | "Running" section header (with play icon) shown when ≥1 active task (T12) | Section labeling | Clear visual grouping of active vs pending |
+| E17 | Full lifecycle: start 2, end 1, end last → both in Pending Commit, no "Running" (U1) | Integration | State correctness across full multi-active lifecycle |
+| E18 | Pause isolation: pause first task → elapsed freezes on that card, second keeps ticking (U2) | Integration | Pause does not bleed across tasks |
+| E19 | Start 3 tasks, end all → all 3 in Pending Commit, no active entries remain (U3) | Integration | Bulk-end produces correct final state |
 
 ### Group F: History Screen — ~10 tests
 
@@ -146,7 +149,7 @@ All screens are currently stubs with `const Center(child: Text('... — coming s
 | G12 | Sync error clears on next successful sync attempt | Error cleanup | Stale errors must not persist |
 | G13 | Commit-entry UI (deferred — ledger engine is Phase 7) shows "Coming in a future update" | Future feature placeholder | Honest about MVP scope (staging-only) |
 
-### Group H: Settings Screen — ~12 tests
+### Group H: Settings Screen — ~13 tests (⚠️ H1–H13 all Phase 3 stubs — need Phase 2 RED. See `settings_screen_test.dart`.)
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
@@ -159,8 +162,8 @@ All screens are currently stubs with `const Center(child: Text('... — coming s
 | H7 | Change passphrase: new passphrase < 8 chars shows validation error | Input validation | Matches `AuthService.changePassphrase()` contract |
 | H8 | Change passphrase: wrong old passphrase shows `AuthException` error | Auth validation | Old passphrase must be correct before change |
 | H9 | Change passphrase: correct old + valid new calls `authService.changePassphrase()` | Happy path | Core passphrase rotation flow |
-| H10 | "Export Recovery Seed" option shows warning dialog before revealing seed | Security (Axiom A7) | Seed is sensitive — must confirm user intent |
-| H11 | Export seed: after confirmation, seed is displayed (requires re-authentication) | Seed export flow | Additional auth gate for seed export |
+| H10 | "Export Recovery Seed" option shows warning dialog before saving seed | Security (Axiom A7) | Seed is sensitive — must confirm user intent |
+| H11 | After warning confirmation, passphrase re-auth dialog appears; correct passphrase calls `authService.exportSeed()` and opens `FilePicker.saveFile()` to save as `phpoc_seed.txt` | Seed export flow | Additional auth gate; seed written to file, not displayed on screen |
 | H12 | "Lock / Log Out" option clears MK and transitions to `/unlock` | Session termination | Calls `authService.lock()` + `appLifecycleNotifier.goToAuth()` |
 | H13 | "About" section shows app name, version, and build info | App info | Standard settings expectation |
 
@@ -196,13 +199,13 @@ All screens are currently stubs with `const Center(child: Text('... — coming s
 | B | Landing | 7 | New vs returning user routing |
 | C | Unlock | 12 | Passphrase input, validation, auth flow |
 | D | Onboarding | 19 | Create/import/connect flows, seed backup |
-| E | Dashboard | 16 | Active task card, capture, pause/resume, timer |
+| E | Dashboard | 19 | Multi-active cards, Running/Pending Commit sections, pause isolation, per-field encryption, collapsible cards |
 | F | History | 11 | Entry list, date filter, detail expansion |
 | G | Sync | 13 | Status indicators, manual sync, offline handling |
 | H | Settings | 13 | Worker config, passphrase change, seed export, lock |
 | I | Navigation | 8 | Bottom nav tabs, GoRouter redirects, shell gating |
 | J | Lifecycle | 6 | Full flows, phase transitions, state persistence |
-| **Total** | **10 groups** | **109** | |
+| **Total** | **10 groups** | **112** | |
 
 ### Coverage Areas
 - **Rendering:** Every screen renders without error (A1–J6)
@@ -211,5 +214,5 @@ All screens are currently stubs with `const Center(child: Text('... — coming s
 - **Error States:** Auth failures, network errors, validation errors, ledger-exists errors
 - **Loading States:** Spinners during async operations, disabled buttons during submission
 - **Empty States:** No tasks, no entries, no Worker, filtered-empty results
-- **Axiom Compliance:** B4 (screen≠service), A2 (obscured passphrase), A5 (staging-only MVP), A6 (offline)
+- **Axiom Compliance:** B4 (screen≠service), A2 (obscured passphrase), A5 (staging-only MVP), A6 (offline), D11 (staging/ledger separation — Pending Commit ≠ committed history)
 - **Cross-Screen Integration:** Dashboard→History linking, phase transitions driving router redirects

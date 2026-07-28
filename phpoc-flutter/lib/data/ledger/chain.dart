@@ -134,6 +134,11 @@ class LedgerChain {
     if (last != null) {
       final expectedPrev = getBlockHash(last);
       final actualPrev = block['prev_hash'] as String? ?? '';
+      // DEBUG: log for prev_hash diagnostics
+      print('[DEBUG chain.append] last type=${last['type']} block_id=${last['block_id']}'
+            ' block_hash=${last['block_hash']} day_hash=${last['day_hash']}');
+      print('[DEBUG chain.append] expectedPrev="$expectedPrev" actualPrev="$actualPrev"');
+      print('[DEBUG chain.append] last keys: ${last.keys.toList()..sort()}');
       if (expectedPrev.isNotEmpty && actualPrev != expectedPrev) {
         throw Exception(
           'prev_hash mismatch: expected $expectedPrev, got $actualPrev',

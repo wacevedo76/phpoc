@@ -7,7 +7,7 @@ import 'package:phpoc_flutter/data/sync/local_cache.dart';
 /// Covers:
 ///   B1–B2: readEntries() decrypts, empty state
 ///   B3–B6: append() encrypts fields, computes hash, generates entry_id,
-///           throws on start_epoch collision
+///           auto-increments on start_epoch collision
 ///   B7–B8: update() modifies fields, no-op on committed
 ///   B9: delete() removes entry
 ///   B10–B11: addPause() / closePause() lifecycle
@@ -124,18 +124,21 @@ void main() {
     });
 
     // B6
-    test('B6: append() throws on start_epoch collision', () async {
+    test('B6: append() auto-increments on start_epoch collision', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
       final cache = LocalCache(storage: storage, crypto: crypto);
 
       await cache.append(title: 'First', startEpoch: 1000);
 
-      // Same start_epoch → collision detection
-      expect(
-        () => cache.append(title: 'Second', startEpoch: 1000),
-        throwsA(isA<Exception>()),
-      );
+      // Same start_epoch → auto-increment (no throw)
+      await cache.append(title: 'Second', startEpoch: 1000);
+
+      final entries = await cache.readEntries();
+      expect(entries.length, 2);
+      // Second entry gets resolvedEpoch = 1001 (auto-incremented past collision)
+      expect(entries[1]['start_epoch'], 1001);
+      expect(entries[1]['title'], 'Second');
     });
 
     // B14 — encrypt/decrypt roundtrip

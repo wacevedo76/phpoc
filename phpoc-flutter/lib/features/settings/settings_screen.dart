@@ -236,13 +236,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       );
 
       if (path != null) {
-        // file_picker saveFile only returns the path; we write via dart:io
-        // but file_picker.saveFile has already written the bytes.
-        // Actually, saveFile returns null if canceled, otherwise the path.
-        // We need to write bytes to the returned path.
-        // file_picker 8.x does not write bytes — we need to get bytes back.
-        // Alternative: use saveFile with bytes parameter...
-        // Let's use a different approach: write via dart:io.
         final file = File(path);
         await file.writeAsString(seed);
         if (mounted) {
@@ -269,10 +262,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<String?> _showPassphrasePrompt() async {
-    String? result;
     final controller = TextEditingController();
 
-    await showDialog<String>(
+    final value = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -304,12 +296,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ],
       ),
-    ).then((value) {
-      result = value;
-      controller.dispose();
-    });
+    );
 
-    return result;
+    // Allow dialog dismiss animation to complete before disposing the
+    // controller, avoiding "A TextEditingController was used after being
+    // disposed" error during the dismiss animation.
+    await Future.delayed(const Duration(milliseconds: 300));
+    controller.dispose();
+
+    return value;
   }
 
   // ── Ledger Backup / Restore ────────────────────────────────
@@ -489,7 +484,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           FilledButton(
             onPressed: () {
               Navigator.of(ctx).pop();
-              _lock();
+              // Delay lock until dialog dismiss animation completes to avoid
+              // a Flutter _FocusInheritedScope assertion when the focused
+              // widget is deactivated during the dismiss animation.
+              Future.delayed(const Duration(milliseconds: 300), () {
+                if (mounted) _lock();
+              });
             },
             child: const Text('Lock / Log Out'),
           ),

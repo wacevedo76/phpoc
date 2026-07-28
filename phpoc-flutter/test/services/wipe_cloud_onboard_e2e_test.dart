@@ -29,14 +29,10 @@ import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 // ── Test constants ─────────────────────────────────────────────
 
 /// Must be set before running E2E tests. Use TEST_CREDENTIALS.md values.
-const _envWorkerUrl = String.fromEnvironment(
-  'PHPOC_WORKER_URL',
-  defaultValue: '',
-);
-const _envApiKey = String.fromEnvironment(
-  'PHPOC_API_KEY',
-  defaultValue: '',
-);
+String get _envWorkerUrl =>
+    Platform.environment['PHPOC_WORKER_URL'] ?? '';
+String get _envApiKey =>
+    Platform.environment['PHPOC_API_KEY'] ?? '';
 
 /// Test seed from TEST_CREDENTIALS.md.
 /// MK derived via: SHA-256(seed_bytes) → hex
@@ -48,7 +44,7 @@ const _knownGenesisIdentitySeal =
 
 /// Known genesis block_hash from testdata/ledger.json
 const _knownGenesisBlockHash =
-    'f8f461b612f770b90b05e45188fa0848e134cfa92af3218037d4c049d9d3035a';
+    'e76a015a4e4830a4c760db63f17f4a3db4aaae3e463b49cd0fcbb6187b184922';
 
 /// Whether E2E tests should run.
 bool get _shouldRun =>

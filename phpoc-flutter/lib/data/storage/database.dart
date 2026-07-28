@@ -110,6 +110,11 @@ class AppDatabase {
     return Future.sync(() => _db.execute(statement, args ?? const []));
   }
 
+  /// Synchronous version of [customStatement] for use by the ledger engine.
+  void customStatementSync(String statement, [List<Object?>? args]) {
+    _db.execute(statement, args ?? const []);
+  }
+
   int _executeAndGetChanges(String sql, [List<Object?>? args]) {
     _db.execute(sql, args ?? const []);
     return _db.select('SELECT changes() AS cnt', []).first[0] as int;
@@ -488,6 +493,54 @@ class BlockDao {
       identitySeal: row.read<String?>('identity_seal'),
       prevHash: row.read<String>('prev_hash'),
       createdAt: row.read<int>('created_at'),
+    );
+  }
+
+  // ── Sync wrappers for LedgerChain (synchronous API) ──────
+
+  Block insertBlockSync(Block block) {
+    final createdAt = block.createdAt > 0
+        ? block.createdAt
+        : DateTime.now().millisecondsSinceEpoch;
+    _db.customStatementSync(
+      'INSERT OR IGNORE INTO blocks (block_id, block_type, block_index, key_version,'
+          ' data_enc, identity_seal, prev_hash, created_at)'
+          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        block.blockId, block.blockType.name, block.blockIndex,
+        block.keyVersion, block.dataEnc, block.identitySeal,
+        block.prevHash, createdAt,
+      ],
+    );
+    return block;
+  }
+
+  List<Block> getAllBlocksSync() {
+    final rows = _db.customSelect(
+      'SELECT * FROM blocks ORDER BY block_index ASC',
+    ).get();
+    return rows.map(_rowToBlock).toList();
+  }
+
+  Block? getLastBlockSync() {
+    final rows = _db.customSelect(
+      'SELECT * FROM blocks ORDER BY block_index DESC LIMIT 1',
+    ).get();
+    if (rows.isEmpty) return null;
+    return _rowToBlock(rows.first);
+  }
+
+  int getBlockCountSync() {
+    return _db.customSelect('SELECT COUNT(*) AS cnt FROM blocks')
+        .get()
+        .first
+        .read<int>('cnt');
+  }
+
+  void deleteBlockSync(String blockId) {
+    _db.customStatementSync(
+      'DELETE FROM blocks WHERE block_id = ?',
+      [blockId],
     );
   }
 }

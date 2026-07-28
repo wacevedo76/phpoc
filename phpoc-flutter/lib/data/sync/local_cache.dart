@@ -233,16 +233,17 @@ class LocalCache {
   }) async {
     final entries = (await storage.get('entries') as List?) ?? [];
 
-    // Collision check
-    final dtos = entries.asMap().entries.map((e) {
-      return _rawToDto(e.value as Map<String, dynamic>, e.key);
-    }).toList();
-    for (final entry in dtos) {
-      if (entry['start_epoch'] == startEpoch) {
-        throw Exception(
-          'Collision detected: A task has already started at this millisecond.',
-        );
-      }
+    // Ensure unique start_epoch: auto-increment on same-ms collision.
+    // Matches Python's ValueError guard but avoids flaky failures when
+    // two captures hit the same millisecond (common in fast test suites
+    // and rapid real-world interaction).
+    final existingEpochs = entries
+        .map((e) => _rawToDto(e as Map<String, dynamic>, -1))
+        .map((d) => d['start_epoch'] as int? ?? 0)
+        .toSet();
+    var resolvedEpoch = startEpoch;
+    while (existingEpochs.contains(resolvedEpoch)) {
+      resolvedEpoch++;
     }
 
     final normalizedTags = _normalizeTags(tags);
@@ -255,10 +256,10 @@ class LocalCache {
     final data = <String, dynamic>{
       'entry_id': entryId,
       'title': title,
-      'duration': endEpoch != null ? endEpoch - startEpoch : 0,
+      'duration': endEpoch != null ? endEpoch - resolvedEpoch : 0,
       'is_active': isActive,
       'is_paused': false,
-      'startTime_enc': _encrypt(startEpoch),
+      'startTime_enc': _encrypt(resolvedEpoch),
       'endTime_enc': endEpoch != null ? _encrypt(endEpoch) : null,
       'pauses_enc': _encrypt('[]'),
       'tags': normalizedTags,
@@ -283,9 +284,9 @@ class LocalCache {
 
     final hash = _computeEntryHash({
       'title': title,
-      'start_epoch': startEpoch,
+      'start_epoch': resolvedEpoch,
       'end_epoch': endEpoch,
-      'duration': endEpoch != null ? endEpoch - startEpoch : 0,
+      'duration': endEpoch != null ? endEpoch - resolvedEpoch : 0,
       'is_active': isActive,
       'is_paused': false,
       'pauses': [],

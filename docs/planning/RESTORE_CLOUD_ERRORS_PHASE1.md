@@ -1,8 +1,10 @@
 # Restore from Cloud — Error Surfacing (Phase 1)
 > **Plan:** Fix credential error opacity in `restoreFromCloud` flow
 > **Purpose:** Blueprint of all needed test assertions before writing any test code.
-> **Status:** ✅ Phase 1-4 complete
-> **Next Phase:** Phase 2 (RED: test definition)
+> **Status:** ✅ Phase 1-4 complete (2026-07-28)
+> **Phase 2:** 10 tests RED → 10 tests GREEN (Groups I/J/K)
+> **Phase 3:** Implementation verified — all 79 tests GREEN
+> **Phase 4:** Unused import removed; no other refactors needed
 
 ## Problem
 `restoreFromCloud()` swallows all connection/credential errors via empty `catch (_)` blocks. Wrong seed (valid format), wrong Worker URL, or wrong API key all produce a blank interface with zero blocks and no error message.

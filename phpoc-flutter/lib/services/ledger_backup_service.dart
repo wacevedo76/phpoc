@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import '../core/models/block.dart';
-import '../core/utils/format_utils.dart';
+import '../core/utils/phpsec_format.dart';
 import '../data/storage/database.dart';
 
 /// Ledger backup service — export/import the full ledger chain in PHPSPEC format.
@@ -20,49 +20,6 @@ class LedgerBackupService {
   final AppDatabase db;
 
   LedgerBackupService({required this.db});
-
-  // ═════════════════════════════════════════════════════════════
-  // PHPSPEC field name constants (per PHPSPEC §4)
-  // ═════════════════════════════════════════════════════════════
-
-  static const _kType = 'type';
-  static const _kDayIndex = 'day_index';
-  static const _kDate = 'date';
-  static const _kPrevHash = 'prev_hash';
-  static const _kEntries = 'entries';
-  static const _kSignature = 'signature';
-  static const _kIdentity = 'identity';
-  static const _kFormatVersion = 'format_version';
-  static const _kBlockHash = 'block_hash';
-
-  static const _typeGenesis = 'genesis';
-  static const _typeDay = 'day';
-  static const _typeYearSummary = 'year_summary';
-  static const _typeMonthSummary = 'month_summary';
-
-  /// Map PHPSPEC type string → seal field name.
-  static const _sealFieldNames = {
-    _typeGenesis: 'day_hash', // historical convention per PHPSPEC §4.1
-    _typeDay: 'day_hash',
-    _typeYearSummary: 'year_hash',
-    _typeMonthSummary: 'month_hash',
-  };
-
-  /// Map internal [BlockType] → PHPSPEC type string.
-  static const _blockTypeToPhpSpec = {
-    BlockType.genesis: _typeGenesis,
-    BlockType.day: _typeDay,
-    BlockType.year: _typeYearSummary,
-    BlockType.month: _typeMonthSummary,
-  };
-
-  /// Map PHPSPEC type string → [BlockType].
-  static const _phpSpecToBlockType = {
-    _typeGenesis: BlockType.genesis,
-    _typeDay: BlockType.day,
-    _typeYearSummary: BlockType.year,
-    _typeMonthSummary: BlockType.month,
-  };
 
   // ═════════════════════════════════════════════════════════════
   // Public API
@@ -127,43 +84,16 @@ class LedgerBackupService {
   // ═════════════════════════════════════════════════════════════
 
   Map<String, dynamic> _blockToPhpSpec(Block block) {
-    final typeStr =
-        _blockTypeToPhpSpec[block.blockType] ?? block.blockType.name;
-    final sealField = _sealFieldNames[typeStr] ?? '${typeStr}_hash';
-
-    // Decode data_enc to extract entries array
-    List<dynamic> entries;
-    try {
-      final decoded = utf8.decode(base64.decode(block.dataEnc));
-      entries = jsonDecode(decoded) as List<dynamic>;
-    } catch (_) {
-      // data_enc is opaque (encrypted or malformed) — emit empty entries
-      entries = [];
-    }
-
-    // Parse createdAt epoch → ISO date string
-    final dateStr = FormatUtils.epochToIsoDate(block.createdAt);
-
-    final result = <String, dynamic>{
-      _kType: typeStr,
-      _kDayIndex: block.blockIndex,
-      _kDate: dateStr,
-      _kPrevHash: block.prevHash,
-      _kEntries: entries,
-      sealField: block.identitySeal,
-    };
-
-    // Include block_hash as a convenience for consumers
-    result[_kBlockHash] = block.identitySeal ?? block.blockId;
+    final result = PhpSpecFormat.blockToMap(block);
 
     // Genesis-specific fields
     if (block.blockType == BlockType.genesis) {
-      // Try to extract identity from entries
+      final entries = PhpSpecFormat.extractEntries(block.dataEnc);
       final identityData = _extractIdentityFromEntries(entries);
       if (identityData != null) {
-        result[_kIdentity] = identityData;
+        result[PhpSpecFormat.kIdentity] = identityData;
       }
-      result[_kFormatVersion] = '0.4.0';
+      result[PhpSpecFormat.kFormatVersion] = '0.4.0';
     }
 
     return result;
@@ -175,7 +105,7 @@ class LedgerBackupService {
 
   Block _jsonToBlock(Map<String, dynamic> json, int index) {
     // Detect format: PHPSPEC uses "type", legacy uses "block_type"
-    if (json.containsKey(_kType)) {
+    if (json.containsKey(PhpSpecFormat.kType)) {
       return _phpSpecToBlock(json, index);
     }
     if (json.containsKey('block_type')) {
@@ -189,51 +119,55 @@ class LedgerBackupService {
   /// Parse PHPSPEC-format block JSON into internal [Block] model.
   Block _phpSpecToBlock(Map<String, dynamic> json, int index) {
     // ── type → blockType ─────────────────────────────────────
-    final typeStr = json[_kType];
+    final typeStr = json[PhpSpecFormat.kType];
     if (typeStr is! String) {
       throw FormatException(
           'Block at index $index: missing or invalid "type"');
     }
-    final blockType = _phpSpecToBlockType[typeStr];
+    final blockType = PhpSpecFormat.phpSpecToBlockType[typeStr];
     if (blockType == null) {
       throw FormatException(
           'Block at index $index: unknown type "$typeStr"');
     }
 
     // ── day_index → blockIndex ───────────────────────────────
-    final dayIndex = json[_kDayIndex];
+    final dayIndex = json[PhpSpecFormat.kDayIndex];
     if (dayIndex is! int) {
       throw FormatException(
           'Block at index $index: missing or invalid "day_index"');
     }
 
     // ── prev_hash → prevHash ─────────────────────────────────
-    final prevHash = json[_kPrevHash];
+    final prevHash = json[PhpSpecFormat.kPrevHash];
     if (prevHash is! String) {
       throw FormatException(
           'Block at index $index: missing or invalid "prev_hash"');
     }
 
-    // ── {type}_hash → identitySeal ───────────────────────────
-    // Standard PHPSPEC uses day_hash/year_hash/month_hash.
-    // Pre-PHPSPEC ledgers use identity_seal directly.
+    // ── {type}_hash → blockId (the block's seal hash) ────────
+    // block_hash is the explicit convenience field; fall back to
+    // the type-specific seal field (day_hash, year_hash, etc.).
     final sealField =
-        _sealFieldNames[typeStr] ?? '${typeStr}_hash';
-    final identitySeal =
-        (json[sealField] ?? json['identity_seal']) as String?;
+        PhpSpecFormat.sealFieldNames[typeStr] ?? '${typeStr}_hash';
+    final sealValue = json[sealField] as String?;
+    final blockHash = json[PhpSpecFormat.kBlockHash] as String?;
+    final blockId = blockHash ?? sealValue ?? 'block_$index';
 
-    // ── block_hash → blockId (fallback: identitySeal) ────────
-    final blockHash = json[_kBlockHash] as String?;
-    final blockId = blockHash ?? identitySeal ?? 'block_$index';
+    // ── identity_seal → identitySeal ─────────────────────────
+    // Explicit field (present on genesis blocks). Falls back to
+    // the seal field for backward compatibility with pre-fix exports
+    // where identity_seal was incorrectly stored in the seal field.
+    final identitySeal =
+        (json['identity_seal'] ?? sealValue) as String?;
 
     // ── date → createdAt (epoch seconds) ─────────────────────
-    final dateStr = json[_kDate];
+    final dateStr = json[PhpSpecFormat.kDate];
     final createdAt = dateStr is String
         ? _isoDateToEpoch(dateStr, index)
         : 0;
 
     // ── entries → data_enc (base64 JSON) ─────────────────────
-    final entries = json[_kEntries];
+    final entries = json[PhpSpecFormat.kEntries];
     final entriesList = (entries is List) ? entries : <dynamic>[];
     final entriesJson = jsonEncode(entriesList);
     final dataEnc = base64.encode(utf8.encode(entriesJson));

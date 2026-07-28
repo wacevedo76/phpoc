@@ -483,7 +483,13 @@ void main() {
         final block = jsonDecode(json) as Map<String, dynamic>;
         expect(block.containsKey('type'), isTrue);
         expect(block.containsKey('day_index'), isTrue);
-        expect(block.containsKey('date'), isTrue);
+        // Genesis is sealed without date — only non-genesis blocks have it
+        if (block['type'] == 'genesis') {
+          expect(block.containsKey('date'), isFalse,
+              reason: 'Genesis must not include date field');
+        } else {
+          expect(block.containsKey('date'), isTrue);
+        }
         expect(block.containsKey('prev_hash'), isTrue);
         expect(block.containsKey('entries'), isTrue);
         expect(block.containsKey('block_hash'), isTrue);

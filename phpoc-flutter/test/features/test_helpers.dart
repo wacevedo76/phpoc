@@ -44,6 +44,9 @@ List<Override> defaultScreenOverrides() {
     }),
     data_providers.cryptoServiceProvider.overrideWith((ref) {
       final crypto = CryptoService();
+      // Fire initialize() — in tests this is synchronous (just sets a flag).
+      // The microtask completes before any widget interaction via pump().
+      crypto.initialize();
       ref.onDispose(() => crypto.clearMasterKey());
       return crypto;
     }),

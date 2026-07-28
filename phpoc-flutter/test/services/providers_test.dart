@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
@@ -6,11 +8,13 @@ import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
+import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
+import 'package:phpoc_flutter/services/ledger_push_service.dart';
 import 'package:phpoc_flutter/services/onboarding_service.dart';
 
-/// Provider wiring + boot probe tests — Groups G (7) + H (8) = 15 assertions.
+/// Provider wiring + boot probe tests — Groups G (7) + H (8) + J (5) = 20 assertions.
 ///
 /// Covers:
 ///   G1–G7: Boot probe / AppLifecycleNotifier phase detection
@@ -74,7 +78,31 @@ final _onboardingServiceProvider = Provider<OnboardingService>((ref) {
   );
 });
 
+/// Ledger push service provider — null when no transport configured.
+/// Production equivalent: watches syncServiceProvider.transport for HttpTransport.
+final _ledgerPushServiceProvider = Provider<LedgerPushService?>((ref) {
+  final sync = ref.watch(_syncServiceProvider);
+  if (!sync.isRemoteAvailable) return null;
+  final db = ref.watch(data_providers.databaseProvider);
+  final crypto = ref.watch(_cryptoServiceProvider);
+  return LedgerPushService(db: db, crypto: crypto, transport: sync.transport!);
+});
+
 // ── Helpers ────────────────────────────────────────────────────
+
+/// Minimal transport for provider wiring tests (no real HTTP).
+class _TestHttpTransport extends HttpTransport {
+  _TestHttpTransport()
+      : super(baseUrl: 'https://test.example.com', apiKey: 'test-key');
+  @override
+  Future<Uint8List?> pull(String path) async => null;
+  @override
+  Future<void> push(String path, Uint8List data) async {}
+  @override
+  Future<List<String>> listFiles(String prefix) async => [];
+  @override
+  Future<void> delete(String path) async {}
+}
 
 class _InMemoryStorage {
   final Map<String, dynamic> _data = {};
@@ -291,6 +319,9 @@ void main() {
       expect(() => container.read(_onboardingServiceProvider),
           returnsNormally);
       expect(() => container.read(appLifecycleProvider), returnsNormally);
+      // J5: ledgerPushServiceProvider must not introduce cycles
+      expect(() => container.read(_ledgerPushServiceProvider),
+          returnsNormally);
 
       // If we got here without Riverpod throwing, the graph has no cycles.
       container.dispose();
@@ -353,6 +384,154 @@ void main() {
       //
       // For Phase 2 RED: verify the getter exists and is a bool.
       expect(auth.isUnlocked, isA<bool>());
+
+      container.dispose();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group J: LedgerPushService Provider — Wiring (5 tests)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('J: LedgerPushService Provider — Wiring', () {
+    // J1
+    test('J1: ledgerPushServiceProvider returns LedgerPushService singleton '
+        '(same instance on repeat reads)', () async {
+      final transport = _TestHttpTransport();
+      final container = ProviderContainer(
+        overrides: [
+          data_providers.databaseProvider.overrideWith((ref) {
+            final db = AppDatabase.inMemory();
+            ref.onDispose(() => db.close());
+            return db;
+          }),
+          _syncServiceProvider.overrideWithProvider(
+            Provider<SyncService>((ref) {
+              final crypto = ref.watch(_cryptoServiceProvider);
+              final storage = _InMemoryStorage();
+              return SyncService(
+                  storage: storage, crypto: crypto, transport: transport);
+            }),
+          ),
+        ],
+      );
+
+      final svc1 = container.read(_ledgerPushServiceProvider);
+      final svc2 = container.read(_ledgerPushServiceProvider);
+
+      expect(svc1, isNotNull,
+          reason: 'LedgerPushService must be constructed when transport exists');
+      expect(identical(svc1, svc2), isTrue,
+          reason: 'LedgerPushService must be a singleton — '
+              'duplicate instances would duplicate _pendingPush guards');
+
+      container.dispose();
+    });
+
+    // J2
+    test('J2: provider injects AppDatabase, CryptoService, HttpTransport '
+        'without missing-dependency crash', () async {
+      final transport = _TestHttpTransport();
+      final container = ProviderContainer(
+        overrides: [
+          data_providers.databaseProvider.overrideWith((ref) {
+            final db = AppDatabase.inMemory();
+            ref.onDispose(() => db.close());
+            return db;
+          }),
+          _syncServiceProvider.overrideWithProvider(
+            Provider<SyncService>((ref) {
+              final crypto = ref.watch(_cryptoServiceProvider);
+              final storage = _InMemoryStorage();
+              return SyncService(
+                  storage: storage, crypto: crypto, transport: transport);
+            }),
+          ),
+        ],
+      );
+
+      // Reading the provider must succeed — no missing deps.
+      final pushSvc = container.read(_ledgerPushServiceProvider);
+
+      expect(pushSvc, isA<LedgerPushService>(),
+          reason: 'Full dependency resolution must not crash — '
+              'miswired deps cause runtime crashes caught here at test time');
+
+      container.dispose();
+    });
+
+    // J3
+    test('J3: provider disposes cleanly — no unclosed DB handles or '
+        'leaked transports after container disposal', () async {
+      final transport = _TestHttpTransport();
+      final container = ProviderContainer(
+        overrides: [
+          data_providers.databaseProvider.overrideWith((ref) {
+            final db = AppDatabase.inMemory();
+            ref.onDispose(() => db.close());
+            return db;
+          }),
+          _syncServiceProvider.overrideWithProvider(
+            Provider<SyncService>((ref) {
+              final crypto = ref.watch(_cryptoServiceProvider);
+              final storage = _InMemoryStorage();
+              return SyncService(
+                  storage: storage, crypto: crypto, transport: transport);
+            }),
+          ),
+        ],
+      );
+
+      // Read to instantiate
+      container.read(_ledgerPushServiceProvider);
+
+      // Dispose must not throw
+      expect(() => container.dispose(), returnsNormally,
+          reason: 'Riverpod onDispose must release resources — '
+              'leaks compound across app lifecycle');
+    });
+
+    // J4
+    test('J4: provider resolves when HttpTransport is null (local-only mode) '
+        '— returns null for push-at-time graceful degradation', () async {
+      final container = _createScopedContainer();
+
+      // _syncServiceProvider has no transport by default → local-only
+      final pushSvc = container.read(_ledgerPushServiceProvider);
+
+      expect(pushSvc, isNull,
+          reason: 'Provider must resolve gracefully when no transport '
+              'is configured — returns null so UI can hide push button. '
+              'The push-time guard handles the null case at pushAll() time.');
+
+      container.dispose();
+    });
+
+    // J5 — included in H5 test above; this test documents the contract.
+    test('J5: updated provider graph (all existing providers + '
+        'ledgerPushServiceProvider) resolves without circular '
+        'dependency errors', () {
+      final container = _createScopedContainer();
+
+      // Read all providers including the new one — no cycles
+      expect(() => container.read(_cryptoServiceProvider), returnsNormally);
+      expect(
+          () => container.read(data_providers.databaseProvider),
+          returnsNormally);
+      expect(() => container.read(_appPreferencesProvider), returnsNormally);
+      expect(
+          () => container.read(_securePreferencesProvider),
+          returnsNormally);
+      expect(() => container.read(_syncServiceProvider), returnsNormally);
+      expect(() => container.read(_authServiceProvider), returnsNormally);
+      expect(
+          () => container.read(_onboardingServiceProvider),
+          returnsNormally);
+      expect(() => container.read(appLifecycleProvider), returnsNormally);
+      expect(() => container.read(_ledgerPushServiceProvider),
+          returnsNormally,
+          reason: 'Adding ledgerPushServiceProvider must not introduce '
+              'cycles in the existing provider graph');
 
       container.dispose();
     });

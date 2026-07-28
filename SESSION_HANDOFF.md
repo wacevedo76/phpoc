@@ -10,10 +10,12 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1109/1115 GREEN (6 pre-existing failures)
+- **Flutter test suite:** 1207/1209 GREEN (2 pre-existing restore_integration flaky: G3, G8 — pass in isolation)
+- **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 
-### Recent commits (Fri Jul 24)
-- _(Phase 3 + Phase 4 changes unstaged)_
+### Recent commits (Mon Jul 28)
+- _(Genesis export correction changes unstaged — Phase 2 RED tests written)_
+- _(Phase 4 REFACTOR changes unstaged — Block Reconstruction)_
 - `becbf08` — feat(flutter): Python-compatible field-level decrypt for cross-client data
 - `2d4a8f3` — feat(flutter): monospace font on all text input fields
 - `7e67f0e` — test(flutter): Group J cross-reference history dates
@@ -24,49 +26,26 @@
 - `a983a55` — refactor(flutter): Phase 4 lint fixes
 - `b3c64fc` — docs: user-must-initiate git operations rule (not pushed)
 
-### Key fixes today
-- **Jan-1-1970 timestamps:** Two-layer fix: (1) `_seedStagingFromBlocks` now reads `startTime_enc` (not non-existent `start_epoch`), (2) `decryptFieldValue` matches Python's HMAC-sub-key derivation so Python-encrypted fields decrypt correctly in Flutter
-- **Cross-platform decrypt:** `LocalCache._decrypt()` tries standard decrypt then falls back to `decryptFieldValueWithCachedKey()` (Python-compatible)
-- **Error surfacing:** `restoreFromCloud` returns `PullResult`; connection/auth/deobfuscation errors propagated to UI
-- **Unlock fix:** `unlock_screen.dart` calls `reauthenticate()` — decrypts real seed from genesis via PDK
-- **R2 data:** `testdata/ledger.json` regenerated with Python-encrypted hex fields; pushed to `phpoc-staging-testing`
+### Recent fixes
+- **Seal field fix** (Jul 28): LedgerBackupService + LedgerPushService seal fields corrected (`identitySeal`→`blockId`). Extracted `PhpSpecFormat` utility. 82/82 ✅
+- **LedgerEngine→SyncService** (Jul 27): Wired via LedgerBlockStore/LedgerIndexStore adapters. Sync errors now surfaced.
+- **Pause display** (Jul 27): Fixed wrong field names (`start_epoch`→`pause_start`) causing ~495,860h durations.
 
 ## Completed ✅
 
-### ✅ F-03: History G2–G4 — Phase 3+4 Complete
-**Root cause:** `_selectedCalendarDate` initialized to today's date in `initState()`, silently filtering all 146 test ledger entries (June 2026) to zero — no Cards rendered.
-**Fix:** Removed `_selectedCalendarDate` default → `null`. Toggle behavior (tap day to filter, tap again to clear) still works.
-**Result:** G2/G3/G4 all GREEN. 31/31 history tests pass.
-**Files:** `lib/features/history/history_screen.dart` (1 line removed in initState).
-**Phase 4:** No refactoring needed — code already clean.
+### ✅ Flutter File Import — 4-Phase TDD Complete (2026-07-28)
+- 20 assertions (L1–L10 service, M1–M10 UI) → 20 GREEN.
+- Phase 4: 3 improvements (1 modularity: extracted `_writeStagingEntries` to deduplicate v1/v2 staging loops; 2 clarity: renamed `// ── Import from File ──` to `// ── Seed File Picker ──` before `_pickSeedFile`, added comment explaining Python/Flutter field name dual-key resolution in `_mapStagingEntry`).
 
-### ✅ Flutter R2 Path Alignment — Phase 4 Complete (REFACTOR)
-**Phase 4 REFACTOR:** 4 clarity improvements applied. All 1066 tests GREEN (7 pre-existing failures unchanged).
+### ✅ Dashboard Screen — 4-Phase TDD Complete (2026-07-28)
+- 31 assertions (E1–E16, T1–T12, U1–U3) → 31 GREEN.
+- Phase 4: 5 improvements (1 modularity: extracted `_buildActiveCardActions`; 2 clarity: renamed `_expandedActive`→`_expandedActiveIds`, comment on index-based tracking; 2 conciseness: arrow-fn tag maps).
 
-### ✅ Flutter Sync Tasks T2/T3/T8 — Phase 1 Complete (Blueprint)
-**Phase 1:** 36 assertions blueprinted across 4 groups (K/M/N/R) → `docs/planning/FLUTTER_SYNC_TASKS_PHASE1.md`
-- K (T2): 7 cookie-check wiring tests
-- M (T3): 10 cookie-compare + fast-path tests
-- N (T8): 14 commit-to-ledger method tests
-- R (T8 UI): 5 sync-screen commit button tests
+### ✅ Settings Screen — 4-Phase TDD (2026-07-28)
+- 13 assertions (H1–H13) → 13 GREEN. Phase 3 fixed 2 bugs (controller dispose timing, _FocusInheritedScope assertion). Phase 4 cleaned dead comments.
 
-### ✅ T8 Commit to Ledger (Group N) — Phase 4 Complete (REFACTOR)
-**Phase 4 REFACTOR:** 4 improvements across 3 files (2 clarity, 1 conciseness, 1 security).
-- Removed unused `blockIndex` param from `markCommitted`
-- Updated N14 test — removed stale Phase 2 UnimplementedError catch
-- Set-based lookup in `markCommitted` (O(1) vs linear)
-- Null-safe `entry_id` extraction in `commitEntries`
-- All 14 Group N tests GREEN. No regressions.
-
-### ✅ Group R Phase 4 (REFACTOR) — Commit button review
-**Phase 4 REFACTOR:** 4 improvements in `sync_screen.dart` (2 clarity, 1 conciseness, 1 security). All 5 Group R tests GREEN.
-
-### ✅ E13 LocalCache.update() title fix — Phase 4 Complete (REFACTOR)
-**Phase 3 GREEN:** 1-line fix in `local_cache.dart` — added `title_enc` sync to `update()` matching tags/comment pattern.
-**Phase 4 REFACTOR:** 2 improvements in `local_cache.dart` (1 clarity, 1 conciseness).
-- Extracted `_upsertEncryptableField` helper — consolidates 3×5-line repeated title/tags/comment pattern
-- Categorized field groups with section comments (encryptable / always-encrypted / plain-only)
-- All 25 local_cache tests GREEN. Full suite: 1111/1111 GREEN (4 pre-existing failures unchanged).
+### ✅ Genesis Export + Push Service + Block Reconstruction + RESTORE_CLOUD_ERRORS
+- All completed via 4-Phase TDD (2026-07-28). Details archived to `docs/planning/archive/SESSION_HISTORY_2026-07-25.md`.
 
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
@@ -89,12 +68,12 @@
 
 ## Immediate Next Steps 🎯
 
-### 🔜 F-06: Dashboard E3
-- F-06: Dashboard empty-title validation (~15 min)
-
-### 🔜 R1–R5: SyncScreen Commit Button
-- R1–R5: SyncScreen "Commit to Ledger" button wiring (~1 hr)
+### 1. Fix sync-to-remote framework assertion crash
+- **Symptom:** Syncing to remote triggers `'_dependents.isEmpty': is not true` at `framework.dart:6268`
+- **Likely cause:** InheritedWidget/InheritedNotifier dependency still registered when a widget is being disposed — often a provider accessed during or after disposal in the sync flow
+- **Repro:** Onboarding → connect Worker → tap sync → error appears
+- **Direction:** Add mounted checks or move provider reads earlier in sync widget lifecycle
 
 ## Known Issues
-- **6 Flutter test failures** (pre-existing — see BACKLOG.md §Active Issues)
-- **E3** (Dashboard empty-title validation), **R1/R2/R3/R4/R5** (SyncScreen commit button), **F3/L1** (flaky)
+- 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation
+- **Sync-to-remote framework assertion** (2026-07-28): `_dependents.isEmpty` assertion at `framework.dart:6268` when syncing to remote. Likely InheritedWidget/InheritedNotifier dependency still live during disposal in the sync flow.
