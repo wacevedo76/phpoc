@@ -76,20 +76,82 @@ class MergeEngine {
     return result;
   }
 
-  /// Dedup key for an [Entry] object.
-  /// Primary: entry_id (stable UUID). Fallback: (title, start_epoch).
-  static String _dedupKey(Entry entry) {
-    if (entry.entryId.isNotEmpty) {
-      return 'id:${entry.entryId}';
-    }
-    return 'fallback:${entry.title}:${entry.startEpoch}';
+  /// Dedup key: primary `entry_id`, fallback `(title, start_epoch)`.
+  static String _makeKey(String? entryId, String? title, int? startEpoch) {
+    if (entryId != null && entryId.isNotEmpty) return 'id:$entryId';
+    return 'fallback:${title ?? ''}:${startEpoch ?? 0}';
   }
 
-  /// Dedup key for a raw entry map.
-  /// Primary: entry_id. Fallback: (title, start_epoch).
-  static String _mapDedupKey(Map<String, dynamic> entry) {
-    final id = entry['entry_id'] as String?;
-    if (id != null && id.isNotEmpty) return 'id:$id';
-    return 'fallback:${entry['title'] ?? ''}:${entry['start_epoch'] ?? 0}';
+  static String _dedupKey(Entry entry) =>
+      _makeKey(entry.entryId, entry.title, entry.startEpoch);
+
+  static String _mapDedupKey(Map<String, dynamic> entry) => _makeKey(
+        entry['entry_id'] as String?,
+        entry['title'] as String?,
+        entry['start_epoch'] as int?,
+      );
+
+  // ═══════════════════════════════════════════════════════════════
+  // Activity-ID-based LWW merge (row-level staging overhaul)
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Merge local and remote staging rows by activity_id with LWW on updated_at.
+  ///
+  /// Rules:
+  ///   - Same activity_id in both → newer `updated_at` wins (local on tie)
+  ///   - Remote-only → added to result
+  ///   - Local-only + committed → removed (cleanup, S5)
+  ///   - Local-only + not committed → kept in result
+  static List<Map<String, dynamic>> mergeEntries(
+    List<Map<String, dynamic>> local,
+    List<Map<String, dynamic>> remote,
+  ) {
+    final result = <String, Map<String, dynamic>>{};
+
+    // Index local by activity_id
+    final localById = <String, Map<String, dynamic>>{};
+    for (final entry in local) {
+      final id = entry['activity_id'] as String?;
+      if (id != null) localById[id] = entry;
+    }
+
+    // Process remote entries first
+    for (final entry in remote) {
+      final id = entry['activity_id'] as String?;
+      if (id == null) continue;
+
+      final localEntry = localById[id];
+      if (localEntry != null) {
+        // Both have it — LWW on updated_at
+        final localTs = localEntry['updated_at'] as int? ?? 0;
+        final remoteTs = entry['updated_at'] as int? ?? 0;
+        if (remoteTs > localTs) {
+          result[id] = Map<String, dynamic>.from(entry);
+        } else {
+          result[id] = Map<String, dynamic>.from(localEntry);
+        }
+      } else {
+        // Remote-only row → include in result
+        result[id] = Map<String, dynamic>.from(entry);
+      }
+    }
+
+    // Process local-only entries
+    for (final id in localById.keys) {
+      if (result.containsKey(id)) continue; // already handled
+
+      final entry = localById[id]!;
+      final committed = entry['committed'] as bool? ?? false;
+
+      if (committed) {
+        // Local-only row already committed → exclude from result (cleanup)
+        continue;
+      }
+
+      // Local-only row not yet committed → preserve
+      result[id] = Map<String, dynamic>.from(entry);
+    }
+
+    return result.values.toList();
   }
 }

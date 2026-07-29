@@ -429,10 +429,12 @@ class BlockDao {
   final AppDatabase _db;
   BlockDao(this._db);
 
+  int _resolveCreatedAt(Block block) => block.createdAt > 0
+      ? block.createdAt
+      : DateTime.now().millisecondsSinceEpoch;
+
   Future<Block> insertBlock(Block block) async {
-    final createdAt = block.createdAt > 0
-        ? block.createdAt
-        : DateTime.now().millisecondsSinceEpoch;
+    final createdAt = _resolveCreatedAt(block);
     await _db.customStatement('''
       INSERT INTO blocks (block_id, block_type, block_index, key_version,
                           data_enc, identity_seal, prev_hash, created_at)
@@ -499,11 +501,9 @@ class BlockDao {
   // ── Sync wrappers for LedgerChain (synchronous API) ──────
 
   Block insertBlockSync(Block block) {
-    final createdAt = block.createdAt > 0
-        ? block.createdAt
-        : DateTime.now().millisecondsSinceEpoch;
+    final createdAt = _resolveCreatedAt(block);
     _db.customStatementSync(
-      'INSERT OR IGNORE INTO blocks (block_id, block_type, block_index, key_version,'
+      'INSERT INTO blocks (block_id, block_type, block_index, key_version,'
           ' data_enc, identity_seal, prev_hash, created_at)'
           ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [

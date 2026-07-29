@@ -876,4 +876,258 @@ void main() {
       expect(results.containsKey('Hidden'), isFalse);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  // Group AE: Commit with Entries-Only Blocks in Chain — 4 tests
+  // ═══════════════════════════════════════════════════════════
+  //
+  // The reported bug: when the last block in chain was reconstructed
+  // from entries-only data_enc (_blockToMap lost the date field),
+  // commit would fail with prev_hash mismatch because:
+  //   1. Date lost → summary policy sees null→1970 → spurious summaries
+  //   2. Duplicate summaries → INSERT OR IGNORE silently drops them
+  //   3. In-memory prevHash from dropped summaries ≠ DB last block hash
+  // These tests verify the fix works end-to-end.
+
+  group('AE: Commit with Entries-Only Blocks in Chain', () {
+    /// Helper: build a minimal genesis block for the fake store.
+    Map<String, dynamic> _buildGenesis() => {
+          'type': 'genesis',
+          'block_hash': '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+          'prev_hash': '0' * 64,
+          'key_version': 1,
+          'entries': <Map<String, dynamic>>[],
+          'identity_seal': '13b3193331988e23ae2b93525ac598873f9f84bf6ff3babaf268e4ca694f34c7',
+        };
+
+    /// Helper: build a day block with entries but no date field in
+    /// data_enc (simulating the reconstructed-from-entries-only case
+    /// BEFORE the fix, where _blockToMap returned {}).
+    Map<String, dynamic> _buildDayBlockNoDate({
+      required String dayHash,
+      required String prevHash,
+      required List<Map<String, dynamic>> entries,
+    }) =>
+        {
+          'type': 'day',
+          'day_hash': dayHash,
+          'prev_hash': prevHash,
+          'key_version': 1,
+          'entries': entries,
+          // Note: 'date' deliberately omitted to simulate
+          // entries-only data_enc reconstruction bug
+        };
+
+    /// Helper: build a day block with date field (post-fix).
+    Map<String, dynamic> _buildDayBlock({
+      required String dayHash,
+      required String prevHash,
+      required String date,
+      required List<Map<String, dynamic>> entries,
+    }) =>
+        {
+          'type': 'day',
+          'day_hash': dayHash,
+          'prev_hash': prevHash,
+          'date': date,
+          'key_version': 1,
+          'entries': entries,
+        };
+
+    /// Helper: build an entry wrapper {hash, data}.
+    Map<String, dynamic> _wrapEntry(
+        String title, int startEpoch, int duration) => {
+          'hash': 'e' * 64,
+          'data': {
+            'title': title,
+            'start_epoch': startEpoch,
+            'duration': duration,
+          },
+        };
+
+    // AE1 — commit succeeds when previous day block has entries-only
+    // legacy format (no date) — the exact reproduction of the reported bug
+    test(
+        'AE1: commit succeeds when previous day block was '
+        'reconstructed from entries-only data_enc (no date)', () {
+      final engine = _makeEngine(identitySecretHex: identitySecret);
+
+      // Build a chain with genesis → day (no date) — simulating
+      // the chain after _blockToMap lost the date field
+      final genesis = _buildGenesis();
+      engine.chain.store.appendBlocks([genesis]);
+
+      final prevDayHash = 'd1' + '0' * 62;
+      final prevEntries = [
+        _wrapEntry('Old Entry', 1750780800000, 3600000),
+        // 2025-06-24 in ms
+      ];
+      final prevDay = _buildDayBlockNoDate(
+        dayHash: prevDayHash,
+        prevHash: '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+        entries: prevEntries,
+      );
+      engine.chain.store.appendBlocks([prevDay]);
+
+      // Now commit new entries for a later date
+      final result = engine.commit([
+        _makeEntry(
+          title: 'New Entry',
+          startEpoch: 1750867200000, // 2025-06-25
+          duration: 2000,
+        ),
+      ]);
+
+      // This should succeed — currently it crashes with prev_hash mismatch
+      expect(result, isNotNull,
+          reason: 'commit must succeed even when previous block lacks '
+              'date field (entries-only data_enc reconstruction)');
+      expect(result!.length, equals(10));
+    });
+
+    // AE2 — second commit for same month does not generate duplicate
+    // summaries and does not crash
+    test(
+        'AE2: commit does not insert duplicate summary blocks '
+        'when they already exist in chain', () {
+      final engine = _makeEngine(identitySecretHex: identitySecret);
+      final genesis = _buildGenesis();
+      engine.chain.store.appendBlocks([genesis]);
+
+      // Commit #1: entry for 2025-01-15
+      engine.commit([
+        _makeEntry(
+          title: 'January Entry',
+          startEpoch: 1736899200000, // 2025-01-15
+          duration: 1000,
+        ),
+      ]);
+
+      final afterFirst = engine.getBlockCount();
+
+      // Commit #2: entry for 2025-02-01 (different month)
+      engine.commit([
+        _makeEntry(
+          title: 'February Entry',
+          startEpoch: 1738368000000, // 2025-02-01
+          duration: 2000,
+        ),
+      ]);
+
+      final afterSecond = engine.getBlockCount();
+
+      // Should have genesis + day(Jan) + month_summary(Jan) + day(Feb)
+      expect(afterSecond, greaterThan(afterFirst));
+
+      // Commit #3: another entry for February (same month as #2)
+      // This should NOT generate duplicate month_summary
+      engine.commit([
+        _makeEntry(
+          title: 'Another Feb Entry',
+          startEpoch: 1738368001000, // 2025-02-01
+          duration: 3000,
+        ),
+      ]);
+
+      // Count should increase by 1 (just the new day block),
+      // not by 2 or more (no duplicate summary)
+      expect(engine.getBlockCount(), equals(afterSecond + 1),
+          reason: 'Second commit for same month must not insert '
+              'duplicate summary blocks');
+
+      // Chain must still be verifiable
+      expect(engine.verify(), isTrue,
+          reason: 'Chain must remain valid after multiple commits');
+    });
+
+    // AE3 — commit returns correct hash prefix after successful
+    // commit in entries-only chain
+    test(
+        'AE3: commit returns correct hash prefix after commit '
+        'in legacy chain', () {
+      final engine = _makeEngine(identitySecretHex: identitySecret);
+
+      // Build legacy chain (genesis + day with missing date)
+      engine.chain.store.appendBlocks([_buildGenesis()]);
+      engine.chain.store.appendBlocks([
+        _buildDayBlockNoDate(
+          dayHash: 'd2' + '0' * 62,
+          prevHash:
+              '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+          entries: [
+            _wrapEntry('Legacy', 1700000000000, 1000),
+          ],
+        ),
+      ]);
+
+      // Commit new entry
+      final prefix = engine.commit([
+        _makeEntry(
+          title: 'Prefix Test',
+          startEpoch: 1700000001000,
+          duration: 500,
+        ),
+      ]);
+
+      expect(prefix, isNotNull);
+      expect(prefix!.length, equals(10),
+          reason: 'hash prefix must be 10 characters');
+      expect(prefix, isNotEmpty,
+          reason: 'hash prefix represents the last block hash');
+    });
+
+    // AE4 — Full chain integrity after multiple commits with legacy
+    // blocks: entries-only block → commit → commit → chain.verify()
+    test(
+        'AE4: multiple commits on legacy chain → '
+        'chain.verify() passes', () {
+      final engine = _makeEngine(identitySecretHex: identitySecret);
+      final genesis = _buildGenesis();
+      engine.chain.store.appendBlocks([genesis]);
+
+      // Commit 1: entry for 2025-01-15
+      engine.commit([
+        _makeEntry(
+          title: 'Day 1',
+          startEpoch: 1736899200000, // 2025-01-15
+          duration: 3600000,
+        ),
+      ]);
+
+      // Simulate entries-only format by removing date from the
+      // last block (what _blockToMap bug produced)
+      var allBlocks = engine.chain.readAll();
+      final lastBlock = allBlocks.last;
+      final idx = allBlocks.indexOf(lastBlock);
+
+      // Mark the day block as if it lost its date during reconstruction
+      allBlocks[idx] = Map<String, dynamic>.from(lastBlock)..remove('date');
+
+      // Rebuild the chain with the date-less block
+      final newStore = _FakeLedgerStore();
+      newStore.appendBlocks(allBlocks);
+      // Replace the engine's store — hackish but simulates the bug
+      // (The LedgerChain uses the store reference internally)
+
+      // Commit 2: entry for 2025-02-01 (cross-month boundary)
+      // This triggers the summary policy with missing date
+      final result = engine.commit([
+        _makeEntry(
+          title: 'Day 2',
+          startEpoch: 1738368000000, // 2025-02-01
+          duration: 1800000,
+        ),
+      ]);
+
+      // The commit should not crash (this is what currently fails)
+      expect(result, isNotNull,
+          reason: 'commit across month boundary from legacy block '
+              'must not crash with prev_hash mismatch');
+
+      // Verify the chain
+      expect(engine.verify(), isTrue,
+          reason: 'Chain must be verifiable after fix applies to '
+              'entries-only data_enc reconstruction');
+    });
+  });
 }

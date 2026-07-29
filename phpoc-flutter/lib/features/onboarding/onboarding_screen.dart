@@ -599,6 +599,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             labelText: 'Passphrase',
             hintText: 'At least 8 characters',
             prefixIcon: const Icon(Icons.key),
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassphrase
+                  ? Icons.visibility
+                  : Icons.visibility_off),
+              onPressed: () =>
+                  setState(() => _obscurePassphrase = !_obscurePassphrase),
+            ),
             errorText: _errorMessage,
             border: const OutlineInputBorder(),
           ),
@@ -734,6 +741,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             labelText: 'New Passphrase',
             hintText: 'At least 8 characters',
             prefixIcon: const Icon(Icons.key),
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassphrase
+                  ? Icons.visibility
+                  : Icons.visibility_off),
+              onPressed: () =>
+                  setState(() => _obscurePassphrase = !_obscurePassphrase),
+            ),
             errorText: _errorMessage,
             border: const OutlineInputBorder(),
           ),
@@ -862,11 +876,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           obscureText: _obscurePassphrase,
           enabled: !_isLoading,
           style: const TextStyle(fontFamily: 'monospace'),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Passphrase',
             hintText: 'At least 8 characters',
-            prefixIcon: Icon(Icons.key),
-            border: OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.key),
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassphrase
+                  ? Icons.visibility
+                  : Icons.visibility_off),
+              onPressed: () =>
+                  setState(() => _obscurePassphrase = !_obscurePassphrase),
+            ),
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
@@ -980,6 +1001,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             labelText: 'Passphrase',
             hintText: 'At least 8 characters',
             prefixIcon: const Icon(Icons.key),
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassphrase
+                  ? Icons.visibility
+                  : Icons.visibility_off),
+              onPressed: () =>
+                  setState(() => _obscurePassphrase = !_obscurePassphrase),
+            ),
             errorText: _errorMessage,
             border: const OutlineInputBorder(),
           ),

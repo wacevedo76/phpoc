@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:phpoc_flutter/core/models/block.dart';
+import 'package:phpoc_flutter/data/ledger/helpers.dart' show epochToDate;
 
 /// Adapter that converts between chain-format block maps and [Block] database rows.
 ///
@@ -123,10 +124,18 @@ class LedgerBlockStore {
 
   // ── Reconstruction (Block model → chain map) ───────────────
 
+  /// Map [BlockType] → chain-format hash field name.
+  static const Map<BlockType, String> _hashKeyByType = {
+    BlockType.genesis: 'block_hash',
+    BlockType.day: 'day_hash',
+    BlockType.year: 'year_hash',
+    BlockType.month: 'month_hash',
+  };
+
   /// Reconstruct a chain-format map from a [Block] row.
   ///
   /// Decodes [dataEnc] (base64 → UTF-8 → JSON) as the base chain map,
-  /// then overlays DB-authoritative fields. Handles two legacy bugs:
+  /// then overlays DB-authoritative fields. Handles three legacy bugs:
   ///
   /// **Bug A (genesis without type):** Onboarding stores genesis with
   /// data_enc `{"seed":"..."}` (no `type`). Type is inferred from
@@ -136,28 +145,19 @@ class LedgerBlockStore {
   /// have wrong [b.blockType] (day) and empty [b.blockId]. The correct type
   /// and hash fields survive in data_enc and are preserved here; the
   /// DB-overlay hash falls back to data_enc when [b.blockId] is empty.
+  ///
+  /// **Bug C (entries-only data_enc):** data_enc may store only the entries
+  /// array `[{data, hash}, ...]` instead of a full block map. When decoded
+  /// JSON is a List, date is reconstructed from earliest entry start_epoch.
   static Map<String, dynamic> _blockToMap(Block b) {
-    // Try to reconstruct from data_enc (original chain map)
-    Map<String, dynamic> map;
-    // data_enc contract: base64(UTF8(JSON(payload)))
-    // Also tolerates legacy plain-JSON blocks (written before fix).
-    try {
-      final decoded = utf8.decode(base64.decode(b.dataEnc));
-      map = json.decode(decoded) as Map<String, dynamic>;
-    } catch (_) {
-      // Fallback: legacy plain-JSON format
-      try {
-        map = json.decode(b.dataEnc) as Map<String, dynamic>;
-      } catch (_) {
-        map = <String, dynamic>{};
-      }
-    }
+    Map<String, dynamic> map = _decodeBlockDataEnc(b.dataEnc);
 
-    // Overlay DB-level fields (authoritative)
+    // Overlay DB-authoritative fields
     map['block_id'] = b.blockId;
     map['prev_hash'] = b.prevHash;
     map['key_version'] = b.keyVersion;
     map['identity_seal'] = b.identitySeal;
+    map['block_index'] = b.blockIndex;
 
     // Type restoration: use data_enc's type when present, otherwise infer
     // from DB blockType (Bug A fix: genesis stored without type field).
@@ -165,32 +165,85 @@ class LedgerBlockStore {
       map['type'] = _blockTypeToChainType(b.blockType);
     }
 
-    // Overlay block-index field
-    if (b.blockType == BlockType.genesis) {
-      map['block_index'] = 0;
-    } else {
-      map['block_index'] = b.blockIndex;
-    }
-
-    // Overlay type-specific hash key so getBlockHash() can find it
+    // Overlay type-specific hash key so getBlockHash() can resolve
     // from the DB-authoritative blockId (fixes summary block lookup).
-    switch (b.blockType) {
-      case BlockType.genesis:
-        map['block_hash'] = b.blockId;
-        break;
-      case BlockType.day:
-        map['day_hash'] = b.blockId;
-        map['day_index'] = b.blockIndex;
-        break;
-      case BlockType.year:
-        map['year_hash'] = b.blockId;
-        break;
-      case BlockType.month:
-        map['month_hash'] = b.blockId;
-        break;
-    }
+    _overlayHashFields(map, b);
 
     return map;
+  }
+
+  /// Decode [dataEnc] into a chain-format map, handling both normal blocks
+  /// and Bug C (entries-only array).
+  static Map<String, dynamic> _decodeBlockDataEnc(String dataEnc) {
+    // data_enc contract: base64(UTF8(JSON(payload)))
+    // Also tolerates legacy plain-JSON blocks (written before fix).
+    try {
+      final decoded = utf8.decode(base64.decode(dataEnc));
+      return _decodeDataEnc(decoded);
+    } catch (_) {
+      // Fallback: legacy plain-JSON format
+      try {
+        return _decodeDataEnc(dataEnc);
+      } catch (_) {
+        return <String, dynamic>{};
+      }
+    }
+  }
+
+  /// Overlay DB-authoritative hash and index fields on [map] from [b].
+  static void _overlayHashFields(Map<String, dynamic> map, Block b) {
+    final hashKey = _hashKeyByType[b.blockType];
+    if (hashKey != null) {
+      map[hashKey] = b.blockId;
+    }
+    if (b.blockType == BlockType.day) {
+      map['day_index'] = b.blockIndex;
+    }
+  }
+
+  /// Decode a raw JSON string and return a chain-format map.
+  ///
+  /// If the decoded JSON is a List (entries-only format from legacy
+  /// storage — Bug C), reconstructs `date` from the earliest entry's
+  /// start_epoch and sets `entries` to the decoded list.
+  static Map<String, dynamic> _decodeDataEnc(String raw) {
+    final dynamic parsed = json.decode(raw);
+    if (parsed is List) {
+      return _reconstructFromEntries(parsed);
+    }
+    return parsed as Map<String, dynamic>;
+  }
+
+  /// Reconstruct block-level fields from an entries array.
+  ///
+  /// - `date`: derived from earliest non-zero start_epoch in entries;
+  ///   falls back to '1970-01-01' (sentinel) when no entries have epoch.
+  /// - `entries`: the decoded entries list cast to Map.
+  static Map<String, dynamic> _reconstructFromEntries(List<dynamic> entries) {
+    String date = '1970-01-01';
+    if (entries.isNotEmpty) {
+      int? earliestEpoch;
+      for (final entry in entries) {
+        if (entry is Map) {
+          final data = entry['data'];
+          if (data is Map) {
+            final epoch = data['start_epoch'];
+            if (epoch is int && epoch > 0) {
+              if (earliestEpoch == null || epoch < earliestEpoch) {
+                earliestEpoch = epoch;
+              }
+            }
+          }
+        }
+      }
+      if (earliestEpoch != null) {
+        date = epochToDate(earliestEpoch);
+      }
+    }
+    return <String, dynamic>{
+      'entries': entries.cast<Map<String, dynamic>>(),
+      'date': date,
+    };
   }
 }
 

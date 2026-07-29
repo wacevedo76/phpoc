@@ -9,6 +9,9 @@ import 'package:phpoc_flutter/services/auth_service.dart';
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
 
 /// Sync — uncommitted tasks, pending count, manual sync, thin status bar.
+///
+/// Row-level staging overhaul: unified "Sync" button that commits all ended
+/// entries, pushes ledger blocks, and pushes clean staging — all in one tap.
 class SyncScreen extends ConsumerStatefulWidget {
   const SyncScreen({super.key});
 
@@ -28,6 +31,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   bool _pushing = false;
   final Map<int, _CardEditState> _editStates = {};
   final Set<int> _saving = {};
+
+  // ── Checkbox selection state (overhaul I2/I3) ────────────
+
+  final Set<int> _selectedIndices = {};
+  bool _selectAll = false;
 
   bool get _canCommit => _uncommittedEntries.isNotEmpty && !_committing;
 
@@ -62,6 +70,64 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     });
   }
 
+  // ── Unified Sync button (overhaul I4/I5/I6) ──────────────
+
+  Future<void> _unifiedSync() async {
+    setState(() => _committing = true);
+    // Yield for one frame so the spinner renders before heavy work.
+    await Future.delayed(const Duration(milliseconds: 50));
+    try {
+      final sync = ref.read(syncServiceProvider);
+
+      List<String>? selectedIds;
+      if (_selectedIndices.isNotEmpty) {
+        selectedIds = _selectedIndices
+            .where((i) => i < _uncommittedEntries.length)
+            .map((i) => _uncommittedEntries[i]['activity_id'] as String? ?? '')
+            .where((id) => id.isNotEmpty)
+            .toList();
+        if (selectedIds.isEmpty) selectedIds = null;
+      }
+
+      final hash = await sync.commitAndSync(selectedIds: selectedIds);
+
+      if (!mounted) return;
+      if (hash != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Synced — $hash')),
+        );
+      }
+      await _refreshStatus();
+      setState(() {
+        _selectedIndices.clear();
+        _selectAll = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sync failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _committing = false);
+    }
+  }
+
+  // ── Select All / Deselect All (overhaul I3) ──────────────
+
+  void _toggleSelectAll() {
+    setState(() {
+      if (_selectAll) {
+        _selectedIndices.clear();
+        _selectAll = false;
+      } else {
+        _selectedIndices.addAll(
+          List.generate(_uncommittedEntries.length, (i) => i),
+        );
+        _selectAll = true;
+      }
+    });
+  }
+
   Future<void> _commitToLedger() async {
     setState(() => _committing = true);
     try {
@@ -85,10 +151,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   /// Renders the "Push Ledger to Cloud" button when a transport is configured.
-  /// Hidden (SizedBox.shrink) when [ledgerPushServiceProvider] returns null
-  /// (local-only mode / no Worker URL configured).
   Widget _buildPushToCloudButton() {
-    final pushSvc = ref.watch(ledgerPushServiceProvider);
+    final pushSvc = ref.read(ledgerPushServiceProvider);
     if (pushSvc == null) return const SizedBox.shrink();
 
     return SizedBox(
@@ -104,15 +168,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
-  /// Calls [LedgerPushService.pushAll] to push the full ledger chain to the
-  /// remote Worker. Shows a success SnackBar with block count + hash prefix,
-  /// or an error SnackBar with the failure reason. Sets [_pushing] to true
-  /// during the operation (disables the button and shows a spinner).
   Future<void> _pushToCloud() async {
     final pushSvc = ref.read(ledgerPushServiceProvider);
-    // Defensive: button is hidden when pushSvc is null, but guard against
-    // race conditions where the transport is disconnected between render
-    // and tap.
     if (pushSvc == null) return;
 
     setState(() => _pushing = true);
@@ -273,23 +330,44 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
+        // ── Ready to Commit section with checkboxes (overhaul I2) ──
         if (_uncommittedEntries.isNotEmpty) ...[
           _buildSectionHeader(
             'Ready to Commit',
             Icons.cloud_upload_outlined,
           ),
-          const SizedBox(height: 4),
+          // Select All / Deselect All toggle (overhaul I3)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _toggleSelectAll,
+                child: Text(_selectAll ? 'Deselect All' : 'Select All'),
+              ),
+            ),
+          ),
           ..._uncommittedEntries.asMap().entries.map((e) =>
               _buildUncommittedCard(e.value, e.key)),
           const SizedBox(height: 16),
         ],
         _buildPendingCount(),
         const SizedBox(height: 16),
+        // Unified Sync button (overhaul I1)
         SizedBox(
           width: double.infinity,
           height: 48,
-          // T8: Commits all completed (is_active=false) uncommitted entries to
-          // the local ledger via SyncService.commitEntries(). Hash shown on success.
+          child: ElevatedButton.icon(
+            onPressed: _canCommit ? _unifiedSync : null,
+            icon: _committing ? _loadingSpinner() : const Icon(Icons.sync),
+            label: Text(_committing ? 'Syncing…' : 'Sync'),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Legacy commit button (backward compat with old tests)
+        SizedBox(
+          width: double.infinity,
+          height: 48,
           child: ElevatedButton.icon(
             onPressed: _canCommit ? _commitToLedger : null,
             icon: _committing ? _loadingSpinner() : const Icon(Icons.lock_outline),
@@ -300,6 +378,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         // Push Ledger to Cloud button (only when transport configured)
         _buildPushToCloudButton(),
         const SizedBox(height: 16),
+        // Legacy sync-to-remote button (kept for backward compat)
         SizedBox(
           width: double.infinity,
           height: 48,
@@ -419,7 +498,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         fields['end_epoch'] = es.endEpoch;
       }
 
-      // Recompute duration from new end time and pauses
       fields['duration'] = _computeDuration(
         startEpoch: _uncommittedEntries[idx]['start_epoch'] as int? ?? 0,
         endEpoch: es.endEpoch,
@@ -445,11 +523,80 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     }
   }
 
-  // ── Uncommitted card (collapsible, orange border) ──────────
+  Future<void> _confirmDelete(int idx) async {
+    final title = _uncommittedEntries[idx]['title'] as String? ?? 'Untitled';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Entry'),
+        content: Text('Delete "$title"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _deleteEntry(idx);
+    }
+  }
+
+  Future<void> _deleteEntry(int idx) async {
+    final entry = _uncommittedEntries[idx];
+    final activityId = entry['activity_id'] as String?;
+    debugPrint('[SyncScreen] delete idx=$idx activityId=$activityId entry=${entry['title']}');
+
+    setState(() {
+      _saving.add(idx);
+      _expandedUncommitted.remove(idx);
+      _selectedIndices.remove(idx);
+      _disposeEditState(idx);
+    });
+    try {
+      final sync = ref.read(syncServiceProvider);
+      if (activityId != null && activityId.isNotEmpty) {
+        debugPrint('[SyncScreen] calling sync.remove("$activityId")');
+        await sync.remove(activityId);
+      } else {
+        // Fallback: old entry without activity_id — use index
+        final entryIndex = entry['entry_index'] as int? ?? idx;
+        debugPrint('[SyncScreen] no activityId, using entry_index=$entryIndex');
+        await sync.remove(entryIndex);
+      }
+      debugPrint('[SyncScreen] sync.remove completed, refreshing');
+      await _refreshStatus();
+      debugPrint('[SyncScreen] refresh done, _uncommittedEntries=${_uncommittedEntries.length}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Entry deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Delete failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving.remove(idx));
+    }
+  }
+
+  // ── Uncommitted card (with checkbox for selection) ────────
 
   Widget _buildUncommittedCard(Map<String, dynamic> entry, int idx) {
     final isExpanded = _expandedUncommitted.contains(idx);
     final es = isExpanded ? _ensureEditState(idx) : null;
+    final isSelected = _selectedIndices.contains(idx);
 
     final title = entry['title'] as String? ?? 'Untitled';
     final startEpoch = entry['start_epoch'] as int? ?? 0;
@@ -460,7 +607,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         (entry['pauses'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
 
-    // Live duration: use edit state values when expanded, stored otherwise
     final displayDurationMs = isExpanded && es != null
         ? _computeDuration(
             startEpoch: startEpoch,
@@ -474,7 +620,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Colors.orange, width: 2),
+        side: BorderSide(
+          color: isSelected ? Colors.blue : Colors.orange,
+          width: 2,
+        ),
       ),
       child: InkWell(
         onTap: () {
@@ -495,6 +644,23 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             children: [
               Row(
                 children: [
+                  // Checkbox for selection (overhaul I2)
+                  Checkbox(
+                    value: isSelected,
+                    onChanged: (v) {
+                      setState(() {
+                        if (v == true) {
+                          _selectedIndices.add(idx);
+                        } else {
+                          _selectedIndices.remove(idx);
+                        }
+                        _selectAll =
+                            _selectedIndices.length == _uncommittedEntries.length;
+                      });
+                    },
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
                   Icon(Icons.check_circle_outline,
                       size: 18,
                       color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -623,7 +789,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Title ──────────────────────────────────────────
           TextField(
             controller: es.titleController,
             decoration: InputDecoration(
@@ -635,8 +800,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 10),
-
-          // ── Comment ────────────────────────────────────────
           TextField(
             controller: es.commentController,
             decoration: InputDecoration(
@@ -650,48 +813,47 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             minLines: 1,
           ),
           const SizedBox(height: 10),
-
-          // ── Tags ───────────────────────────────────────────
           _buildEditTags(idx, es),
           const SizedBox(height: 10),
-
-          // ── End Time ───────────────────────────────────────
           _buildEditEndTime(idx, es),
           const SizedBox(height: 10),
-
-          // ── Pauses ─────────────────────────────────────────
           _buildEditPauses(idx, es),
           const SizedBox(height: 12),
-
-          // ── Encryption toggles ─────────────────────────────
           _buildEncryptionToggles(es),
           const SizedBox(height: 10),
-
-          // ── Save button ────────────────────────────────────
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: isSaving ? null : () => _saveEntry(idx),
-              icon: isSaving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save, size: 18),
-              label: Text(isSaving ? 'Saving…' : 'Save'),
-              style: FilledButton.styleFrom(
-                visualDensity: VisualDensity.compact,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _confirmDelete(idx),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Delete'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                  visualDensity: VisualDensity.compact,
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: isSaving ? null : () => _saveEntry(idx),
+                icon: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save, size: 18),
+                label: Text(isSaving ? 'Saving…' : 'Save'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
-
-  // ── Tags editor ───────────────────────────────────────────
 
   Widget _buildEditTags(int idx, _CardEditState es) {
     final theme = Theme.of(context);
@@ -761,7 +923,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     es.tagInputController.clear();
   }
 
-  /// Compute duration (ms) from start, end, and pauses in staging format.
   int _computeDuration({
     required int startEpoch,
     int? endEpoch,
@@ -779,8 +940,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     final result = endEpoch - startEpoch - totalPauseMs;
     return result < 0 ? 0 : result;
   }
-
-  // ── End time editor ───────────────────────────────────────
 
   Widget _buildEditEndTime(int idx, _CardEditState es) {
     final theme = Theme.of(context);
@@ -853,8 +1012,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     setState(() => es.endEpoch = combined.millisecondsSinceEpoch);
   }
 
-  // ── Pauses editor ─────────────────────────────────────────
-
   Widget _buildEditPauses(int idx, _CardEditState es) {
     final theme = Theme.of(context);
 
@@ -871,8 +1028,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               label: const Text('Add', style: TextStyle(fontSize: 12)),
               style: TextButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
               ),
             ),
           ],
@@ -880,11 +1036,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         if (es.pauses.isNotEmpty) ...[
           const SizedBox(height: 4),
           ...es.pauses.asMap().entries.map((p) {
-            final pStart =
-                p.value['pause_start'] as int? ?? 0;
+            final pStart = p.value['pause_start'] as int? ?? 0;
             final pEnd = p.value['pause_stop'] as int?;
-            final pStartDt =
-                DateTime.fromMillisecondsSinceEpoch(pStart);
+            final pStartDt = DateTime.fromMillisecondsSinceEpoch(pStart);
             final pEndDt = pEnd != null
                 ? DateTime.fromMillisecondsSinceEpoch(pEnd)
                 : null;
@@ -892,59 +1046,46 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                 ? pEndDt.difference(pStartDt)
                 : DateTime.now().difference(pStartDt);
             return Padding(
-              padding:
-                  const EdgeInsets.only(left: 4, bottom: 4),
+              padding: const EdgeInsets.only(left: 4, bottom: 4),
               child: Row(
                 children: [
                   Expanded(
                     child: InkWell(
-                      onTap: () => _pickPauseTime(
-                          es, p.key, isStart: true),
-                      borderRadius:
-                          BorderRadius.circular(6),
+                      onTap: () => _pickPauseTime(es, p.key, isStart: true),
+                      borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding:
-                            const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           border: Border.all(
-                              color: theme
-                                  .colorScheme.outline
+                              color: theme.colorScheme.outline
                                   .withValues(alpha: 0.4)),
-                          borderRadius:
-                              BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           FormatUtils.time(pStartDt),
-                          style:
-                              theme.textTheme.bodySmall,
+                          style: theme.textTheme.bodySmall,
                         ),
                       ),
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6),
-                    child: Text('\u2013',
-                        style: theme.textTheme.bodySmall),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text('\u2013', style: theme.textTheme.bodySmall),
                   ),
                   Expanded(
                     child: InkWell(
-                      onTap: () => _pickPauseTime(
-                          es, p.key, isStart: false),
-                      borderRadius:
-                          BorderRadius.circular(6),
+                      onTap: () =>
+                          _pickPauseTime(es, p.key, isStart: false),
+                      borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding:
-                            const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           border: Border.all(
-                              color: theme
-                                  .colorScheme.outline
+                              color: theme.colorScheme.outline
                                   .withValues(alpha: 0.4)),
-                          borderRadius:
-                              BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           pEndDt != null
@@ -960,15 +1101,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                     style: theme.textTheme.bodySmall,
                   ),
                   IconButton(
-                    onPressed: () => setState(
-                        () => es.pauses.removeAt(p.key)),
-                    icon: const Icon(Icons.close,
-                        size: 16),
-                    visualDensity:
-                        VisualDensity.compact,
+                    onPressed: () =>
+                        setState(() => es.pauses.removeAt(p.key)),
+                    icon: const Icon(Icons.close, size: 16),
+                    visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(),
+                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),
@@ -984,14 +1122,13 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     setState(() {
       es.pauses.add({
         'pause_start': now,
-        'pause_stop': now + 600000, // default 10 min
+        'pause_stop': now + 600000,
       });
     });
   }
 
   Future<void> _pickPauseTime(
-      _CardEditState es, int pauseIdx,
-      {required bool isStart}) async {
+      _CardEditState es, int pauseIdx, {required bool isStart}) async {
     final pause = es.pauses[pauseIdx];
     final epoch = (isStart
             ? pause['pause_start']
@@ -1021,8 +1158,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     });
   }
 
-  // ── Encryption toggles ────────────────────────────────────
-
   Widget _buildEncryptionToggles(_CardEditState es) {
     final theme = Theme.of(context);
 
@@ -1041,18 +1176,15 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 2),
           _encryptSwitch(
-            'Title',
-            es.encryptTitle,
+            'Title', es.encryptTitle,
             (v) => setState(() => es.encryptTitle = v),
           ),
           _encryptSwitch(
-            'Tags',
-            es.encryptTags,
+            'Tags', es.encryptTags,
             (v) => setState(() => es.encryptTags = v),
           ),
           _encryptSwitch(
-            'Comment',
-            es.encryptComment,
+            'Comment', es.encryptComment,
             (v) => setState(() => es.encryptComment = v),
           ),
         ],
@@ -1072,20 +1204,16 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               : Theme.of(context).colorScheme.onSurfaceVariant,
         ),
         const SizedBox(width: 6),
-        Text(label,
-            style: Theme.of(context).textTheme.bodySmall),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
         const Spacer(),
         Switch(
           value: value,
           onChanged: onChanged,
-          materialTapTargetSize:
-              MaterialTapTargetSize.shrinkWrap,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ],
     );
   }
-
-  // ── Status bar (thin, above NavigationBar) ─────────────────
 
   Widget _buildStatusBar() {
     final (label, icon, color) = _statusInfo();

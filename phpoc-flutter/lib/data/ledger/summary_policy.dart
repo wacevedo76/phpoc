@@ -5,8 +5,13 @@ import 'package:phpoc_flutter/data/ledger/helpers.dart' show secretToHex;
 /// Abstract policy for inserting summary blocks between day blocks.
 abstract class SummaryPolicy {
   final CryptoService crypto;
+  final String? identitySecret;
+  final String? _identitySecretHex;
 
-  const SummaryPolicy({required this.crypto});
+  SummaryPolicy({
+    required this.crypto,
+    this.identitySecret,
+  }) : _identitySecretHex = secretToHex(identitySecret);
 
   /// Return summary blocks that should be inserted between [prevBlock]
   /// and a new day block for [currentDate] (YYYY-MM-DD).
@@ -39,13 +44,10 @@ abstract class SummaryPolicy {
 /// - month_summary when month changes (same year)
 /// - year_summary + month_summary on year boundary
 class YearMonthSummaryPolicy extends SummaryPolicy {
-  final String? identitySecret;
-  final String? _identitySecretHex;
-
   YearMonthSummaryPolicy({
     required super.crypto,
-    this.identitySecret,
-  }) : _identitySecretHex = secretToHex(identitySecret);
+    super.identitySecret,
+  });
 
   @override
   List<Map<String, dynamic>> getSummaryBlocks(
@@ -151,7 +153,8 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
     // Compute seal over the block
     final hashKey = type == 'year_summary' ? 'year_hash' : 'month_hash';
     final sealData = Map<String, dynamic>.from(block);
-    sealData.remove('prev_hash'); // seal should not include prev_hash for cross-verification
+    sealData.remove(hashKey);
+    sealData.remove('identity_seal');
     final seal = _computeSeal(sealData);
     block[hashKey] = seal;
 
@@ -181,13 +184,10 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
 
 /// Policy that inserts only year_summary blocks (no month summaries).
 class YearOnlySummaryPolicy extends SummaryPolicy {
-  final String? identitySecret;
-  final String? _identitySecretHex;
-
   YearOnlySummaryPolicy({
     required super.crypto,
-    this.identitySecret,
-  }) : _identitySecretHex = secretToHex(identitySecret);
+    super.identitySecret,
+  });
 
   @override
   List<Map<String, dynamic>> getSummaryBlocks(

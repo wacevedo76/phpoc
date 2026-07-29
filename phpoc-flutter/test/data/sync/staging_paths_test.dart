@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/data/sync/staging_paths.dart';
 
-/// StagingPaths constant tests — Group P (7 assertions).
+/// StagingPaths constant tests — Groups P (7) + I (2) = 9 assertions.
 ///
 /// Phase 2 (RED): All tests fail because StagingPaths still uses old Flutter paths.
 /// Phase 3 will correct the constants to match CLI/web canonical paths.
@@ -10,6 +10,7 @@ import 'package:phpoc_flutter/data/sync/staging_paths.dart';
 ///   P1–P5: Individual path constant values match CLI/web canonical paths
 ///   P6: All members are static const (compile-time immutability)
 ///   P7: remoteStagingBlob is NOT the old Flutter path
+///   I1–I2: B-04 Row-level sync path constants (staging/blob)
 
 void main() {
   group('P: StagingPaths — Path Constants', () {
@@ -98,6 +99,33 @@ void main() {
         isNot('staging/blob.bin'),
         reason: 'The old incorrect Flutter path must not be reused as the '
             'new canonical constant value.',
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group I: B-04 Row-Level Sync Path Constants — ~2 tests
+  // ═══════════════════════════════════════════════════════════════
+
+  group('I: StagingPaths — Row-Level Sync (B-04)', () {
+    // I1
+    test('I1: remoteRowLevelBlob equals staging/blob', () {
+      expect(
+        StagingPaths.remoteRowLevelBlob,
+        'staging/blob',
+        reason: 'Row-level sync needs a dedicated path constant for '
+            'staging/blob. Auto-push writes here; sync gate must read '
+            'from the same path.',
+      );
+    });
+
+    // I2
+    test('I2: remoteStagingHashIndex (staging/hash_index.json) unchanged', () {
+      expect(
+        StagingPaths.remoteStagingHashIndex,
+        'staging/hash_index.json',
+        reason: 'Tier-1 hash index path must not change — '
+            'Worker already serves this path for fast-path cookie check.',
       );
     });
   });

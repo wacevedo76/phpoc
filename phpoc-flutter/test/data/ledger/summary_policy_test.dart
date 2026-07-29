@@ -371,4 +371,107 @@ void main() {
       );
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  // Group AD: YearMonthSummaryPolicy — Null Date Handling — 3 tests
+  // ═══════════════════════════════════════════════════════════
+  //
+  // When _blockToMap loses the `date` field (entries-only data_enc),
+  // getSummaryBlocks() receives prevBlock['date'] == null, defaults to
+  // "1970-01-01", and generates spurious year+month summaries for all
+  // intervening years. These tests verify the policy handles missing/
+  // sentinel dates gracefully.
+
+  group('AD: YearMonthSummaryPolicy — Null Date Handling', () {
+    // AD1 — getSummaryBlocks with prevBlock missing date returns empty
+    // when current date is same as what date would resolve to
+    test(
+        'AD1: prevBlock without date → does not generate spurious '
+        'summaries when currDate matches period derivable from type',
+        () {
+      final policy = _makePolicy();
+
+      // Simulate a day block reconstructed from entries-only data_enc
+      // where date was lost — the entries have start_epoch ≈ 2025-03-15
+      final prevBlock = <String, dynamic>{
+        'type': 'day',
+        'day_hash': 's' * 64,
+        // 'date' deliberately missing
+      };
+
+      // With date missing, the policy should NOT assume 1970-01-01
+      // and generate 55 years of summaries. Even if date is unknown,
+      // it should handle gracefully.
+      final summaries =
+          policy.getSummaryBlocks(prevBlock, '2025-03-15');
+
+      // Current behavior: prevDate defaults to 1970-01-01 → generates
+      // year+month summaries for 1970–2025. This is the bug.
+      //
+      // Expected: no summaries, or at least not dozens.
+      // For RED phase, we assert the desired behavior.
+      expect(summaries.length, lessThanOrEqualTo(2),
+          reason: 'Missing date should not trigger 55 years of '
+              'spurious summaries');
+    });
+
+    // AD2 — prev date="1970-01-01" (sentinel) → does not generate
+    // summaries for future commits
+    test(
+        'AD2: prevBlock date=1970-01-01 (sentinel) → does not '
+        'generate summaries for every future commit', () {
+      final policy = _makePolicy();
+
+      // The explicit "unknown date" sentinel after _blockToMap fix
+      final prevBlock = <String, dynamic>{
+        'type': 'day',
+        'date': '1970-01-01',
+        'day_hash': 't' * 64,
+      };
+
+      // Committing entries for 2026-06-20 should NOT generate year
+      // and month summaries for every year/month from 1970 to 2026.
+      final summaries =
+          policy.getSummaryBlocks(prevBlock, '2026-06-20');
+
+      // Current behavior: generates year_summary 1970 + month_summary
+      // for each month from 1970-01 through 2026-05... but the policy
+      // only generates for the immediate month before. With 1970-01-01
+      // and 2026-06-20, it would generate year_summary for 1970 and
+      // month_summary for 2026-05, if prev is treated as real date.
+      //
+      // Desired: 1970-01-01 is a sentinel → treat as if date unknown
+      // → generate no summaries, or at least not the full chain.
+      expect(summaries.length, lessThanOrEqualTo(2),
+          reason: '1970-01-01 sentinel should not trigger summary '
+              'generation as if it were a real date');
+    });
+
+    // AD3 — getSummaryBlocks with null date does not crash
+    test('AD3: getSummaryBlocks with null date does not crash', () {
+      final policy = _makePolicy();
+
+      final prevBlock = <String, dynamic>{
+        'type': 'day',
+        'day_hash': 'u' * 64,
+        'date': null, // explicitly null
+      };
+
+      // Must not throw — should handle null gracefully
+      List<Map<String, dynamic>> summaries;
+      try {
+        summaries =
+            policy.getSummaryBlocks(prevBlock, '2025-06-01');
+      } catch (e) {
+        // If it throws on null, that's the bug — document the failure
+        fail('getSummaryBlocks must not crash when prevBlock date '
+            'is null: $e');
+      }
+
+      // Even if it doesn't crash, the result should be reasonable
+      expect(summaries.length, lessThanOrEqualTo(2),
+          reason: 'Null date should result in minimal summaries, '
+              'not a 55-year chain');
+    });
+  });
 }

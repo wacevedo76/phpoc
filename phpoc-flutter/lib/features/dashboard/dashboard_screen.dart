@@ -25,6 +25,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   bool _encryptTitle = false;
   bool _encryptTags = false;
   bool _encryptComment = false;
+  bool _isOneOff = false;
   bool _isCapturing = false;
   bool _formExpanded = false;
   String? _errorMessage;
@@ -108,11 +109,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ? null
             : _commentController.text.trim(),
         encryptFields: encrypted,
+        isOneOff: _isOneOff,
       );
       _titleController.clear();
       _tagsController.clear();
       _commentController.clear();
-      setState(() => _formExpanded = false);
+      setState(() {
+        _formExpanded = false;
+        _isOneOff = false;
+      });
       await _loadData();
       if (mounted) setState(() => _isCapturing = false);
     } catch (e) {
@@ -696,6 +701,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             ],
             const SizedBox(height: 8),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Checkbox(
+                  value: _isOneOff,
+                  onChanged: (v) => setState(() => _isOneOff = v ?? false),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                GestureDetector(
+                  onTap: () =>
+                      setState(() => _isOneOff = !_isOneOff),
+                  child: const Text('One-off'),
+                ),
+                const SizedBox(width: 16),
+              ],
+            ),
             Row(
               children: [
                 Expanded(

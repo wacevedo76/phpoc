@@ -11,6 +11,8 @@ class StagingPaths {
 
   static const String remoteStagingHashIndex = 'staging/hash_index.json';
 
+  static const String remoteRowLevelBlob = 'staging/blob';
+
   // Already correct — regression guard
   static const String remoteLedgerBlocksPrefix = 'ledger/blocks/';
 

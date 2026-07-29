@@ -533,6 +533,66 @@ void main() {
             'a non-functional button. Transport must be configured.',
       );
     });
+
+    // L6 — Regression: push button survives sync-then-rebuild without
+    // triggering _dependents.isEmpty assertion.
+    //
+    // The fix: _buildPushToCloudButton() uses ref.read (not ref.watch) so
+    // it never creates a reactive dependency that outlives the rebuild cycle
+    // after checkAndSync() mutates SyncService state.
+    testWidgets('L6: push button remains visible and functional after '
+        'sync-to-remote completes (regression for _dependents.isEmpty '
+        'assertion)', (tester) async {
+      final (syncSvc, transport, db, crypto) = await _seededPushSetup();
+
+      final pushSvc =
+          LedgerPushService(db: db, crypto: crypto, transport: transport);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider
+                .overrideWith((ref) => syncSvc),
+            data_providers.ledgerPushServiceProvider
+                .overrideWith((ref) => pushSvc),
+          ]);
+
+      // Push button must be visible before sync
+      expect(
+        find.text('Push Ledger to Cloud'),
+        findsOneWidget,
+        reason: 'Push button must render when transport is configured',
+      );
+
+      // Tap "Sync to Remote" — this triggers checkAndSync() which mutates
+      // syncService state (reconcile, blob push, cookie). The subsequent
+      // setState() in _refreshStatus() triggers a rebuild that exercises
+      // _buildPushToCloudButton().
+      final syncButton = find.text('Sync to Remote');
+      expect(syncButton, findsOneWidget);
+      await tester.tap(syncButton);
+      await tester.pumpAndSettle();
+
+      // ASSERTION: after the sync-driven rebuild, the push button must still
+      // be present. A _dependents.isEmpty assertion here means ref.watch
+      // (instead of ref.read) created a dependency on ledgerPushServiceProvider
+      // that wasn't cleaned up before the old InheritedElement was disposed.
+      expect(
+        find.text('Push Ledger to Cloud'),
+        findsOneWidget,
+        reason: 'Push button must survive the rebuild cycle after sync '
+            'completes — ref.read avoids the reactive dependency that '
+            'causes _dependents.isEmpty assertion',
+      );
+
+      // Also verify the button still works (can be tapped after sync)
+      final pushFinder = find.text('Push Ledger to Cloud');
+      await tester.tap(pushFinder);
+      await tester.pump(); // Show loading spinner
+      expect(find.byType(CircularProgressIndicator), findsOneWidget,
+          reason: 'Push button must still function after sync completes');
+      await tester.pumpAndSettle(); // Complete the push
+    });
   });
 }
 

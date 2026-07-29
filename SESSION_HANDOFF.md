@@ -10,21 +10,14 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1207/1209 GREEN (2 pre-existing restore_integration flaky: G3, G8 — pass in isolation)
+- **Flutter test suite:** 1412/1414 GREEN (2 pre-existing restore_integration flaky: G3, G8 — pass in isolation)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 
 ### Recent commits (Mon Jul 28)
-- _(Genesis export correction changes unstaged — Phase 2 RED tests written)_
-- _(Phase 4 REFACTOR changes unstaged — Block Reconstruction)_
-- `becbf08` — feat(flutter): Python-compatible field-level decrypt for cross-client data
-- `2d4a8f3` — feat(flutter): monospace font on all text input fields
-- `7e67f0e` — test(flutter): Group J cross-reference history dates
-- `c240bbe` — fix(flutter): entry timestamps — pass encrypted fields from blocks
-- `40724ce` — fix(flutter): unlock uses reauthenticate()
-- `44399a5` — fix(flutter): restore-from-cloud surfaces credential errors in UI
-- `ebbcb37` — fix(flutter): deriveMasterKey matches Python, staging format
-- `a983a55` — refactor(flutter): Phase 4 lint fixes
-- `b3c64fc` — docs: user-must-initiate git operations rule (not pushed)
+- _(Genesis export + Block Reconstruction Phase 4 changes unstaged)_
+- `becbf08` feat(flutter): Python-compatible field-level decrypt
+- `2d4a8f3` feat(flutter): monospace font on text input fields
+- `a983a55` refactor(flutter): Phase 4 lint fixes
 
 ### Recent fixes
 - **Seal field fix** (Jul 28): LedgerBackupService + LedgerPushService seal fields corrected (`identitySeal`→`blockId`). Extracted `PhpSpecFormat` utility. 82/82 ✅
@@ -33,23 +26,14 @@
 
 ## Completed ✅
 
+### ✅ Flutter Staging Schema Overhaul — 4-Phase TDD Complete (2026-07-28)
+- 110 assertions → 111 GREEN tests → Phase 4: 6 improvements (conciseness + clarity) across 3 files. Full suite: 1339/1341.
+- New: `activity_id.dart`, `staging_store.dart`, `migration.dart`, `staging_hash_index.dart`. Modified: `merge_engine.dart`, `sync_service.dart`, `sync_screen.dart`.
+
 ### ✅ Sync-to-remote _dependents.isEmpty assertion (2026-07-28)
-- **Root cause:** `_buildPushToCloudButton()` used `ref.watch(ledgerPushServiceProvider)` inside `build()`. After `checkAndSync()` completed, cascading provider invalidation coincided with the rebuild cycle, leaving a live dependency on the old InheritedElement during its disposal.
-- **Fix:** Changed `ref.watch` → `ref.read` (1 line). The button doesn't need reactive rebuild.
-- **Test:** L6 regression test (24/24 GREEN): sync → rebuild → push button still visible + functional.
+- `ref.watch` → `ref.read` in `_buildPushToCloudButton()`. L6 regression test 24/24.
 
-### ✅ Flutter File Import — 4-Phase TDD Complete (2026-07-28)
-- 20 assertions (L1–L10 service, M1–M10 UI) → 20 GREEN.
-- Phase 4: 3 improvements (1 modularity: extracted `_writeStagingEntries` to deduplicate v1/v2 staging loops; 2 clarity: renamed `// ── Import from File ──` to `// ── Seed File Picker ──` before `_pickSeedFile`, added comment explaining Python/Flutter field name dual-key resolution in `_mapStagingEntry`).
-
-### ✅ Dashboard Screen — 4-Phase TDD Complete (2026-07-28)
-- 31 assertions (E1–E16, T1–T12, U1–U3) → 31 GREEN.
-- Phase 4: 5 improvements (1 modularity: extracted `_buildActiveCardActions`; 2 clarity: renamed `_expandedActive`→`_expandedActiveIds`, comment on index-based tracking; 2 conciseness: arrow-fn tag maps).
-
-### ✅ Settings Screen — 4-Phase TDD (2026-07-28)
-- 13 assertions (H1–H13) → 13 GREEN. Phase 3 fixed 2 bugs (controller dispose timing, _FocusInheritedScope assertion). Phase 4 cleaned dead comments.
-
-### ✅ Genesis Export + Push Service + Block Reconstruction + RESTORE_CLOUD_ERRORS
+### ✅ Flutter File Import, Dashboard, Settings, Genesis Export, Push Service, Block Reconstruction, RESTORE_CLOUD_ERRORS
 - All completed via 4-Phase TDD (2026-07-28). Details archived to `docs/planning/archive/SESSION_HISTORY_2026-07-25.md`.
 
 ## Flutter Mobile App
@@ -71,12 +55,23 @@
 | T7 | Cookie Push | ✅ `_pushCookie()` wired |
 | T8 | Commit to Ledger | ✅ Phase 4 complete (14 Group N + 5 Group R = 19 tests GREEN) |
 
+### ✅ Commit prev_hash mismatch fix — 4-Phase TDD Complete (2026-07-28)
+- **Phase 1:** 17 assertions → `docs/planning/flutter/COMMIT_PREV_HASH_MISMATCH_PHASE1.md`
+- **Phase 2:** 10 RED tests (Groups AB, AC, AD, AE, AF) across 3 test files
+- **Phase 3:** 10 GREEN. Fixed `_blockToMap` (entries-array reconstruction), `_buildSummary` seal consistency, `INSERT OR IGNORE`→`INSERT`, `_FakeBlockDao` dupe detection.
+- **Phase 4:** 5 improvements across 4 files (clarity: `store_adapters.dart`, `engine.dart`; conciseness: `store_adapters.dart`, `summary_policy.dart`, `database.dart`). Full suite: 1356/1358.
+- **Bug:** `_blockToMap` lost date when data_enc stored entries array → spurious summaries → INSERT OR IGNORE silently dropped → prev_hash mismatch.
+
 ## Immediate Next Steps 🎯
 
-### 1. B-03: Flutter Staging Schema Overhaul — Phase 2 (RED)
-- Blueprint complete: `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups A–K)
-- Subsumes B-02 (auto-push folded into mutation wrappers, Group D–E)
-- Phase 2: Write 110 RED tests across activity_id, staging_store, migration, sync mutations, debounce, commit-and-clean, offline queue, hash index, sync screen UI, merge engine, legacy compat
+_All active Flutter sync tasks complete. Backlog Phase 7 (P3: git-based remote sync) is deferred. No other 🔜 items in the queue._
+
+### ✅ B-04: Flutter — Wire cross-device sync for row-level staging — 4-Phase TDD Complete (2026-07-28)
+- **Phase 1:** 56 assertions → `docs/planning/flutter/B04_ROW_LEVEL_SYNC_PHASE1.md`
+- **Phase 2:** 56 RED tests across 9 groups (A–I), 27 RED / 29 GREEN
+- **Phase 3:** 54/54 B-04 tests GREEN + full suite 1412/1414
+- **Phase 4:** 5 improvements across 3 files (conciseness: merged duplicate import, consolidated `_pullRemoteRows`→`_pullRemoteBlob`, shared `safeJsonDecode`; clarity: path constant, descriptive comments in `mergeEntries`)
+- Full suite: 1412/1414 (2 pre-existing flaky G3, G8)
 
 ## Known Issues
 - 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation

@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-07-18
+> **Last updated:** 2026-07-28
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -13,26 +13,45 @@
 
 ---
 
-## 🔴 B-03: Flutter — Staging Schema Overhaul
+## ✅ B-03: Flutter — Staging Schema Overhaul ✅
 
 **Plan:** `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups)
+**Completed:** 2026-07-28 — Full 4-Phase TDD. Phase 4: 6 improvements across 3 files.
+- **Phase 1:** 110 assertions blueprinted across 11 groups (A–K)
+- **Phase 2:** 111 RED tests across 7 files
+- **Phase 3:** 111/111 GREEN + 125/125 old tests pass
+- **Phase 4:** 6 improvements (conciseness: consolidated `_readColumn`, deduplicated `_dedupKey`/`_mapDedupKey`, extracted `_inDateRange()`, deduplicated `_doPush()` retry; clarity: extracted `_buildActivityData()` + `_decodeActivityBlob()`). Full suite: 1339/1341 GREEN.
 
-**Problem:** Flutter staging uses a monolithic `entries` JSON array blob with positional indexing and no activity IDs. This prevents auto-push (no stable keys for diffing), leaves committed tombstones in staging indefinitely, requires 3 separate buttons (Commit, Push Ledger, Sync to Remote), and has no offline resilience.
+**Deliverables delivered:** ActivityIdGenerator, StagingStore, StagingMigration, StagingHashIndex, row-level SyncService mutations, commitAndSync pipeline, debounced auto-push, unified Sync button with checkboxes, offline queue, syncStatus stream.
 
-**Scope:** Complete staging rework — activity IDs, row-per-activity schema, migration, auto-push, commit-and-clean pipeline, offline queue, visual sync indicator.
+---
 
-**Deliverables:**
-1. `ActivityIdGenerator` — 10-char CSPRNG activity_id generation
-2. `StagingStore` — row-per-activity SQLite table (activity_id, activity_status, activity, updated_at)
-3. Migration — old `entries` blob → new `staging` rows (preserving existing entries)
-4. Auto-push — debounced fire-and-forget push on every mutation (subsumes B-02)
-5. Commit-and-Clean — commit → remove from staging by activity_id → push ledger + staging
-6. Offline queue — persist pending pushes, flush on reconnect
-7. Sync status indicator — 🟢 in-sync / 🟡 pending / 🔴 error on tab icon
+## 🟠 B-04: Flutter — Wire cross-device sync for row-level staging
 
-**Next action:** Phase 2 (RED: test definition) — 110 tests across 11 groups.
+**Depends on:** B-03 ✅
+**Phase 1:** ✅ 56 assertions → `docs/planning/flutter/B04_ROW_LEVEL_SYNC_PHASE1.md`
+**Phase 2:** ✅ RED — 56 tests across 9 groups (A–I), 27 RED / 29 GREEN
+**Phase 3:** ✅ GREEN — 54/54 B-04 tests pass. Full suite 1412/1414.
 
-**Severity:** 🟠 High (architectural gap — staging schema affects cross-client sync integrity)
+**Implementation:**
+- `checkAndSync()` branches on `stagingStore`: cookie fast path → `_fastPathRowLevel()` (hash index compare); reconcile → `_reconcileAndClaimRowLevel()` (mergeEntries + row-level push)
+- `_pullRemoteBlob()` → `_pullRemoteRows()` when stagingStore is wired (pulls from `staging/blob`)
+- `_reconcileAndClaim()` → `_reconcileAndClaimRowLevel()`: reads/writes StagingStore, merges via `MergeEngine.mergeEntries()`, pushes via `_pushStagingRowsToRemote()`, cleans up committed rows
+- `StagingStore.putRow(preserveUpdatedAt:)` flag for merge writeback (LWW timestamps preserved)
+- `MergeEngine.mergeEntries()` LWW tie-break: `>` (local wins) replaced `>=`
+- Test infrastructure: `_RowTestHarness.addRow()` uses `preserveUpdatedAt: true`
+
+**Phase 4:** ✅ REFACTOR — 5 improvements across 3 files. Conciseness: merged duplicate `import 'dart:convert'`, consolidated `_pullRemoteRows` → `_pullRemoteBlob` (~25 lines deduped), extracted shared `safeJsonDecode` to `StagingStore`. Clarity: hardcoded `'staging/blob'` → `StagingPaths.remoteRowLevelBlob`, replaced J-numbered test assertion refs with descriptive comments in `mergeEntries`. Full suite: 1412/1414.
+
+**Problem:** The staging overhaul (B-03) auto-pushes to `staging/blob` but the sync gate (`checkAndSync` / `_reconcileAndClaim`) still operates on `staging/blobs/current.json`. Push and pull are on different paths — cross-device sync is disconnected.
+
+**Worker note:** The Worker's generic blob handlers already serve any R2 path (GET/PUT/DELETE pass-through). No new routes needed — `staging/blob` and `staging/hash_index.json` work today.
+
+**Reference:** phpoc-web's `row_sync.js` — `buildDiff()` (8-scenario LWW resolution) + `RowSyncWorker`. Web has same disconnect.
+
+**Phase 1 groups:** A (Pull 8), B (Merge 10), C (Push 5), D (Fast path 7), E (Store 6), F (Bootstrap 4), G (Gates 6), H (Integration 8), I (Paths 2) = 56 total.
+
+**Next action:** Phase 4 (REFACTOR) — code review for modularity, clarity, security, conciseness.
 
 ---
 

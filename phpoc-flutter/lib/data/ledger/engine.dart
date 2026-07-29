@@ -173,60 +173,55 @@ class LedgerEngine {
     final dayBlocks = chain.getDayBlocks();
     if (count > dayBlocks.length) return -1;
 
-    // Get the blocks to revert (last N day blocks)
     final toRevert = dayBlocks.sublist(dayBlocks.length - count);
-
     final allBlocks = chain.readAll();
 
-    // Count entries and build staging data
+    // Decrypt entries and build staging data
     var entryCount = 0;
     final stagingEntries = <Map<String, dynamic>>[];
-
     for (final block in toRevert) {
-      final entries = block['entries'] as List<dynamic>? ?? [];
       final date = block['date'] as String? ?? '';
-
-      for (final entry in entries) {
-        var data = Map<String, dynamic>.from(entry['data'] as Map);
-
-        // Decrypt standard fields
-        data = _decryptForStaging(data);
-
-        // Decrypt per-field encrypted fields
-        data = _decryptPerField(data);
-
-        // Subtract from index
-        final hasEncryptedFields = data['has_encrypted_fields'] as bool? ?? false;
-        final title = data['title'] as String? ?? '';
-        final duration = data['duration'] as int? ?? 0;
-
-        if (!hasEncryptedFields && title.isNotEmpty && duration > 0) {
-          index.update(date, title, -duration);
-        }
-
-        stagingEntries.add({
-          'hash': entry['hash'],
-          'data': data,
-        });
-
+      for (final entry in block['entries'] as List<dynamic>? ?? []) {
+        stagingEntries.add(_restoreEntryToStaging(entry, date));
         entryCount++;
       }
     }
 
-    // Revert: remove blocks from the chain starting from the first reverted block
+    // Remove reverted blocks from the chain
     final firstRevertedIdx = allBlocks.indexOf(toRevert.first);
     _truncateFrom(firstRevertedIdx);
 
-    // Restore entries to staging (prepend to existing)
+    // Prepend restored entries to existing staging
     try {
       final existing = stagingStore.readEntries() as List<dynamic>? ?? [];
       stagingStore.writeEntries([...stagingEntries, ...existing]);
     } catch (_) {
-      // If staging store doesn't support readEntries, just write
       stagingStore.writeEntries(stagingEntries);
     }
 
     return entryCount;
+  }
+
+  /// Decrypt an entry's data and subtract from the blind index.
+  ///
+  /// Returns the staging-format entry wrapper {hash, data}.
+  Map<String, dynamic> _restoreEntryToStaging(
+    Map<String, dynamic> entry,
+    String date,
+  ) {
+    var data = _decryptPerField(
+      _decryptForStaging(Map<String, dynamic>.from(entry['data'] as Map)),
+    );
+
+    final hasEncryptedFields = data['has_encrypted_fields'] as bool? ?? false;
+    final title = data['title'] as String? ?? '';
+    final duration = data['duration'] as int? ?? 0;
+
+    if (!hasEncryptedFields && title.isNotEmpty && duration > 0) {
+      index.update(date, title, -duration);
+    }
+
+    return {'hash': entry['hash'], 'data': data};
   }
 
   // ═══════════════════════════════════════════════════════════════
