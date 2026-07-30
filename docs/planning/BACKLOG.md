@@ -55,6 +55,31 @@
 
 ---
 
+## 🟠 B-05: Cross-Platform Staging Format Alignment
+
+**Doc:** `docs/planning/CROSS_PLATFORM_STAGING_FORMAT_ALIGNMENT.md`
+**Depends on:** B-03 ✅, B-04 ✅
+
+**Problem:** Three clients use three incompatible staging architectures — different blob paths, entry identity schemes, obfuscation, and merge strategies. No cross-client staging sync is possible.
+
+**Phases:**
+- ✅ **Phase 1:** Extract canonical format into PHPSPEC.md §8 (complete)
+- 🔜 **Phase 3 (B-05b):** Web alignment — switch to `staging/blob`, wire `buildDiff` + `RowStagingStore` into sync gate, hash index fast path, local-wins tie-break, drop envelope `updated_at`, retire `row_sync.js`
+- **Phase 2 (B-05c):** CLI alignment — `StagingStore` (SQLite, row-level), `activity_id`, `staging/blob`, hash index, obfuscation alignment
+
+**Resolved (2026-07-28):**
+- ✅ Merge tie-break → local-wins
+- ✅ CLI migration path → full StagingStore (SQLite)
+- ✅ Transport model → retire `row_sync.js`; single blob + hash index canonical
+- ✅ Entry identity → `activity_id` as single key; `entry_id` legacy only
+- ✅ Envelope `updated_at` → omit; hash index supersedes
+- ✅ Backward compat → immediate cutover (single user)
+- ✅ `committed` flag → canonical row field (cross-device cleanup signal)
+
+**All questions resolved. Next action:** Phase 1 — extract canonical format into PHPSPEC.md §8.
+
+---
+
 ## ~~🔴 B-02: Flutter — Auto-push staging blob on every mutation~~ (subsumed by B-03)
 
 B-02's scope (debounced auto-push on mutation) is folded into B-03 deliverable #4. The broader architectural changes (activity IDs, row schema, commit-and-clean) make B-03 the correct tracking unit.

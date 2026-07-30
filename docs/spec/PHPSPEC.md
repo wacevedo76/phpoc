@@ -117,7 +117,7 @@ A PHPOC ledger consists of the following files:
 | `ledger.json` | The chain — array of blocks (Genesis, summaries, days) | ✅ **Primary format** |
 | `index.json` | Blind duration index — rebuildable from chain | 🔄 Optional cache |
 | `identity.json` | Identity secret (encrypted) — redundant with genesis fallback | ⚠️ Optional convenience |
-| `staging.json` | Mutable unsynced entries (transient, not part of format) | ❌ Not part of spec |
+| `staging/` | Mutable unsynced entries (row-level, §8). Transient, not part of ledger chain. | ❌ Not part of ledger spec |
 
 **The ledger chain (`ledger.json`) is the single canonical data file.** It is self-contained — identity is embedded in the Genesis block via `identity_secret_enc_fallback`. All other files are auxiliary caches or transient state.
 
@@ -1279,105 +1279,109 @@ def rebuild_index(ledger: list, master_key: bytes) -> dict:
 
 ## 8. Staging Area
 
-The staging area (`staging.json`) is a **transient, mutable** buffer for entries that have not yet been synced to the immutable ledger. It is not part of the canonical ledger format — its structure is an implementation detail of the reference CLI.
+The staging area is a transient, mutable buffer for entries that have not yet been committed to the immutable ledger. In multi-device setups, staging is shared across devices via a remote transport using the canonical blob format described below.
 
-### 8.1 Format
+### 8.1 Row Schema
 
-```json
-[
-  {
-    "hash": "<hex: SHA-256 of data dict>",
-    "data": {
-      "title": "Guitar Practice",
-      "duration": 0,
-      "is_active": true,
-      "is_paused": false,
-      "startTime_enc": "plain:1714000000000",
-      "endTime_enc": null,
-      "pauses_enc": "plain:[]",
-      "metadata_enc": "plain:{}",
-      "tags": ["music"],
-      "media": []
-    },
-    "start_epoch": 1714000000000
-  }
-]
-```
-
-### 8.2 `plain:` Prefix Convention
-
-Staging entries use a special `plain:` prefix on encrypted fields instead of real ciphertext. This allows:
-
-- **Viewing** entries without authentication (the CLI uses `NoAuthCryptoManager` for `add` commands)
-- **Editing** entries without re-encryption (end times, comments)
-- **Decrypting** by stripping the `plain:` prefix and using the value as-is
-
-```python
-def decrypt_staging_field(value: str) -> str:
-    if value.startswith("plain:"):
-        return value[6:]
-    return decrypt(value)  # real decryption
-```
-
-### 8.3 Sync Pipeline
-
-During sync, staging entries are:
-
-1. **Normalized** — any stray encrypted data (from a revert or stale context) is decrypted back to `plain:` format. If decryption fails, the entry is skipped with a warning.
-2. **Encrypted** — `plain:` prefix is replaced with real AES-CTR + auth tag ciphertext.
-3. **Content hashed** — `content_hash` is computed from resolved plaintext and added to the data.
-4. **Packed** — grouped by date and written into Day blocks in the ledger.
-5. **Removed** — synced entries (and any marked for removal) are deleted from staging.
-
-### 8.4 Staging vs Ledger
-
-| Aspect | Staging | Ledger |
-|--------|---------|--------|
-| Mutable? | ✅ Yes (add, edit, delete) | ❌ No (append-only after creation) |
-| Encrypted? | ❌ `plain:` prefix | ✅ Real AES-CTR + auth tag |
-| Authenticated? | ❌ No (anyone can read) | ✅ Yes (requires Master Key) |
-| Transient? | ✅ Yes (deleted after sync) | ❌ No (persistent) |
-| Canonical? | ❌ No | ✅ Yes |
-
-> The staging format is **not** part of the PHPOC protocol specification. Implementations may use any internal buffer for unsynced entries. The `plain:` convention and JSON array format described here are specific to the reference CLI and provided for interoperability.
-
-### 8.5 Multi-Device Remote Staging
-
-In a multi-device setup, staging is **shared across devices** via a remote transport. The remote blob is the authoritative source; local staging is a cache.
-
-#### Timeline Model
-
-Staging entries are timestamped and additive. Since real-world tasks don't start or end at the same millisecond on two devices, there are no write conflicts. No session cookie, no mutual exclusion, no eviction.
-
-**Workflow:**
-
-```
-check device_id → re-auth if mismatch → modify local → push to remote → pull remote → local == remote
-```
-
-1. Device A auths → derives device ID from MK → compares with remote blob's `device_id_enc`. Mismatch? Re-auth. Match? Proceed.
-2. Device A appends entry to local staging → serializes → encrypts obfuscation blob → pushes via transport → pulls back → local and remote are identical.
-3. Device B auths → device ID mismatch → re-auth → pulls remote blob → merges entries from all devices (sorted by timestamp) → appends new entry → pushes.
-
-#### Remote Blob Structure
-
-The shared staging blob is a single encrypted file stored on the remote:
+Each staging entry is a row identified by `activity_id`:
 
 ```json
 {
-  "device_id_enc": "<hex: encrypted device identifier>",
-  "staging": [ ...entries... ],
-  "version": 1
+  "activity_id": "a1b2c3d4e5",
+  "activity_status": "active",
+  "activity": "{... encrypted entry JSON ...}",
+  "updated_at": 1714000000000,
+  "committed": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `activity_id` | string (10-char) | ✅ | Stable, randomly-generated identifier assigned at entry creation. Alphabet: `[A-Za-z0-9]` (62 chars, ~59 bits entropy). Unique within a single user's staging window (~1,000 rows). Survives the staging→ledger lifecycle — embedded in the entry `data` dict and covered by `content_hash`. |
+| `activity_status` | enum | ✅ | Current lifecycle state: `"active"`, `"paused"`, `"ended"`. |
+| `activity` | string (JSON) | ✅ | The entry data dict (same structure as §4.5 entry `data` field). Includes `activity_id`, `title`, `duration`, encrypted timestamps, `content_hash`, `device_id_enc`, `device_proof`, and optionally `entry_id` (UUID4, legacy — see §8.9). |
+| `updated_at` | integer (ms epoch) | ✅ | Last modification timestamp. Updated on any status change or data modification. Used for LWW conflict resolution (§8.5). |
+| `committed` | boolean | ✅ | Whether this entry has been committed to the ledger. Cross-device cleanup signal: when device A commits and pushes `committed: true`, device B removes the row from local staging on next sync to prevent activity duplication. |
+
+### 8.2 Blob Envelope
+
+The shared staging blob is a single JSON object:
+
+```json
+{
+  "entries": [ /* row array, §8.1 */ ],
+  "device_id": "uuid-string",
+  "device_proof": "hmac-hex-string"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `device_id_enc` | string (hex) | Encrypted opaque device ID of the last device that touched staging. Local device checks this on every interaction; re-auth if mismatch. |
-| `staging` | array | Array of staging entries (same format as §8.1) from all devices, merged by timestamp. |
-| `version` | integer | Schema version for forward compatibility. Currently `1`. |
+| `entries` | array | Array of staging rows (§8.1). |
+| `device_id` | string | UUID of the last device that pushed this blob. Used for auth gate: local device compares against its own device ID on pull; mismatch triggers re-auth and device cookie handoff. |
+| `device_proof` | string (hex) | HMAC-SHA256 proof that the pushing device held the master key at push time. Verified on pull to confirm the remote blob was produced by an authorized device. |
 
-#### Transport Interface
+> **Note:** The envelope does not include an `updated_at` field. The per-row `updated_at` in §8.1 is used for conflict resolution. Envelope-level freshness checks are handled by the hash index (§8.3).
+
+### 8.3 Hash Index
+
+A compact manifest enabling O(1) change detection without pulling the full blob:
+
+```json
+[
+  { "activity_id": "a1b2c3d4e5", "activity_status": "ended" },
+  { "activity_id": "f6g7h8i9j0", "activity_status": "active" }
+]
+```
+
+- Sorted by `activity_id` ascending (lexicographic).
+- SHA-256 of `JSON.stringify(sorted_array)` (compact, no whitespace) allows a single-hash comparison to determine if the remote index changed.
+- Diff engine compares local vs remote hash index to identify which rows need reconciliation (new, removed, status-changed).
+- If local and remote hash indices are identical → skip full blob pull (fast path).
+
+### 8.4 Canonical Paths
+
+| Purpose | Path |
+|---------|------|
+| Staging blob | `staging/blob` |
+| Hash index | `staging/hash_index.json` |
+| Device cookie | `staging/blobs/device_cookie.bin` |
+
+Previous path `staging/blobs/current.json` is deprecated. The ledger paths (`ledger/blocks/{block_id}.json`, `ledger/hash_index.json`) are unchanged.
+
+### 8.5 Merge Strategy
+
+Row-level reconciliation by `activity_id` with Last-Writer-Wins on `updated_at`:
+
+1. Index both local and remote rows by `activity_id`.
+2. **Both sides have the row:** compare `updated_at`. Newer timestamp wins. On equal timestamp: **local wins** (single-user constraint makes same-millisecond cross-device conflicts a theoretical edge case).
+3. **Remote-only:** included in result (pull).
+4. **Local-only:** if `committed: true` → excluded from result (cleanup — committed on local, should be removed from staging to prevent re-commit). Otherwise → preserved.
+
+### 8.6 Sync Workflow
+
+```
+checkAndSync():
+  1. Pull remote hash index                → compare SHA-256
+  2. If identical → skip (fast path, done)
+  3. Diff remote vs local hash index        → identify changed rows
+  4. If only local changes → push only
+  5. Pull remote blob                       → deobfuscate
+  6. mergeEntries(local, remote)            → reconcile
+  7. Push merged blob + hash index
+```
+
+### 8.7 Obfuscation & Transport
+
+The serialized blob JSON is obfuscated before transport:
+
+1. `json.encode()` (compact, no whitespace) → UTF-8 bytes
+2. Encrypt with AES-256-CTR using a derived staging sub-key
+3. Append HMAC-SHA256 authentication tag
+
+Obfuscation must produce byte-identical output across platforms (Python stdlib, Rust `ring`, JavaScript WASM). All implementations must validate against the deterministic test vectors in `phpoc-crypto-core/tests/crypto_test_vectors.json`.
+
+Transport is abstracted behind a minimal interface:
 
 ```python
 class AbstractStagingTransport(ABC):
@@ -1387,46 +1391,34 @@ class AbstractStagingTransport(ABC):
     def push(self, remote_path: str, data: bytes) -> None: ...
 ```
 
-Minimal two-method interface. Git is the first implementation with the blob stored at `staging/blobs/` in the remote repo. Additional transports (HTTP, local network) can be implemented behind the same interface.
+R2 (Cloudflare) is the reference transport. The Worker's generic blob handlers serve any R2 path — no custom Worker endpoints are required.
 
-#### Blob Obfuscation
+### 8.8 Staging vs Ledger
 
-> ⚠️ **Cross-Platform Portability Hazard:** Blob obfuscation is the **highest-risk primitive for cross-platform interop**. Three implementations (Python stdlib, Rust `ring`, JS WASM) must produce byte-identical output for the same inputs. Subtle differences in HMAC padding, AES-CTR keystream, or tier arithmetic will produce incompatible wire formats that silently break multi-device sync. **All alternative implementations must validate against the deterministic blob obfuscation test vectors in `phpoc-crypto-core/tests/crypto_test_vectors.json`** before being considered production-ready.
+| Aspect | Staging | Ledger |
+|--------|---------|--------|
+| Mutable? | ✅ Yes (status changes, edits, deletions) | ❌ No (append-only after creation) |
+| Identity key | `activity_id` (10-char CSPRNG) | `entry_id` (UUID4, optional) + `content_hash` |
+| Authenticated (transport)? | ✅ HMAC on blob envelope | ✅ HMAC on block seals |
+| Transient? | ✅ Yes (cleaned up after commit) | ❌ No (persistent) |
+| Canonical format? | ✅ Yes (this section) | ✅ Yes (§4) |
 
-The serialized staging blob is obfuscated before being pushed to the remote:
+### 8.9 Legacy Format
 
-```
-Serialized JSON → pad to next class ceiling (random fill) → encrypt → push to remote
-```
+Prior to the row-level `activity_id` model, two incompatible staging formats existed:
 
-Fixed-size tiers keep the blob size constant for a given usage level, preventing traffic analysis:
+- **CLI:** Monolithic `staging.json` array at `staging/blobs/current.json` with `entry_id`-based identity and 4-tier obfuscation padding (64K–512K). Entries used the `plain:` prefix convention (§9.1) for unencrypted field storage at rest.
+- **Web:** Monolithic blob at `staging/blobs/current.json` with `entry_id`-based identity and an `updated_at` field on the blob envelope.
 
-| Class | Max Plaintext |
-|-------|---------------|
-| 64K | Very light usage |
-| 128K | Light usage |
-| 256K | Moderate usage |
-| 512K | Heavy usage (lengthy comments) |
-
-Random filler bytes pad actual data to the next class ceiling before encryption. Cross-class transitions (e.g., 64K→128K) leak one bit of information (a threshold was crossed), but once in a class the daily size is stable.
-
-#### Offline Behavior
-
-- Device writes entries to **local cache** when offline.
-- On reconnect: push queued entries → pull remote blob → merge (appended by timestamp, no conflict).
-- On `sync` (staging → ledger): entries for days already committed by another device are silently discarded with a warning.
-
-#### Device Attribution in Staging
-
-Staging entries carry the same `device_id_enc` and `transitions_enc` fields as ledger entries (see §4.5). These are populated at staging time (using `plain:` prefix for unencrypted staging) and encrypted into real ciphertext at sync time.
+These formats are superseded by the canonical format described in §8.1–8.7. New implementations must write the canonical format. Reading legacy formats for backward compatibility is optional and implementation-defined.
 
 ---
 
 ## 9. Implementation Considerations
 
-### 9.1 Handling `plain:` Prefix
+### 9.1 Handling `plain:` Prefix (Legacy CLI)
 
-The `plain:` prefix appears in staging entries and in entries restored via `revert`. Implementations importing staging entries must handle both formats:
+The `plain:` prefix appears in staging entries from the legacy CLI format (§8.9). It also appears in entries restored via `revert`. Implementations importing legacy staging entries must handle both formats:
 
 ```python
 def resolve_field(value: str) -> str:
