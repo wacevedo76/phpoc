@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,15 +40,32 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<Map<String, dynamic>> _activeTasks = [];
   List<Map<String, dynamic>> _uncommittedEntries = [];
   bool _isLoading = true;
+  Timer? _minuteTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _startMinuteTimer();
+  }
+
+  void _startMinuteTimer() {
+    _minuteTimer?.cancel();
+    // Align to the next minute boundary so the display updates cleanly
+    final now = DateTime.now();
+    final secondsUntilNextMinute = 60 - now.second;
+    _minuteTimer = Timer(Duration(seconds: secondsUntilNextMinute), () {
+      if (mounted) setState(() {});
+      // Switch to periodic 60s after first aligned tick
+      _minuteTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    });
   }
 
   @override
   void dispose() {
+    _minuteTimer?.cancel();
     _titleController.dispose();
     _tagsController.dispose();
     _commentController.dispose();
