@@ -25,14 +25,21 @@ from core.sync.transport import AbstractStagingTransport
 # Import the obfuscation helpers from RemoteStagingSync
 from domain.staging.remote_sync import (
     RemoteStagingSync,
-    TIER_64K,
-    TIER_128K,
-    TIER_256K,
-    TIER_512K,
-    BLOB_TIERS,
+    _TIER_64K,
+    _TIER_128K,
+    _TIER_256K,
+    _TIER_512K,
+    _BLOB_TIERS,
     BLOB_SUBKEY_PREFIX,
     SyncCheckResult,
 )
+
+# Aliases for backward compatibility with test naming
+TIER_64K = _TIER_64K
+TIER_128K = _TIER_128K
+TIER_256K = _TIER_256K
+TIER_512K = _TIER_512K
+BLOB_TIERS = _BLOB_TIERS
 from security.device_identity import (
     AbstractDeviceIdentityProvider,
     DeviceIdentity,

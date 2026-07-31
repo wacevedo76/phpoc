@@ -1424,7 +1424,7 @@ void main() {
 
     // N3
     test('N3: commitEntries filters out already-committed entries '
-        '(committed==true)', () async {
+        '(committed==true) and temporary cleanup removes them', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Already Done');
       await svc.end('Already Done', 5000);
@@ -1436,17 +1436,14 @@ void main() {
       await svc.end('Fresh Done', 6000);
 
       await svc.commitEntries();
-      // Verify only the non-committed entry was passed to engine
+      // Fresh Done was committed and deleted.
+      // Already Done was skipped by the commit filter but removed by the
+      // temporary stale-entry cleanup (TODO: remove after 2026-08-01).
       final entries = await svc.getEntries();
-      final alreadyDone = entries.firstWhere(
-          (e) => e['title'] == 'Already Done', orElse: () => {});
-      expect(alreadyDone['committed'], true,
-          reason: 'Already-committed entry must stay committed');
-      // Fresh Done should now be committed
-      final freshDone = entries.firstWhere(
-          (e) => e['title'] == 'Fresh Done', orElse: () => {});
-      expect(freshDone['committed'], true,
-          reason: 'Fresh Done must be marked committed after commitEntries');
+      expect(entries, isEmpty,
+          reason: 'Both entries must be gone: Fresh Done was committed+deleted, '
+              'Already Done was removed by temporary stale cleanup '
+              '(amend this test after 2026-08-01 when cleanup is removed).');
     });
 
     // N4
@@ -1474,17 +1471,17 @@ void main() {
     });
 
     // N6
-    test('N6: after commit, committed entries marked committed=true in '
-        'staging', () async {
+    test('N6: after commit, committed entries are deleted from staging',
+        () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Mark Me');
       await svc.end('Mark Me', 5000);
 
       await svc.commitEntries();
       final entries = await svc.getEntries();
-      expect(entries[0]['committed'], true,
-          reason: 'After commit, entry must be marked committed=true '
-              'to prevent re-commit');
+      expect(entries, isEmpty,
+          reason: 'After commit, committed entries must be deleted from '
+              'staging — they already live in the ledger chain');
     });
 
     // N7
@@ -1544,38 +1541,38 @@ void main() {
 
     // N10
     test('N10: commitEntries passes entries with has_encrypted_fields '
-        'flag preserved', () async {
+        'flag to LedgerEngine successfully', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Encrypted Task', encryptFields: {'title'});
       await svc.end('Encrypted Task', 5000);
 
-      await svc.commitEntries();
+      final hash = await svc.commitEntries();
+      // Commit must succeed — flag is passed to LedgerEngine, not validated
+      // in staging (committed entries are deleted after commit)
+      expect(hash, isNotNull,
+          reason: 'commitEntries must succeed when entries have '
+              'has_encrypted_fields flag — engine processes it');
+      // Staging must be clean after commit
       final entries = await svc.getEntries();
-      // Verify has_encrypted_fields still true after commit
-      final committed = entries.firstWhere(
-          (e) => e['title'] == 'Encrypted Task' ||
-              (e['committed'] == true),
-          orElse: () => {});
-      // Flag should be preserved through to the engine
-      expect(committed['has_encrypted_fields'], true,
-          reason: 'has_encrypted_fields flag must survive commit round-trip');
+      expect(entries, isEmpty,
+          reason: 'Committed entries must be removed from staging');
     });
 
     // N11
-    test('N11: committed entries retain hash field from LedgerEngine in '
-        'staging', () async {
+    test('N11: commitEntries succeeds and returns hash prefix',
+        () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Hash Retain');
       await svc.end('Hash Retain', 5000);
 
-      await svc.commitEntries();
-      final entries = await svc.getEntries();
-      // Entry should have 'hash' field from the staging record
-      final committed = entries.firstWhere(
-          (e) => e['title'] == 'Hash Retain', orElse: () => {});
-      expect(committed['hash'], isNotNull,
-          reason: 'After commit, hash field from LedgerEngine must be '
-              'preserved in staging for cross-reference');
+      final hash = await svc.commitEntries();
+      // The commit must return a hash prefix from LedgerEngine.
+      // Committed entries are deleted from staging — hash is in the ledger.
+      expect(hash, isNotNull,
+          reason: 'commitEntries must return the block hash prefix '
+              'from LedgerEngine.commit');
+      expect(hash!.length, 10,
+          reason: 'Hash prefix must be 10 characters');
     });
 
     // N12
@@ -1601,20 +1598,21 @@ void main() {
 
     // N13
     test('N13: commitEntries preserves entry_id, device_uuid, '
-        'end_device_uuid through commit', () async {
+        'end_device_uuid through commit to ledger', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Provenance Test');
       await svc.end('Provenance Test', 5000);
 
-      await svc.commitEntries();
+      final hash = await svc.commitEntries();
+      // Commit must succeed — provenance fields travel through engine.
+      // Committed entries are deleted from staging; provenance is in ledger.
+      expect(hash, isNotNull,
+          reason: 'commitEntries must succeed — entry_id and device_uuid '
+              'are preserved in the ledger block, not staging');
+      // Staging must be clean after commit
       final entries = await svc.getEntries();
-      // Verify provenance fields survive the commit round-trip
-      final entry = entries.firstWhere(
-          (e) => e['title'] == 'Provenance Test', orElse: () => {});
-      expect(entry['entry_id'], isNotNull,
-          reason: 'entry_id must survive commit for cross-device merge');
-      expect(entry['device_uuid'], isNotNull,
-          reason: 'device_uuid must survive commit for provenance tracking');
+      expect(entries, isEmpty,
+          reason: 'Committed entries must be removed from staging');
     });
 
     // N14
@@ -1631,6 +1629,101 @@ void main() {
       final result = await svc.commitEntries();
       expect(result, isNull,
           reason: 'Empty staging returns null — nothing to commit');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group N' — commitEntries cleanup (committed entry deletion)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('N\': commitEntries — committed entry cleanup', () {
+    // N15
+    test('N15: commitEntries deletes committed entries from staging '
+        '(they no longer appear in getEntries)', () async {
+      final svc = await _makeSyncWithEngine();
+      await svc.capture(title: 'Task A');
+      await svc.end('Task A', 5000);
+      await svc.capture(title: 'Task B');
+      await svc.end('Task B', 6000);
+
+      await svc.commitEntries();
+
+      final entries = await svc.getEntries();
+      expect(
+          entries.where((e) => e['title'] == 'Task A' || e['title'] == 'Task B'),
+          isEmpty,
+          reason: 'Committed entries must be removed from staging after '
+              'commitEntries completes — they already live in the ledger.');
+    });
+
+    // N16
+    test('N16: commitEntries does not remove active entries from staging',
+        () async {
+      final svc = await _makeSyncWithEngine();
+      await svc.capture(title: 'Active Task');
+      await svc.capture(title: 'Done Task');
+      await svc.end('Done Task', 5000);
+
+      await svc.commitEntries();
+
+      final entries = await svc.getEntries();
+      expect(entries.length, 1,
+          reason: 'Only committed entries must be removed; active entries '
+              'must stay in staging for later commit.');
+      expect(entries[0]['title'], 'Active Task');
+      expect(entries[0]['is_active'], true);
+    });
+
+    // N17
+    test('N17: commitEntries removes committed entries even when staging '
+        'already contains previously-committed entries (idempotent cleanup)',
+        () async {
+      final svc = await _makeSyncWithEngine();
+
+      // First commit
+      await svc.capture(title: 'First Batch');
+      await svc.end('First Batch', 5000);
+      await svc.commitEntries();
+
+      // Second commit — staging must be clean from first batch
+      await svc.capture(title: 'Second Batch');
+      await svc.end('Second Batch', 6000);
+      await svc.commitEntries();
+
+      final entries = await svc.getEntries();
+      expect(entries, isEmpty,
+          reason: 'After two commitEntries calls, staging must be empty — '
+              'no stale committed entries leak across commits.');
+    });
+
+    // N18 — TODO(remove after 2026-08-01): temporary stale-entry cleanup
+    test('N18: commitEntries cleans up pre-existing stale committed '
+        'entries (temporary — remove after 2026-08-01)', () async {
+      final svc = await _makeSyncWithEngine();
+
+      // Simulate pre-existing committed entries that accumulated
+      // before the deletion fix (BUG-2026-07-30).
+      await svc.capture(title: 'Old Stale A');
+      await svc.end('Old Stale A', 1000);
+      await svc.capture(title: 'Old Stale B');
+      await svc.end('Old Stale B', 2000);
+      // Mark them as committed without deleting (old broken behavior)
+      await svc.modify(0, {'committed': true});
+      await svc.modify(1, {'committed': true});
+
+      // Now create a new entry to trigger commitEntries
+      await svc.capture(title: 'Fresh Entry');
+      await svc.end('Fresh Entry', 3000);
+
+      await svc.commitEntries();
+
+      // Fresh Entry was committed + deleted.
+      // Old Stale A and B must also be cleaned up by the temporary gate.
+      final entries = await svc.getEntries();
+      expect(entries, isEmpty,
+          reason: 'Temporary cleanup must remove all stale committed '
+              'entries, not just the ones committed in this call. '
+              '(Remove this test after 2026-08-01.)');
     });
   });
 

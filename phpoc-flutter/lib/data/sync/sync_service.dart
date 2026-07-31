@@ -957,6 +957,36 @@ class SyncService {
         .toList();
     await _local.markCommitted(entryIds);
 
+    // Delete committed entries from staging — they already live in the ledger.
+    // Sort indices descending so removal at a higher index doesn't shift
+    // earlier indices on subsequent deletes.
+    final committedIndices = toCommit
+        .map((e) => e['entry_index'] as int?)
+        .where((i) => i != null)
+        .cast<int>()
+        .toList();
+    committedIndices.sort((a, b) => b.compareTo(a));
+    for (final idx in committedIndices) {
+      await _local.delete(idx);
+    }
+
+    // TODO(remove after 2026-08-01): cleanup stale committed entries
+    // that accumulated before the deletion fix (BUG-2026-07-30).
+    // This is intentionally temporary — new entries are deleted above.
+    if (DateTime.now().isBefore(DateTime.utc(2026, 8, 1))) {
+      final allAfterCommit = await _local.readEntries();
+      final staleIndices = <int>[];
+      for (var i = 0; i < allAfterCommit.length; i++) {
+        if (allAfterCommit[i]['committed'] == true) {
+          staleIndices.add(allAfterCommit[i]['entry_index'] as int);
+        }
+      }
+      staleIndices.sort((a, b) => b.compareTo(a));
+      for (final idx in staleIndices) {
+        await _local.delete(idx);
+      }
+    }
+
     return hashPrefix;
   }
 

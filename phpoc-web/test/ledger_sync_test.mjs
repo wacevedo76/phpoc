@@ -611,7 +611,7 @@ async function run() {
     const { sync, storage, transport } = createSyncService();
     await storage.set('ledger:blocks', [makeBlock(0), makeBlock(1)]);
 
-    transport._store.set('staging/blobs/current.json', new Uint8Array([1, 2, 3]));
+    transport._store.set('staging/blob', new Uint8Array([1, 2, 3]));
     transport._store.set('staging/blobs/device_cookie.bin', new Uint8Array([4, 5, 6]));
     transport.resetCalls();
 
@@ -619,7 +619,7 @@ async function run() {
 
     const stagingPushes = transport._pushCalls.filter(p => p.startsWith('staging/'));
     t.assertEq(stagingPushes.length, 0, 'F6a. no staging paths pushed');
-    const stagingAfter = transport._store.get('staging/blobs/current.json');
+    const stagingAfter = transport._store.get('staging/blob');
     const cookieAfter = transport._store.get('staging/blobs/device_cookie.bin');
     t.assertDeepEq(Array.from(stagingAfter || []), [1, 2, 3], 'F6b. staging blob untouched');
     t.assertDeepEq(Array.from(cookieAfter || []), [4, 5, 6], 'F6c. device cookie untouched');

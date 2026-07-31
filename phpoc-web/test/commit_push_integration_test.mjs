@@ -667,7 +667,7 @@ async function run() {
     await seedGenesisBlock(storage, crypto, mk);
 
     // Add staging blob to remote (simulating a prior sync)
-    transport._store.set('staging/blobs/current.json', new Uint8Array([1, 2, 3]));
+    transport._store.set('staging/blob', new Uint8Array([1, 2, 3]));
     transport._store.set('staging/blobs/device_cookie.bin', new Uint8Array([4, 5, 6]));
 
     // Commit entries → push ledger blocks
@@ -682,7 +682,7 @@ async function run() {
       'C2a. ledger block on remote');
 
     // Staging paths untouched by ledger push
-    t.assert(transport._store.has('staging/blobs/current.json'),
+    t.assert(transport._store.has('staging/blob'),
       'C2b. staging blob still on remote');
     t.assert(transport._store.has('staging/blobs/device_cookie.bin'),
       'C2c. device cookie still on remote');

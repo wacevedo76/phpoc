@@ -481,7 +481,7 @@ class TestFreshnessBasedPull(unittest.TestCase):
         import os
 
         # Pad to tier (use 64K for simplicity, but test blobs are tiny)
-        from domain.staging.remote_sync import RemoteStagingSync, TIER_64K
+        from domain.staging.remote_sync import RemoteStagingSync
         # Skip actual tier selection for test — just use minimal padding
 
         # Build a minimal obfuscated blob
@@ -1758,7 +1758,7 @@ class TestSpecifierMismatchCaseB:
             _make_raw_entry("RemoteTask", 1000, 2000, entry_id="remote-entry-1"),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
 
@@ -1790,7 +1790,7 @@ class TestSpecifierMismatchCaseB:
             _make_raw_entry("RemoteTask", 3000, 4000, entry_id="remote-only"),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
 
@@ -1893,7 +1893,7 @@ class TestNoLocalCookie:
             _make_raw_entry("RemoteOnly", 1000, 2000, entry_id="rid-1"),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
         spy.set_cookie(make_remote_cookie_bytes(specifier="remote-spec", device_uuid=DEVICE_B_UUID))
@@ -1942,7 +1942,7 @@ class TestNoRemoteCookie:
             _make_raw_entry("OldEntry", 1000, 2000, entry_id="old-1"),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
 
@@ -2130,7 +2130,7 @@ class TestFullReplace:
             _make_raw_entry("Z", 5000, 6000, entry_id="z"),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_B_UUID, entries=remote_entries),
         )
 
@@ -2985,7 +2985,7 @@ class TestF3SkipBlobPush:
             _make_raw_entry("RemoteAdded", 3000, 4000, entry_id=str(uuid.uuid4())),
         ]
         spy.set_remote_blob(
-            "staging/blobs/current.json",
+            "staging/blob",
             make_staging_blob_bytes(device_id=DEVICE_A_UUID, entries=remote_entries),
         )
 

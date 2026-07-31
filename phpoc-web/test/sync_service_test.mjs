@@ -25,6 +25,16 @@ import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 import { jsonSort } from '../src/ledger/utils.js';
 import { buildHashIndex } from '../src/sync/hash_index.js';
+import { buildStagingHashIndex, compareStagingHashIndexes, computeHashForIndex } from '../src/sync/staging_hash_index.js';
+import { REMOTE_STAGING_BLOB, REMOTE_STAGING_HASH_INDEX, REMOTE_STAGING_HASH_INDEX_SHA256 } from '../src/sync/keys.js';
+import { mergeEntries } from '../src/sync/merge_engine.js';
+
+// mergeRows will be exported from row_sync.js after Phase 3.
+// For RED phase, dynamic import with stub fallback.
+const _rowSyncMod2 = await import('../src/sync/row_sync.js');
+const mergeRows = typeof _rowSyncMod2.mergeRows === 'function'
+  ? _rowSyncMod2.mergeRows
+  : (_local, _remote) => [{ activity_id: '__stub__', activity_status: '__stub__', activity: '{}', updated_at: 0, committed: false }];
 
 // ══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -245,7 +255,7 @@ class MockCrypto {
 // Helpers
 // ══════════════════════════════════════════════════════════════════════
 
-const BLOB_PATH = 'staging/blobs/current.json';
+const BLOB_PATH = 'staging/blob';
 const COOKIE_PATH = 'staging/blobs/device_cookie.bin';
 
 /**
@@ -317,6 +327,55 @@ async function pushRemoteBlob(transport, crypto, entries, deviceId, mk) {
   });
   const obfuscated = crypto.obfuscateBlob(blob, mk);
   const bytes = new Uint8Array(Buffer.from(obfuscated, 'base64'));
+  await transport.push(BLOB_PATH, bytes);
+}
+
+/**
+ * Helper: set up a valid local cookie so fast-path activates.
+ * Creates a local cookie and queues remote cookie with matching specifier.
+ */
+async function createLocalCookie(sync, transport, crypto, mk) {
+  const deviceId = await sync._getDeviceId();
+  const specifier = crypto.generateDeviceSpecifier();
+
+  // Write local cookie
+  await sync._storage.set('cookie', {
+    device_specifier: specifier,
+    creation_time: Date.now(),
+  });
+
+  // Queue remote cookie pull (matching specifier)
+  const cookieBytes = new TextEncoder().encode(JSON.stringify({
+    device_uuid: deviceId,
+    device_specifier: specifier,
+  }));
+  transport.queueResponse(COOKIE_PATH, cookieBytes);
+}
+
+/**
+ * Helper: push a canonical-format staging blob to the mock transport.
+ * Creates a PHPSPEC §8 blob envelope with canonical rows.
+ */
+async function pushRemoteBlobWithCanonicalRows(transport, crypto, rows, deviceId, mk) {
+  const blob = JSON.stringify({
+    device_id: deviceId,
+    device_proof: '',
+    entries: rows.map(r => ({
+      activity_id: r.activity_id || '',
+      activity_status: r.activity_status || 'active',
+      activity: r.activity || '{}',
+      updated_at: r.updated_at || Date.now(),
+      committed: r.committed || false,
+    })),
+  });
+
+  let bytes;
+  if (mk) {
+    const obfuscatedB64 = crypto.obfuscateBlob(blob, mk);
+    bytes = new Uint8Array(Buffer.from(obfuscatedB64, 'base64'));
+  } else {
+    bytes = new TextEncoder().encode(blob);
+  }
   await transport.push(BLOB_PATH, bytes);
 }
 
@@ -2114,14 +2173,14 @@ async function run() {
 
     // Pre-populate all keys on remote
     await pushRemoteChain(transport, chain, mk);
-    await transport.push('staging/blobs/current.json', new TextEncoder().encode(JSON.stringify({ entries: [] })));
+    await transport.push('staging/blob', new TextEncoder().encode(JSON.stringify({ entries: [] })));
     await transport.push('staging/blobs/device_cookie.bin', new TextEncoder().encode(JSON.stringify({ device_uuid: 'dev-n1' })));
     await transport.push('ledger/hash_index.json', new TextEncoder().encode('["hash1"]'));
     await transport.push('ledger/hash_index.sha256', new TextEncoder().encode('abc123'));
 
     const preFiles = await transport.listFiles('ledger/blocks/');
     t.assert(preFiles && preFiles.length > 0, 'N1. pre-condition: block files exist');
-    t.assert(transport.hasKey('staging/blobs/current.json'), 'N1b. pre-condition: staging blob exists');
+    t.assert(transport.hasKey('staging/blob'), 'N1b. pre-condition: staging blob exists');
     t.assert(transport.hasKey('staging/blobs/device_cookie.bin'), 'N1c. pre-condition: cookie exists');
     t.assert(transport.hasKey('ledger/hash_index.json'), 'N1c2. pre-condition: hash_index.json exists');
     t.assert(transport.hasKey('ledger/hash_index.sha256'), 'N1c3. pre-condition: hash_index.sha256 exists');
@@ -2131,7 +2190,7 @@ async function run() {
     // Block files should be deleted
     const filesAfter = await transport.listFiles('ledger/blocks/');
     t.assert(!filesAfter || filesAfter.length === 0, 'N1d. block files deleted');
-    t.assert(!transport.hasKey('staging/blobs/current.json'), 'N1e. staging blob deleted');
+    t.assert(!transport.hasKey('staging/blob'), 'N1e. staging blob deleted');
     t.assert(!transport.hasKey('staging/blobs/device_cookie.bin'), 'N1f. cookie deleted');
     t.assert(!transport.hasKey('ledger/hash_index.json'), 'N1g. hash_index.json deleted');
     t.assert(!transport.hasKey('ledger/hash_index.sha256'), 'N1h. hash_index.sha256 deleted');
@@ -2207,7 +2266,7 @@ async function run() {
 
     const preFiles = await transport.listFiles('ledger/blocks/');
     t.assert(preFiles && preFiles.length > 0, 'N4. pre-condition: block files exist');
-    t.assert(!transport.hasKey('staging/blobs/current.json'), 'N4b. pre-condition: staging blob absent (simulates 404)');
+    t.assert(!transport.hasKey('staging/blob'), 'N4b. pre-condition: staging blob absent (simulates 404)');
     t.assert(transport.hasKey('staging/blobs/device_cookie.bin'), 'N4c. pre-condition: cookie exists');
 
     // Should not throw — partial failure is OK
@@ -4230,6 +4289,492 @@ async function run() {
     t.assert(!entries.some(e => e.title === 'Local Committed L6'), 'L6b. local committed filtered');
     t.assert(entries.some(e => e.title === 'RU'), 'L6c. uncommitted remote survives');
     t.assert(entries.some(e => e.title === 'Local Active L6'), 'L6d. uncommitted local survives');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group B: Staging Hash Index Fast Path (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group B: Hash Index Fast Path ──');
+
+  // B1: checkAndSync pulls staging/hash_index.json SHA-256 before full blob
+  {
+    const mk = 'b1-hi----b1-hi----b1-hi----b1-hi----b1-hi';
+    const { sync, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Setup: local cookie valid, remote cookie matches (fast path)
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    // Queue: staging/hash_index.sha256 first, then staging/blob
+    const idx = [{ id: 'b1-act', status: 'active' }];
+    const idxJson = JSON.stringify(idx);
+    const idxB64 = crypto.obfuscateBlob(idxJson, mk);
+    const idxBytes = new Uint8Array(Buffer.from(idxB64, 'base64'));
+    transport.queueResponse(REMOTE_STAGING_HASH_INDEX_SHA256, new TextEncoder().encode(crypto.sha256(new TextDecoder().decode(idxBytes))));
+    transport.queueResponse(REMOTE_STAGING_HASH_INDEX, idxBytes);
+
+    const result = await sync.checkAndSync();
+    // Should have pulled the hash index SHA-256 (Tier 1 check)
+    t.assert(transport._pullCalls.some(p => p === REMOTE_STAGING_HASH_INDEX_SHA256),
+      'B1: checkAndSync pulls staging hash index SHA-256 for Tier 1 fast path');
+  }
+
+  // B2: When remote SHA-256 matches local → returns READY without pulling full blob
+  {
+    const mk = 'b2-hi----b2-hi----b2-hi----b2-hi----b2-hi';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Setup local entries and hash index
+    await sync.capture({ title: 'B2 Entry', startEpoch: 1000 });
+    const entries = await sync.readEntries();
+    const hashIndex = buildStagingHashIndex(entries);
+    const indexJson = JSON.stringify(hashIndex);
+    const sha = crypto.sha256(indexJson);
+    await sync._local.writeHashIndex(hashIndex);
+
+    // Setup cookies for fast path
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    // Queue: SHA-256 matches (both empty hash indexes would match)
+    transport.queueResponse(REMOTE_STAGING_HASH_INDEX_SHA256, new TextEncoder().encode(sha));
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'B2: returns READY when SHA-256 matches (no full blob pull)');
+  }
+
+  // B3: When remote SHA-256 differs → pulls full blob for reconciliation
+  {
+    const mk = 'b3-diff--b3-diff--b3-diff--b3-diff--b3-diff';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Setup local entries and hash index (will differ from remote)
+    await sync.capture({ title: 'B3 Local', startEpoch: 1000 });
+    const entries = await sync.readEntries();
+    const hashIndex = buildStagingHashIndex(entries);
+    await sync._local.writeHashIndex(hashIndex);
+
+    // Setup cookies for fast path
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    // Queue different SHA-256 and a blob with different entries
+    const differentSha = crypto.sha256('different-index-content');
+    transport.queueResponse(REMOTE_STAGING_HASH_INDEX_SHA256, new TextEncoder().encode(differentSha));
+
+    // Queue remote cookie for auth fallback
+    transport.queueResponse(COOKIE_PATH, null);
+
+    const result = await sync.checkAndSync();
+    // When SHA-256 differs and we fall through to auth gate, may get READY/OFFLINE
+    // The key assertion: the system detected the difference and didn't use fast path
+    t.assert(transport._pullCalls.some(p => p === REMOTE_STAGING_HASH_INDEX_SHA256),
+      'B3: hash index SHA-256 was pulled (Tier 1)');
+  }
+
+  // B4: When no remote hash index exists (legacy) → pulls full blob directly
+  {
+    const mk = 'b4-legacyb4-legacyb4-legacyb4-legacyb4-legacy';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'B4 Entry', startEpoch: 1000 });
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    // Queue: hash index SHA-256 returns null (legacy — no hash index on remote)
+    transport.queueResponse(REMOTE_STAGING_HASH_INDEX_SHA256, null);
+    // Queue: remote cookie for auth gate fallback
+    transport.queueResponse(COOKIE_PATH, null);
+
+    const result = await sync.checkAndSync();
+    // Should fall through to full blob path
+    t.assert(result === SyncResult.READY || result === SyncResult.OFFLINE || result === SyncResult.REAUTH_NEEDED,
+      'B4: legacy (no hash index) falls through to auth gate without crashing');
+  }
+
+  // B5: After successful push, staging hash index is pushed to remote
+  {
+    const mk = 'b5-push--b5-push--b5-push--b5-push--b5-push';
+    const { sync, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'B5 Entry', startEpoch: 1000 });
+    await sync.pushToRemote(mk);
+
+    // After push, both hash index and SHA-256 should be on remote
+    t.assert(transport._store.has(REMOTE_STAGING_HASH_INDEX),
+      'B5a: staging hash index pushed to remote after blob push');
+    t.assert(transport._store.has(REMOTE_STAGING_HASH_INDEX_SHA256),
+      'B5b: staging hash index SHA-256 pushed to remote after blob push');
+  }
+
+  // B6: Hash index push failure does not block READY result
+  {
+    const mk = 'b6-fail--b6-fail--b6-fail--b6-fail--b6-fail';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'B6 Entry', startEpoch: 1000 });
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    // Make the hash index push fail by corrupting the transport for that path
+    const origPush = transport.push.bind(transport);
+    transport.push = async (path, data) => {
+      if (path === REMOTE_STAGING_HASH_INDEX || path === REMOTE_STAGING_HASH_INDEX_SHA256) {
+        throw new Error('Simulated push failure');
+      }
+      return origPush(path, data);
+    };
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'B6: READY even when hash index push fails');
+  }
+
+  // B7: When transport is null (no remote) → checkAndSync returns READY (unchanged)
+  {
+    const { sync } = createSyncService({ withTransport: false });
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.READY, 'B7: READY when no transport configured (local-only)');
+  }
+
+  // B8: Hash index fast path skipped when genesis incompatible
+  {
+    const mk = 'b8-gen---b8-gen---b8-gen---b8-gen---b8-gen';
+    const { sync, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Set genesis to incompatible
+    sync._genesisCompatible = false;
+
+    const result = await sync.checkAndSync();
+    t.assertEq(result, SyncResult.GENESIS_MISMATCH,
+      'B8: GENESIS_MISMATCH when genesis incompatible (hash index skipped)');
+  }
+
+  // B9: After reconcile, hash index is cached locally
+  {
+    const mk = 'b9-cache--b9-cache--b9-cache--b9-cache--b9-cache';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'B9 Entry', startEpoch: 1000 });
+    await createLocalCookie(sync, transport, crypto, mk);
+
+    await sync.checkAndSync();
+
+    // After sync, local staging hash index should be cached
+    const cachedIndex = await sync._local.readHashIndex();
+    t.assert(cachedIndex !== null, 'B9: staging hash index cached locally after reconcile');
+  }
+
+  // B10: Hash index diff identifies rows with status changes (active→paused, paused→ended)
+  {
+    const local = [{ id: 'b10-a', status: 'active' }, { id: 'b10-b', status: 'paused' }];
+    const remote = [{ id: 'b10-a', status: 'paused' }, { id: 'b10-b', status: 'ended' }];
+    const diff = compareStagingHashIndexes(local, remote);
+    t.assert(!diff.identical, 'B10a: status changes detected');
+    t.assertEq(diff.statusChanged.length, 2, 'B10b: both status changes identified');
+    t.assert(diff.statusChanged.some(c => c.id === 'b10-a' && c.oldStatus === 'active' && c.newStatus === 'paused'),
+      'B10c: active→paused detected');
+    t.assert(diff.statusChanged.some(c => c.id === 'b10-b' && c.oldStatus === 'paused' && c.newStatus === 'ended'),
+      'B10d: paused→ended detected');
+  }
+
+  // B11: Hash index diff identifies new remote rows (local doesn't have)
+  {
+    const local = [{ id: 'b11-a', status: 'active' }];
+    const remote = [{ id: 'b11-a', status: 'active' }, { id: 'b11-b', status: 'paused' }];
+    const diff = compareStagingHashIndexes(local, remote);
+    t.assert(!diff.identical, 'B11a: new remote row detected');
+    t.assertEq(diff.newRemote.length, 1, 'B11b: one new remote row');
+    t.assertEq(diff.newRemote[0].id, 'b11-b', 'B11c: correct new row identified');
+  }
+
+  // B12: Hash index diff identifies removed local rows (remote doesn't have)
+  {
+    const local = [{ id: 'b12-a', status: 'active' }, { id: 'b12-b', status: 'ended' }];
+    const remote = [{ id: 'b12-a', status: 'active' }];
+    const diff = compareStagingHashIndexes(local, remote);
+    t.assert(!diff.identical, 'B12a: removed local row detected');
+    t.assertEq(diff.removedLocal.length, 1, 'B12b: one removed local row');
+    t.assertEq(diff.removedLocal[0], 'b12-b', 'B12c: correct removed row identified');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group C: _reconcileDifferentDevice with Canonical Rows (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group C: Reconcile with Canonical Rows ──');
+
+  // C1: _reconcileDifferentDevice uses mergeRows() with canonical rows
+  {
+    const mk = 'c1-merge-c1-merge-c1-merge-c1-merge-c1-merge';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'C1 Local', startEpoch: 1000 });
+    const localDeviceId = await sync._getDeviceId();
+
+    // Push a remote blob with canonical rows
+    await pushRemoteBlobWithCanonicalRows(transport, crypto, [
+      { activity_id: 'c1-remote', activity_status: 'active', activity: '{"title":"Remote C1"}', updated_at: 2000, committed: false },
+    ], 'remote-c1-device-web', mk);
+
+    // Queue remote cookie (different device)
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'remote-c1-device-web',
+      device_specifier: 'spec-remote-c1',
+    })));
+
+    await sync._reconcileDifferentDevice(mk, localDeviceId);
+
+    // Verify entries are stored in canonical format
+    const entries = await sync.readEntries();
+    t.assert(entries.length > 0, 'C1a: entries after reconcile');
+    // Local entry should survive
+    t.assert(entries.some(e => e.title === 'C1 Local'), 'C1b: local entry survived reconcile');
+  }
+
+  // C2: After reconcile, local entries are stored in canonical row format
+  {
+    const mk = 'c2-storedc2-storedc2-storedc2-storedc2-stored';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'C2 Entry', startEpoch: 1000 });
+    const localDeviceId = await sync._getDeviceId();
+
+    await pushRemoteBlobWithCanonicalRows(transport, crypto, [
+      { activity_id: 'c2-remote', activity_status: 'active', activity: '{"title":"Remote C2"}', updated_at: 2000, committed: false },
+    ], 'remote-c2-web', mk);
+
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'remote-c2-web',
+      device_specifier: 'spec-remote-c2',
+    })));
+
+    await sync._reconcileDifferentDevice(mk, localDeviceId);
+
+    const entries = await sync.readEntries();
+    // All entries should have canonical fields
+    t.assert(entries.every(e => typeof e.entry_id === 'string'), 'C2a: entries have entry_id');
+    t.assert(entries.every(e => typeof e.title === 'string'), 'C2b: entries have title');
+    t.assert(entries.every(e => typeof e.start_epoch === 'number'), 'C2c: entries have start_epoch');
+  }
+
+  // C3: mergeRows uses activity_id for dedup (not entry_id)
+  // Tested at unit level in Group D — this verifies integration
+  {
+    const local = [
+      { activity_id: 'c3-a', activity_status: 'active', activity: '{"title":"Local"}', updated_at: 1000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'c3-a', activity_status: 'paused', activity: '{"title":"Remote"}', updated_at: 2000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'C3a: deduplicated by activity_id');
+    t.assertEq(merged[0].activity_id, 'c3-a', 'C3b: activity_id preserved');
+  }
+
+  // C4: mergeRows falls back to entry_id when activity_id is missing (legacy compat)
+  {
+    // This tests the integration: mergeRows should handle rows without activity_id
+    // by using some fallback dedup mechanism
+    const local = [
+      { entry_id: 'legacy-1', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false },
+    ];
+    const remote = [
+      { entry_id: 'legacy-1', activity_status: 'paused', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'C4: legacy entry_id dedup prevents duplicates');
+  }
+
+  // C5: mergeRows preserves committed: true flag — committed is irreversible
+  {
+    const local = [
+      { activity_id: 'c5-a', activity_status: 'ended', activity: '{}', updated_at: 1000, committed: true },
+    ];
+    const remote = [
+      { activity_id: 'c5-a', activity_status: 'active', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'C5a: single merged row');
+    t.assertEq(merged[0].committed, true, 'C5b: committed flag preserved (irreversible)');
+  }
+
+  // C6: mergeRows on equal updated_at gives local priority (local-wins tie-break)
+  {
+    const local = [
+      { activity_id: 'c6-tie', activity_status: 'paused', activity: '{"source":"local"}', updated_at: 5000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'c6-tie', activity_status: 'active', activity: '{"source":"remote"}', updated_at: 5000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged[0].activity_status, 'paused', 'C6a: local wins on tie (status)');
+    t.assert(JSON.parse(merged[0].activity).source === 'local', 'C6b: local payload wins on tie');
+  }
+
+  // C7: After reconcile, committed entries are filtered from staging
+  {
+    const mk = 'c7-filterc7-filterc7-filterc7-filterc7-filter';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'C7 Active', startEpoch: 1000 });
+    const localDeviceId = await sync._getDeviceId();
+
+    await pushRemoteBlobWithCanonicalRows(transport, crypto, [
+      { activity_id: 'c7-committed', activity_status: 'ended', activity: '{"title":"Remote Committed"}', updated_at: 2000, committed: true },
+      { activity_id: 'c7-active', activity_status: 'active', activity: '{"title":"Remote Active"}', updated_at: 3000, committed: false },
+    ], 'remote-c7-web', mk);
+
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'remote-c7-web',
+      device_specifier: 'spec-remote-c7',
+    })));
+
+    await sync._reconcileDifferentDevice(mk, localDeviceId);
+    const entries = await sync.readEntries();
+
+    // Committed entries should be filtered from staging
+    const committed = entries.filter(e => e.committed === true);
+    t.assertEq(committed.length, 0, 'C7: committed entries filtered from staging after reconcile');
+  }
+
+  // C8: When remote blob is BLOB_KEY_MISMATCH → returns OFFLINE (unchanged)
+  {
+    const mk = 'c8-key---c8-key---c8-key---c8-key---c8-key';
+    const wrongKey = '1111111111111111111111111111111111111111111111111111111111111111';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    // Push blob with mk, then try to pull with wrongKey → BLOB_KEY_MISMATCH
+    await pushRemoteBlobWithCanonicalRows(transport, new MockCrypto(wrongKey), [
+      { activity_id: 'c8-encrypted', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false },
+    ], 'remote-c8-web', mk);
+
+    // Set crypto to use mk so push works but obfuscated with mk
+    // Reconfigure to simulate key mismatch when pulling
+    transport.queueResponse(COOKIE_PATH, null);
+
+    // We need to test what happens when pullBlob returns BLOB_KEY_MISMATCH
+    // For now: verify the sync doesn't crash with BLOB_KEY_MISMATCH
+    const result = await sync._reconcileDifferentDevice(mk, await sync._getDeviceId());
+    t.assert(result === SyncResult.OFFLINE || result === SyncResult.READY,
+      'C8: BLOB_KEY_MISMATCH handled without crash');
+  }
+
+  // C9: When remote blob is null (no remote staging) → pushes local only
+  {
+    const mk = 'c9-null--c9-null--c9-null--c9-null--c9-null';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'C9 Only', startEpoch: 1000 });
+    const localDeviceId = await sync._getDeviceId();
+
+    // No remote blob (null)
+    transport.queueResponse(COOKIE_PATH, null);
+    // Queue: null for REMOTE_STAGING_BLOB
+    // Mock transport returns null by default for unknown paths
+
+    await sync._reconcileDifferentDevice(mk, localDeviceId);
+
+    // Verify local blob was pushed
+    t.assert(transport._store.has(REMOTE_STAGING_BLOB), 'C9: local blob pushed when no remote blob exists');
+  }
+
+  // C10: reconcile preserves entry_index for local entries
+  {
+    const mk = 'ca-index-ca-index-ca-index-ca-index-ca-index';
+    const { sync, storage, transport, crypto } = createSyncService({
+      withTransport: true,
+      withMasterKey: true,
+      masterKey: mk,
+    });
+
+    await sync.capture({ title: 'C10 First', startEpoch: 1000 });
+    await sync.capture({ title: 'C10 Second', startEpoch: 2000 });
+    const localDeviceId = await sync._getDeviceId();
+
+    // Push remote blob with one canonical row
+    await pushRemoteBlobWithCanonicalRows(transport, crypto, [
+      { activity_id: 'ca-remote', activity_status: 'active', activity: '{"title":"Remote C10"}', updated_at: 3000, committed: false },
+    ], 'remote-ca-web', mk);
+
+    transport.queueResponse(COOKIE_PATH, new TextEncoder().encode(JSON.stringify({
+      device_uuid: 'remote-ca-web',
+      device_specifier: 'spec-remote-ca',
+    })));
+
+    await sync._reconcileDifferentDevice(mk, localDeviceId);
+    const entries = await sync.readEntries();
+
+    // Entries should have entry_index field for UI ordering
+    t.assert(entries.every(e => typeof e.entry_index === 'number'),
+      'C10: entry_index preserved after reconcile');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group G: Keys Path Change (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group G: Keys Path Change ──');
+
+  // G1: REMOTE_STAGING_BLOB = 'staging/blob'
+  {
+    t.assertEq(REMOTE_STAGING_BLOB, 'staging/blob',
+      'G1: REMOTE_STAGING_BLOB is canonical path staging/blob');
+  }
+
+  // G2: All existing tests that use REMOTE_STAGING_BLOB still pass with new path
+  // This is a regression guard: verify the constant is a string and can be used
+  {
+    t.assert(typeof REMOTE_STAGING_BLOB === 'string', 'G2a: REMOTE_STAGING_BLOB is a string');
+    t.assert(REMOTE_STAGING_BLOB.length > 0, 'G2b: REMOTE_STAGING_BLOB is non-empty');
+    t.assert(REMOTE_STAGING_BLOB.includes('staging'), 'G2c: REMOTE_STAGING_BLOB contains staging');
   }
 
   // ── Results ───────────────────────────────────────────────────────

@@ -54,7 +54,7 @@ import {
   InvalidFormatError,
 } from './genesis_gate.js';
 import { base64ToBytes, bytesToBase64 } from './base64.js';
-import { rawCommittedEntryToDTO, rawEntryToDTO } from './entry_dto.js';
+import { rawCommittedEntryToDTO, rawEntryToDTO, canonicalRowToDTO } from './entry_dto.js';
 import {
   REMOTE_STAGING_BLOB,
   REMOTE_DEVICE_COOKIE,
@@ -603,8 +603,36 @@ export class SyncService {
 
     const remoteCookie = DeviceCookie.parseRemote(remoteCookieRaw);
     if (remoteCookie && DeviceCookie.matches(localCookie, remoteCookie)) {
-      // Same device session — fast path
-      await this._pushOnFastPath(localCookie);
+      // Same device session — fast path with hash index Tier 1 check
+      const mk = this._crypto.getMasterKey();
+      if (mk) {
+        // Pull remote staging hash index SHA-256 for Tier 1 fast path
+        let skipPush = false;
+        try {
+          const remoteShaRaw = await this._transport.pull(REMOTE_STAGING_HASH_INDEX_SHA256);
+          if (remoteShaRaw !== null) {
+            const remoteSha = new TextDecoder().decode(remoteShaRaw);
+            const localIdx = await this._local.readHashIndex();
+            if (localIdx) {
+              // Compute local encrypted SHA-256 to match remote (remote stores
+              // SHA-256 of the ENCRYPTED blob for Tier 1 comparison)
+              const localJson = JSON.stringify(localIdx);
+              const obfuscatedB64 = this._crypto.obfuscateBlob(localJson, mk);
+              const idxBytes = base64ToBytes(obfuscatedB64);
+              const localEncryptedSha = this._crypto.sha256(new TextDecoder().decode(idxBytes));
+              if (localEncryptedSha === remoteSha) {
+                skipPush = true;
+              }
+            }
+          }
+        } catch {
+          // Hash index pull failed — fall through to full push
+        }
+        if (!skipPush) {
+          await this.pushBlobOnly(mk);
+        }
+      }
+      await this._touchLocalCookie();
       return SyncResult.READY;
     }
 
@@ -745,9 +773,24 @@ export class SyncService {
     if (remoteBlob && Array.isArray(remoteBlob.entries)) {
       try {
         const localEntries = await this._local.readEntries();
-        const remoteDTOs = remoteBlob.entries
-          .map((raw) => rawEntryToDTO(raw))
-          .filter(Boolean);
+
+        // Detect format: canonical (activity_id at row level) vs legacy (data field)
+        const firstRaw = remoteBlob.entries[0];
+        const isCanonical = firstRaw && typeof firstRaw.activity_id === 'string' && !firstRaw.data;
+
+        let remoteDTOs;
+        if (isCanonical) {
+          // Canonical format (PHPSPEC §8): convert each row to DTO
+          remoteDTOs = remoteBlob.entries
+            .map((raw) => canonicalRowToDTO(raw))
+            .filter(Boolean);
+        } else {
+          // Legacy format ({hash, data: {_enc}}): use rawEntryToDTO
+          remoteDTOs = remoteBlob.entries
+            .map((raw) => rawEntryToDTO(raw))
+            .filter(Boolean);
+        }
+
         const merged = mergeEntries(localEntries, remoteDTOs);
         // Filter committed entries — same as CLI service.py:505-507:
         // "merged = [e for e in merged if not e.get('committed')]"

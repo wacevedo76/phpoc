@@ -1,14 +1,15 @@
 /**
- * Row-level sync: buildDiff pure function + RowSyncWorker HTTP client.
+ * Row-level sync: buildDiff pure function + mergeRows canonical row merge.
  *
  * buildDiff compares local row data against a remote manifest and ledger
  * hash index to produce a sync plan ({pull, push, deleteLocal, fastPath}).
  *
- * RowSyncWorker wraps a transport to call the four Worker row-level endpoints:
- *   GET  /storage/staging/manifest          → fetchManifest()
- *   GET  /storage/staging/rows/{id}         → fetchRow(id)
- *   PUT  /storage/staging/rows/{id}         → pushRow(id, row)
- *   DELETE /storage/staging/rows/{id}       → deleteRow(id)
+ * mergeRows merges two arrays of canonical-format staging rows
+ * ({activity_id, activity_status, activity, updated_at, committed})
+ * using activity_id as the merge key with LWW resolution.
+ *
+ * RowSyncWorker has been removed per B-05b — per-row CRUD endpoints
+ * are replaced by the single-blob + hash index model (PHPSPEC §8).
  *
  * Resolution rules follow ADR-025 (LWW with ledger-aware cleanup).
  */
@@ -127,12 +128,12 @@ export function buildDiff(localRows, remoteManifest, ledgerHashIndex) {
       // S2: Local newer → push
       push.push(activityId);
     } else {
-      // S3: Same timestamp — tie-break by status, remote wins
+      // S3: Same timestamp — local wins on tie (PHPSPEC §8.5, matches Flutter)
       const remoteStatus = remoteRow.activity_status || '';
       const localStatus = localRow.activity_status || '';
       if (remoteStatus !== localStatus) {
-        // Different status → pull remote version
-        pull.push(activityId);
+        // Different status → push local version
+        push.push(activityId);
       }
       // If status also matches, row is identical → no-op
     }
@@ -151,10 +152,6 @@ export function buildDiff(localRows, remoteManifest, ledgerHashIndex) {
     }
   }
 
-  // S7: All local rows committed and remote is empty → fastPath
-  const allCommitted = local.length > 0 && push.length === 0 &&
-    pull.length === 0 && deleteLocal.length === local.length;
-
   // fastPath: no network calls needed. deleteLocal is a purely local
   // operation (removing rows that are already committed on some device),
   // so it does not disable fastPath.
@@ -166,142 +163,98 @@ export function buildDiff(localRows, remoteManifest, ledgerHashIndex) {
 
 
 // ══════════════════════════════════════════════════════════════════════
-// RowSyncWorker — HTTP client for Worker row-level endpoints
+// mergeRows — canonical row merge by activity_id (PHPSPEC §8.5)
 // ══════════════════════════════════════════════════════════════════════
 
-const MANIFEST_PATH = '/storage/staging/manifest';
-const ROW_PATH_PREFIX = '/storage/staging/rows/';
+/**
+ * Merge two arrays of canonical staging rows by activity_id.
+ *
+ * Resolution rules (PHPSPEC §8.5):
+ *   1. activity_id is the primary merge key; entry_id is the legacy fallback.
+ *   2. On timestamp conflict: newer updated_at wins.
+ *   3. On equal updated_at: local row wins (matches Flutter).
+ *   4. Local-only rows with committed:true are excluded.
+ *   5. Remote-only rows are included unconditionally.
+ *   6. committed:true is irreversible (never downgraded to false).
+ *
+ * Pure function — no side effects, does not mutate inputs.
+ *
+ * @param {Array<{activity_id: string, activity_status: string, activity: string, updated_at: number, committed?: boolean}>} local
+ * @param {Array<{activity_id: string, activity_status: string, activity: string, updated_at: number, committed?: boolean}>} remote
+ * @returns {Array<{activity_id: string, activity_status: string, activity: string, updated_at: number, committed: boolean}>}
+ */
+export function mergeRows(local, remote) {
+  const loc = Array.isArray(local) ? local : [];
+  const rem = Array.isArray(remote) ? remote : [];
 
-export class RowSyncWorker {
-  /**
-   * @param {object} transport — Transport-like object with pull(), push(), delete().
-   * @param {object} [config]
-   * @param {string} [config.apiKey] — API key for auth headers.
-   */
-  constructor(transport, config = {}) {
-    this._transport = transport;
-    this._config = config;
-    this._apiKey = config.apiKey || null;
+  const merged = new Map();
 
-    /** @type {number} Max retry attempts for transient failures. */
-    this._maxRetries = 3;
+  // Process local rows first
+  for (const row of loc) {
+    if (!row) continue;
+    const key = row.activity_id || row.entry_id;
+    if (!key) continue;
+    merged.set(key, {
+      activity_id: row.activity_id || row.entry_id || '',
+      activity_status: row.activity_status || 'active',
+      activity: row.activity || '{}',
+      updated_at: row.updated_at ?? 0,
+      committed: row.committed || false,
+    });
   }
 
-  /**
-   * Fetch the remote staging manifest.
-   *
-   * @returns {Promise<Manifest>}
-   */
-  async fetchManifest() {
-    const raw = await this._retry(() => this._transport.pull(MANIFEST_PATH));
-    if (raw === null || raw === undefined) {
-      throw new Error('fetchManifest: null response');
-    }
-    const text = new TextDecoder().decode(raw);
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      throw new Error('fetchManifest: invalid JSON response');
-    }
-    // Validate: parsed must be an object, not a string/number/array
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new Error('fetchManifest: invalid JSON response');
-    }
-    // Normalize: ensure rows is always an array
-    return {
-      rows: Array.isArray(parsed.rows) ? parsed.rows : [],
-      version: typeof parsed.version === 'number' ? parsed.version : 0,
-    };
-  }
-
-  /**
-   * Fetch a single row by activity_id.
-   *
-   * @param {string} activityId
-   * @returns {Promise<object|null>} Row object or null if 404.
-   */
-  async fetchRow(activityId) {
-    const path = ROW_PATH_PREFIX + activityId;
-    const raw = await this._retry(() => this._transport.pull(path));
-    if (raw === null || raw === undefined) {
-      return null; // 404
-    }
-    const text = new TextDecoder().decode(raw);
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
+  // Build a set of remote keys for O(1) lookup during committed-exclusion
+  const remoteKeys = new Set();
+  for (const row of rem) {
+    if (row) {
+      const key = row.activity_id || row.entry_id;
+      if (key) remoteKeys.add(key);
     }
   }
 
-  /**
-   * Push (upsert) a row to remote.
-   *
-   * @param {string} activityId - Activity ID used in URL path.
-   * @param {object} row - Full row object (activity_id, activity_status, activity, updated_at).
-   *   If row.activity_id differs from activityId, the body is sent as-is
-   *   (caller is responsible for consistency).
-   * @returns {Promise<{ok: boolean, status: number}>}
-   */
-  async pushRow(activityId, row) {
-    const path = ROW_PATH_PREFIX + activityId;
-    const body = new TextEncoder().encode(JSON.stringify(row));
-    try {
-      const result = await this._retry(() => this._transport.push(path, body));
-      if (result && typeof result.status === 'number') {
-        return {
-          ok: result.status >= 200 && result.status < 300,
-          status: result.status,
-        };
-      }
-      return { ok: true, status: 200 };
-    } catch (e) {
-      return { ok: false, status: 0 };
+  // Process remote rows — merge by activity_id (or entry_id fallback)
+  for (const row of rem) {
+    if (!row) continue;
+    const key = row.activity_id || row.entry_id;
+    if (!key) continue;
+    const existing = merged.get(key);
+    const remoteTime = row.updated_at ?? 0;
+    const localTime = existing ? (existing.updated_at ?? 0) : -1;
+    const remoteCommitted = row.committed || false;
+
+    if (!existing) {
+      // Remote-only row → include unconditionally
+      merged.set(key, {
+        activity_id: row.activity_id || row.entry_id || '',
+        activity_status: row.activity_status || 'active',
+        activity: row.activity || '{}',
+        updated_at: remoteTime,
+        committed: remoteCommitted,
+      });
+    } else if (remoteTime > localTime) {
+      // Remote newer → remote wins, committed is irreversible
+      merged.set(key, {
+        activity_id: row.activity_id || row.entry_id || '',
+        activity_status: row.activity_status || 'active',
+        activity: row.activity || '{}',
+        updated_at: remoteTime,
+        committed: existing.committed || remoteCommitted,
+      });
+    } else if (remoteCommitted) {
+      // Remote time ≤ local → local wins, but committed flag is irreversible
+      existing.committed = true;
     }
   }
 
-  /**
-   * Delete a row from remote. Idempotent — deleting a nonexistent row
-   * returns {ok: true, status: 404}.
-   *
-   * @param {string} activityId
-   * @returns {Promise<{ok: boolean, status: number}>}
-   */
-  async deleteRow(activityId) {
-    const path = ROW_PATH_PREFIX + activityId;
-    try {
-      const result = await this._retry(() => this._transport.delete(path));
-      if (result && typeof result.status === 'number') {
-        return {
-          ok: result.status >= 200 && result.status < 300,
-          status: result.status,
-        };
-      }
-      return { ok: true, status: 200 };
-    } catch (e) {
-      return { ok: false, status: 0 };
+  // Filter out local-only rows with committed:true (rule 4).
+  // Local-only means the row's key is NOT in the remote set.
+  const result = [];
+  for (const row of merged.values()) {
+    if (row.committed && !remoteKeys.has(row.activity_id || '')) {
+      continue;
     }
+    result.push(row);
   }
 
-  // ── Internal ──────────────────────────────────────────────────────
-
-  /**
-   * Retry a thunk up to _maxRetries times for transient failures.
-   *
-   * @param {() => Promise<any>} thunk
-   * @returns {Promise<any>}
-   * @private
-   */
-  async _retry(thunk) {
-    let lastError;
-    for (let attempt = 0; attempt < this._maxRetries; attempt++) {
-      try {
-        return await thunk();
-      } catch (e) {
-        lastError = e;
-      }
-    }
-    throw lastError || new Error('Retry exhausted');
-  }
+  return result;
 }

@@ -242,7 +242,7 @@ console.log('\n=== Group A: _reconcileAndClaim — Genesis Gate ===');
 
   const blob = [{ id: 'e1', title: 'task' }];
   await transport.push(
-    'staging/blobs/current.json',
+    'staging/blob',
     new TextEncoder().encode(JSON.stringify(blob))
   );
 
@@ -338,7 +338,7 @@ console.log('\n=== Group A: _reconcileAndClaim — Genesis Gate ===');
 
   const blob = [{ id: 'e6', title: 'should not be pulled' }];
   await transport.push(
-    'staging/blobs/current.json',
+    'staging/blob',
     new TextEncoder().encode(JSON.stringify(blob))
   );
 

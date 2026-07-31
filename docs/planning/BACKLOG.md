@@ -64,8 +64,8 @@
 
 **Phases:**
 - ✅ **Phase 1:** Extract canonical format into PHPSPEC.md §8 (complete)
-- 🔜 **Phase 3 (B-05b):** Web alignment — switch to `staging/blob`, wire `buildDiff` + `RowStagingStore` into sync gate, hash index fast path, local-wins tie-break, drop envelope `updated_at`, retire `row_sync.js`
-- **Phase 2 (B-05c):** CLI alignment — `StagingStore` (SQLite, row-level), `activity_id`, `staging/blob`, hash index, obfuscation alignment
+- ✅ **Phase 3 (B-05b):** Web alignment — switch to `staging/blob`, wire `buildDiff` + `RowStagingStore` into sync gate, hash index fast path, local-wins tie-break, drop envelope `updated_at`, retire `row_sync.js` ✅ Complete (2026-07-30)
+- ✅ **Phase 2 (B-05c):** CLI alignment — `ActivityIdGenerator`, `StagingHashIndex`, `staging/blob` path, hash index pull/push, compact JSON, drop envelope `updated_at`, remove public tier constants. **4-Phase TDD complete (2026-07-30) — 52/52 GREEN; Phase 4: 3 improvements (extracted `_xport_pull/_push`, `_build_lookup_map`; moved `import time`).**
 
 **Resolved (2026-07-28):**
 - ✅ Merge tie-break → local-wins

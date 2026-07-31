@@ -16,6 +16,25 @@ const _ENCRYPTABLE_FIELDS = [
 ];
 
 /**
+ * Parse a field value that may be plain:-prefixed or hex ciphertext.
+ * Returns the plaintext string, or null if unparseable.
+ * @param {string} raw - e.g. "plain:hello" or hex ciphertext
+ * @param {object} [crypto] - Optional crypto service for hex decryption
+ * @returns {string|null}
+ */
+function _parsePlainOrEncrypted(raw, crypto) {
+  if (!raw || typeof raw !== 'string') return null;
+  if (raw.startsWith('plain:')) return raw.slice(6);
+  if (crypto) {
+    try {
+      const decrypted = crypto.decryptWithCachedKey(raw);
+      if (decrypted != null) return decrypted;
+    } catch { /* fall through */ }
+  }
+  return raw;
+}
+
+/**
  * Decode encrypted field-name tokens → standard _enc key names.
  * Legacy _enc keys pass through as-is.
  * @param {object} data
@@ -90,8 +109,7 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
     let title = '';
     if (data.title_enc) {
       try {
-        const decrypted = crypto.decryptWithCachedKey(data.title_enc);
-        title = (decrypted != null) ? decrypted : '';
+        title = crypto.decryptWithCachedKey(data.title_enc) ?? '';
       } catch { title = data.title || ''; }
     } else {
       title = data.title || '';
@@ -100,8 +118,8 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
     let tags = [];
     if (data.tags_enc) {
       try {
-        const decrypted = crypto.decryptWithCachedKey(data.tags_enc);
-        tags = decrypted ? JSON.parse(decrypted) : [];
+        const plain = crypto.decryptWithCachedKey(data.tags_enc);
+        tags = plain ? JSON.parse(plain) : [];
       } catch { tags = data.tags || []; }
     } else {
       tags = data.tags || [];
@@ -119,9 +137,9 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
     let duration = 0;
     if (data.duration_enc) {
       try {
-        const decrypted = crypto.decryptWithCachedKey(data.duration_enc);
-        if (decrypted != null) {
-          const n = parseInt(decrypted, 10);
+        const plain = crypto.decryptWithCachedKey(data.duration_enc);
+        if (plain != null) {
+          const n = parseInt(plain, 10);
           duration = isNaN(n) ? 0 : n;
         }
       } catch { duration = data.duration || 0; }
@@ -198,58 +216,33 @@ export function rawEntryToDTO(rawEntry, crypto) {
     // Dual-read encryptable fields: try _enc first, fall back to plaintext
     let title = '';
     if (data.title_enc) {
-      if (data.title_enc.startsWith('plain:')) {
-        title = data.title_enc.slice(6);
-      } else if (crypto) {
-        try {
-          const decrypted = crypto.decryptWithCachedKey(data.title_enc);
-          title = (decrypted != null) ? decrypted : '';
-        } catch { title = ''; }
-      }
+      const plain = _parsePlainOrEncrypted(data.title_enc, crypto);
+      title = plain ?? '';
     } else {
       title = data.title || '';
     }
 
     let tags = [];
     if (data.tags_enc) {
-      if (data.tags_enc.startsWith('plain:')) {
-        try { tags = JSON.parse(data.tags_enc.slice(6)); } catch { tags = []; }
-      } else if (crypto) {
-        try {
-          const decrypted = crypto.decryptWithCachedKey(data.tags_enc);
-          tags = decrypted ? JSON.parse(decrypted) : [];
-        } catch { tags = []; }
-      }
+      const plain = _parsePlainOrEncrypted(data.tags_enc, crypto);
+      try { tags = plain ? JSON.parse(plain) : []; } catch { tags = []; }
     } else {
       tags = data.tags || [];
     }
 
     let comment = null;
     if (data.comment_enc) {
-      if (data.comment_enc.startsWith('plain:')) {
-        comment = data.comment_enc.slice(6);
-      } else if (crypto) {
-        try {
-          comment = crypto.decryptWithCachedKey(data.comment_enc) || null;
-        } catch { comment = null; }
-      }
+      comment = _parsePlainOrEncrypted(data.comment_enc, crypto);
     } else {
       comment = data.comment || null;
     }
 
     let duration = 0;
     if (data.duration_enc) {
-      if (data.duration_enc.startsWith('plain:')) {
-        const n = parseInt(data.duration_enc.slice(6), 10);
+      const plain = _parsePlainOrEncrypted(data.duration_enc, crypto);
+      if (plain != null) {
+        const n = parseInt(plain, 10);
         duration = isNaN(n) ? 0 : n;
-      } else if (crypto) {
-        try {
-          const decrypted = crypto.decryptWithCachedKey(data.duration_enc);
-          if (decrypted != null) {
-            const n = parseInt(decrypted, 10);
-            duration = isNaN(n) ? 0 : n;
-          }
-        } catch { /* keep default */ }
       }
     } else {
       duration = data.duration || 0;
@@ -335,6 +328,58 @@ export function parsePlainInt(str, crypto) {
   // Could be an already-decrypted value (just a number string)
   const n = parseInt(str, 10);
   return isNaN(n) ? null : n;
+}
+
+/**
+ * Convert a canonical staging row (PHPSPEC §8) to a local DTO.
+ *
+ * Canonical rows: {activity_id, activity_status, activity, updated_at, committed}
+ * DTO format: {entry_id, title, start_epoch, end_epoch, is_active, ...}
+ *
+ * activity JSON is parsed to extract title, start_epoch, etc.
+ *
+ * @param {object} row - Canonical staging row.
+ * @returns {object|null} DTO or null on parse failure.
+ */
+export function canonicalRowToDTO(row) {
+  try {
+    const activityStr = typeof row.activity === 'string' ? row.activity : '{}';
+    let activity;
+    try {
+      activity = JSON.parse(activityStr);
+    } catch {
+      activity = {};
+    }
+
+    const startEpoch = activity.start_epoch ?? 0;
+    const dateStr = new Date(startEpoch).toISOString().slice(0, 10);
+
+    return {
+      entry_id: activity.entry_id || row.activity_id || '',
+      activity_id: row.activity_id || '',
+      title: activity.title || '',
+      start_epoch: startEpoch,
+      end_epoch: activity.end_epoch ?? null,
+      duration: activity.duration || 0,
+      is_active: row.activity_status !== 'ended',
+      is_paused: row.activity_status === 'paused',
+      pauses: activity.pauses || [],
+      tags: activity.tags || [],
+      comment: activity.comment || null,
+      media: activity.media || [],
+      metadata: activity.metadata || {},
+      date: dateStr,
+      source: 'remote',
+      hash: '',
+      device_uuid: activity.device_uuid || '',
+      end_device_uuid: activity.end_device_uuid || '',
+      committed: row.committed || false,
+      block_index: null,
+      has_encrypted_fields: false,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -168,7 +168,7 @@ class MockCrypto {
 // Helpers
 // ══════════════════════════════════════════════════════════════════════
 
-const BLOB_PATH = 'staging/blobs/current.json';
+const BLOB_PATH = 'staging/blob';
 const COOKIE_PATH = 'staging/blobs/device_cookie.bin';
 
 function createSyncService({ withTransport = true, withMasterKey = false, masterKey = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111', cookieTtl = 30 } = {}) {

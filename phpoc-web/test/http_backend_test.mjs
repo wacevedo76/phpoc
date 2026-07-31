@@ -296,7 +296,7 @@ await testBehavior('list returns paths under prefix', async () => {
   const { backend, transport } = createFixture();
   await transport.push('ledger/blocks/0.json', new TextEncoder().encode('{}'));
   await transport.push('ledger/blocks/1.json', new TextEncoder().encode('{}'));
-  await transport.push('staging/blobs/current.json', new TextEncoder().encode('{}'));
+  await transport.push('staging/blob', new TextEncoder().encode('{}'));
   const files = await backend.list('ledger/blocks/');
   // Transport returns basenames only (prefix stripped), matching Worker behavior.
   // HttpBackend is a pass-through — what the transport returns is what you get.
@@ -312,7 +312,7 @@ await testBehavior('list returns empty for unmatched prefix', async () => {
 await testBehavior('list returns all files under root prefix', async () => {
   const { backend, transport } = createFixture();
   await transport.push('ledger/blocks/0.json', new TextEncoder().encode('{}'));
-  await transport.push('staging/blobs/current.json', new TextEncoder().encode('{}'));
+  await transport.push('staging/blob', new TextEncoder().encode('{}'));
   const files = await backend.list('');
   assert(files.length >= 2, 'returns all files with empty prefix');
 });

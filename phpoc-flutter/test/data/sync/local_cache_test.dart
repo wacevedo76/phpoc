@@ -299,6 +299,36 @@ void main() {
 
   group('B: LocalCache — delete()', () {
     // B9
+    // B8c: committed entries can be deleted after markCommitted
+    // (validates the cleanup pattern used by commitEntries)
+    test('B8c: committed entries can be deleted after markCommitted', () async {
+      final storage = _FakeStorage();
+      final crypto = await _makeCrypto();
+      final cache = LocalCache(storage: storage, crypto: crypto);
+
+      await cache.append(title: 'Task A', startEpoch: 1000);
+      await cache.append(title: 'Task B', startEpoch: 2000);
+      await cache.append(title: 'Task C', startEpoch: 3000);
+
+      // Mark A and C as committed (simulating what commitEntries does)
+      final allEntries = await cache.readEntries();
+      final aId = allEntries.firstWhere((e) => e['title'] == 'Task A')['entry_id'];
+      final cId = allEntries.firstWhere((e) => e['title'] == 'Task C')['entry_id'];
+      await cache.markCommitted([aId as String, cId as String]);
+
+      // Delete committed entries (highest index first to avoid shifting)
+      await cache.delete(2); // Task C
+      await cache.delete(0); // Task A
+
+      final remaining = await cache.readEntries();
+      expect(remaining.length, 1,
+          reason: 'Only B should remain after deleting A and C');
+      expect(remaining[0]['title'], 'Task B');
+      // Uncommitted entry must be untouched
+      expect(remaining[0]['committed'], isFalse,
+          reason: 'Uncommitted entry must not be flagged as committed');
+    });
+
     test('B9: delete() removes entry at index', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();

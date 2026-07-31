@@ -18,7 +18,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `cli/background.py` | COLD | Phase A instant reads, background sync check |
 | `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
 | `cli/wal.py` | COLD | Write-ahead log, background push |
-| `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import |
+| `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import, uses canonical `staging/blob` path |
 | `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `cli/migrate.py` | NEW | `migrate_chain()` — canonical format migration (I-07/I-17) |
 | `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
@@ -26,6 +26,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
 | `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
 | `core/sync/transport_registry.py` | HOT | `TransportProvider` dataclass, `TransportRegistry` — extensible transport discovery for onboarding |
+| `core/activity_id.py` | 🟢 GREEN | **NEW (B-05c Phase 3)** — `ActivityIdGenerator` — CSPRNG 10-char alphanumeric activity IDs, port of Flutter `activity_id.dart` |
+| `core/staging_hash_index.py` | 🟢 GREEN | **NEW (B-05c Phase 3)** — `StagingHashIndex` + `StagingHashDiff` — compact manifest for O(1) staging change detection, port of Flutter/Web |
 | `security/crypto.py` | HOT | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | HOT | Passphrase + Recovery authenticators — per-user PBKDF2 salt, transparent upgrade |
 | `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix. I-09: `derive_device_id()` from MK + device_local_secret. |
@@ -34,7 +36,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
 | `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
 | `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
-| `domain/staging/remote_sync.py` | COLD | Blob obfuscation, pull/push, device cookie |
+| `domain/staging/remote_sync.py` | HOT | Blob obfuscation, pull/push, device cookie, hash index pull/push, canonical `staging/blob` path (PHPSPEC §8) |
 | `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id` |
 | `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
 | `worker/src/index.ts` | HOT | Cloudflare Worker router (~175 lines): CORS, auth, generic blob handlers + row-level staging dispatch |

@@ -16,14 +16,17 @@ import json
 import os
 import pytest
 
-from domain.staging.remote_sync import (
-    RemoteStagingSync,
-    BLOB_TIERS,
-    TIER_64K,
-    TIER_128K,
-    TIER_256K,
-    TIER_512K,
-)
+from domain.staging.remote_sync import RemoteStagingSync
+
+# Internal tier constants (private — accessed for tier selection tests only)
+from domain.staging.remote_sync import _BLOB_TIERS, _TIER_64K, _TIER_128K, _TIER_256K, _TIER_512K
+
+# Aliases for backward compatibility with test naming
+BLOB_TIERS = _BLOB_TIERS
+TIER_64K = _TIER_64K
+TIER_128K = _TIER_128K
+TIER_256K = _TIER_256K
+TIER_512K = _TIER_512K
 
 
 # ---------------------------------------------------------------------------

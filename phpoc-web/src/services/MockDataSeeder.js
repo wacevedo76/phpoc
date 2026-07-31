@@ -287,7 +287,7 @@ export async function seedMockRemote(mockRemote, crypto, opts = {}) {
   });
 
   await mockRemote.push(
-    'staging/blobs/current.json',
+    'staging/blob',
     new TextEncoder().encode(JSON.stringify(blob, null, 2))
   );
 

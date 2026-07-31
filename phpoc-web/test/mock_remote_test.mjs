@@ -135,7 +135,7 @@ async function testListFiles() {
   await remote.push('ledger/blocks/0.json', strToBytes('{}'));
   await remote.push('ledger/blocks/1.json', strToBytes('{}'));
   await remote.push('ledger/blocks/2.json', strToBytes('{}'));
-  await remote.push('staging/blobs/current.json', strToBytes('{}'));
+  await remote.push('staging/blob', strToBytes('{}'));
   await remote.push('staging/blobs/device_cookie.bin', strToBytes('{}'));
 
   const ledgerFiles = await remote.listFiles('ledger/blocks/');
@@ -190,12 +190,12 @@ async function testSeed() {
   const { remote } = createMock();
 
   await remote.seed([
-    { path: 'staging/blobs/current.json', data: JSON.stringify({ entries: [] }) },
+    { path: 'staging/blob', data: JSON.stringify({ entries: [] }) },
     { path: 'staging/blobs/device_cookie.bin', data: JSON.stringify({ device_uuid: 'test' }) },
     { path: 'ledger/blocks/0.json', data: JSON.stringify({ index: 0 }) },
   ]);
 
-  const blob = await remote.pull('staging/blobs/current.json');
+  const blob = await remote.pull('staging/blob');
   assert(blob !== null, 'seeded blob is pullable');
   assertDeepEq(JSON.parse(bytesToStr(blob)), { entries: [] }, 'seeded blob content matches');
 

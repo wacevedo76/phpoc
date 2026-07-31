@@ -96,7 +96,7 @@ class MockCrypto {
 // Constants
 // ══════════════════════════════════════════════════════════════════════
 
-const BLOB_PATH = 'staging/blobs/current.json';
+const BLOB_PATH = 'staging/blob';
 const TEST_MK = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111';
 const TEST_DEVICE_ID = 'test-device-0001-0000-0000-000000000001';
 
@@ -175,6 +175,9 @@ async function run() {
 
     const rawEntry = blob.entries[0];
     t.assertEq(rawEntry.committed, true, 'C1. pushBlob includes committed=true in raw entry');
+    // block_index is serialized inside the activity JSON
+    const activity = JSON.parse(rawEntry.activity);
+    t.assertEq(activity.block_index, 5, 'C1b. block_index=5 inside activity JSON');
   }
 
   // ── C2: committed=false serialized ────────────────────────────────
@@ -203,7 +206,9 @@ async function run() {
     await remote.pushBlob([dto], TEST_DEVICE_ID);
 
     const blob = readPushedBlob(transport, crypto, TEST_MK);
-    t.assertEq(blob.entries[0].block_index, 42, 'C3. pushBlob includes block_index in raw entry');
+    // block_index is inside the activity JSON, not at row level
+    const activityC3 = JSON.parse(blob.entries[0].activity);
+    t.assertEq(activityC3.block_index, 42, 'C3. pushBlob includes block_index inside activity JSON');
   }
 
   // ── C4: legacy DTO without committed/block_index ─────────────────
@@ -241,8 +246,9 @@ async function run() {
     const rawEntry = blob.entries[0];
     t.assert(!('committed' in rawEntry) || rawEntry.committed === false,
       'C4b. legacy DTO does not add spurious committed flag');
-    // Should still have the core fields
-    t.assertEq(rawEntry.data.title, 'Legacy Entry', 'C4c. core fields preserved');
+    // Canonical format: core fields are in the activity JSON string
+    const activityC4 = JSON.parse(rawEntry.activity);
+    t.assertEq(activityC4.title, 'Legacy Entry', 'C4c. core fields preserved in activity JSON');
   }
 
   // ── C5: round-trip DTO → pushBlob raw → rawEntryToDTO ────────────
@@ -269,7 +275,9 @@ async function run() {
 
     const pulledRaw = pulledBlob.entries[0];
     t.assertEq(pulledRaw.committed, true, 'C5c. committed survives push→pull round-trip');
-    t.assertEq(pulledRaw.block_index, 7, 'C5d. block_index survives push→pull round-trip');
+    // block_index is inside the activity JSON
+    const activityC5 = JSON.parse(pulledRaw.activity);
+    t.assertEq(activityC5.block_index, 7, 'C5d. block_index survives push→pull round-trip inside activity');
   }
 
   // ══════════════════════════════════════════════════════════════════

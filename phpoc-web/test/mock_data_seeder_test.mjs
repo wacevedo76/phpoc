@@ -275,7 +275,7 @@ async function testSeedMockRemote() {
   assertDeepEq(
     paths,
     ['ledger/blocks/0.json', 'ledger/index.json',
-     'staging/blobs/current.json', 'staging/blobs/device_cookie.bin'],
+     'staging/blob', 'staging/blobs/device_cookie.bin'],
     'all 4 expected paths created'
   );
 }
@@ -286,7 +286,7 @@ async function testSeededBlobContent() {
   const { remote } = createMock();
   await seedMockRemote(remote, null, { historyDays: 2, activeTasks: 2, deviceUuid: 't' });
 
-  const raw = await remote.pull('staging/blobs/current.json');
+  const raw = await remote.pull('staging/blob');
   assert(raw !== null, 'blob exists on remote');
 
   const parsed = JSON.parse(bytesToStr(raw));
@@ -364,7 +364,7 @@ async function testInspectMockRemote() {
   assertEq(info.blobs.length, 4, 'dump has 4 entries');
 
   // Entry counts should include staging blob
-  const stagingInfo = info.entryCounts['staging/blobs/current.json'];
+  const stagingInfo = info.entryCounts['staging/blob'];
   assert(stagingInfo !== undefined, 'staging blob in entryCounts');
   assert(typeof stagingInfo.total === 'number', 'total is number');
   assert(stagingInfo.total > 0, 'staging has entries');

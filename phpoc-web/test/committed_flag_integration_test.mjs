@@ -171,7 +171,7 @@ class MockCrypto {
 }
 // ══════════════════════════════════════════════════════════════════════
 
-const BLOB_PATH = 'staging/blobs/current.json';
+const BLOB_PATH = 'staging/blob';
 const COOKIE_PATH = 'staging/blobs/device_cookie.bin';
 const TEST_MK = 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111';
 
@@ -257,10 +257,21 @@ async function run() {
     const plaintext = crypto.deobfuscateBlob(b64, TEST_MK);
     const blob = JSON.parse(plaintext);
 
-    const rawCommittedEntry = blob.entries.find(e => e.data?.title === 'E1 Entry');
+    // Canonical format: entries have activity_id, activity_status, activity, updated_at, committed
+    const rawCommittedEntry = blob.entries.find(e => {
+      if (typeof e.activity === 'string') {
+        try {
+          const a = JSON.parse(e.activity);
+          return a.title === 'E1 Entry';
+        } catch { return false; }
+      }
+      return false;
+    });
     t.assert(rawCommittedEntry, 'E1d. entry found in remote blob');
     t.assertEq(rawCommittedEntry.committed, true, 'E1e. committed=true in remote raw entry');
-    t.assertEq(rawCommittedEntry.block_index, 3, 'E1f. block_index=3 in remote raw entry');
+    // block_index is inside the activity JSON in canonical format
+    const a = JSON.parse(rawCommittedEntry.activity);
+    t.assertEq(a.block_index, 3, 'E1f. block_index=3 in remote raw entry (activity JSON)');
   }
 
   // ── E2: markCommitted → readEntries → committed=true locally ─────

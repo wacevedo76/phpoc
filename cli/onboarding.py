@@ -376,7 +376,7 @@ def _handle_staging_key_mismatch(transport, data_dir: Path) -> None:
         transport: Transport instance with ``pull()`` and ``delete()`` methods.
         data_dir: Data directory for forensic storage.
     """
-    staging_path = "staging/blobs/current.json"
+    staging_path = "staging/blob"
 
     # 1. Prominent warning
     print()

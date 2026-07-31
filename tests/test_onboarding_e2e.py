@@ -61,7 +61,7 @@ TEST_PASSPHRASE = "my-test-passphrase-123"
 
 # Remote paths
 LEDGER_BLOCKS_PREFIX = "ledger/blocks/"
-STAGING_PATH = "staging/blobs/current.json"
+STAGING_PATH = "staging/blob"
 INDEX_PATH = "ledger/index.json"
 REMOTE_COOKIE_PATH = "staging/blobs/device_cookie.bin"
 

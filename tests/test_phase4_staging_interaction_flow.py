@@ -879,8 +879,8 @@ class TestPushFlow(unittest.TestCase):
         # Should not raise
         svc.push_to_remote(b"mk")
 
-    def test_push_includes_updated_timestamp(self):
-        """push_to_remote includes a millisecond timestamp."""
+    def test_push_envelope_excludes_updated_at_per_phpspec8(self):
+        """push_to_remote envelope does not include updated_at (hash index supersedes)."""
         transport = mock_transport()
         device_provider = MagicMock()
         device_provider.get_device_identity.return_value = DeviceIdentity(
@@ -894,9 +894,8 @@ class TestPushFlow(unittest.TestCase):
         svc.capture("T", 1000, stop_epoch=2000)
         svc.push_to_remote(b"mk")
         blob = json.loads(transport._blob)
-        self.assertIn("updated_at", blob)
-        self.assertIsInstance(blob["updated_at"], int)
-        self.assertGreater(blob["updated_at"], 0)
+        self.assertNotIn("updated_at", blob,
+                         "Envelope must not have 'updated_at' — hash index supersedes it")
 
     def test_push_provides_device_id_in_blob(self):
         """push_to_remote includes device_id in the blob header."""

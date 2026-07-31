@@ -10,7 +10,7 @@
 
 // ── Remote paths (Worker → R2) ─────────────────────────────────────
 
-export const REMOTE_STAGING_BLOB = 'staging/blobs/current.json';
+export const REMOTE_STAGING_BLOB = 'staging/blob';
 export const REMOTE_DEVICE_COOKIE = 'staging/blobs/device_cookie.bin';
 export const REMOTE_LEDGER_BLOCKS_PREFIX = 'ledger/blocks/';
 export const REMOTE_LEDGER_INDEX = 'ledger/index.json';

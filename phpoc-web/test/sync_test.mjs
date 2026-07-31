@@ -396,9 +396,9 @@ const pulled = await remoteSync.pullBlob();
 assert(pulled !== null, 'pulled blob exists');
 assertEq(pulled.device_id, 'dev-123', 'blob has device_id');
 assertEq(pulled.entries.length, 1, 'blob has one entry');
-// Bug 3b: entries are now in spec format {hash, data: {title, ...}}
+// Bug 3b: entries are now in canonical format (PHPSPEC §8)
 const rawEntry = pulled.entries[0];
-assert(rawEntry.data && rawEntry.data.title === 'Test', 'entry preserved (spec format)');
+assert(rawEntry.activity_id && rawEntry.activity && JSON.parse(rawEntry.activity).title === 'Test', 'entry preserved (canonical format)');
 
 // 4c. Cookie push/pull
 const cookieBytes = new TextEncoder().encode(
@@ -428,7 +428,7 @@ const impossibleCrypto = new MockCrypto();
 impossibleCrypto.deobfuscateBlob = () => { throw new Error('fail'); };
 impossibleCrypto.setMasterKey('some-key');
 const badRS = new RemoteSync(badTransport, impossibleCrypto);
-await badTransport.push('staging/blobs/current.json',
+await badTransport.push('staging/blob',
   new TextEncoder().encode('garbage-bytes-that-arent-obfuscated')
 );
 const badPull = await badRS.pullBlob();

@@ -4,6 +4,8 @@
 Wiring layer between CLI and domain — factory initialization, sync orchestration lifecycle, sync confirmation, and transport abstractions for remote staging.
 
 ## Ownership
+- `core/activity_id.py` — `ActivityIdGenerator`: CSPRNG 10-char alphanumeric activity IDs for row-level staging
+- `core/staging_hash_index.py` — `StagingHashIndex` + `StagingHashDiff`: compact manifest for O(1) staging change detection
 - `core/factory.py` — `LedgerFactory`: ledger initialization, identity creation
 - `core/ledger.py` — Legacy ledger code (being migrated to domain/ledger/)
 - `core/sync/orchestrator.py` — `SyncOrchestrator`: full sync lifecycle (pull → merge → commit → verify → push)

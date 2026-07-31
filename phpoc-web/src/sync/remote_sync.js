@@ -7,12 +7,19 @@
  * and device cookies over a transport, with blob obfuscation via the
  * Rust WASM CryptoService.
  *
- * Remote blob format (JSON, stored as obfuscated bytes):
+ * Remote blob format (JSON, stored as obfuscated bytes) — PHPSPEC §8:
  *   {
  *     "device_id": "uuid-string",
  *     "device_proof": "hmac-hex",
- *     "entries": [...],
- *     "updated_at": 1714000000000
+ *     "entries": [
+ *       {
+ *         "activity_id": "a1b2c3d4e5",
+ *         "activity_status": "active",
+ *         "activity": "{... encrypted entry JSON ...}",
+ *         "updated_at": 1714000000000,
+ *         "committed": false
+ *       }
+ *     ]
  *   }
  *
  * Blob obfuscation is delegated entirely to CryptoService.obfuscateBlob() /
@@ -25,6 +32,54 @@
 
 import { base64ToBytes, bytesToBase64 } from './base64.js';
 import { REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE } from './keys.js';
+
+/**
+ * Derive activity_status from a legacy staging DTO's flags.
+ * @param {object} e
+ * @returns {string} 'active' | 'paused' | 'ended'
+ * @private
+ */
+function _deriveStatusFromDTO(e) {
+  if (e.is_active === false) return 'ended';
+  if (e.is_paused) return 'paused';
+  return 'active';
+}
+
+/**
+ * Convert a legacy DTO to a canonical staging row.
+ * DTOs have flat fields (title, start_epoch, etc.); canonical rows store
+ * activity data as a JSON string under the `activity` key (PHPSPEC §8).
+ * @param {object} e - Legacy DTO
+ * @param {string} deviceId - Fallback device UUID
+ * @param {number} now - Fallback timestamp (Date.now())
+ * @returns {object} Canonical row
+ * @private
+ */
+function _dtoToCanonicalRow(e, deviceId, now) {
+  return {
+    activity_id: e.activity_id || e.entry_id || '',
+    activity_status: _deriveStatusFromDTO(e),
+    activity: JSON.stringify({
+      title: e.title || '',
+      start_epoch: e.start_epoch ?? 0,
+      end_epoch: e.end_epoch ?? null,
+      duration: e.duration || 0,
+      tags: e.tags || [],
+      comment: e.comment || null,
+      media: e.media || [],
+      entry_id: e.entry_id || '',
+      is_active: e.is_active ?? false,
+      is_paused: e.is_paused ?? false,
+      pauses: e.pauses || [],
+      metadata: e.metadata || {},
+      device_uuid: e.device_uuid || deviceId,
+      end_device_uuid: e.end_device_uuid || '',
+      block_index: e.block_index ?? null,
+    }),
+    updated_at: e.updated_at ?? now,
+    committed: e.committed || false,
+  };
+}
 
 /**
  * Sentinel returned by pullBlob() when a remote blob exists but cannot be
@@ -92,52 +147,46 @@ export class RemoteSync {
   }
 
   /**
-   * Encrypt entries into blob format, obfuscate, and push via transport.
+   * Push staging entries in canonical PHPSPEC §8 blob format.
    *
-   * Converts DTO entries to raw spec format ({hash, data: {..._enc}})
-   * for cross-client compatibility with CLI (Bug 3b fix).
+   * Rows are flat: {activity_id, activity_status, activity, updated_at, committed}.
+   * No {hash, data: {..._enc}} wrapping. No updated_at in the envelope.
    *
    * Obfuscation happens when a master key is available. Falls back to
    * plaintext JSON when no key is available (unauthenticated session).
    *
-   * @param {Array} entries - List of staging entry DTOs.
+   * @param {Array} entries - List of staging rows (DTOS or canonical-format rows).
    * @param {string} deviceId - This device's UUID.
    * @param {string} [masterKeyHex] - 64-char hex master key for obfuscation.
    *   Falls back to crypto.getMasterKey() if not provided.
    * @returns {Promise<void>}
    */
   async pushBlob(entries, deviceId, masterKeyHex) {
-    // Convert DTOs to raw spec format ({hash, data: {..._enc}})
-    const rawEntries = entries.map((e) => ({
-      hash: e.hash || '',
-      data: {
-        entry_id: e.entry_id || '',
-        title: e.title || '',
-        startTime_enc: `plain:${e.start_epoch ?? 0}`,
-        endTime_enc: e.end_epoch != null ? `plain:${e.end_epoch}` : undefined,
-        duration: e.duration || 0,
-        is_active: e.is_active ?? true,
-        is_paused: e.is_paused ?? false,
-        pauses_enc: `plain:${JSON.stringify(e.pauses || [])}`,
-        metadata_enc: `plain:${JSON.stringify(e.metadata || {})}`,
-        tags: e.tags || [],
-        comment: e.comment || null,
-        media: e.media || [],
-        device_uuid: e.device_uuid || deviceId,
-        end_device_uuid: e.end_device_uuid || '',
-      },
-      committed: e.committed ?? false,
-      block_index: e.block_index ?? null,
-    }));
+    const now = Date.now();
+
+    // Convert entries to canonical rows. Entries may be DTOs (entry_id-based)
+    // or already canonical-format rows (activity_id-based).
+    const rows = entries.map((e) => {
+      if (e.activity_id && typeof e.activity === 'string') {
+        // Already canonical — pass through with defaults
+        return {
+          activity_id: e.activity_id,
+          activity_status: e.activity_status || 'active',
+          activity: e.activity,
+          updated_at: e.updated_at ?? now,
+          committed: e.committed || false,
+        };
+      }
+      return _dtoToCanonicalRow(e, deviceId, now);
+    });
 
     const blob = {
       device_id: deviceId,
       device_proof: '',
-      entries: rawEntries,
-      updated_at: Date.now(),
+      entries: rows,
     };
 
-    let blobBytes = new TextEncoder().encode(JSON.stringify(blob, null, 2));
+    let blobBytes = new TextEncoder().encode(JSON.stringify(blob));
 
     const effectiveKey = masterKeyHex || this._crypto.getMasterKey();
     if (effectiveKey) {

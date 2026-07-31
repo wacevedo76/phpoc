@@ -17,9 +17,19 @@
 import { TestHelpers } from './test_helpers.mjs';
 import { MemoryBackend } from '../src/sync/storage.js';
 
-// Import from modules that don't exist yet (RED phase):
-import { buildDiff } from '../src/sync/row_sync.js';
-import { RowSyncWorker } from '../src/sync/row_sync.js';
+// Import from modules:
+import { buildDiff, mergeRows } from '../src/sync/row_sync.js';
+
+// RowSyncWorker has been removed per B-05b — per-row CRUD endpoints
+// are replaced by the single-blob + hash index model (PHPSPEC §8).
+// The import below validates that removal (Group F tests).
+let RowSyncWorker;
+try {
+  const mod = await import('../src/sync/row_sync.js');
+  RowSyncWorker = mod.RowSyncWorker;
+} catch {
+  RowSyncWorker = undefined;
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Helpers
@@ -549,7 +559,8 @@ async function runTests() {
     t.assert(result.pull.includes('noTimeFld01') || result.push.includes('noTimeFld01'), 'D35: missing updated_at handled');
   }
 
-  // ─── Group W: RowSyncWorker HTTP ─────────────────────────────────
+  // ─── Group W: RowSyncWorker HTTP (skipped: retired per B-05b) ──
+  if (typeof RowSyncWorker === 'function') {
   console.log('\n── RowSyncWorker HTTP Integration ──');
 
   // W1: fetchManifest returns parsed manifest on 200
@@ -988,6 +999,245 @@ async function runTests() {
     }
     // Verify storage is empty
     t.assertEq(transport._store.size, 0, 'W30: all rows deleted');
+  }
+  } else {
+    console.log('\n── RowSyncWorker HTTP Integration (skipped: retired per B-05b) ──');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group D: mergeRows() — canonical row merge (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group D: mergeRows() ──');
+
+  // D1: mergeRows merges two arrays of canonical rows by activity_id
+  {
+    const local = [
+      { activity_id: 'd1-a', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false },
+      { activity_id: 'd1-b', activity_status: 'paused', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'd1-c', activity_status: 'active', activity: '{}', updated_at: 1500, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 3, 'D1a: 3 rows after merge');
+    const ids = merged.map(r => r.activity_id).sort();
+    t.assertDeepEq(ids, ['d1-a', 'd1-b', 'd1-c'], 'D1b: all activity_ids present');
+  }
+
+  // D2: When both sides have same activity_id, newer updated_at wins
+  {
+    const local = [
+      { activity_id: 'd2-x', activity_status: 'paused', activity: '{"local":true}', updated_at: 1000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'd2-x', activity_status: 'active', activity: '{"remote":true}', updated_at: 2000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'D2a: one row after merge');
+    t.assertEq(merged[0].activity_status, 'active', 'D2b: newer remote status wins');
+    t.assertEq(merged[0].updated_at, 2000, 'D2c: newer remote timestamp');
+    t.assert(JSON.parse(merged[0].activity).remote, 'D2d: remote activity payload wins');
+  }
+
+  // D3: When both sides have equal updated_at, local row wins
+  {
+    const local = [
+      { activity_id: 'd3-tie', activity_status: 'paused', activity: '{"local":true}', updated_at: 5000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'd3-tie', activity_status: 'active', activity: '{"remote":true}', updated_at: 5000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'D3a: one row after merge');
+    t.assertEq(merged[0].activity_status, 'paused', 'D3b: local wins on tie (status)');
+    t.assert(JSON.parse(merged[0].activity).local, 'D3c: local activity payload wins on tie');
+  }
+
+  // D4: Remote-only rows are included in merge result
+  {
+    const local = [
+      { activity_id: 'd4-local', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'd4-remote', activity_status: 'paused', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 2, 'D4a: both rows present');
+    t.assert(merged.some(r => r.activity_id === 'd4-remote'), 'D4b: remote-only row included');
+    t.assert(merged.some(r => r.activity_id === 'd4-local'), 'D4c: local-only row preserved');
+  }
+
+  // D5: Local-only rows with committed: true are excluded
+  {
+    const local = [
+      { activity_id: 'd5-clean', activity_status: 'ended', activity: '{}', updated_at: 1000, committed: true },
+      { activity_id: 'd5-keep', activity_status: 'active', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const remote = [];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'D5a: committed local-only row excluded');
+    t.assertEq(merged[0].activity_id, 'd5-keep', 'D5b: uncommitted local preserved');
+  }
+
+  // D6: Local-only rows without committed flag are preserved
+  {
+    const local = [
+      { activity_id: 'd6-noflag', activity_status: 'active', activity: '{}', updated_at: 1000 },
+      // committed flag intentionally missing
+    ];
+    const remote = [];
+    const merged = mergeRows(local, remote);
+    t.assertEq(merged.length, 1, 'D6a: row without committed flag preserved');
+    t.assertEq(merged[0].activity_id, 'd6-noflag', 'D6b: row identity preserved');
+  }
+
+  // D7: mergeRows is a pure function — no side effects
+  {
+    const local = [
+      { activity_id: 'd7-a', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false },
+    ];
+    const remote = [
+      { activity_id: 'd7-b', activity_status: 'paused', activity: '{}', updated_at: 2000, committed: false },
+    ];
+    const localCopy = JSON.stringify(local);
+    const remoteCopy = JSON.stringify(remote);
+    mergeRows(local, remote);
+    t.assertEq(JSON.stringify(local), localCopy, 'D7a: local array unchanged after merge');
+    t.assertEq(JSON.stringify(remote), remoteCopy, 'D7b: remote array unchanged after merge');
+  }
+
+  // D8: mergeRows handles empty arrays on either side
+  {
+    // Both empty
+    const r1 = mergeRows([], []);
+    t.assertEq(r1.length, 0, 'D8a: mergeRows([], []) returns empty');
+
+    // Local empty
+    const r2 = mergeRows([], [{ activity_id: 'd8-r', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false }]);
+    t.assertEq(r2.length, 1, 'D8b: mergeRows([], remote) returns remote entries');
+
+    // Remote empty
+    const r3 = mergeRows([{ activity_id: 'd8-l', activity_status: 'active', activity: '{}', updated_at: 1000, committed: false }], []);
+    t.assertEq(r3.length, 1, 'D8c: mergeRows(local, []) returns local entries');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group E: buildDiff() tie-break change (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group E: buildDiff() Tie-Break Change ──');
+
+  // E1: S3: equal updated_at, different status → local wins (push, not pull)
+  // Previously remote-wins; now local-wins matching Flutter
+  {
+    const local = [localRow('e1-tie', 'paused', 5000)];
+    const remote = manifest([manifestRow('e1-tie', 'active', 5000)]);
+    const hashIdx = new Map();
+    const result = buildDiff(local, remote, hashIdx);
+    // With local-wins tie-break: local is newer (or equal) → push
+    t.assert(result.push.includes('e1-tie'), 'E1a: S3 tie-break — local wins → push');
+    t.assert(!result.pull.includes('e1-tie'), 'E1b: S3 tie-break — not in pull');
+    t.assert(result.fastPath === false, 'E1c: fastPath false when push needed');
+  }
+
+  // E2: S3: equal updated_at, same status → no-op (identical rows)
+  {
+    const local = [localRow('e2-same', 'active', 5000)];
+    const remote = manifest([manifestRow('e2-same', 'active', 5000)]);
+    const hashIdx = new Map();
+    const result = buildDiff(local, remote, hashIdx);
+    t.assert(!result.push.includes('e2-same'), 'E2a: identical rows — not in push');
+    t.assert(!result.pull.includes('e2-same'), 'E2b: identical rows — not in pull');
+    t.assert(!result.deleteLocal.includes('e2-same'), 'E2c: identical rows — not in deleteLocal');
+  }
+
+  // E3: All other buildDiff scenarios (S1, S2, S4, S5, S6, S7) unchanged
+  {
+    // S1: Remote newer → pull (unchanged)
+    const s1Result = buildDiff(
+      [localRow('e3-s1', 'staged', 1000)],
+      manifest([manifestRow('e3-s1', 'active', 2000)]),
+      new Map()
+    );
+    t.assert(s1Result.pull.includes('e3-s1'), 'E3a: S1 remote newer → pull (unchanged)');
+
+    // S2: Local newer → push (unchanged)
+    const s2Result = buildDiff(
+      [localRow('e3-s2', 'active', 2000)],
+      manifest([manifestRow('e3-s2', 'staged', 1000)]),
+      new Map()
+    );
+    t.assert(s2Result.push.includes('e3-s2'), 'E3b: S2 local newer → push (unchanged)');
+
+    // S4: Remote-only → pull (unchanged)
+    const s4Result = buildDiff(
+      [],
+      manifest([manifestRow('e3-s4', 'active', 1000)]),
+      new Map()
+    );
+    t.assert(s4Result.pull.includes('e3-s4'), 'E3c: S4 remote-only → pull (unchanged)');
+
+    // S5: Local-only, committed → deleteLocal (unchanged)
+    const s5Result = buildDiff(
+      [localRow('e3-s5')],
+      manifest([]),
+      new Map([['e3-s5', { committed_at: 1000 }]])
+    );
+    t.assert(s5Result.deleteLocal.includes('e3-s5'), 'E3d: S5 committed → deleteLocal (unchanged)');
+
+    // S6: Local-only, not committed → push (unchanged)
+    const s6Result = buildDiff(
+      [localRow('e3-s6')],
+      manifest([]),
+      new Map()
+    );
+    t.assert(s6Result.push.includes('e3-s6'), 'E3e: S6 new local → push (unchanged)');
+  }
+
+  // E4: buildDiff fastPath true when no push/pull needed (unchanged)
+  {
+    const local = [localRow('e4-a', 'active', 5000)];
+    const remote = manifest([manifestRow('e4-a', 'active', 5000)]);
+    const result = buildDiff(local, remote, new Map());
+    t.assert(result.fastPath === true, 'E4: fastPath true when identical rows (no actions needed)');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Group F: RowSyncWorker Removal (Phase 2 RED, B-05b)
+  // ══════════════════════════════════════════════════════════════════
+
+  console.log('\n── Group F: RowSyncWorker Removal ──');
+
+  // F1: RowSyncWorker class is deleted from row_sync.js
+  // This test checks that importing RowSyncWorker throws or returns undefined
+  {
+    let importFailed = false;
+    let workerIsDefined = false;
+    try {
+      // RowSyncWorker should not exist — import should fail or it should be undefined
+      workerIsDefined = typeof RowSyncWorker !== 'undefined';
+    } catch {
+      importFailed = true;
+    }
+    t.assert(importFailed || !workerIsDefined, 'F1: RowSyncWorker class removed from row_sync.js');
+  }
+
+  // F2: No imports of RowSyncWorker remain in sync.js or any other module
+  // This is a compile-time check: if sync.js still imports RowSyncWorker,
+  // the test file would fail to load. But we also verify by checking the
+  // import at the top of this file — mergeRows should exist but RowSyncWorker should not.
+  {
+    // mergeRows should be importable (exists after Phase 3)
+    t.assert(typeof mergeRows === 'function', 'F2a: mergeRows exists and is importable');
+    // RowSyncWorker should not be importable (deleted)
+    let rowSyncWorkerExists = false;
+    try {
+      rowSyncWorkerExists = typeof RowSyncWorker !== 'undefined' && RowSyncWorker !== null;
+    } catch {
+      rowSyncWorkerExists = false;
+    }
+    t.assert(!rowSyncWorkerExists, 'F2b: RowSyncWorker no longer importable');
   }
 
   // ══════════════════════════════════════════════════════════════════

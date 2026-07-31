@@ -7,12 +7,11 @@ The transport is a 2-method interface:
   - ``pull(path) -> bytes | None``
   - ``push(path, data: bytes) -> None``
 
-Remote blob format (JSON, stored as obfuscated bytes):
+Remote blob format (JSON, stored as obfuscated bytes) — PHPSPEC §8:
   {
     "device_id": "uuid-string",
     "device_proof": "hmac-hex",
-    "entries": [...],
-    "updated_at": 1714000000000
+    "entries": [...]
   }
 """
 
@@ -33,13 +32,13 @@ from cli.trace import trace
 _logger = logging.getLogger(__name__)
 
 
-# Obfuscation tier sizes in bytes
-TIER_64K = 64 * 1024       # 65536
-TIER_128K = 128 * 1024     # 131072
-TIER_256K = 256 * 1024     # 262144
-TIER_512K = 512 * 1024     # 524288
+# Obfuscation tier sizes in bytes (internal — not part of public API)
+_TIER_64K = 64 * 1024       # 65536
+_TIER_128K = 128 * 1024     # 131072
+_TIER_256K = 256 * 1024     # 262144
+_TIER_512K = 512 * 1024     # 524288
 
-BLOB_TIERS = [TIER_64K, TIER_128K, TIER_256K, TIER_512K]
+_BLOB_TIERS = [_TIER_64K, _TIER_128K, _TIER_256K, _TIER_512K]
 # Prefix used to derive the blob obfuscation sub-key from the master key
 BLOB_SUBKEY_PREFIX = b"blob-obfuscation"
 
@@ -79,7 +78,7 @@ class RemoteStagingSync:
         crypto: AbstractCryptoManager,
         transport,
         device_id_provider: AbstractDeviceIdentityProvider,
-        blob_path: str = "staging/blobs/current.json",
+        blob_path: str = "staging/blob",
         master_key: Optional[bytes] = None,
     ):
         self._crypto = crypto
@@ -97,6 +96,9 @@ class RemoteStagingSync:
     def _select_tier(plaintext_size: int) -> int:
         """Select the smallest obfuscation tier that fits *plaintext_size*.
 
+        Internal — tiered padding is a legacy implementation detail per
+        PHPSPEC §8.9. New code should not depend on specific tier sizes.
+
         Args:
             plaintext_size: Size of the serialized blob in bytes.
 
@@ -106,12 +108,12 @@ class RemoteStagingSync:
         Raises:
             ValueError: If plaintext_size exceeds the largest tier (512K).
         """
-        for tier in BLOB_TIERS:
+        for tier in _BLOB_TIERS:
             if plaintext_size <= tier:
                 return tier
         raise ValueError(
             f"Blob size {plaintext_size} bytes exceeds max tier "
-            f"{TIER_512K} bytes (512K). Consider a larger tier."
+            f"{_TIER_512K} bytes (512K). Consider a larger tier."
         )
 
     @staticmethod
@@ -297,6 +299,27 @@ class RemoteStagingSync:
     # Public API
     # ------------------------------------------------------------------
 
+    # -- Transport helpers (thin dispatch so Git/HTTP both work) ----------
+
+    def _xport_pull(self, path: str, timeout_ms: Optional[int] = None) -> Optional[bytes]:
+        """Pull *path* through the transport, forwarding *timeout_ms* if set.
+
+        Some transports (Git) do not accept a ``timeout_ms`` kwarg, so we
+        branch on None rather than always forwarding.
+        """
+        if timeout_ms is not None:
+            return self._transport.pull(path, timeout_ms=timeout_ms)
+        return self._transport.pull(path)
+
+    def _xport_push(self, path: str, data: bytes, timeout_ms: Optional[int] = None) -> None:
+        """Push *data* to *path* through the transport."""
+        if timeout_ms is not None:
+            self._transport.push(path, data, timeout_ms=timeout_ms)
+        else:
+            self._transport.push(path, data)
+
+    # -- Public API ----------------------------------------------------------
+
     @trace
     def pull(self, master_key: Optional[bytes] = None, timeout_ms: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Pull remote blob, deobfuscate, return parsed dict.
@@ -318,7 +341,7 @@ class RemoteStagingSync:
             or ``BLOB_KEY_MISMATCH`` if a blob exists but cannot be
             decrypted (wrong master key or corrupted data).
         """
-        raw_bytes = self._transport.pull(self._blob_path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(self._blob_path)
+        raw_bytes = self._xport_pull(self._blob_path, timeout_ms=timeout_ms)
         if raw_bytes is None:
             return None
 
@@ -367,15 +390,14 @@ class RemoteStagingSync:
             "device_id": device_id,
             "device_proof": "",  # set by caller or via device_id_provider
             "entries": entries,
-            "updated_at": int(time.time() * 1000),
         }
-        blob_bytes = json.dumps(blob, indent=2).encode("utf-8")
+        blob_bytes = json.dumps(blob, separators=(",", ":")).encode("utf-8")
 
         effective_key = master_key if isinstance(master_key, bytes) else self._master_key
         if effective_key is not None and len(effective_key) == 32:
             blob_bytes = self._obfuscate(blob_bytes, effective_key)
 
-        self._transport.push(self._blob_path, blob_bytes, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.push(self._blob_path, blob_bytes)
+        self._xport_push(self._blob_path, blob_bytes, timeout_ms=timeout_ms)
 
     @trace
     def check_device(self, master_key: Optional[bytes] = None) -> bool:
@@ -426,7 +448,7 @@ class RemoteStagingSync:
         Returns:
             Raw cookie bytes (JSON), or None if no cookie exists on remote.
         """
-        return self._transport.pull(REMOTE_COOKIE_PATH, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(REMOTE_COOKIE_PATH)
+        return self._xport_pull(REMOTE_COOKIE_PATH, timeout_ms=timeout_ms)
 
     @trace
     def push_cookie(self, cookie_bytes: bytes, timeout_ms: Optional[int] = None):
@@ -437,7 +459,44 @@ class RemoteStagingSync:
             timeout_ms: Optional timeout in milliseconds forwarded to
                         the transport layer.
         """
-        self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.push(REMOTE_COOKIE_PATH, cookie_bytes)
+        self._xport_push(REMOTE_COOKIE_PATH, cookie_bytes, timeout_ms=timeout_ms)
+
+    @trace
+    def pull_hash_index(self, timeout_ms: Optional[int] = None) -> Optional[list]:
+        """Pull the remote hash index from 'staging/hash_index.json'.
+
+        Per PHPSPEC §8.3, the hash index is a compact JSON array of
+        ``{activity_id, activity_status}`` objects, sorted by activity_id.
+
+        Args:
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
+
+        Returns:
+            Parsed list of dicts, or None if no hash index exists.
+        """
+        raw_bytes = self._xport_pull("staging/hash_index.json", timeout_ms=timeout_ms)
+        if raw_bytes is None:
+            return None
+        try:
+            return json.loads(raw_bytes.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+    @trace
+    def push_hash_index(self, index: list, timeout_ms: Optional[int] = None):
+        """Push the hash index to 'staging/hash_index.json'.
+
+        The index is serialized as compact JSON (no whitespace) per
+        PHPSPEC §8.3 for deterministic hashing.
+
+        Args:
+            index: List of ``{activity_id, activity_status}`` dicts.
+            timeout_ms: Optional timeout in milliseconds forwarded to
+                        the transport layer.
+        """
+        data = json.dumps(index, separators=(",", ":")).encode("utf-8")
+        self._xport_push("staging/hash_index.json", data, timeout_ms=timeout_ms)
 
     def check_remote_available(self, timeout_ms: int = 500) -> bool:
         """Quick reachability check on the transport.
@@ -451,11 +510,10 @@ class RemoteStagingSync:
         Returns:
             True if remote is reachable within the timeout (pull returned bytes).
         """
-        import time as _time
-        start = _time.monotonic()
+        start = time.monotonic()
         try:
-            result = self._transport.pull(self._blob_path, timeout_ms=timeout_ms) if timeout_ms is not None else self._transport.pull(self._blob_path)
-            elapsed_ms = (_time.monotonic() - start) * 1000
+            result = self._xport_pull(self._blob_path, timeout_ms=timeout_ms)
+            elapsed_ms = (time.monotonic() - start) * 1000
             if elapsed_ms > timeout_ms:
                 return False
             # Transport responded — treat as available even if blob is empty
