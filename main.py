@@ -156,6 +156,8 @@ def main():
     dev_sub = dev_parser.add_subparsers(dest="dev_action")
     dev_cookie_p = dev_sub.add_parser("cookie", help="Display the remote device cookie (from R2)")
     dev_push_p = dev_sub.add_parser("push-status", help="Show last push status and WAL state")
+    dev_clear_p = dev_sub.add_parser("clear-remote", help="Delete ALL data from the remote (ledger blocks, staging, cookie, indexes)")
+    dev_clear_p.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
 
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
@@ -294,6 +296,38 @@ def main():
         global_device_id_provider = RandomUUIDDeviceIdentityProvider(CONFIG)
 
     if args.command == "init":
+        # If a ledger already exists, warn before overwriting
+        if LEDGER_PATH.exists():
+            print("A ledger already exists.")
+            print(f"  Data directory: {CONFIG_DIR}")
+            print("  This will permanently delete your current ledger, staging,")
+            print("  index, identity, and all remote transport settings.")
+            confirm = input("Continue and create a new ledger? [y/N]: ")
+            if confirm.lower() != "y":
+                print("Aborted.")
+                return
+            # Remove old data files
+            for p in [LEDGER_PATH, INDEX_PATH, STAGING_PATH, IDENTITY_PATH]:
+                if p.exists():
+                    p.unlink()
+                    print(f"  Deleted: {p.name}")
+            # Clear WAL if present
+            from cli.wal import _wal_path
+            wal_path = _wal_path(CONFIG_DIR)
+            if wal_path.exists():
+                wal_path.unlink()
+                print("  Deleted: push WAL")
+            # Clear device cookie
+            cookie_path = CONFIG_DIR / "device_cookie.meta"
+            if cookie_path.exists():
+                cookie_path.unlink()
+                print("  Deleted: device_cookie.meta")
+            # Clear session cache
+            auth.clear_session()
+            if auth.SESSION_FILE.exists():
+                auth.SESSION_FILE.unlink()
+                print("  Deleted: session cache")
+
         username = input("Username: ")
         email = input("Email: ")
         
@@ -307,8 +341,9 @@ def main():
         # PDK for initialization
         pdk = hashlib.pbkdf2_hmac('sha256', p1.encode(), b"session-salt", 600000, 32)
         
-        # Initialize config file with defaults if not yet created
-        CONFIG.write(CONFIG.read())
+        # Write clean default config — clears all remote transport, HTTP,
+        # device identity, and cookie settings to factory defaults.
+        CONFIG.write(ConfigManager.DEFAULTS)
 
         seed = LedgerFactory.initialize(LEDGER_PATH, pdk, username, email)
         if seed:
@@ -811,8 +846,11 @@ def main():
                     print(f"  Remote transport:  not accessible")
             else:
                 print(f"  Remote transport:  not configured")
-        else:
-            print("Unknown dev command. Available: ph dev cookie, ph dev push-status")
+        elif dev_action == "clear-remote":
+            if transport is None:
+                print("Remote transport not configured. Use 'ph transport set http cloudflare' first.")
+                exit(1)
+            _handle_clear_remote(transport, args)
     elif args.command == "rep":
         from_str, to_str = CLIInterface._resolve_date_filters(
             days=args.days,
@@ -1613,6 +1651,88 @@ def _handle_review(ledger, cli):
             print(f"  [{start_str}-{end_str}] {e['title']}{tag_str} ({dur_str}){pause_str}{comment_str}")
 
     print(f"\n── Summary: {total_entries} entries, {total_duration//60000}m total over {len(by_date)} day(s) ──")
+
+
+def _handle_clear_remote(transport, args):
+    """Delete ALL remote data: ledger blocks, staging blob, cookie, indexes.
+
+    Mirrors the behavior of phpoc-web's sync.clearRemote() and
+    phpoc-flutter's equivalent. This is a destructive operation —
+    all remote R2 keys under ledger/ and staging/ are deleted.
+    """
+    REMOTE_KEYS = [
+        # Ledger
+        "ledger/index.json",
+        "ledger/hash_index.json",
+        "ledger/hash_index.sha256",
+        # Staging
+        "staging/blob",
+        "staging/blobs/device_cookie.bin",
+        "staging/hash_index.json",
+        "staging/hash_index.sha256",
+    ]
+    BLOCKS_PREFIX = "ledger/blocks/"
+
+    if not hasattr(transport, 'delete') or not hasattr(transport, 'list_files'):
+        print("Remote transport does not support delete/list operations.")
+        return
+
+    # Discover block files
+    block_files = []
+    try:
+        block_files = transport.list_files(BLOCKS_PREFIX) or []
+    except Exception as e:
+        print(f"Failed to list remote blocks: {e}")
+        return
+
+    total_keys = len(REMOTE_KEYS) + len(block_files)
+    if total_keys == 0:
+        print("Remote is already empty — nothing to clear.")
+        return
+
+    print(f"This will permanently delete ALL remote data (R2 bucket):")
+    print(f"  {len(block_files)} ledger block file(s)")
+    print(f"  {len(REMOTE_KEYS)} index/cookie/staging key(s)")
+    print(f"  Total: {total_keys} key(s)")
+    print()
+
+    if not getattr(args, 'yes', False):
+        confirm = input("Type 'DELETE' to confirm: ")
+        if confirm != "DELETE":
+            print("Aborted.")
+            return
+
+    deleted = 0
+    failed = 0
+
+    # Delete ledger block files
+    for filename in block_files:
+        path = BLOCKS_PREFIX + filename
+        try:
+            transport.delete(path)
+            print(f"  Deleted: {path}")
+            deleted += 1
+        except Exception as e:
+            print(f"  Failed:  {path} ({e})")
+            failed += 1
+
+    # Delete index/cookie/staging keys
+    for key in REMOTE_KEYS:
+        try:
+            transport.delete(key)
+            print(f"  Deleted: {key}")
+            deleted += 1
+        except Exception:
+            # 404 / not found is fine — the key may not exist
+            failed += 1
+
+    # Reset genesis compatibility gate in transport if available
+    if hasattr(transport, 'resetCache'):
+        transport.resetCache()
+
+    print()
+    print(f"Done — {deleted} key(s) deleted, {failed} skipped/not found.")
+    print("The remote is now empty. Run 'ph sync' to push your new ledger.")
 
 
 def _print_staging_line(entry, idx):

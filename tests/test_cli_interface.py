@@ -312,7 +312,7 @@ class TestGroupD_CheckAndSyncCount(unittest.TestCase):
         'ph view' was the worst offender."""
         self.mock_staging._remote = MagicMock()
         self.mock_crypto.decrypt.return_value = '0'
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
 
         with patch.object(self.cli, '_sync_before_command',
                           wraps=self.cli._sync_before_command) as mock_sync, \
@@ -332,7 +332,7 @@ class TestGroupD_CheckAndSyncCount(unittest.TestCase):
         'ph list all|synced|staged' also duplicated."""
         self.mock_staging._remote = MagicMock()
         self.mock_ledger_engine.get_day_blocks.return_value = []
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
 
         with patch.object(self.cli, '_sync_before_command',
                           wraps=self.cli._sync_before_command) as mock_sync:
@@ -349,13 +349,19 @@ class TestGroupD_CheckAndSyncCount(unittest.TestCase):
         self.mock_staging._remote = None  # local-only
         self.mock_crypto.decrypt.return_value = '1000000'
         from datetime import datetime
-        self.mock_staging._local._store.read_entries.return_value = [{
-            'data': {
-                'title': 'Test Task',
-                'is_active': True,
-                'startTime_enc': 'plain:1000000',
-                'is_paused': False,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            'title': 'Test Task',
+            'is_active': True,
+            'start_epoch': 1000000,
+            'is_paused': False,
+            'duration': 0,
+            'tags': [],
+            'comment': '',
+            'media': [],
+            'metadata': {},
+            'pauses': [],
+            'entry_id': 'test-id',
+            'date': '2026-01-01',
         }]
 
         with patch.object(self.cli, '_sync_before_command',
@@ -939,7 +945,7 @@ class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
         mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
         self.mock_ledger_engine.get_day_blocks.return_value = []
         self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
 
         with patch('cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
@@ -1379,7 +1385,7 @@ class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
         mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
         self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
         self.mock_ledger_engine.get_day_blocks.return_value = []
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
 
         with patch('cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \

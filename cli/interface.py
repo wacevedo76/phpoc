@@ -219,9 +219,9 @@ class CLIInterface:
         treat it as a 1-based index into the active tasks list.
         Otherwise, return the identifier as-is (title string).
         If an exact title match exists among active tasks, title takes precedence."""
-        staging = self._staging._local._store.read_entries()
-        active = [e for e in staging if e["data"].get("is_active")]
-        active_titles = [e["data"]["title"] for e in active]
+        staging = self._staging._local.read_entries()
+        active = [e for e in staging if e.get("is_active")]
+        active_titles = [e["title"] for e in active]
 
         # Title match takes precedence
         if identifier in active_titles:
@@ -249,9 +249,9 @@ class CLIInterface:
 
     def _get_active_with_ids(self):
         """Return list of {id, title} dicts for active tasks."""
-        staging = self._staging._local._store.read_entries()
-        active = [e for e in staging if e["data"].get("is_active")]
-        return [{"id": i + 1, "title": e["data"]["title"]} for i, e in enumerate(active)]
+        staging = self._staging._local.read_entries()
+        active = [e for e in staging if e.get("is_active")]
+        return [{"id": i + 1, "title": e["title"]} for i, e in enumerate(active)]
 
     @staticmethod
     def _compute_duration(start_epoch, end_epoch, pauses):
@@ -392,8 +392,8 @@ class CLIInterface:
         _show_sync_notifications(self._staging._data_dir)
 
         # Phase A: Read and display local data INSTANTLY (no remote blocking)
-        staging = self._staging._local._store.read_entries()
-        active = [e for e in staging if e["data"].get("is_active")]
+        staging_dtos = self._staging._local.read_entries()
+        active = [dto for dto in staging_dtos if dto.get("is_active")]
 
         # Phase A: Spawn background remote check (non-blocking, fire-and-forget)
         # Must fire before any early return so reads are always async.
@@ -406,17 +406,31 @@ class CLIInterface:
             return
 
         # Build active entries with IDs directly (avoid title-keyed map — dup titles)
+        # DTOs have start_epoch in ms, plain fields already decoded
+        import json as _json
         active_entries = []
-        for i, entry in enumerate(active, 1):
-            data = entry["data"]
-            start_val = data["startTime_enc"]
-            if start_val.startswith("plain:"):
-                start_epoch = int(start_val[6:])
-            else:
-                try:
-                    start_epoch = int(self._crypto.decrypt(start_val))
-                except Exception:
-                    continue  # Skip entries with undecryptable timestamps
+        for i, dto in enumerate(active, 1):
+            start_epoch = dto.get("start_epoch", 0) or 0
+            # Package as _print_entry-compatible entry dict
+            entry = {
+                "source": "staged",
+                "data": {
+                    "title": dto.get("title", ""),
+                    "duration": dto.get("duration", 0),
+                    "startTime_enc": f"plain:{start_epoch}",
+                    "endTime_enc": f"plain:{dto.get('end_epoch')}" if dto.get("end_epoch") else None,
+                    "metadata_enc": f"plain:{_json.dumps(dto.get('metadata', {}))}",
+                    "pauses_enc": f"plain:{_json.dumps(dto.get('pauses', []))}",
+                    "tags": dto.get("tags", []),
+                    "comment": dto.get("comment", ""),
+                    "media": dto.get("media", []),
+                    "is_active": dto.get("is_active", False),
+                    "is_paused": dto.get("is_paused", False),
+                    "entry_id": dto.get("entry_id", ""),
+                    "_is_staged": True,
+                },
+                "date": dto.get("date", "unknown"),
+            }
             active_entries.append({"id": i, "entry": entry, "start_epoch": start_epoch})
 
         for ae in active_entries:
@@ -689,8 +703,8 @@ class CLIInterface:
             committed_titles: Dict of {(date_str, title): count} from the
                 remote ledger blocks.
         """
-        staging_raw = self._staging._local._store.read_entries()
-        if not staging_raw:
+        staging_dtos = self._staging._local.read_entries()
+        if not staging_dtos:
             return
 
         if not committed_titles:
@@ -702,23 +716,20 @@ class CLIInterface:
         indices_to_remove: List[int] = []
         remaining = dict(committed_titles)
 
-        for entry_idx, entry in enumerate(staging_raw):
-            data = entry.get("data", {})
-            title = data.get("title", "")
+        for entry_idx, dto in enumerate(staging_dtos):
+            title = dto.get("title", "")
             if not title:
                 continue
 
-            # Decode start_epoch to get date
-            start_val = data.get("startTime_enc", "")
-            if isinstance(start_val, str) and start_val.startswith("plain:"):
-                try:
-                    start_epoch = int(start_val[6:])
-                    date_str = time.strftime(
-                        "%Y-%m-%d", time.gmtime(start_epoch // 1000)
-                    )
-                except Exception:
-                    continue
-            else:
+            # DTO has start_epoch in ms — compute date from it
+            start_epoch = dto.get("start_epoch")
+            if start_epoch is None:
+                continue
+            try:
+                date_str = time.strftime(
+                    "%Y-%m-%d", time.gmtime(start_epoch // 1000)
+                )
+            except Exception:
                 continue
 
             key = (date_str, title)
@@ -765,10 +776,31 @@ class CLIInterface:
 
         staged_data = []
         if source in ['staged', 'all']:
-            staged_data = self._staging._local._store.read_entries()
-            # Mark staged items for clarity or specific handling if needed
-            for item in staged_data:
-                item['data']['_is_staged'] = True
+            staged_dtos = self._staging._local.read_entries()
+            # Convert DTOs to _print_entry-compatible format with plain: prefix
+            import json as _json
+            for dto in staged_dtos:
+                start_epoch = dto.get("start_epoch", 0) or 0
+                end_epoch = dto.get("end_epoch")
+                staged_data.append({
+                    "source": "staged",
+                    "data": {
+                        "title": dto.get("title", ""),
+                        "duration": dto.get("duration", 0),
+                        "startTime_enc": f"plain:{start_epoch}",
+                        "endTime_enc": f"plain:{end_epoch}" if end_epoch is not None else None,
+                        "metadata_enc": f"plain:{_json.dumps(dto.get('metadata', {}))}",
+                        "pauses_enc": f"plain:{_json.dumps(dto.get('pauses', []))}",
+                        "tags": dto.get("tags", []),
+                        "comment": dto.get("comment", ""),
+                        "media": dto.get("media", []),
+                        "is_active": dto.get("is_active", False),
+                        "is_paused": dto.get("is_paused", False),
+                        "entry_id": dto.get("entry_id", ""),
+                        "_is_staged": True,
+                    },
+                    "date": dto.get("date", "unknown"),
+                })
 
         # Process synced data
         synced_by_date = {}
@@ -812,27 +844,13 @@ class CLIInterface:
                     "date": remote_date,
                 })
 
-        # Process staged data
-        # Group staged data by date to match ledger format for consistent display
+        # Process staged data — entries are already in _print_entry-compatible format
         staged_by_date = {}
-        for entry in staged_data:
-            start_val = entry["data"]["startTime_enc"]
-            decryptable = True
-            if start_val.startswith("plain:"):
-                start_epoch = int(start_val[6:])
-            else:
-                try:
-                    start_epoch = int(self._crypto.decrypt(start_val))
-                except Exception:
-                    decryptable = False
-                    start_epoch = 0  # placeholder; _print_entry handles display
-            if not decryptable and not start_val.startswith("plain:"):
-                # Still include so _print_entry can show placeholder
-                pass
-            date_str = time.strftime("%Y-%m-%d", time.gmtime(start_epoch // 1000)) if decryptable else "unknown"
+        for entry_data in staged_data:
+            date_str = entry_data["date"]
             if date_str not in staged_by_date:
                 staged_by_date[date_str] = []
-            staged_by_date[date_str].append({"source": "staged", "data": entry["data"], "date": date_str})
+            staged_by_date[date_str].append(entry_data)
 
         # --- P11 Fix B: Collect spanning entries from previous day ---
         # For each date in range, peek at the previous day's synced block and
@@ -1088,9 +1106,9 @@ class CLIInterface:
         all_tags = set()
 
         # From staging
-        staging = self._staging._local._store.read_entries()
+        staging = self._staging._local.read_entries()
         for entry in staging:
-            all_tags.update(entry["data"].get("tags", []))
+            all_tags.update(entry.get("tags", []))
 
         # From local synced ledger
         ledger_data = self._ledger_engine.get_day_blocks()

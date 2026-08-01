@@ -185,7 +185,7 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
         """
         # Setup: local staging and ledger have tags
         mock_cli = MagicMock()
-        mock_cli._staging._local._store.read_entries.return_value = []
+        mock_cli._staging._local.read_entries.return_value = []
         mock_cli._ledger_engine.get_day_blocks.return_value = []
 
         # Setup: CLI has remote ledger cache with different tags
@@ -223,8 +223,8 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
         # Scenario: after sync, the committed entry was removed from staging
         # but is still in the ledger. list_tags should find its tags.
         mock_cli = MagicMock()
-        mock_cli._staging._local._store.read_entries.return_value = [
-            {"data": {"title": "Current", "tags": ["current-tag"]}},
+        mock_cli._staging._local.read_entries.return_value = [
+            {"title": "Current", "tags": ["current-tag"]},
         ]
         mock_cli._ledger_engine.get_day_blocks.return_value = [
             {
@@ -317,13 +317,19 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
         proceed with local data WITHOUT re-authenticating.
         """
         self.mock_crypto.decrypt.return_value = '1000000'
-        self.mock_staging._local._store.read_entries.return_value = [{
-            'data': {
-                'title': 'Local Active Task',
-                'is_active': True,
-                'startTime_enc': 'plain:1000000',
-                'is_paused': False,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            'title': 'Local Active Task',
+            'is_active': True,
+            'start_epoch': 1000000,
+            'is_paused': False,
+            'duration': 0,
+            'tags': [],
+            'comment': '',
+            'media': [],
+            'metadata': {},
+            'pauses': [],
+            'entry_id': 'test-id',
+            'date': '2026-01-01',
         }]
 
         with patch.object(self.cli, '_sync_before_command',
@@ -362,14 +368,20 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
                 }
             }],
         }]
-        self.mock_staging._local._store.read_entries.return_value = [{
-            "data": {
-                "title": "LocalStagedTask",
-                "startTime_enc": "plain:3000000",
-                "endTime_enc": "plain:4000000",
-                "duration": 1000000,
-                "_is_staged": True,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            "title": "LocalStagedTask",
+            "start_epoch": 3000000,
+            "end_epoch": 4000000,
+            "duration": 1000000,
+            "tags": [],
+            "comment": "",
+            "media": [],
+            "metadata": {},
+            "pauses": [],
+            "entry_id": "test-id",
+            "date": "2026-01-01",
+            "is_active": False,
+            "is_paused": False,
         }]
         self.cli._remote_ledger_cache = {}
 
@@ -464,13 +476,19 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
         """
         self.mock_staging._remote = None  # no remote
         self.cli._crypto.decrypt.side_effect = Exception("no key")
-        self.mock_staging._local._store.read_entries.return_value = [{
-            'data': {
-                'title': 'PlainTask',
-                'is_active': True,
-                'startTime_enc': 'plain:1000000',
-                'is_paused': False,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            'title': 'PlainTask',
+            'is_active': True,
+            'start_epoch': 1000000,
+            'is_paused': False,
+            'duration': 0,
+            'tags': [],
+            'comment': '',
+            'media': [],
+            'metadata': {},
+            'pauses': [],
+            'entry_id': 'test-id',
+            'date': '2026-01-01',
         }]
 
         with patch.object(self.cli, '_sync_before_command',
@@ -627,13 +645,19 @@ class TestGroupD_Regression(unittest.TestCase):
     def test_D1_view_with_valid_cookie_still_works(self):
         """D1: No regression — active tasks shown when cookie is valid."""
         self.mock_crypto.decrypt.return_value = '1000000'
-        self.mock_staging._local._store.read_entries.return_value = [{
-            'data': {
-                'title': 'TestTask',
-                'is_active': True,
-                'startTime_enc': 'plain:1000000',
-                'is_paused': False,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            'title': 'TestTask',
+            'is_active': True,
+            'start_epoch': 1000000,
+            'is_paused': False,
+            'duration': 0,
+            'tags': [],
+            'comment': '',
+            'media': [],
+            'metadata': {},
+            'pauses': [],
+            'entry_id': 'test-id',
+            'date': '2026-01-01',
         }]
 
         with patch.object(self.cli, '_sync_before_command',
@@ -662,7 +686,7 @@ class TestGroupD_Regression(unittest.TestCase):
                 }
             }],
         }]
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
         self.cli._remote_ledger_cache = {}
 
         with patch.object(self.cli, '_sync_before_command',
@@ -688,8 +712,8 @@ class TestGroupD_Regression(unittest.TestCase):
         cli = CLIInterface(mock_staging, mock_ledger_engine, mock_crypto)
 
         # Setup: staging has tags, ledger has some overlapping tags
-        mock_staging._local._store.read_entries.return_value = [
-            {"data": {"title": "A", "tags": ["work", "coding"]}},
+        mock_staging._local.read_entries.return_value = [
+            {"title": "A", "tags": ["work", "coding"]},
         ]
         mock_ledger_engine.get_day_blocks.return_value = [
             {
@@ -707,8 +731,8 @@ class TestGroupD_Regression(unittest.TestCase):
         if callable(getattr(cli, '_get_all_tags', None)):
             all_tags = cli._get_all_tags()
         else:
-            for entry in mock_staging._local._store.read_entries():
-                all_tags.update(entry["data"].get("tags", []))
+            for entry in mock_staging._local.read_entries():
+                all_tags.update(entry.get("tags", []))
             for day in mock_ledger_engine.get_day_blocks():
                 if day.get("type") != "day":
                     continue
@@ -725,13 +749,19 @@ class TestGroupD_Regression(unittest.TestCase):
     def test_D4_list_active_shows_same_as_view(self):
         """D4: No regression — `ph list active` alias behavior preserved."""
         self.mock_crypto.decrypt.return_value = '1000000'
-        self.mock_staging._local._store.read_entries.return_value = [{
-            'data': {
-                'title': 'ActiveTask',
-                'is_active': True,
-                'startTime_enc': 'plain:1000000',
-                'is_paused': False,
-            }
+        self.mock_staging._local.read_entries.return_value = [{
+            'title': 'ActiveTask',
+            'is_active': True,
+            'start_epoch': 1000000,
+            'is_paused': False,
+            'duration': 0,
+            'tags': [],
+            'comment': '',
+            'media': [],
+            'metadata': {},
+            'pauses': [],
+            'entry_id': 'test-id',
+            'date': '2026-01-01',
         }]
 
         # view_active output
@@ -834,7 +864,7 @@ class TestGroupE_EdgeCases(unittest.TestCase):
         Phase 3 refactoring to use CLIInterface, the empty-state path
         must still produce clean output.
         """
-        self.mock_staging._local._store.read_entries.return_value = []
+        self.mock_staging._local.read_entries.return_value = []
         self.mock_ledger_engine.get_day_blocks.return_value = []
         self.cli._remote_ledger_cache = None
 
@@ -859,8 +889,8 @@ class TestGroupE_EdgeCases(unittest.TestCase):
         (which always works for plain:), but after refactoring to
         CLIInterface, the path must still handle this.
         """
-        self.mock_staging._local._store.read_entries.return_value = [
-            {"data": {"title": "PlainEntry", "tags": ["visible-tag"]}},
+        self.mock_staging._local.read_entries.return_value = [
+            {"title": "PlainEntry", "tags": ["visible-tag"]},
         ]
         self.mock_ledger_engine.get_day_blocks.return_value = []
         self.cli._remote_ledger_cache = None
@@ -870,8 +900,8 @@ class TestGroupE_EdgeCases(unittest.TestCase):
         if callable(getattr(self.cli, '_get_all_tags', None)):
             all_tags = self.cli._get_all_tags()
         else:
-            for entry in self.mock_staging._local._store.read_entries():
-                all_tags.update(entry["data"].get("tags", []))
+            for entry in self.mock_staging._local.read_entries():
+                all_tags.update(entry.get("tags", []))
 
         self.assertIn("visible-tag", all_tags,
                       "E3 FAIL: 'visible-tag' not found in NoAuth mode. "
