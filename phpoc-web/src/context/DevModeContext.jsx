@@ -931,9 +931,12 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { jsonSort } = await import('../ledger/utils.js');
       const hashKey = genesisBlock.block_hash ? 'block_hash' : 'day_hash';
+      // Must match Python migrate.py exclusion list:
+      //   hashField, signature, identity_seal, format_version, key_version
       const checkData = {};
       for (const [k, v] of Object.entries(genesisBlock)) {
-        if (k !== hashKey && k !== 'signature') {
+        if (k !== hashKey && k !== 'signature' &&
+            k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
           checkData[k] = v;
         }
       }

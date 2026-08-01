@@ -448,10 +448,13 @@ export class WorkerImportSource {
         throw new Error(`Missing or invalid ${hashField} at block index ${i}`);
       }
 
-      // Verify per-block seal
+      // Verify per-block seal.
+      // Excluded fields must match Python's migrate.py:
+      //   hashField, signature, identity_seal, format_version, key_version
       const checkData = {};
       for (const key of Object.keys(block).sort()) {
-        if (key !== hashField && key !== 'signature') {
+        if (key !== hashField && key !== 'signature' && key !== 'format_version' &&
+            key !== 'identity_seal' && key !== 'key_version') {
           checkData[key] = block[key];
         }
       }

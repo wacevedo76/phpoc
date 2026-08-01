@@ -518,11 +518,11 @@ export class LedgerChain {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, identity_seal, signature, and format_version
-    // I-07: format_version excluded from seal computation.
+    // Build check data: everything except the hash key, identity_seal, signature, format_version, and key_version.
+    // Must match Python migrate.py exclusion list exactly.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
         checkData[k] = v;
       }
     }

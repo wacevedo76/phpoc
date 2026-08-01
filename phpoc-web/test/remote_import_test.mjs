@@ -252,7 +252,6 @@ function createV1Export(crypto, masterKey, opts = {}) {
 function createRawChain(crypto, masterKey, opts = {}) {
   const genesis = {
     type: 'genesis',
-    format_version: '2',
     day_index: 0,
     date: '2026-01-01',
     prev_hash: '0'.repeat(64),
@@ -264,10 +263,12 @@ function createRawChain(crypto, masterKey, opts = {}) {
     signature: '',
   };
 
-  // Compute genesis seal
+  // Compute genesis seal — must match Python migrate.py exclusion list:
+  //   hashField, signature, identity_seal, format_version, key_version
   const genesisCheckData = {};
   for (const key of Object.keys(genesis).sort()) {
-    if (key !== 'day_hash' && key !== 'signature') {
+    if (key !== 'day_hash' && key !== 'signature' &&
+        key !== 'identity_seal' && key !== 'format_version' && key !== 'key_version') {
       genesisCheckData[key] = genesis[key];
     }
   }

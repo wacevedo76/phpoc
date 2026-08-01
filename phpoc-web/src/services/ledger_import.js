@@ -290,11 +290,18 @@ function _importRawChain(blocks, crypto, masterKey) {
       );
     }
 
-    // Verify per-block seal: HMAC of block content (excluding hash + signature + format_version)
-    // I-07: format_version excluded from seal computation.
+    // Verify per-block seal: HMAC of block content.
+    //
+    // Excluded from seal payload (must match Python's migrate.py):
+    //   - hashField   — the seal/hash itself (day_hash, month_hash, year_hash, block_hash)
+    //   - signature   — identity signature (PHPSPEC §5.3)
+    //   - identity_seal — server-side identity binding (added after seal is computed)
+    //   - format_version — stripped by I-07, must not affect seal
+    //   - key_version   — ADR-026 key versioning metadata, must not affect seal
     const checkData = {};
     for (const key of Object.keys(block).sort()) {
-      if (key !== hashField && key !== 'signature' && key !== 'format_version') {
+      if (key !== hashField && key !== 'signature' && key !== 'format_version' &&
+          key !== 'identity_seal' && key !== 'key_version') {
         checkData[key] = block[key];
       }
     }

@@ -385,7 +385,7 @@ export class LedgerMerge {
     // I-07: format_version excluded from seal computation.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
         checkData[k] = v;
       }
     }
