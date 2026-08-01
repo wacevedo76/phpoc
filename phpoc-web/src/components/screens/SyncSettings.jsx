@@ -1255,6 +1255,20 @@ export default function SyncSettings() {
           </div>
         )}
 
+        {/* Clear Remote button — always visible when remote is available */}
+        {sync?.isRemoteAvailable && (
+          <div className="sync-commit-bar">
+            <button
+              className="btn btn-danger btn-clear-remote"
+              onClick={() => { setShowClearRemoteOverlay(true); setClearRemoteError(null); }}
+              disabled={syncing || clearingRemote}
+              title="Delete all data from remote bucket and re-sync this device's data"
+            >
+              🗑 Clear Remote
+            </button>
+          </div>
+        )}
+
         {/* ── Status section ───────────────────────────────────── */}
         <div className={`sync-details${syncStatusCollapsed ? ' sync-details-collapsed' : ''}`}>
           {syncStatusCollapsed ? (
@@ -1318,17 +1332,7 @@ export default function SyncSettings() {
             </span>
           </div>
 
-          {/* Clear Remote button */}
-          {sync?.isRemoteAvailable && (
-            <button
-              className="btn btn-danger btn-clear-remote"
-              onClick={() => { setShowClearRemoteOverlay(true); setClearRemoteError(null); }}
-              disabled={syncing || clearingRemote}
-              title="Delete all data from remote bucket and re-sync this device's data"
-            >
-              🗑 Clear Remote
-            </button>
-          )}
+
 
           {/* Last sync result */}
           {lastSyncResult && (
