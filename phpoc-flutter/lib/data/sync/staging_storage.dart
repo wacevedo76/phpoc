@@ -16,13 +16,15 @@ class StagingStorage {
   final AppDatabase _db;
 
   StagingStorage(this._db) {
-    _ensureTable();
+    _ensureTableSync();
   }
 
   // ── Key-Value table ────────────────────────────────────────
 
-  void _ensureTable() {
-    _db.customStatement('''
+  /// Synchronous table creation — called from constructor so the
+  /// _staging_kv table is guaranteed to exist before any get/set call.
+  void _ensureTableSync() {
+    _db.customStatementSync('''
       CREATE TABLE IF NOT EXISTS _staging_kv (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL

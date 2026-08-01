@@ -4,6 +4,7 @@ import '../../core/crypto/crypto_service.dart';
 import '../../data/ledger/engine.dart';
 import '../../data/ledger/store_adapters.dart';
 import '../../data/sync/staging_storage.dart';
+import '../../data/sync/staging_store.dart';
 import '../../data/sync/sync_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
@@ -74,10 +75,12 @@ final syncServiceProvider = Provider<SyncService>((ref) {
   final crypto = ref.watch(cryptoServiceProvider);
   final db = ref.watch(databaseProvider);
   final storage = StagingStorage(db);
+  final stagingStore = StagingStore(db);
   final engine = ref.watch(ledgerEngineProvider);
   return SyncService(
     storage: storage,
     crypto: crypto,
+    stagingStore: stagingStore,
     ledgerEngine: engine,
   );
 });

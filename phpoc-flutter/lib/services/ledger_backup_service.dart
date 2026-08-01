@@ -59,6 +59,11 @@ class LedgerBackupService {
       throw const FormatException('Invalid JSON: expected a JSON array');
     }
 
+    // Reject empty imports — importing zero blocks would wipe the ledger.
+    if (parsed.isEmpty) {
+      throw const FormatException('Cannot import an empty ledger — no blocks found');
+    }
+
     // Validate all blocks before writing anything
     final blocks = <Block>[];
     for (var i = 0; i < parsed.length; i++) {
@@ -69,7 +74,9 @@ class LedgerBackupService {
       blocks.add(_jsonToBlock(obj, i));
     }
 
-    // In a transaction: clear existing blocks + index, insert new
+    // In a transaction: clear existing blocks + index, insert new.
+    // The transaction ensures atomicity — if any insert fails, the
+    // deletes roll back, so existing blocks are preserved.
     await db.transaction(() async {
       await db.customStatement('DELETE FROM index_entries');
       await db.customStatement('DELETE FROM blocks');
