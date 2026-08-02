@@ -61,7 +61,10 @@
 
 ## Immediate Next Steps 🎯
 
-_None — all active tasks complete._
+### ✅ B-06: Wire staging sync into restoreFromCloud — 4-Phase TDD Complete (2026-07-31)
+**Blueprint:** `docs/planning/flutter/B06_STAGING_SYNC_IN_RESTORE_PHASE1.md` — 12 assertions.
+**Phases 2-3:** 9/9 B-06 tests GREEN (A5, A11-A15, G1, G5, G6). 1-line fix: `await syncService.initialPull()` in `restoreFromCloud()`.
+**Phase 4:** 4 improvements in `onboarding_service.dart` — extracted `_ensureNoLedger` (4 duplicates), `_validateSeedAndPassphrase` (3 duplicates), `_pullFromCloud` (~100→~25 lines); reused `_postImportSetup` in 3 methods. Full suite: 1419/1426 (7 pre-existing flaky).
 
 ### ✅ B-05c: CLI Staging Format Alignment — 4-Phase TDD Complete (2026-07-30)
 - Phase 3: 52/52 GREEN — `core/activity_id.py`, `core/staging_hash_index.py` (new); `remote_sync.py` (staging/blob, compact JSON, hash index, no updated_at); `onboarding.py` (path updated); 12 regressions fixed; full suite 2400/2401
@@ -90,3 +93,4 @@ _None — all active tasks complete._
 ## Known Issues
 - 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation
 - **Emulator has 216 stale committed entries** in `_staging_kv` (200KB, `committed: true`) — will be cleared on next commit via temporary cleanup (expires 2026-08-01)
+- **B-06: restoreFromCloud doesn't pull staging** ✅ Fixed (2026-07-31) — staging now synced via `initialPull()` during cloud restore

@@ -52,16 +52,7 @@ class OnboardingService {
   /// [wipeExisting] is false.
   /// Throws validation error if [passphrase] is fewer than 8 characters.
   Future<String> createNewLedger(String passphrase, {bool wipeExisting = false}) async {
-    // 0. Optionally clear existing data
-    if (wipeExisting) {
-      await clearAllData();
-    }
-
-    // 1. Check existing data → LedgerExistsException
-    if (await _hasGenesisBlock()) {
-      throw LedgerExistsException(
-          'A ledger already exists. Clear existing data first.');
-    }
+    await _ensureNoLedger(wipeExisting);
 
     // 2. Validate passphrase length (≥8)
     if (passphrase.length < CryptoService.minPassphraseLength) {
@@ -72,17 +63,9 @@ class OnboardingService {
     // 3. Generate random 32-byte seed
     final seedB64 = crypto.generateSeed();
 
-    // 4. Build genesis and persist
-    await _buildAndPersistGenesis(passphrase, seedB64);
+    await _postImportSetup(passphrase, seedB64);
 
-    // 5. Create device identity (UUIDv4)
-    final uuid = crypto.generateUuid();
-    await preferences.setDeviceUuid(uuid);
-
-    // 6. Set hasExistingData flag
-    await preferences.setHasExistingData(true);
-
-    // 7. Return seed base64
+    // Return seed base64
     return seedB64;
   }
 
@@ -96,35 +79,10 @@ class OnboardingService {
   /// [wipeExisting] is false.
   /// Throws format/validation error if [seedB64] is not valid base64.
   Future<void> importFromSeed(String seedB64, String passphrase, {bool wipeExisting = false}) async {
-    // 0. Optionally clear existing data
-    if (wipeExisting) {
-      await clearAllData();
-    }
+    await _ensureNoLedger(wipeExisting);
+    _validateSeedAndPassphrase(seedB64, passphrase);
 
-    // 1. Check existing data → LedgerExistsException
-    if (await _hasGenesisBlock()) {
-      throw LedgerExistsException(
-          'A ledger already exists. Clear existing data first.');
-    }
-
-    // 2. Validate seed format (base64, 32 bytes)
-    CryptoService.validateSeedBase64(seedB64);
-
-    // 3. Validate passphrase length (≥8)
-    if (passphrase.length < CryptoService.minPassphraseLength) {
-      throw FormatException(
-          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
-    }
-
-    // 4. Build genesis and persist
-    await _buildAndPersistGenesis(passphrase, seedB64);
-
-    // 5. Create device identity (UUIDv4)
-    final uuid = crypto.generateUuid();
-    await preferences.setDeviceUuid(uuid);
-
-    // 6. Set hasExistingData flag
-    await preferences.setHasExistingData(true);
+    await _postImportSetup(passphrase, seedB64);
   }
 
   /// Restore a ledger from a recovery seed and pull data from the cloud.
@@ -151,25 +109,8 @@ class OnboardingService {
     String apiKey, {
     bool wipeExisting = false,
   }) async {
-    // 0. Optionally clear existing data
-    if (wipeExisting) {
-      await clearAllData();
-    }
-
-    // 1. Check existing data → LedgerExistsException
-    if (await _hasGenesisBlock()) {
-      throw LedgerExistsException(
-          'A ledger already exists. Clear existing data first.');
-    }
-
-    // 2. Validate seed format (base64, 32 bytes) — fail fast before any DB write
-    CryptoService.validateSeedBase64(seedB64);
-
-    // 3. Validate passphrase length (≥8)
-    if (passphrase.length < CryptoService.minPassphraseLength) {
-      throw FormatException(
-          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
-    }
+    await _ensureNoLedger(wipeExisting);
+    _validateSeedAndPassphrase(seedB64, passphrase);
 
     // 4. Validate Worker URL for injection characters — must throw BEFORE
     //    any DB write (H7: security gate).
@@ -181,59 +122,10 @@ class OnboardingService {
     final mk = crypto.deriveMasterKey(seedB64);
     crypto.setMasterKey(mk);
 
-    // 6. Persist genesis block (encrypts seed with PDK) so reauthenticate works.
-    //    Must happen BEFORE any network operations — genesis is a local construct
-    //    and does not depend on pulling from R2.
-    await _buildAndPersistGenesis(passphrase, seedB64);
+    // Persist genesis + device identity before any network operations.
+    await _postImportSetup(passphrase, seedB64);
 
-    // 7-8. Create device identity, set flag.
-    final uuid = crypto.generateUuid();
-    await preferences.setDeviceUuid(uuid);
-    await preferences.setHasExistingData(true);
-
-    // 9. Connect Worker + pull ledger blocks.
-    //    Connection/pull errors are surfaced via PullResult, not thrown.
-    //    ledgerPullService is optional — when absent, returns empty success.
-    String? connectError;
-    bool connected = false;
-    try {
-      await connectWorker(workerUrl, apiKey)
-          .timeout(const Duration(seconds: 20));
-      connected = true;
-    } catch (e) {
-      connectError = 'Cannot reach Worker at $workerUrl: $e';
-    }
-
-    if (connected && ledgerPullService != null) {
-      try {
-        final pullResult = await ledgerPullService!.pullAll()
-            .timeout(const Duration(seconds: 120));
-
-        // Re-create genesis after pull: importFromJson wipes all blocks
-        // including the Flutter-format genesis created above. The R2 genesis
-        // has a different format that AuthService can't read.
-        if (pullResult.blocksPulled > 0) {
-          await _buildAndPersistGenesis(passphrase, seedB64);
-        }
-
-        return pullResult;
-      } catch (e) {
-        if (e is TimeoutException) {
-          return PullResult.failure(errors: [
-            'Connection timed out while pulling blocks. '
-                'Check the Worker URL and try again.',
-          ]);
-        }
-        return PullResult.failure(errors: ['Pull failed: $e']);
-      }
-    }
-
-    if (connectError != null) {
-      return PullResult.failure(errors: [connectError]);
-    }
-
-    // No transport configured — nothing to pull
-    return PullResult.ok(blocksPulled: 0, entriesStaged: 0);
+    return await _pullFromCloud(workerUrl, apiKey, passphrase, seedB64);
   }
 
   /// Connect to a Cloudflare Worker for remote sync.
@@ -304,25 +196,8 @@ class OnboardingService {
     String passphrase, {
     bool wipeExisting = false,
   }) async {
-    // 0. Wipe existing data if requested
-    if (wipeExisting) {
-      await clearAllData();
-    }
-
-    // 1. Check existing data → LedgerExistsException
-    if (await _hasGenesisBlock()) {
-      throw LedgerExistsException(
-          'A ledger already exists. Clear existing data first.');
-    }
-
-    // 2. Validate seed format
-    CryptoService.validateSeedBase64(seedB64);
-
-    // 3. Validate passphrase
-    if (passphrase.length < CryptoService.minPassphraseLength) {
-      throw FormatException(
-          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
-    }
+    await _ensureNoLedger(wipeExisting);
+    _validateSeedAndPassphrase(seedB64, passphrase);
 
     // 4. Derive MK for seal verification
     final mk = crypto.deriveMasterKey(seedB64);
@@ -401,6 +276,93 @@ class OnboardingService {
   // ═══════════════════════════════════════════════════════════════
   // Internal helpers
   // ═══════════════════════════════════════════════════════════════
+
+  /// Wipe existing data if requested, then verify no ledger exists.
+  ///
+  /// Throws [LedgerExistsException] if a genesis block already exists
+  /// and [wipeExisting] is false.
+  Future<void> _ensureNoLedger(bool wipeExisting) async {
+    if (wipeExisting) {
+      await clearAllData();
+    }
+    if (await _hasGenesisBlock()) {
+      throw LedgerExistsException(
+          'A ledger already exists. Clear existing data first.');
+    }
+  }
+
+  /// Validate seed format and passphrase length.
+  ///
+  /// Throws [FormatException] if [seedB64] is invalid base64 or [passphrase]
+  /// is shorter than [CryptoService.minPassphraseLength].
+  void _validateSeedAndPassphrase(String seedB64, String passphrase) {
+    CryptoService.validateSeedBase64(seedB64);
+    if (passphrase.length < CryptoService.minPassphraseLength) {
+      throw FormatException(
+          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
+    }
+  }
+
+  /// Pull data from the cloud: connect Worker, pull ledger blocks, pull staging.
+  ///
+  /// Connection and pull errors are surfaced via [PullResult.failure].
+  /// When [ledgerPullService] is absent, returns [PullResult.ok] with zeros.
+  Future<PullResult> _pullFromCloud(
+    String workerUrl, String apiKey, String passphrase, String seedB64,
+  ) async {
+    String? connectError;
+    bool connected = false;
+    try {
+      await connectWorker(workerUrl, apiKey)
+          .timeout(const Duration(seconds: 20));
+      connected = true;
+    } catch (e) {
+      connectError = 'Cannot reach Worker at $workerUrl: $e';
+    }
+
+    PullResult? pullResult;
+    String? pullError;
+
+    if (connected && ledgerPullService != null) {
+      try {
+        pullResult = await ledgerPullService!.pullAll()
+            .timeout(const Duration(seconds: 120));
+
+        // Re-create genesis after pull: importFromJson wipes all blocks
+        // including the Flutter-format genesis. R2 genesis uses a different
+        // format that AuthService can't read.
+        if (pullResult!.blocksPulled > 0) {
+          await _buildAndPersistGenesis(passphrase, seedB64);
+        }
+      } catch (e) {
+        if (e is TimeoutException) {
+          pullError = 'Connection timed out while pulling blocks. '
+              'Check the Worker URL and try again.';
+        } else {
+          pullError = 'Pull failed: $e';
+        }
+      }
+    }
+
+    // Pull staging entries from remote (best-effort).
+    if (connected && pullError == null) {
+      try {
+        await syncService.initialPull();
+      } catch (_) {
+        // Degraded mode: staging pull failure does not block restore.
+      }
+    }
+
+    if (pullError != null) {
+      return PullResult.failure(errors: [pullError]);
+    }
+    if (connectError != null) {
+      return PullResult.failure(errors: [connectError]);
+    }
+    if (pullResult != null) return pullResult;
+
+    return PullResult.ok(blocksPulled: 0, entriesStaged: 0);
+  }
 
   /// Check if a genesis block exists in the database.
   Future<bool> _hasGenesisBlock() async {

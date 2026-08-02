@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
@@ -8,6 +9,7 @@ import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
+import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 import 'package:phpoc_flutter/services/ledger_pull_service.dart';
@@ -40,6 +42,65 @@ class _FakeStorage {
   Future<dynamic> get(String key) async => _data[key];
   Future<void> set(String key, dynamic value) async => _data[key] = value;
   Future<void> remove(String key) async => _data.remove(key);
+}
+
+/// Simulates a remote Worker with in-memory blob storage.
+///
+/// Extends [HttpTransport] so it satisfies Dart's type system for
+/// [SyncService.transport]. Stores obfuscated blobs keyed by path.
+class _MockHttpTransport extends HttpTransport {
+  final Map<String, Uint8List> _store = {};
+  int pullCount = 0;
+  int pushCount = 0;
+  bool throwOnPull = false;
+  dynamic pullError;
+
+  _MockHttpTransport()
+      : super(baseUrl: 'https://mock.example.com', apiKey: 'mock-key');
+
+  @override
+  Future<Uint8List?> pull(String path) async {
+    pullCount++;
+    if (throwOnPull) throw pullError ?? Exception('Mock pull error');
+    return _store[path];
+  }
+
+  @override
+  Future<void> push(String path, Uint8List data) async {
+    pushCount++;
+    _store[path] = data;
+  }
+
+  @override
+  Future<void> healthCheck() async {
+    // No-op: mock always succeeds
+  }
+
+  /// Store a staging blob for the legacy path so [_pullRemoteBlob]
+  /// can retrieve it on [pull]. The [crypto] must have MK already set
+  /// so obfuscation succeeds.
+  void putLegacyStagingBlob(
+      List<Map<String, dynamic>> entries, CryptoService crypto) {
+    final blobData = {'entries': entries};
+    final jsonStr = json.encode(blobData);
+    final blob = crypto.obfuscateBlob(jsonStr, crypto.getMasterKey()!);
+    _store['staging/blobs/current.json'] = blob;
+  }
+}
+
+/// Spy [SyncService] that records [initialPull] calls.
+class _SpySyncService extends SyncService {
+  int initialPullCallCount = 0;
+  bool throwOnInitialPull = false;
+
+  _SpySyncService({required super.storage, required super.crypto});
+
+  @override
+  Future<void> initialPull() async {
+    initialPullCallCount++;
+    if (throwOnInitialPull) throw Exception('Mock initialPull failure');
+    return super.initialPull();
+  }
 }
 
 /// Create a fresh OnboardingService with all dependencies.
@@ -138,23 +199,30 @@ void main() {
     });
 
     // A5
-    test('A5: restoreFromCloud with reachable Worker — staging entries are '
-        'pulled and merged', () async {
-      // RED: This test requires a mock transport that returns a blob.
-      // The assertion defines the integration contract.
-      final onboarding = await _makeOnboarding();
+    test('A5: restoreFromCloud calls syncService.initialPull '
+        'to pull staging entries from remote', () async {
+      // RED: initialPull() is NOT called yet → spy count stays 0.
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _FakeStorage();
+      final spy = _SpySyncService(storage: storage, crypto: crypto);
+
+      final onboarding = OnboardingService(
+        crypto: crypto,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: spy,
+      );
 
       await onboarding.restoreFromCloud(
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // After restore, the sync service should have performed an initial pull.
-      // The result is observable via getEntries() on the sync service.
-      final entries = await onboarding.syncService.getEntries();
-      // With a real transport, entries might be populated from remote.
-      // The key assertion is that the method completes without throwing.
-      expect(entries, isA<List>(),
-          reason: 'Restore must attempt sync pull and return cleanly');
+      // RED: initialPull not wired → callCount is 0
+      expect(spy.initialPullCallCount, greaterThan(0),
+          reason: 'restoreFromCloud must call initialPull '
+              'to pull remote staging entries (not wired yet — Phase 3)');
     });
 
     // A6
@@ -245,6 +313,199 @@ void main() {
       final entries = await onboarding.syncService.getEntries();
       expect(entries, isEmpty,
           reason: 'First-device restore: staging starts empty');
+    });
+
+    // A11 — RED: initialPull() is NOT called yet (count == 0).
+    test('A11: restoreFromCloud calls syncService.initialPull() exactly once '
+        'after ledger pull', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _FakeStorage();
+      final spy = _SpySyncService(storage: storage, crypto: crypto);
+
+      final onboarding = OnboardingService(
+        crypto: crypto,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: spy,
+      );
+
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+      );
+
+      expect(spy.initialPullCallCount, 1,
+          reason: 'restoreFromCloud must call initialPull exactly once '
+              'after ledger pull succeeds (not wired yet — Phase 3)');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group A-ext: restoreFromCloud staging sync resilience
+  // ═══════════════════════════════════════════════════════════════
+
+  group('A-ext: staging sync resilience', () {
+    // A12
+    test('A12: network failure during initialPull → still returns success, '
+        'genesis + identity preserved', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _FakeStorage();
+      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      spy.throwOnInitialPull = true;
+
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final onboarding = OnboardingService(
+        crypto: crypto,
+        db: db,
+        preferences: prefs,
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: spy,
+      );
+
+      // Must not throw despite initialPull failure
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+      );
+
+      // Genesis + identity must survive staging pull failure
+      final blocks = await db.blockDao.getAllBlocks();
+      expect(blocks.length, greaterThan(0),
+          reason: 'Genesis must survive staging pull failure');
+      expect(await prefs.hasExistingData(), isTrue,
+          reason: 'Identity flag must survive staging pull failure');
+      expect(spy.initialPullCallCount, 1,
+          reason: 'initialPull must be attempted even if it fails');
+    });
+
+    // A13
+    test('A13: deobfuscation failure from remote (corrupted blob) → '
+        'staging empty, identity preserved', () async {
+      // A corrupted blob from the remote causes initialPull to fail.
+      // The spy's throwOnInitialPull simulates this.
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _FakeStorage();
+      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      spy.throwOnInitialPull = true;
+
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final onboarding = OnboardingService(
+        crypto: crypto,
+        db: db,
+        preferences: prefs,
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: spy,
+      );
+
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+      );
+
+      // Identity must be preserved
+      expect(await prefs.hasExistingData(), isTrue,
+          reason: 'Identity must survive corrupted remote blob');
+
+      // Staging must be empty (corrupted blob = no entries)
+      final entries = await spy.getEntries();
+      expect(entries, isEmpty,
+          reason: 'Corrupted blob must produce empty staging');
+    });
+
+    // A14
+    test('A14: empty remote → initialPull returns empty, staging stays empty, '
+        'restore succeeds', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _FakeStorage();
+      final sync = SyncService(storage: storage, crypto: crypto);
+
+      final onboarding = OnboardingService(
+        crypto: crypto,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: sync,
+      );
+
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
+      );
+
+      // Genesis + identity must be set
+      expect(await onboarding.hasExistingData(), isTrue,
+          reason: 'Identity must be set on first-device restore');
+
+      // Staging must be empty (no remote data)
+      final entries = await sync.getEntries();
+      expect(entries, isEmpty,
+          reason: 'Empty remote must produce empty staging');
+    });
+
+    // A15
+    test('A15: second restore (wipeExisting) → staging entries from both '
+        'remote blobs land correctly', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final mk = crypto.deriveMasterKey(validSeedB64);
+      crypto.setMasterKey(mk);
+
+      // ── First restore: set up identity, push initial staging ──
+      final storage1 = _FakeStorage();
+      final sync1 = SyncService(storage: storage1, crypto: crypto);
+      final transport1 = _MockHttpTransport();
+      sync1.transport = transport1;
+
+      final onboarding1 = OnboardingService(
+        crypto: crypto,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: sync1,
+      );
+
+      // Do first restore to set up identity
+      // Note: restoreFromCloud calls connectWorker which creates a new
+      // transport. We bypass that by setting transport directly.
+      await onboarding1.importFromSeed(validSeedB64, validPassphrase);
+      sync1.transport = transport1;
+
+      // Push first batch of staging entries
+      await sync1.capture(title: 'Batch 1 Task',
+          tags: ['batch1'], startEpoch: 1700000000000);
+      await sync1.pushToRemote();
+
+      // ── Second restore with wipeExisting on a fresh DB ──
+      final crypto2 = CryptoService();
+      await crypto2.initialize();
+      crypto2.setMasterKey(crypto2.deriveMasterKey(validSeedB64));
+
+      final storage2 = _FakeStorage();
+      final sync2 = SyncService(storage: storage2, crypto: crypto2);
+      sync2.transport = transport1; // same transport = same remote data
+
+      final onboarding2 = OnboardingService(
+        crypto: crypto2,
+        db: AppDatabase.inMemory(),
+        preferences: AppPreferences.testInstance(),
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: sync2,
+      );
+
+      await onboarding2.importFromSeed(validSeedB64, validPassphrase);
+      sync2.transport = transport1; // re-set after importFromSeed
+      await sync2.initialPull();
+
+      // Second restore must see entries from first batch
+      final entries = await sync2.getEntries();
+      expect(entries.length, greaterThan(0),
+          reason: 'Second restore must see staging from first push');
+      final titles = entries.map((e) => e['title'] as String).toSet();
+      expect(titles, contains('Batch 1 Task'),
+          reason: 'Batch 1 entries must survive second restore');
     });
   });
 
