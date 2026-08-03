@@ -43,6 +43,7 @@ import { DeviceCookie } from './cookie.js';
 import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
 import { mergeEntries } from './merge_engine.js';
 import { LocalCache } from './local_cache.js';
+import { LedgerChain } from '../ledger/chain.js';
 import { getOrCreateDeviceUuid, getOrCreateDeviceSecret, deriveDeviceId } from './device_uuid.js';
 import {
   GenesisGate,
@@ -1342,5 +1343,128 @@ export class SyncService {
       this._transport.pull(REMOTE_HASH_INDEX_SHA256).then(b => b !== null).catch(() => false),
     ]);
     return { hashIndexJson: hiJson, hashIndexSha256: hiSha };
+  }
+
+  /**
+   * Verify the local ledger chain integrity.
+   *
+   * Runs LedgerChain.verify() which checks seal integrity, hash chain
+   * linkage, entry hashes, and content hashes. Returns a structured
+   * result suitable for display in the Sync Status panel.
+   *
+   * On failure, also runs per-block diagnostics to identify the first
+   * failing block and the failure mode (seal vs hash chain).
+   *
+   * @returns {Promise<{verified: boolean|null, blockCount: number, error: string|null, firstFailure: number|null, failReason: string|null}>}
+   *   verified=null means no ledger or no master key (not applicable).
+   */
+  async verifyLedgerChain() {
+    const mk = this._crypto.getMasterKey();
+    if (!mk) return { verified: null, blockCount: 0, error: null, firstFailure: null, failReason: null };
+
+    try {
+      const chain = new LedgerChain(this._crypto, this._storage, mk, null);
+      const blocks = await chain._getBlocks();
+      if (blocks.length === 0) {
+        return { verified: null, blockCount: 0, error: null, firstFailure: null, failReason: null };
+      }
+
+      // Fast path: full chain verify
+      const valid = await chain.verify();
+      if (valid) {
+        return { verified: true, blockCount: blocks.length, error: null, firstFailure: null, failReason: null };
+      }
+
+      // Per-block diagnostics: find the first failing block and why
+      let firstFailure = null;
+      let failReason = null;
+
+      // Check genesis seal first (most common failure: wrong master key)
+      const genesis = blocks[0];
+      const genesisType = genesis.type || 'day';
+      const genesisHashKey = genesisType === 'genesis'
+        ? (genesis.block_hash ? 'block_hash' : 'day_hash')
+        : 'day_hash';
+      const genesisCheck = {};
+      for (const [k, v] of Object.entries(genesis)) {
+        if (k !== genesisHashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
+          genesisCheck[k] = v;
+        }
+      }
+      try {
+        if (!chain.verifySeal(genesisCheck, genesis[genesisHashKey])) {
+          firstFailure = 0;
+          failReason = 'genesis_seal_mismatch';
+        }
+      } catch {
+        firstFailure = 0;
+        failReason = 'genesis_seal_error';
+      }
+
+      // If genesis seal is OK, find the first failing block
+      if (firstFailure === null) {
+        for (let i = 1; i < blocks.length; i++) {
+          const current = blocks[i];
+          const prev = blocks[i - 1];
+
+          // Use getBlockHash-style lookup (handles all block types)
+          const prevHash = prev.block_hash || prev.day_hash || prev.month_hash || prev.year_hash;
+          if (current.prev_hash !== prevHash) {
+            firstFailure = i;
+            failReason = 'prev_hash_link_broken';
+            break;
+          }
+
+          // Check seal on this block
+          const t = current.type || 'day';
+          let hk;
+          if (t === 'genesis') hk = current.block_hash ? 'block_hash' : 'day_hash';
+          else if (t === 'day') hk = 'day_hash';
+          else if (t === 'month_summary') hk = 'month_hash';
+          else if (t === 'year_summary') hk = 'year_hash';
+          else hk = 'day_hash';
+
+          const cd = {};
+          for (const [k, v] of Object.entries(current)) {
+            if (k !== hk && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
+              cd[k] = v;
+            }
+          }
+          try {
+            if (!chain.verifySeal(cd, current[hk])) {
+              firstFailure = i;
+              failReason = 'seal_mismatch';
+              break;
+            }
+          } catch {
+            firstFailure = i;
+            failReason = 'seal_error';
+            break;
+          }
+        }
+
+        if (firstFailure === null) {
+          // All seals + links valid — must be entry-level failure
+          firstFailure = -1;
+          failReason = 'entry_hash';
+        }
+      }
+
+      return {
+        verified: false,
+        blockCount: blocks.length,
+        error: null,
+        firstFailure,
+        failReason,
+      };
+    } catch (err) {
+      return {
+        verified: false,
+        blockCount: 0,
+        error: err.message || 'Verification failed',
+        firstFailure: null,
+        failReason: null,
+      };
+    }
   }
 }

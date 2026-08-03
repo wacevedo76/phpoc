@@ -2485,6 +2485,23 @@ a { color: var(--accent-blue); text-decoration: none; }
 .sync-offline .sync-icon { color: var(--text-muted); }
 .sync-reauth .sync-icon { color: var(--accent-red); }
 
+.sync-indicator-clickable {
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.sync-indicator-clickable:hover {
+  background: rgba(229, 57, 53, 0.08);
+}
+
+.sync-indicator-clickable:focus-visible {
+  outline: 2px solid var(--accent-red);
+  outline-offset: 2px;
+}
+
 /* ===================================================================
    Empty / Placeholder States
    =================================================================== */

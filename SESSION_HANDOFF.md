@@ -28,10 +28,15 @@
 
 ## Completed ✅
 
+### ✅ B-02 Web: Cross-ledger entry migration — 4-Phase TDD Complete (2026-08-03)
+- 30 assertions → 55 GREEN tests → Phase 4: 7 improvements across 2 files.
+- New: `import_entries.js` (EntryImporter), `import_service.js` (ImportService + data classes).
+- Modified: `App.jsx` (+/import route), `Settings.jsx` (+import tile).
+- Phase 4: extracted `_entryData`, `_coerceField`, `_deriveDate` helpers; `_validateSeed`, `_collectTargetData`, `_parseChainBuffer` in ImportService; DRY self-import guard; deduped date-derivation logic. Full suite: 55/55.
+
 ### ✅ B-02: Cross-ledger entry import (Flutter) — 4-Phase TDD Complete (2026-08-01)
-- 79 assertions → 79 GREEN tests → Phase 4: 5 improvements (modularity + conciseness + clarity) across 1 file.
+- 79 assertions → 79 GREEN tests → Phase 4: 5 improvements across 1 file.
 - New: `import_result.dart`, `import_service.dart`, `import_screen.dart`, `import_providers.dart`.
-- Phase 4: extracted `_encryptedFieldMap` constant, loop-ified `_reencryptEntry`, extracted `_parsePlaintextField` helper, removed unused `_sourceChainCache` and `computeContentHash` import, added doc on decrypt→re-encrypt flow.
 - Full suite: 1456/1478 (22 pre-existing).
 
 ### ✅ B-02 UI Layer: ImportScreen, sheets, provider, route, settings — 4-Phase TDD Complete (2026-08-03)
@@ -73,10 +78,6 @@
 - 17 assertions → 10 RED → 10 GREEN → 5 Phase 4 improvements. Full suite: 1356/1358.
 
 ## Immediate Next Steps 🎯
-
-### 🔜 B-02 Web: Cross-ledger entry migration — Phase 1 Complete
-**Blueprint:** `docs/planning/web/B02_WEB_IMPORT_PHASE1.md` — 30 assertions across 4 groups (J–M).
-**Next:** Phase 2 (RED: test definition)
 
 ### ✅ B-06: Wire staging sync into restoreFromCloud — 4-Phase TDD Complete (2026-07-31)
 **Blueprint:** `docs/planning/flutter/B06_STAGING_SYNC_IN_RESTORE_PHASE1.md` — 12 assertions.

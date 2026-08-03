@@ -3,8 +3,8 @@
 > **Plan:** `docs/planning/B02_CROSS_LEDGER_MIGRATION_PHASE1.md` (cross-client blueprint, Groups J & K)
 > **Reference:** Flutter implementation — `import_service.dart`, `import_result.dart`, UI layer (40 tests)
 > **Purpose:** Blueprint for the web-specific test assertions before writing any code.
-> **Status:** 🔜 Phase 1 (test exploration)
-> **Next Phase:** Phase 2 (RED: test definition)
+> **Status:** ✅ Phase 1–4 Complete (55 tests GREEN, 7 Phase 4 improvements)
+> **Next Phase:** N/A — task complete
 
 ## Architecture Overview
 
@@ -19,12 +19,12 @@
 | Storage | `src/sync/storage.js` | ✅ Done — IndexedDB via StorageBackend |
 | File import (onboarding) | `src/services/ledger_import.js` | ✅ Done — file validation, seal + hash checks |
 | Remote import | `src/sync/remote_import.js` | ✅ Done — cloud backup fetch |
-| **ImportService** | `src/services/import_service.js` | 🔧 **New** — cross-ledger merge pipeline |
-| **EntryImporter** | `src/ledger/import_entries.js` | 🔧 **New** — core: decrypt → re-encrypt → build |
-| **ImportScreen** | `src/components/screens/ImportScreen.jsx` | 🔧 **New** — UI with seed input, file picker, preview |
-| **Route** | `src/App.jsx` | 🔧 Add `/import` route |
-| **Settings tile** | `src/components/screens/Settings.jsx` | 🔧 Add import entry in Data section |
-| **Tests** | `test/import_entries_test.mjs` | 🔧 **New** — Group J + K tests |
+| **ImportService** | `src/services/import_service.js` | ✅ Done — cross-ledger merge pipeline |
+| **EntryImporter** | `src/ledger/import_entries.js` | ✅ Done — core: decrypt → re-encrypt → build |
+| **ImportScreen** | `src/components/screens/ImportScreen.jsx` | ✅ Done — UI with seed input, file picker, preview |
+| **Route** | `src/App.jsx` | ✅ Done — `/import` route |
+| **Settings tile** | `src/components/screens/Settings.jsx` | ✅ Done — import entry in Data section |
+| **Tests** | `test/import_entries_test.mjs` | ✅ Done — 55 tests (Groups J, K, L, M) |
 
 ### Component Tree
 

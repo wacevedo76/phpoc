@@ -177,7 +177,7 @@ export default function Settings() {
       return;
     }
 
-    // ── Step 1: Verify credentials with a quick ping ──────────
+    // ── Step 1: Verify connectivity + credentials via /health endpoint ──
     const urlChanged = workerUrl !== prevUrl;
     const apiKeyChanged = apiKey !== prevApiKey;
     setSaved('checking');
@@ -188,27 +188,49 @@ export default function Settings() {
     }
 
     try {
-      const pingResp = await fetch(workerUrl, {
+      // Strip trailing slash and append /health for a definitive ping
+      const healthUrl = workerUrl.replace(/\/+$/, '') + '/health';
+      const pingResp = await fetch(healthUrl, {
         method: 'GET',
         headers: apiKey ? { 'X-Api-Key': apiKey } : {},
         signal: AbortSignal.timeout(8000),
       });
 
-      if (!pingResp.ok && pingResp.status !== 404) {
-        // 403 = auth failure, other 4xx/5xx = server error
+      if (pingResp.status === 403) {
         setSaved('error');
-        if (pingResp.status === 403) {
-          setGenesisStatus('offline');
-          setGenesisReason('Authentication failed. Check your API key.');
-        } else {
-          setGenesisStatus('error');
-          setGenesisReason(`Server returned HTTP ${pingResp.status}`);
-        }
+        setGenesisStatus('offline');
+        setGenesisReason('Authentication failed. Check your API key.');
         setTimeout(() => setSaved('idle'), 3000);
         return;
       }
-      // 200 or 404 means server is reachable and auth passed (root
-      // key may not exist, which is expected).
+
+      if (!pingResp.ok) {
+        setSaved('error');
+        setGenesisStatus('offline');
+        setGenesisReason(`Server returned HTTP ${pingResp.status}. Is this a phpoc-staging Worker?`);
+        setTimeout(() => setSaved('idle'), 3000);
+        return;
+      }
+
+      // Confirm the response body identifies as phpoc-staging
+      let body;
+      try {
+        body = await pingResp.json();
+      } catch {
+        setSaved('error');
+        setGenesisStatus('offline');
+        setGenesisReason('Unexpected response. Is this a phpoc-staging Worker?');
+        setTimeout(() => setSaved('idle'), 3000);
+        return;
+      }
+
+      if (!body || body.ok !== true || body.service !== 'phpoc-staging') {
+        setSaved('error');
+        setGenesisStatus('offline');
+        setGenesisReason('Response does not identify as phpoc-staging. Check your Worker URL.');
+        setTimeout(() => setSaved('idle'), 3000);
+        return;
+      }
     } catch (err) {
       setSaved('error');
       setGenesisStatus('offline');
@@ -457,6 +479,28 @@ export default function Settings() {
             </div>
             <button className="btn btn-secondary btn-sm" onClick={() => setShowImportModal(true)}>
               Import
+            </button>
+          </div>
+
+          {/* Import entries from another ledger */}
+          <div className="settings-action-row" style={{ marginTop: '0.75rem' }}>
+            <div className="settings-action-info">
+              <strong>📋 Import entries from another ledger</strong>
+              <p className="settings-hint">
+                Import entries from a different ledger by providing its recovery seed.
+                Entries are re-encrypted and appended to your current ledger.
+              </p>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                // Navigate to /import — use the AppLayout's onNavigate
+                // which is accessible via window.__navigate or direct location change.
+                // For now, dispatch a custom event that AppLayout handles.
+                window.dispatchEvent(new CustomEvent('navigate', { detail: 'import' }));
+              }}
+            >
+              Import Entries
             </button>
           </div>
         </section>

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, Component } from 'react';
+import React, { useState, useCallback, useEffect, Component } from 'react';
 import { DevModeProvider, useApp } from './context/DevModeContext.jsx';
 import LandingScreen from './components/screens/LandingScreen.jsx';
 import OnboardingScreen from './components/screens/OnboardingScreen.jsx';
@@ -11,6 +11,7 @@ import SyncSettings from './components/screens/SyncSettings.jsx';
 import LedgerSync from './components/screens/LedgerSync.jsx';
 import UserProfile from './components/screens/UserProfile.jsx';
 import Configuration from './components/screens/Configuration.jsx';
+import ImportScreen from './components/screens/ImportScreen.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
 import ReauthOverlay from './components/overlays/ReauthOverlay.jsx';
 import { performReauth } from './sync/reauth.js';
@@ -133,6 +134,13 @@ function AppInner() {
     }
   }, []);
 
+  // Listen for window-level navigate events (e.g., from Settings)
+  useEffect(() => {
+    const onCustomNavigate = (e) => handleNavigate(e.detail);
+    window.addEventListener('navigate', onCustomNavigate);
+    return () => window.removeEventListener('navigate', onCustomNavigate);
+  }, [handleNavigate]);
+
   const handleLogout = useCallback(() => {
     logout();
   }, [logout]);
@@ -245,6 +253,8 @@ function AppInner() {
         );
       case 'settings':
         return <Settings />;
+      case 'import':
+        return <ImportScreen />;
       case 'ledger':
         return <LedgerSync />;
       default:

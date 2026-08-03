@@ -96,12 +96,14 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | 5 onboarding paths including "From Cloud" import sub-option (2026-06-20) |
 | `phpoc-web/src/crypto/index.js` | HOT | `CryptoService` — singleton WASM wrapper (20 exports), master key cache, ready guards. Imports from `./wasm/` (bundled by Vite, not external). |
 | `phpoc-web/src/services/export_auth.js` | 🟢 GREEN | **NEW** — `exportWithAuth()` — always-fresh passphrase auth + genesis seal verification via `_verifyGenesisSeal()`. 40 tests pass. E2E-06 Phase 4 complete. (2026-07-04) |
+| `phpoc-web/src/services/import_service.js` | 🟢 GREEN | **B-02 Web Phase 4 Complete** — `ImportService` + 3 data classes + `_validateSeed`, `_collectTargetData`, `_parseChainBuffer`. 55 tests. (2026-08-03) |
 | `phpoc-web/test/export_passphrase_validation_test.mjs` | 🟢 GREEN | **NEW** — 40 assertions (A-E groups): cached MK bypass, seal verification, cache safety, error messaging, integration. (2026-07-04) |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
 | `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Chain integrity: `onboardFromRemote` verifies full prev_hash linkage (2026-07-05).
 | `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()`, `jsonSortIndent2()`, `computeEntryHash()` — Python-compatible JSON serialization + canonical entry hashing (2026-07-16) |
 | `phpoc-web/src/ledger/chain.js` | HOT | `LedgerChain` — block storage, append/appendBlocks (prev_hash verification in `append()` added 2026-07-05) |
+| `phpoc-web/src/ledger/import_entries.js` | 🟢 GREEN | **B-02 Web Phase 4 Complete** — `EntryImporter` + `_entryData`, `_coerceField`, `_deriveDate` helpers. 55 tests. (2026-08-03) |
 | `phpoc-web/test/utils_test.mjs` | HOT | 27 tests — validates jsonSort() matches Python output |
 | `phpoc-web/src/hooks/useAutoSync.js` | HOT | Auto-sync hook — `createAutoSync()` + `useAutoSync()` React hook (GREEN, 58 assertions, 0 failures) |
 | `phpoc-web/test/auto_sync_hook_test.mjs` | HOT | 24-assertion test suite for auto-sync hook (all GREEN) |
@@ -134,9 +136,10 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/row_sync.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `buildDiff()` 8-scenario LWW resolution + `RowSyncWorker` HTTP client (manifest, row CRUD, retry). |
 | `phpoc-web/src/sync/migration.js` | 🟢 GREEN | **NEW (Phase 3 GREEN)** — `migrateBlobToRows()` blob→rows conversion, idempotent (marker key), best-effort. |
 | `phpoc-web/src/components/screens/SyncSettings.jsx` | HOT | Sync UI — status display (`computeDisplayStatus` + `isAutoSyncing`), commit flow. Reauth overlay refs removed (2026-06-28). |
+| `phpoc-web/src/components/screens/ImportScreen.jsx` | 🟢 GREEN | **B-02 Web Phase 4 Complete** — Import entries placeholder screen. Route: /import. (2026-08-03) |
 | `phpoc-web/src/components/ui/EncryptionFlags.jsx` | HOT | **NEW** — reusable encryption checkbox group (master + per-field), extracted from Dashboard + NewTask (Phase 4 refactor) |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
-| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component (2026-06-28) |
+| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component + /import route → ImportScreen (2026-08-03) |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 

@@ -18,7 +18,7 @@
  * Architecture: PHPOC-REACT_WEB-DESIGN_DECISIONS.md §11.31
  */
 
-import { getBlockHash, jsonSort, computeEntryHash } from './utils.js';
+import { getBlockHash, jsonSort, computeEntryHash, verifyEntryHash } from './utils.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
 
 // Default format_version when genesis has none (pre-spec, implicit 0.2.0)
@@ -410,8 +410,7 @@ export class LedgerMerge {
     // 4. Content hash verification
     if (type === 'day' && block.entries) {
       for (const entry of block.entries) {
-        const expectedHash = computeEntryHash(entry.data, crypto);
-        if (expectedHash !== entry.hash) {
+        if (!verifyEntryHash(entry.data, entry.hash, crypto)) {
           return false;
         }
 

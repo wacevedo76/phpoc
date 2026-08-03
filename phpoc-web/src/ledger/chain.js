@@ -15,7 +15,7 @@
  *   const valid = await chain.verify();
  */
 
-import { jsonSort, computeEntryHash, getBlockHash } from './utils.js';
+import { jsonSort, computeEntryHash, getBlockHash, verifyEntryHash } from './utils.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
 
@@ -547,8 +547,7 @@ export class LedgerChain {
     if (type === 'day' && block.entries) {
       for (const entry of block.entries) {
         const data = entry.data;
-        const expectedHash = computeEntryHash(data, this.crypto);
-        if (expectedHash !== entry.hash) {
+        if (!verifyEntryHash(data, entry.hash, this.crypto)) {
           return false;
         }
 

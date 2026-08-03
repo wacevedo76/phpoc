@@ -88,6 +88,12 @@ export default {
 		// Route
 		switch (request.method) {
 			case 'GET':
+				if (path === 'health' || path.endsWith('/health')) {
+					return withCors(new Response(
+						JSON.stringify({ ok: true, service: 'phpoc-staging' }),
+						{ status: 200, headers: { 'Content-Type': 'application/json' } }
+					));
+				}
 				if (url.searchParams.has('prefix')) {
 					return withCors(await handleList(request, env, url.searchParams.get('prefix')!));
 				}

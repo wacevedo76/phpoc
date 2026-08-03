@@ -96,6 +96,29 @@ export function computeEntryHash(data, crypto) {
 }
 
 /**
+ * Verify an entry hash, accepting both canonical (indent=2) and legacy
+ * (compact) formats. Matching LedgerChain.verifySeal() which also has
+ * a pre-migration fallback.
+ *
+ * Ledgers migrated before migrate.py step 3a was introduced have entry
+ * hashes computed with json.dumps(data, sort_keys=True) — compact format
+ * without indentation. This function accepts both.
+ *
+ * @param {object} data - The entry data dict.
+ * @param {string} storedHash - The stored hash to verify against.
+ * @param {object} crypto - CryptoService with a sha256() method.
+ * @returns {boolean} True if the hash matches either format.
+ */
+export function verifyEntryHash(data, storedHash, crypto) {
+  // Primary: canonical indent=2 format (post-migration)
+  if (computeEntryHash(data, crypto) === storedHash) {
+    return true;
+  }
+  // Fallback: pre-migration compact format (sort_keys=True, no indent)
+  return crypto.sha256(jsonSort(data)) === storedHash;
+}
+
+/**
  * Return the hash of a block irrespective of its type.
  *
  * Handles day_hash, month_hash, and year_hash — the three hash keys

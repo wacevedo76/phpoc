@@ -508,6 +508,7 @@ cannot actually be rotated — it's all infrastructure and no action.
 ### B-02 ✅: Cross-ledger entry migration
 
 **Flutter Phase 1–4:** ✅ Complete — 79 Flutter assertions → 79 GREEN tests → 5 Phase 4 improvements.
+**Web Phase 1–4:** ✅ Complete — 30 assertions → 55 GREEN tests → 7 Phase 4 improvements across 2 files.
 
 **Phase 1:** ✅ Complete — 116 assertions across 13 groups (A–M) covering all three clients.
 Blueprint: `docs/planning/B02_CROSS_LEDGER_MIGRATION_PHASE1.md`.

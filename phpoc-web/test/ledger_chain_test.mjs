@@ -15,7 +15,7 @@ import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
-import { jsonSort, jsonSortIndent2 } from '../src/ledger/utils.js';
+import { jsonSort, jsonSortIndent2, verifyEntryHash } from '../src/ledger/utils.js';
 
 const t = new TestHelpers();
 
@@ -381,6 +381,42 @@ if (typeof LedgerChain === 'function') {
   storedEntry[0].entries[0].hash = 'aaaa' + storedEntry[0].entries[0].hash.slice(4);
   await storeEntry.set('ledger:blocks', storedEntry);
   t.assert(!(await chainEntry.verify()), 'verify() returns false when entry hash is wrong');
+
+  // ── Entry hash format compatibility ─────────────────────────────
+  // Test 34a: verifyEntryHash accepts canonical indent=2 format
+  const sampleEntry = { title: 'Test Entry', duration: 600 };
+  const canonicalHash = createHash('sha256').update(jsonSortIndent2(sampleEntry), 'utf-8').digest('hex');
+  t.assert(verifyEntryHash(sampleEntry, canonicalHash, crypto), 'verifyEntryHash accepts canonical indent=2 format');
+
+  // Test 34b: verifyEntryHash accepts legacy compact format (sort_keys, no indent)
+  const legacyHash = createHash('sha256').update(jsonSort(sampleEntry), 'utf-8').digest('hex');
+  t.assert(verifyEntryHash(sampleEntry, legacyHash, crypto), 'verifyEntryHash accepts legacy compact format');
+
+  // Test 34c: verifyEntryHash rejects wrong hash
+  const wrongHash = '0'.repeat(64);
+  t.assert(!verifyEntryHash(sampleEntry, wrongHash, crypto), 'verifyEntryHash rejects wrong hash');
+
+  // Test 34d: LedgerChain.verify() passes with legacy-format entry hashes
+  const storeLegacy = makeEmptyStore();
+  const chainLegacy = new LedgerChain(crypto, storeLegacy, MASTER_KEY);
+  const legacyEntry = { title: 'Legacy', duration: 300 };
+  const legacyData = [{
+    hash: createHash('sha256').update(jsonSort(legacyEntry), 'utf-8').digest('hex'),
+    data: legacyEntry,
+  }];
+  const legacyBlock = await chainLegacy.buildDayBlock(legacyData, ZERO_HASH, '2026-01-16');
+  // Override the computed hash with legacy format
+  legacyBlock.entries[0].hash = createHash('sha256').update(jsonSort(legacyEntry), 'utf-8').digest('hex');
+  // Must recompute seal since the hash changed
+  const checkData = {};
+  for (const [k, v] of Object.entries(legacyBlock)) {
+    if (k !== 'day_hash' && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
+      checkData[k] = v;
+    }
+  }
+  legacyBlock.day_hash = crypto.seal(jsonSort(checkData), MASTER_KEY);
+  await storeLegacy.set('ledger:blocks', [legacyBlock]);
+  t.assert(await chainLegacy.verify(), 'verify() passes with legacy compact entry hashes');
 
   // Test 35: verify with identity signature
   const storeSig = makeEmptyStore();

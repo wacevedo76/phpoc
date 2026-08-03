@@ -14,8 +14,9 @@ import { Icons } from '../ui/Icons.jsx';
  * Props:
  *   @param {'READY'|'NOT_SYNCED'|'OFFLINE'|'REAUTH_NEEDED'|'PENDING'|'SYNCING'} status
  *   @param {boolean} [compact=false] — compact mode (just the dot)
+ *   @param {Function} [onReauth] — callback when REAUTH_NEEDED indicator is clicked
  */
-export default function SyncIndicator({ status, compact = false }) {
+export default function SyncIndicator({ status, compact = false, onReauth }) {
   const config = {
     READY:              { icon: Icons.syncReady, label: 'Synced',          className: 'sync-ready' },
     NOT_SYNCED:         { icon: Icons.syncPending, label: 'Not synced',     className: 'sync-pending' },
@@ -36,8 +37,17 @@ export default function SyncIndicator({ status, compact = false }) {
     );
   }
 
+  const isReauth = status === 'REAUTH_NEEDED' && typeof onReauth === 'function';
+
   return (
-    <div className={`sync-indicator ${c.className}`}>
+    <div
+      className={`sync-indicator ${c.className}${isReauth ? ' sync-indicator-clickable' : ''}`}
+      onClick={isReauth ? onReauth : undefined}
+      onKeyDown={isReauth ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onReauth(); } } : undefined}
+      role={isReauth ? 'button' : undefined}
+      tabIndex={isReauth ? 0 : undefined}
+      title={isReauth ? 'Click to re-authenticate' : undefined}
+    >
       <span className="sync-icon"><c.icon size={20} /></span>
       <span className="sync-label">{c.label}</span>
     </div>

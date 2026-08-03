@@ -122,6 +122,9 @@ export default function SyncSettings() {
   // ── [DEBUG] Hash index existence ────────────────────────────────
   const [hashIndexStatus, setHashIndexStatus] = useState({ hashIndexJson: null, hashIndexSha256: null });
 
+  // ── Ledger chain verification ──────────────────────────────────
+  const [ledgerVerify, setLedgerVerify] = useState({ verified: null, blockCount: 0, error: null, firstFailure: null, failReason: null });
+
   // Display status: SYNCING (manual or auto) > remote status > NOT_SYNCED
   // (entries pending commit). When remote sync succeeded (READY), show the
   // remote status even if entries exist — "Not Synced" only appears when
@@ -195,6 +198,18 @@ export default function SyncSettings() {
     check();
     return () => { cancelled = true; };
   }, [sync, sync?.isRemoteAvailable, lastSyncResult]);
+
+  // Poll ledger chain verification
+  useEffect(() => {
+    if (!sync) return;
+    let cancelled = false;
+    const check = async () => {
+      const result = await sync.verifyLedgerChain();
+      if (!cancelled) setLedgerVerify(result);
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [sync, lastSyncResult]);
 
   // ── Selection ───────────────────────────────────────────────────
 
@@ -1297,7 +1312,7 @@ export default function SyncSettings() {
 
           <div className="sync-detail-row">
             <span className="sync-detail-label">Status</span>
-            <SyncIndicator status={displayStatus} />
+            <SyncIndicator status={displayStatus} onReauth={() => triggerReauth('sync_settings')} />
           </div>
 
           <div className="sync-detail-row">
@@ -1332,7 +1347,28 @@ export default function SyncSettings() {
             </span>
           </div>
 
-
+          {/* Ledger chain verification */}
+          <div className="sync-detail-row">
+            <span className="sync-detail-label">Ledger</span>
+            <span className="sync-detail-value">
+              {ledgerVerify.verified === null && ledgerVerify.blockCount === 0
+                ? '⋯ checking'
+                : ledgerVerify.verified
+                  ? <span style={{ color: 'var(--accent-green)' }}>✅ Verified — {ledgerVerify.blockCount} block{ledgerVerify.blockCount !== 1 ? 's' : ''}</span>
+                  : ledgerVerify.failReason === 'genesis_seal_mismatch'
+                    ? <span style={{ color: 'var(--accent-red)' }}>❌ Invalid — master key does not match this ledger</span>
+                    : ledgerVerify.failReason === 'genesis_seal_error'
+                      ? <span style={{ color: 'var(--accent-red)' }}>❌ Invalid — seal verification error at genesis</span>
+                      : ledgerVerify.failReason === 'prev_hash_link_broken'
+                        ? <span style={{ color: 'var(--accent-red)' }}>❌ Broken chain — prev_hash mismatch at block {ledgerVerify.firstFailure}</span>
+                        : ledgerVerify.failReason === 'seal_mismatch'
+                          ? <span style={{ color: 'var(--accent-red)' }}>❌ Invalid seal at block {ledgerVerify.firstFailure} of {ledgerVerify.blockCount}</span>
+                          : ledgerVerify.error
+                            ? <span style={{ color: 'var(--accent-red)' }}>❌ Error — {ledgerVerify.error}</span>
+                            : <span style={{ color: 'var(--accent-red)' }}>❌ Invalid — {ledgerVerify.blockCount} blocks failed verification</span>
+              }
+            </span>
+          </div>
 
           {/* Last sync result */}
           {lastSyncResult && (
