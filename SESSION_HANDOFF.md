@@ -74,7 +74,9 @@
 
 ## Immediate Next Steps 🎯
 
-_No active tasks. Check `docs/planning/BACKLOG.md` for next task._
+### 🔜 B-02 Web: Cross-ledger entry migration — Phase 1 Complete
+**Blueprint:** `docs/planning/web/B02_WEB_IMPORT_PHASE1.md` — 30 assertions across 4 groups (J–M).
+**Next:** Phase 2 (RED: test definition)
 
 ### ✅ B-06: Wire staging sync into restoreFromCloud — 4-Phase TDD Complete (2026-07-31)
 **Blueprint:** `docs/planning/flutter/B06_STAGING_SYNC_IN_RESTORE_PHASE1.md` — 12 assertions.
