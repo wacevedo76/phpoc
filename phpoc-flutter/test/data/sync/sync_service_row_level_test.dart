@@ -551,24 +551,27 @@ void main() {
     });
 
     // B6
-    test('B6: row exists on local only, committed=true → removed from '
-        'local staging', () async {
+    test('B6: row exists on local only, committed=true → kept in '
+        'staging for History display', () async {
       final h = await _makeRowSync();
 
-      // Local-only, committed=true → cleanup (S5)
+      // Local-only, committed=true → stays in staging for History/Dashboard
       await h.addRow(
         activityId: 'committedLocal',
         status: 'ended',
         committed: true,
       );
 
-      // No remote entries (committed by other device)
+      // No remote entries
       await h.svc.checkAndSync();
 
       final rows = await h.stagingStore.getAllRows();
-      expect(rows.where((r) => r['activity_id'] == 'committedLocal'), isEmpty,
-          reason: 'Committed local-only row must be removed during sync '
-              '(S5 cleanup — already committed on another device)');
+      final persisted = rows.where((r) => r['activity_id'] == 'committedLocal');
+      expect(persisted, isNotEmpty,
+          reason: 'Committed entries stay in staging for History/Dashboard '
+              'display; Sync tab filters them out via committed flag');
+      expect(persisted.first['committed'], true,
+          reason: 'Committed flag must be preserved');
 
       await h.close();
     });
@@ -1113,24 +1116,27 @@ void main() {
     });
 
     // E3
-    test('E3: rows deleted via StagingStore.deleteRow() when committed '
-        'remotely', () async {
+    test('E3: committed rows stay in staging (not deleted) for '
+        'History/Dashboard display', () async {
       final h = await _makeRowSync();
 
-      // Local committed row — should be cleaned up
+      // Local committed row — stays for History/Dashboard display
       await h.addRow(
-        activityId: 'toDelete',
+        activityId: 'toKeep',
         status: 'ended',
         committed: true,
       );
 
-      // Remote has no matching entry — committed locally, remote cleared
+      // Remote has no matching entry
       await h.svc.checkAndSync();
 
-      // Committed local-only row must be deleted
+      // Committed local-only row must persist in staging
       final rows = await h.stagingStore.getAllRows();
-      expect(rows.where((r) => r['activity_id'] == 'toDelete'), isEmpty,
-          reason: 'Committed local-only rows must be deleted from StagingStore');
+      final kept = rows.where((r) => r['activity_id'] == 'toKeep');
+      expect(kept, isNotEmpty,
+          reason: 'Committed rows stay in staging for History/Dashboard; '
+              'Sync tab filters them out');
+      expect(kept.first['committed'], true);
 
       await h.close();
     });
@@ -1510,7 +1516,7 @@ void main() {
 
     // H3
     test('H3: Device A commits entry → syncs → Device B syncs → '
-        'B\'s local row is deleted', () async {
+        'B\'s row marked committed, stays for History', () async {
       final hA = await _makeRowSync();
       final hB = await _makeRowSync();
 
@@ -1529,21 +1535,25 @@ void main() {
         'committed': true,
       });
 
-      // A syncs
+      // A syncs — but committed entries are filtered out of push
       await hA.svc.flushPendingQueue();
 
-      // B syncs — should see committed row and clean up
+      // B syncs — should see committed row and mark it committed too
       if (hA.transport.pushData.isNotEmpty) {
         hB.transport.setPullResponse('staging/blob', hA.transport.pushData[0]);
       }
 
       await hB.svc.checkAndSync();
 
-      // B's local row should be deleted (committed cleanup, S5)
+      // B's row stays in staging with committed=true for History display;
+      // Sync tab filters it out via the committed flag.
       final rowsB = await hB.stagingStore.getAllRows();
-      expect(
-          rowsB.where((r) => r['activity_id'] == 'commitMe'), isEmpty,
-          reason: 'Committed entry must be cleaned up from B\'s staging');
+      final committedEntry = rowsB.where((r) => r['activity_id'] == 'commitMe');
+      expect(committedEntry, isNotEmpty,
+          reason: 'Committed entries stay in staging for History/Dashboard; '
+              'Sync tab filters them out');
+      expect(committedEntry.first['committed'], true,
+          reason: 'B must recognise the entry is committed');
 
       await hA.close();
       await hB.close();

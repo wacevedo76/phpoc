@@ -241,6 +241,7 @@ export class GenesisGate {
       if (msg.includes('403')) {
         throw new AuthGenesisError('Remote authentication failed', { cause: err });
       }
+      console.warn('[GenesisGate] _pullRemoteChain failed:', err);
       throw new NetworkGenesisError('Remote unreachable during genesis check', { cause: err });
     }
 

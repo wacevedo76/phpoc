@@ -8,6 +8,7 @@ import 'package:phpoc_flutter/data/storage/providers.dart'
     show appPreferencesProvider, authServiceProvider, ledgerBackupServiceProvider,
     onboardingServiceProvider, securePreferencesProvider, syncServiceProvider;
 import 'package:phpoc_flutter/data/sync/transport.dart' show HttpTransport;
+import 'package:go_router/go_router.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 
@@ -594,6 +595,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onTap: _clearAllData,
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // ── Data / Storage ───────────────────────────────────
+          _buildSectionHeader('Data / Storage'),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.call_merge),
+              title: const Text('Import entries from another ledger'),
+              subtitle: const Text('Move entries from an old ledger'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => GoRouter.of(context).go('/import'),
             ),
           ),
           const SizedBox(height: 24),

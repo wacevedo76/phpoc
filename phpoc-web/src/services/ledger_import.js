@@ -32,7 +32,7 @@
  * @module ledger_import
  */
 
-import { jsonSort } from '../ledger/utils.js';
+import { jsonSort, jsonSortIndent2 } from '../ledger/utils.js';
 
 /**
  * Import entries from an exported ledger file.
@@ -348,8 +348,15 @@ function _importRawChain(blocks, crypto, masterKey) {
           `importLedger: malformed entry at block ${i}, entry ${j} — missing hash or data`
         );
       }
-      // Verify entry hash (over the data dict, sorted keys, Python-compatible spacing)
-      const expectedHash = crypto.sha256(jsonSort(entry.data));
+      // Verify entry hash — 3-way fallback matching Python's
+      // _verify_entry_hash_flex: sort+indent2 → sort+compact → nosort+indent2.
+      let expectedHash = crypto.sha256(jsonSortIndent2(entry.data));
+      if (entry.hash !== expectedHash) {
+        expectedHash = crypto.sha256(jsonSort(entry.data));
+      }
+      if (entry.hash !== expectedHash) {
+        expectedHash = crypto.sha256(JSON.stringify(entry.data, null, 2));
+      }
       if (entry.hash !== expectedHash) {
         throw new Error(
           `importLedger: entry hash mismatch at block ${i}, entry ${j} ` +

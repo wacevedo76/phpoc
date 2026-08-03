@@ -10,10 +10,11 @@
 
 ## Current State
 - **Branch:** `feature/flutter-mobile`
-- **Flutter test suite:** 1416/1418 GREEN (2 pre-existing restore_integration flaky: G3, G8 — pass in isolation)
+- **Flutter test suite:** 1472/1493 passing (22 failing: all pre-existing flaky/date-gated)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 
 ### Recent commits (Mon Jul 28)
+- `docs/planning/flutter/B02_IMPORT_UI_PHASE1.md` — Phase 1 blueprint (40 assertions, UI layer)
 - _(Genesis export + Block Reconstruction Phase 4 changes unstaged)_
 - `becbf08` feat(flutter): Python-compatible field-level decrypt
 - `2d4a8f3` feat(flutter): monospace font on text input fields
@@ -26,6 +27,18 @@
 - **Pause display** (Jul 27): Fixed wrong field names (`start_epoch`→`pause_start`) causing ~495,860h durations.
 
 ## Completed ✅
+
+### ✅ B-02: Cross-ledger entry import (Flutter) — 4-Phase TDD Complete (2026-08-01)
+- 79 assertions → 79 GREEN tests → Phase 4: 5 improvements (modularity + conciseness + clarity) across 1 file.
+- New: `import_result.dart`, `import_service.dart`, `import_screen.dart`, `import_providers.dart`.
+- Phase 4: extracted `_encryptedFieldMap` constant, loop-ified `_reencryptEntry`, extracted `_parsePlaintextField` helper, removed unused `_sourceChainCache` and `computeContentHash` import, added doc on decrypt→re-encrypt flow.
+- Full suite: 1456/1478 (22 pre-existing).
+
+### ✅ B-02 UI Layer: ImportScreen, sheets, provider, route, settings — 4-Phase TDD Complete (2026-08-03)
+- 40 assertions → 40 GREEN tests → Phase 4: 7 improvements across 2 files.
+- Phase 4: extracted `_extractSeedAndFile` pattern-match helper (DRY, ~24 lines → ~7), cleaned dead code in `resetToReady()` (11→3 lines), switch pattern matching in `_showProgressSheet`, fixed typo `dragRun()`→`dryRun()`, TODO marker on `_pickFile()`.
+- Files: `import_providers.dart`, `import_screen.dart`, `import_preview_sheet.dart`, `import_progress_sheet.dart`, `app_router.dart`, `settings_screen.dart`.
+- Full suite: 1472/1493 (22 pre-existing).
 
 ### ✅ Flutter Staging Schema Overhaul — 4-Phase TDD Complete (2026-07-28)
 - 110 assertions → 111 GREEN tests → Phase 4: 6 improvements (conciseness + clarity) across 3 files. Full suite: 1339/1341.
@@ -61,34 +74,21 @@
 
 ## Immediate Next Steps 🎯
 
+_No active tasks. Check `docs/planning/BACKLOG.md` for next task._
+
 ### ✅ B-06: Wire staging sync into restoreFromCloud — 4-Phase TDD Complete (2026-07-31)
 **Blueprint:** `docs/planning/flutter/B06_STAGING_SYNC_IN_RESTORE_PHASE1.md` — 12 assertions.
 **Phases 2-3:** 9/9 B-06 tests GREEN (A5, A11-A15, G1, G5, G6). 1-line fix: `await syncService.initialPull()` in `restoreFromCloud()`.
 **Phase 4:** 4 improvements in `onboarding_service.dart` — extracted `_ensureNoLedger` (4 duplicates), `_validateSeedAndPassphrase` (3 duplicates), `_pullFromCloud` (~100→~25 lines); reused `_postImportSetup` in 3 methods. Full suite: 1419/1426 (7 pre-existing flaky).
 
 ### ✅ B-05c: CLI Staging Format Alignment — 4-Phase TDD Complete (2026-07-30)
-- Phase 3: 52/52 GREEN — `core/activity_id.py`, `core/staging_hash_index.py` (new); `remote_sync.py` (staging/blob, compact JSON, hash index, no updated_at); `onboarding.py` (path updated); 12 regressions fixed; full suite 2400/2401
-- Phase 4: 3 improvements across 2 files — `_xport_pull/_xport_push` helpers eliminate 7 repeated ternary patterns (conciseness+clarity); `_build_lookup_map()` deduplicates dict-building in `compare()` (modularity+conciseness); moved `import time` to module level (clarity)
+52/52 GREEN + 3 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
 
 ### ✅ B-05b: Cross-Platform Staging Format Alignment — 4-Phase TDD Complete (2026-07-30)
-
-**Doc:** `docs/planning/CROSS_PLATFORM_STAGING_FORMAT_ALIGNMENT.md`
-
-**Phase 1:** Complete (canonical format in PHPSPEC.md §8)
-**Phase 2:** Complete (58 RED tests across 4 files)
-**Phase 3:** Complete — 165 GREEN tests, 0 regressions
-**Phase 4:** 5 improvements across 3 files:
-- `row_sync.js`: removed dead `allCommitted` variable, clarified committed-irreversible control flow (clarity), replaced O(n²) `rem.find()` with O(1) Set (conciseness)
-- `entry_dto.js`: extracted `_parsePlainOrEncrypted()` helper — eliminated 4x repeated plain:-prefix + decryption pattern (modularity/conciseness)
-- `remote_sync.js`: extracted `_dtoToCanonicalRow()` — separated DTO→canonical conversion (modularity/clarity)
-- All B-05b tests GREEN: 165/165, sync_service 289/310 (21 pre-existing, 0 new)
+165 GREEN + 5 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
 
 ### ✅ B-04: Flutter — Wire cross-device sync for row-level staging — 4-Phase TDD Complete (2026-07-28)
-- **Phase 1:** 56 assertions → `docs/planning/flutter/B04_ROW_LEVEL_SYNC_PHASE1.md`
-- **Phase 2:** 56 RED tests across 9 groups (A–I), 27 RED / 29 GREEN
-- **Phase 3:** 54/54 B-04 tests GREEN + full suite 1412/1414
-- **Phase 4:** 5 improvements across 3 files (conciseness: merged duplicate import, consolidated `_pullRemoteRows`→`_pullRemoteBlob`, shared `safeJsonDecode`; clarity: path constant, descriptive comments in `mergeEntries`)
-- Full suite: 1412/1414 (2 pre-existing flaky G3, G8)
+54/54 GREEN + 5 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
 
 ## Known Issues
 - 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation

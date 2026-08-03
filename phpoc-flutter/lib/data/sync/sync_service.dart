@@ -415,6 +415,7 @@ class SyncService {
       'device_uuid': activityData['device_uuid'] ?? '',
       'activity_status': row['activity_status'],
       'updated_at': row['updated_at'],
+      'committed': activityData['committed'] ?? false,
     };
   }
 
@@ -557,19 +558,15 @@ class SyncService {
         .toSet();
 
     // Write merged rows to StagingStore, preserving updated_at (LWW tiebreaker).
-    // Delete rows that were committed remotely (committed=true in merged result).
+    // Committed entries stay in staging for History/Dashboard display;
+    // the Sync tab filters them out via the committed flag.
     for (final row in merged) {
-      final committed = row['committed'] as bool? ?? false;
-      if (committed) {
-        // Committed on another device → remove from local staging (S5 cleanup)
-        await stagingStore!.deleteRow(row['activity_id'] as String);
-      } else {
-        await stagingStore!.putRow(row, preserveUpdatedAt: true);
-      }
+      await stagingStore!.putRow(row, preserveUpdatedAt: true);
     }
 
-    // Remove local-only rows that were filtered out by mergeEntries
-    // (committed local-only entries, S5)
+    // Remove local-only rows that were filtered out by mergeEntries.
+    // (mergeEntries keeps all local rows, so this should only catch
+    // races where staging changed between reads.)
     for (final localRow in localRows) {
       final id = localRow['activity_id'] as String?;
       if (id != null && !mergedIds.contains(id)) {

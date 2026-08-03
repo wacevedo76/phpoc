@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../core/models/entry.dart';
 
 /// Cross-device entry merge — dedup by entry_id.
@@ -99,9 +101,11 @@ class MergeEngine {
   ///
   /// Rules:
   ///   - Same activity_id in both → newer `updated_at` wins (local on tie)
+  ///   - Committed flag is irreversible: if either side is committed,
+  ///     the merged entry stays committed
   ///   - Remote-only → added to result
-  ///   - Local-only + committed → removed (cleanup, S5)
-  ///   - Local-only + not committed → kept in result
+  ///   - Local-only → kept in result (committed or not; Sync tab filter
+  ///     handles exclusion, History/Dashboard needs them for display)
   static List<Map<String, dynamic>> mergeEntries(
     List<Map<String, dynamic>> local,
     List<Map<String, dynamic>> remote,
@@ -122,13 +126,25 @@ class MergeEngine {
 
       final localEntry = localById[id];
       if (localEntry != null) {
-        // Both have it — LWW on updated_at
+        // Both have it — LWW on updated_at.
+        // Committed flag is irreversible: if either side is committed,
+        // the merged entry must stay committed (ledger-aware cleanup).
+        final localCommitted = _isCommitted(localEntry);
+        final remoteCommitted = _isCommitted(entry);
         final localTs = localEntry['updated_at'] as int? ?? 0;
         final remoteTs = entry['updated_at'] as int? ?? 0;
         if (remoteTs > localTs) {
-          result[id] = Map<String, dynamic>.from(entry);
+          final winner = Map<String, dynamic>.from(entry);
+          if (localCommitted || remoteCommitted) {
+            winner['committed'] = true;
+          }
+          result[id] = winner;
         } else {
-          result[id] = Map<String, dynamic>.from(localEntry);
+          final winner = Map<String, dynamic>.from(localEntry);
+          if (localCommitted || remoteCommitted) {
+            winner['committed'] = true;
+          }
+          result[id] = winner;
         }
       } else {
         // Remote-only row → include in result
@@ -136,22 +152,42 @@ class MergeEngine {
       }
     }
 
-    // Process local-only entries
+    // Process local-only entries — keep all, committed or not.
+    // The Sync tab filters by committed flag; History/Dashboard
+    // reads committed entries for display.
     for (final id in localById.keys) {
       if (result.containsKey(id)) continue; // already handled
-
-      final entry = localById[id]!;
-      final committed = entry['committed'] as bool? ?? false;
-
-      if (committed) {
-        // Local-only row already committed → exclude from result (cleanup)
-        continue;
+      final entry = Map<String, dynamic>.from(localById[id]!);
+      // Ensure row-level committed flag exists when activity blob has it
+      if (_isCommitted(entry) && entry['committed'] != true) {
+        entry['committed'] = true;
       }
-
-      // Local-only row not yet committed → preserve
-      result[id] = Map<String, dynamic>.from(entry);
+      result[id] = entry;
     }
 
     return result.values.toList();
+  }
+
+  /// Check whether a staging row is committed.
+  ///
+  /// Checks the row-level `committed` field first, then falls back to
+  /// the `committed` flag inside the `activity` JSON blob. This ensures
+  /// entries seeded from ledger blocks by [LedgerPullService] are
+  /// recognised as committed even when only the activity blob carries
+  /// the flag.
+  static bool _isCommitted(Map<String, dynamic> row) {
+    // Row-level flag (canonical) — set by putRow for ledger-seeded entries
+    if (row['committed'] == true) return true;
+
+    // Fallback: activity JSON blob (entries seeded before row-level fix)
+    try {
+      final activityStr = row['activity'] as String?;
+      if (activityStr != null) {
+        final activity = jsonDecode(activityStr);
+        if (activity is Map && activity['committed'] == true) return true;
+      }
+    } catch (_) {}
+
+    return false;
   }
 }

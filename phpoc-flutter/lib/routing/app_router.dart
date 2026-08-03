@@ -9,6 +9,7 @@ import '../features/dashboard/dashboard_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/sync/sync_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/import/import_screen.dart';
 import '../features/shared/app_scaffold.dart';
 
 /// App lifecycle phase — drives routing redirects.
@@ -122,6 +123,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/history', builder: (_, _) => const HistoryScreen()),
           GoRoute(path: '/sync', builder: (_, _) => const SyncScreen()),
           GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
+          GoRoute(path: '/import', builder: (_, _) => const ImportScreen()),
         ],
       ),
     ],

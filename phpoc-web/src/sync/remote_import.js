@@ -32,7 +32,7 @@
 
 import { bytesToBase64 } from './base64.js';
 import { REMOTE_LEDGER_BLOCKS_PREFIX } from './keys.js';
-import { jsonSortIndent2 } from '../ledger/utils.js';
+import { jsonSortIndent2, jsonSort } from '../ledger/utils.js';
 
 const _textDecoder = new TextDecoder();
 
@@ -493,7 +493,18 @@ export class WorkerImportSource {
         if (!entry.hash || !entry.data) {
           throw new Error(`Malformed entry at block ${i}, entry ${j} — missing hash or data`);
         }
-        const expectedHash = crypto.sha256(jsonSortIndent2(entry.data));
+        // Try canonical (sort+indent2) first, then legacy formats.
+        // Matches Python's _verify_entry_hash_flex: sort+indent2 →
+        // sort+compact → nosort+indent2.
+        let expectedHash = crypto.sha256(jsonSortIndent2(entry.data));
+        if (entry.hash !== expectedHash) {
+          // Legacy CLI: sorted keys, compact (no indent)
+          expectedHash = crypto.sha256(jsonSort(entry.data));
+        }
+        if (entry.hash !== expectedHash) {
+          // Legacy Web: unsorted keys, 2-space indent (JSON.stringify)
+          expectedHash = crypto.sha256(JSON.stringify(entry.data, null, 2));
+        }
         if (entry.hash !== expectedHash) {
           throw new Error(
             `Entry hash mismatch at block ${i}, entry ${j} ("${entry.data.title || 'untitled'}")`

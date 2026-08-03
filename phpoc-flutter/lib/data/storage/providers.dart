@@ -147,6 +147,7 @@ final ledgerPullServiceProvider = Provider<LedgerPullService>((ref) {
     transport: null, // Wired later by connectWorker
     backupService: ref.watch(ledgerBackupServiceProvider),
     stagingStorage: StagingStorage(db),
+    stagingStore: StagingStore(db),
   );
 });
 

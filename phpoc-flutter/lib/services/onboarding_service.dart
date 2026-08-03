@@ -162,6 +162,7 @@ class OnboardingService {
         transport: transport,
         backupService: pull.backupService,
         stagingStorage: pull.stagingStorage,
+        stagingStore: pull.stagingStore,
       );
     }
 

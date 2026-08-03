@@ -710,5 +710,133 @@ void main() {
         reason: 'Build tech stack info must include "flutter"',
       );
     });
+
+    // ═══════════════════════════════════════════════════════════
+    // Group S: Import tile in Settings (4 assertions)
+    // ═══════════════════════════════════════════════════════════
+
+    // S1 — Import tile in Data/Storage section
+    testWidgets('S1: settings shows "Import entries from another ledger" '
+        'tile in the Data/Storage section', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      // Scroll to find the import tile
+      await tester.scrollUntilVisible(
+        find.textContaining('Import'),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Import entries from another ledger'),
+        findsOneWidget,
+        reason: 'Settings must have an import tile with descriptive title',
+      );
+    });
+
+    // S2 — Tapping import tile navigates to /import
+    testWidgets('S2: tapping the import tile navigates to /import',
+        (tester) async {
+      // Build a GoRouter with /settings and /import routes
+      final router = GoRouter(
+        initialLocation: '/settings',
+        routes: [
+          GoRoute(
+            path: '/settings',
+            builder: (_, __) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: '/import',
+            builder: (_, __) => const Placeholder(),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: defaultScreenOverrides(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Scroll to the import tile
+      await tester.scrollUntilVisible(
+        find.textContaining('Import'),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      // Tap the import tile
+      await tester.tap(find.text('Import entries from another ledger'));
+      await tester.pumpAndSettle();
+
+      // Should navigate to /import (a Placeholder in this test setup)
+      expect(
+        find.byType(Placeholder),
+        findsOneWidget,
+        reason: 'Tapping import tile must navigate to /import route',
+      );
+    });
+
+    // S3 — Import tile has appropriate icon
+    testWidgets('S3: import tile has an appropriate icon '
+        '(call_merge or file_open)', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      // Scroll to find the import tile
+      await tester.scrollUntilVisible(
+        find.textContaining('Import'),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      // The import tile must have a leading icon
+      final importTile = find.ancestor(
+        of: find.text('Import entries from another ledger'),
+        matching: find.byType(ListTile),
+      );
+      expect(importTile, findsOneWidget,
+          reason: 'Import tile must be a ListTile');
+
+      // Verify an icon exists (Icons.call_merge, Icons.file_open, or similar)
+      final iconFinder = find.descendant(
+        of: importTile,
+        matching: find.byType(Icon),
+      );
+      expect(iconFinder, findsWidgets,
+          reason: 'Import tile must have an icon');
+    });
+
+    // S4 — Import tile subtitle describes the feature
+    testWidgets('S4: import tile subtitle describes the feature',
+        (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      // Scroll to find the import tile
+      await tester.scrollUntilVisible(
+        find.textContaining('Import'),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      // The tile must have a subtitle describing the feature
+      final hasDescriptiveSubtitle =
+          find.textContaining('Move entries').evaluate().isNotEmpty ||
+          find.textContaining('old ledger').evaluate().isNotEmpty ||
+          find.textContaining('another ledger').evaluate().isNotEmpty ||
+          find.textContaining('Import entries').evaluate().isNotEmpty;
+      expect(
+        hasDescriptiveSubtitle,
+        isTrue,
+        reason: 'Import tile must have a subtitle describing what it does',
+      );
+    });
   });
 }

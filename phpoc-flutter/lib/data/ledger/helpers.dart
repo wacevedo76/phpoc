@@ -52,10 +52,14 @@ String computeEntryHash(Map<String, dynamic> data) {
   return sha256(canon);
 }
 
-/// Verify an entry hash against canonical (indent2) AND legacy compact formats.
+/// Verify an entry hash against canonical (indent2) AND legacy formats.
 ///
-/// Tries the canonical indent2 format first, then falls back to compact
-/// (sort_keys=True, no indent) with and without separator spaces.
+/// Tries all four serialization formats in order, matching the
+/// Python/JS _verify_entry_hash_flex / 3-way fallback pattern:
+///  1. sort+indent2 (canonical: jsonSortIndent2)
+///  2. sort+compact with spaces (Python-compatible: jsonSort)
+///  3. sort+compact no spaces (JS-compatible: jsonEncodeSortedNoSpaces)
+///  4. nosort+indent2 (legacy web: JsonEncoder.withIndent, unsorted keys)
 bool verifyEntryHashTwoWay(Map<String, dynamic> data, String expectedHash) {
   // Canonical: sort_keys + indent=2
   if (computeEntryHash(data) == expectedHash) return true;
@@ -67,6 +71,11 @@ bool verifyEntryHashTwoWay(Map<String, dynamic> data, String expectedHash) {
   // Legacy fallback 2: sorted keys, no-separator-spaces (JS compact)
   final noSpaceJson = jsonEncodeSortedNoSpaces(data);
   if (sha256(noSpaceJson) == expectedHash) return true;
+
+  // Legacy fallback 3: unsorted keys, 2-space indent
+  // (pre-entry-hash-consolidation web: JSON.stringify(obj, null, 2))
+  final unsortedIndentJson = const JsonEncoder.withIndent('  ').convert(data);
+  if (sha256(unsortedIndentJson) == expectedHash) return true;
 
   return false;
 }

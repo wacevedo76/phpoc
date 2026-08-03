@@ -505,7 +505,12 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Effort:** ~30 min. **Trigger:** When manual archiving friction becomes real. **Next action:** N/A — pick up when needed.
 
-### B-02 🟢: Cross-ledger entry migration
+### B-02 ✅: Cross-ledger entry migration
+
+**Flutter Phase 1–4:** ✅ Complete — 79 Flutter assertions → 79 GREEN tests → 5 Phase 4 improvements.
+
+**Phase 1:** ✅ Complete — 116 assertions across 13 groups (A–M) covering all three clients.
+Blueprint: `docs/planning/B02_CROSS_LEDGER_MIGRATION_PHASE1.md`.
 
 **Why:** A user with two separate ledgers (old and new, different seeds, non-overlapping
 activity periods) may want to retire the newer one and consolidate all entries into the
@@ -519,13 +524,9 @@ ledger's last entry (no overlaps). The newer ledger is retired after migration.
 The protocol has all the building blocks (two seeds → two `CryptoManager`s, versioned MK
 derivation, export/import formats) but no packaged command.
 
-**Deliverable:** `cli/migrate_ledger.py` — `ph migrate-ledger --from-seed <seed>` command:
-1. Auth with both seeds → two `CryptoManager` instances
-2. Decrypt all entries from new ledger's day blocks
-3. Re-encrypt with old ledger's MK and commit as new day blocks (preserving dates)
-4. Rebuild index, archive/retire new ledger
-5. Verify chain integrity post-migration
+**Deliverable:** `cli/import_ledger.py` — `ph import-ledger --seed <seed>` or `--file <path>` command.
+Also: `phpoc-web/src/ledger/import_entries.js`, `lib/services/import_service.dart`.
 
-**Effort:** Medium (~1 day). **Depends on:** I-01 (versioned MK) ✅, I-01a (rotation execution) ✅ —
-not a hard dependency but rotation should land first. **Priority:** 🟢 Low — useful but not
-protocol-critical; workaround exists via manual export→import→commit.
+**Effort:** Medium (~1 day). **Depends on:** I-01 (versioned MK) ✅, I-01a (rotation execution) ✅,
+I-06 (content_hash required) ✅, I-09 (device attribution) ✅.
+**Priority:** 🟢 Low — useful but not protocol-critical; workaround exists via manual export→import→commit.

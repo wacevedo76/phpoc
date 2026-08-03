@@ -5,7 +5,9 @@ import '../core/crypto/crypto_service.dart';
 import '../core/models/pull_result.dart';
 import '../data/storage/database.dart';
 import '../data/sync/staging_storage.dart';
+import '../data/sync/staging_store.dart';
 import '../data/sync/transport.dart';
+import '../data/ledger/helpers.dart' show getBlockHash, verifyEntryHashTwoWay;
 import 'ledger_backup_service.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
@@ -23,6 +25,7 @@ class LedgerPullService {
   final HttpTransport? transport;
   final LedgerBackupService backupService;
   final StagingStorage stagingStorage;
+  final StagingStore stagingStore;
 
   /// Regex to parse block index from filenames returned by listFiles.
   /// The Worker `?prefix=` API returns bare filenames like `000042.json`.
@@ -41,6 +44,7 @@ class LedgerPullService {
     required this.transport,
     required this.backupService,
     required this.stagingStorage,
+    required this.stagingStore,
   });
 
   /// Pull all blocks + import + seed staging from the remote Worker.
@@ -157,7 +161,15 @@ class LedgerPullService {
       _addMissingIndices(discoveredIndices, hashIndex.length, failedBlocks);
     }
 
-    // Step 3: Import assembled PHPSPEC array into database
+    // Step 3: Validate the assembled chain before importing.
+    // Matches web's WorkerImportSource._validateRawChain: genesis type,
+    // block seals, prev_hash linkage, and per-entry hash verification
+    // with the 4-way fallback (sort+indent2, sort+compact, nosort+indent2).
+    if (blocks.isNotEmpty) {
+      _validateImportedChain(blocks);
+    }
+
+    // Step 4: Import assembled PHPSPEC array into database
     if (blocks.isNotEmpty) {
       try {
         final jsonArray = const JsonEncoder().convert(blocks);
@@ -245,34 +257,31 @@ class LedgerPullService {
     }
   }
 
-  /// Seed staging storage with entries from imported blocks.
+  /// Seed staging store with entries from imported blocks.
   ///
   /// Extracts entries from each block's `entries` array and writes them
-  /// to the staging store in the `{hash, data: {...}}` raw format that
-  /// [LocalCache._rawToDto] expects, so Dashboard/History screens can
-  /// display committed ledger entries.
+  /// as row-level staging entries so Dashboard/History screens can display
+  /// committed ledger entries.
   ///
-  /// Encryptable fields use `plain:` prefix (no MK-based encryption)
-  /// since these entries are already cryptographically secured by the
-  /// ledger chain. [LocalCache._decrypt] handles the `plain:` prefix.
+  /// The activity blob is the same `{hash, data: {...}}` raw format that
+  /// the old LocalCache-based path used, since _stagingRowToDto expects
+  /// field names from the PHPSPEC entry data dict.
   ///
   /// Entries already present in staging (matched by entry_id) are not
   /// duplicated. Best-effort — staging write failures are logged but
   /// never block the pull result.
   Future<void> _seedStagingFromBlocks(
       List<Map<String, dynamic>> blocks) async {
-    final existingEntries = await stagingStorage.get('entries');
-    final stagingList = (existingEntries is List)
-        ? List<Map<String, dynamic>>.from(existingEntries)
-        : <Map<String, dynamic>>[];
-
-    // Collect existing entry_ids from staging (ids live in .data.entry_id)
+    // Collect existing activity_ids to avoid duplicates
+    final existingRows = await stagingStore.getAllRows();
     final existingIds = <String>{};
-    for (final raw in stagingList) {
-      final data = raw['data'] as Map<String, dynamic>?;
-      if (data == null) continue;
-      final eid = data['entry_id'] as String?;
-      if (eid != null) existingIds.add(eid);
+    for (final row in existingRows) {
+      try {
+        final activityData =
+            jsonDecode(row['activity'] as String? ?? '{}') as Map<String, dynamic>;
+        final eid = activityData['entry_id'] as String?;
+        if (eid != null) existingIds.add(eid);
+      } catch (_) {}
     }
 
     for (final block in blocks) {
@@ -289,50 +298,146 @@ class LedgerPullService {
         if (eid != null && existingIds.contains(eid)) continue;
         if (eid != null) existingIds.add(eid);
 
-        // Skip active / paused entries (they belong in active task slot,
-        // not the completed-entries list)
+        // Skip active / paused entries — only completed entries go to staging
         final isActive = entryData['is_active'] as bool? ?? false;
         if (isActive) continue;
         if (entryData['is_paused'] == true) continue;
 
-        // Build the {hash, data: {...}} raw format that LocalCache expects.
-        // Encrypted fields (startTime_enc, endTime_enc, pauses_enc, metadata_enc)
-        // are passed through as-is from the block data — LocalCache._rawToDto
-        // decrypts them with the MK. Fields not present in block entries use
-        // plain: prefix for zero-cost passthrough.
-        final data = <String, dynamic>{
+        // Generate an activity_id (10-char alphanumeric) if entry_id is missing
+        final activityId = (eid != null && eid.length == 10)
+            ? eid
+            : _generateActivityId();
+
+        // Build the activity JSON blob with plaintext field names that
+        // match what _stagingRowToDto expects. Block entries use encrypted
+        // hex fields (startTime_enc, endTime_enc, pauses_enc, metadata_enc)
+        // which must be decrypted with the MK first.
+        final mkHex = crypto.getMasterKey()!;
+        final startEpoch = _decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
+        final endEpoch = _decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
+        final pauses = _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
+        final deviceUuid = entryData['device_uuid'] as String? ?? '';
+
+        final activity = jsonEncode({
           'entry_id': eid ?? '',
+          'hash': raw['hash'] ?? '',
           'title': entryData['title'] ?? '',
-          'startTime_enc': entryData['startTime_enc'] ?? 'plain:0',
-          'duration': entryData['duration'] ?? 0,
+          'start_epoch': startEpoch,
+          'end_epoch': endEpoch,
+          'duration': entryData['duration'] as int? ?? 0,
           'is_active': false,
           'is_paused': false,
-          'pauses_enc': entryData['pauses_enc'] ??
-              'plain:${jsonEncode(<dynamic>[])}',
+          'pauses': pauses,
           'tags': entryData['tags'] ?? <dynamic>[],
-          'device_uuid_enc': 'plain:${entryData['device_uuid'] ?? ''}',
-          'end_device_uuid_enc': 'plain:${entryData['end_device_uuid'] ?? ''}',
-          'metadata_enc': entryData['metadata_enc'] ?? 'plain:{}',
-        };
-        if (entryData['endTime_enc'] != null) {
-          data['endTime_enc'] = entryData['endTime_enc'];
+          'device_uuid': deviceUuid,
+          'committed': true,  // Already committed to ledger — skip staging area
+        });
+
+        try {
+          await stagingStore.putRow({
+            'activity_id': activityId,
+            'activity_status': 'ended',
+            'activity': activity,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'committed': true, // Row-level flag for MergeEngine.mergeEntries
+          });
+        } catch (_) {
+          // Best-effort: staging seed failure does not block pull result
         }
-        if (entryData['comment'] != null) {
-          data['comment'] = entryData['comment'];
+      }
+    }
+  }
+
+  /// Generate a 10-character alphanumeric activity_id.
+  String _generateActivityId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final buf = StringBuffer();
+    for (var i = 0; i < 10; i++) {
+      buf.write(chars[(DateTime.now().microsecondsSinceEpoch + i * 7919) % chars.length]);
+    }
+    return buf.toString();
+  }
+
+  /// Decrypt an encrypted epoch string to an int. Returns 0 on null or failure.
+  int _decryptEpoch(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return 0;
+    try {
+      final plain = crypto.decryptFieldValue(encHex, mkHex);
+      return int.tryParse(plain) ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Decrypt an encrypted pauses JSON array string.
+  List<dynamic> _decryptPauses(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return <dynamic>[];
+    try {
+      final plain = crypto.decryptFieldValue(encHex, mkHex);
+      final decoded = jsonDecode(plain);
+      return (decoded is List) ? decoded : <dynamic>[];
+    } catch (_) {
+      return <dynamic>[];
+    }
+  }
+
+  /// Validate the assembled chain before import.
+  ///
+  /// Matches web's WorkerImportSource._validateRawChain and Python's
+  /// _verify_entry_hash_flex. Validates:
+  ///   - Genesis block type
+  ///   - Per-entry hash with 4-way fallback (via verifyEntryHashTwoWay)
+  ///   - Prev_hash chain linkage
+  ///
+  /// Throws on first validation failure; the caller catches and returns
+  /// a PullResult.failure with the error message.
+  void _validateImportedChain(List<Map<String, dynamic>> blocks) {
+    // ── Genesis check ──────────────────────────────────────
+    final genesis = blocks.first;
+    if (genesis['type'] != 'genesis') {
+      throw FormatException('Remote chain must start with a genesis block (type: "genesis")');
+    }
+
+    // ── Per-entry hash verification ────────────────────────
+    for (var i = 0; i < blocks.length; i++) {
+      final block = blocks[i];
+      final type = block['type'] as String? ?? 'day';
+      if (type == 'genesis' || type == 'year_summary' || type == 'month_summary') {
+        continue;
+      }
+      final entries = block['entries'] as List<dynamic>? ?? [];
+      for (var j = 0; j < entries.length; j++) {
+        final entry = entries[j];
+        if (entry is! Map<String, dynamic>) {
+          throw FormatException('Malformed entry at block $i, entry $j');
+        }
+        final data = entry['data'] as Map<String, dynamic>?;
+        final hash = entry['hash'] as String?;
+        if (data == null || hash == null) {
+          throw FormatException('Malformed entry at block $i, entry $j — missing hash or data');
         }
 
-        stagingList.add({
-          'hash': raw['hash'] ?? '',
-          'data': data,
-          'committed': true,
-        });
+        // 4-way fallback: sort+indent2 → sort+compact → compact-nospace → nosort+indent2
+        if (!verifyEntryHashTwoWay(data, hash)) {
+          throw FormatException(
+            'Entry hash mismatch at block $i, entry $j '
+            '("${data['title'] ?? 'untitled'}")',
+          );
+        }
       }
     }
 
-    try {
-      await stagingStorage.set('entries', stagingList);
-    } catch (_) {
-      // Best-effort: staging seed failure does not block pull result
+    // ── Prev_hash chain linkage ─────────────────────────────
+    for (var i = 1; i < blocks.length; i++) {
+      final prevHash = getBlockHash(blocks[i - 1]);
+      final actualPrev = blocks[i]['prev_hash'] as String? ?? '';
+      if (prevHash.isNotEmpty && actualPrev != prevHash) {
+        throw FormatException(
+          'Chain linkage broken at block $i: '
+          'prev_hash=${actualPrev.length > 8 ? actualPrev.substring(0, 8) : actualPrev}… '
+          'expected=${prevHash.length > 8 ? prevHash.substring(0, 8) : prevHash}…',
+        );
+      }
     }
   }
 

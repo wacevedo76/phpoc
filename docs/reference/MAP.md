@@ -47,12 +47,14 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | File | Temp | Key contents |
 |---|---|---|
 | `lib/core/utils/format_utils.dart` | HOT | Shared date/time/duration formatters: dateTime, date, dateShort, time, duration, epochToIsoDate, epochToDateStr, monthAbbr, parseIsoDateStr |
+| `lib/core/models/import_result.dart` | HOT | **NEW (B-02 Phase 3)** — ImportPreview, ImportResult, DateRange, ImportException |
 | `lib/data/ledger/helpers.dart` | HOT | **NEW** — getBlockHash, computeEntryHash, verifyEntryHashTwoWay, computeContentHash, verifyContentHash |
 | `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain: buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, computeSeal, verifySeal, identity MAC |
 | `lib/data/ledger/engine.dart` | HOT | **NEW** — LedgerEngine: commit, verify, revert, queryIndex, rebuildIndex (coordinates chain + index + staging) |
 | `lib/data/ledger/index_manager.dart` | HOT | **NEW** — IndexManager: blind index (date→title→duration), encrypted at rest, plaintext fallback |
 | `lib/data/ledger/summary_policy.dart` | HOT | **NEW** — SummaryPolicy hierarchy: YearMonthSummaryPolicy, YearOnlySummaryPolicy, NoSummaryPolicy |
 | `lib/data/ledger/merge.dart` | HOT | **NEW** — Chain merge: fork detection, content-hash dedup, chain rebuild with summaries |
+| `lib/services/import_service.dart` | HOT | **NEW (B-02 Phase 3)** — ImportService: dryRun, import, importFromFile, rollback |
 | `lib/features/landing/landing_screen.dart` | HOT | Landing screen — Log In / New Ledger routing |
 | `lib/features/auth/unlock_screen.dart` | HOT | Unlock screen — passphrase entry, validation, auth flow |
 | `lib/features/onboarding/onboarding_screen.dart` | HOT | Onboarding — create/import/connect sub-flows |
@@ -60,10 +62,14 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `lib/features/history/history_screen.dart` | HOT | History — CalendarMonthGrid, entry list grouped by date, single-date toggle + date-range filter, detail expansion |
 | `lib/features/history/calendar_month_grid.dart` | HOT | **NEW (Phase 3)** — CalendarMonthGrid widget: month grid, green dots, prev/next month+year navigation, date selection |
 | `lib/features/sync/sync_screen.dart` | HOT | Sync — status, manual trigger, pending count |
-| `lib/features/settings/settings_screen.dart` | HOT | Settings — Worker config, passphrase change, seed export to file, ledger backup/restore |
+| `lib/features/settings/settings_screen.dart` | HOT | Settings — Worker config, passphrase change, seed export to file, ledger backup/restore, import tile (B-02) |
+| `lib/features/import/import_screen.dart` | HOT | **B-02 Phase 3** — ImportScreen (ConsumerStatefulWidget): seed field, file picker, preview button, preview/progress sheets |
+| `lib/features/import/import_providers.dart` | HOT | **B-02 Phase 3** — ImportNotifier (Notifier<ImportState>) + importServiceProvider: sealed state machine (Initial→Ready→Previewing→Loaded→Running→Done/Failed) |
+| `lib/features/import/import_preview_sheet.dart` | HOT | **NEW (B-02 Phase 3)** — ImportPreviewSheet (ModalBottomSheet): entry count, date range, conflicts, Import/ImportAnyway |
+| `lib/features/import/import_progress_sheet.dart` | HOT | **NEW (B-02 Phase 3)** — ImportProgressSheet (ModalBottomSheet): .running (phase + indicator), .success (summary), .error (recovery) |
 | `lib/features/shared/app_scaffold.dart` | HOT | Bottom-nav shell (Dashboard/History/Sync/Settings) |
 | `lib/features/shared/loading_indicator.dart` | HOT | Shared loading indicator widget |
-| `lib/routing/app_router.dart` | HOT | GoRouter + AppLifecycleNotifier (5-phase lifecycle) |
+| `lib/routing/app_router.dart` | HOT | GoRouter + AppLifecycleNotifier (5-phase lifecycle), /import route (B-02) |
 
 ### Web/Mobile (phpoc-web)
 

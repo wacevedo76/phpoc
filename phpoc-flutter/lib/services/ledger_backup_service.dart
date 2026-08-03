@@ -138,11 +138,13 @@ class LedgerBackupService {
     }
 
     // ── day_index → blockIndex ───────────────────────────────
-    final dayIndex = json[PhpSpecFormat.kDayIndex];
-    if (dayIndex is! int) {
-      throw FormatException(
-          'Block at index $index: missing or invalid "day_index"');
-    }
+    // Summary blocks (month_summary, year_summary) omit day_index
+    // — they use month/year fields instead. Also, day_index values
+    // from day blocks may collide with array positions of summary
+    // blocks (e.g., month_summary at index 2 then day with day_index=2).
+    // Use the array index for all blocks to guarantee uniqueness and
+    // preserve chain order. day_index is not used after import.
+    final dayIndex = index;
 
     // ── prev_hash → prevHash ─────────────────────────────────
     final prevHash = json[PhpSpecFormat.kPrevHash];

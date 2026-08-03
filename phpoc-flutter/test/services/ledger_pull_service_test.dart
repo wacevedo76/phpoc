@@ -7,6 +7,7 @@ import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/core/models/pull_result.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
@@ -131,6 +132,7 @@ Future<LedgerPullService> _makeService({
   FakePullTransport? transport,
   LedgerBackupService? backupService,
   StagingStorage? stagingStorage,
+  StagingStore? stagingStore,
   bool cacheMk = true,
 }) async {
   final d = db ?? AppDatabase.inMemory();
@@ -144,12 +146,14 @@ Future<LedgerPullService> _makeService({
   final t = transport ?? FakePullTransport();
   final b = backupService ?? LedgerBackupService(db: d);
   final s = stagingStorage ?? StagingStorage(d);
+  final store = stagingStore ?? StagingStore(d);
   return LedgerPullService(
     db: d,
     crypto: c,
     transport: t,
     backupService: b,
     stagingStorage: s,
+    stagingStore: store,
   );
 }
 
@@ -245,6 +249,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       expect(service, isA<LedgerPullService>());
     });
@@ -257,6 +262,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       expect(service.pullAll, isA<Function>());
     });
@@ -274,6 +280,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
 
       expect(
@@ -292,6 +299,7 @@ void main() {
         transport: null as dynamic,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
 
       // Should not throw — returns empty/success result for local-only mode
@@ -329,6 +337,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
     });
 
@@ -527,6 +536,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
     });
 
@@ -780,6 +790,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
 
       final result = await service.pullAll();
@@ -816,6 +827,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
 
       final result = await service.pullAll();
@@ -857,6 +869,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       final result = await service.pullAll();
 
@@ -882,6 +895,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       final result = await service.pullAll();
 
@@ -923,6 +937,7 @@ void main() {
             transport: transport,
             backupService: backupService,
             stagingStorage: stagingStorage,
+            stagingStore: StagingStore(db),
           );
 
       // H1
@@ -1025,6 +1040,49 @@ void main() {
               reason: 'Entry must have tags list');
         }
       });
+
+      // H5
+      test('H5: Seeded staging rows have row-level committed=true '
+          '(not just in activity blob)', () async {
+        transport.hashIndexJson = jsonEncode(['h0']);
+        _storeObfuscatedBlock(
+            transport, crypto, 0,
+            _genesisBlockJson(blockHash: 'h0', identitySeal: 'h0', entries: [
+              {'entry_id': 'e5', 'title': 'Committed Entry Check',
+               'start_epoch': 1717200000000, 'end_epoch': 1717203600000,
+               'duration': 3600000, 'is_active': false, 'is_paused': false,
+               'tags': [], 'date': '2024-06-01', 'hash': 'xyz789'},
+            ]));
+
+        final service = _makeService();
+        final result = await service.pullAll();
+
+        expect(result.success, isTrue);
+        expect(result.entriesStaged, 1);
+
+        // Read raw staging rows (not through SyncService DTO layer)
+        final stagingStore = StagingStore(db);
+        final rows = await stagingStore.getAllRows();
+        expect(rows, isNotEmpty);
+
+        for (final row in rows) {
+          expect(
+            row['committed'],
+            true,
+            reason: 'Entries seeded from ledger blocks must have '
+                'committed=true at the row level so MergeEngine '
+                'can detect them during sync',
+          );
+          // Verify the activity blob also has committed=true
+          final activity = jsonDecode(row['activity'] as String);
+          expect(
+            activity['committed'],
+            true,
+            reason: 'Activity blob must also carry committed for '
+                '_stagingRowToDto display rendering',
+          );
+        }
+      });
     });
 
     // F5
@@ -1041,6 +1099,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
 
       // Fire two concurrent pullAll() calls
