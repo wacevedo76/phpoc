@@ -10,6 +10,8 @@ import 'package:phpoc_flutter/data/storage/providers.dart'
 import 'package:phpoc_flutter/data/sync/transport.dart' show HttpTransport;
 import 'package:go_router/go_router.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
+import 'package:phpoc_flutter/app.dart';
+import 'package:phpoc_flutter/theme/app_theme.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 
 /// Settings — Worker config, passphrase change, seed export, about.
@@ -42,6 +44,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isExporting = false;
   final _exportPassphraseController = TextEditingController();
 
+  // Theme state
+  ThemeVariant _selectedTheme = ThemeVariant.greenLight;
+  String get _themeLabel => AppTheme.variants[_selectedTheme] ?? 'Green – Light';
+
   @override
   void dispose() {
     _workerUrlController.dispose();
@@ -62,6 +68,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final sync = ref.read(syncServiceProvider);
     final prefs = ref.read(appPreferencesProvider);
     final securePrefs = ref.read(securePreferencesProvider);
+
+    // Load theme preference
+    prefs.getThemeMode().then((mode) {
+      if (!mounted) return;
+      final v = ThemeVariant.values.firstWhere(
+        (v) => v.name == mode,
+        orElse: () => ThemeVariant.greenLight,
+      );
+      setState(() => _selectedTheme = v);
+    });
 
     // Restore transport from saved credentials if not already wired
     if (!sync.isRemoteAvailable) {
@@ -505,6 +521,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  // ── Theme ───────────────────────────────────────────────────
+
+  void _onThemeChanged(ThemeVariant? variant) {
+    if (variant == null) return;
+    setState(() => _selectedTheme = variant);
+    ref.read(themeProvider.notifier).setVariant(variant);
+  }
+
   // ── Build ────────────────────────────────────────────────────
 
   @override
@@ -546,6 +570,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 if (_showWorkerEditor) _buildWorkerEditor(),
               ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // ── Appearance ────────────────────────────────────────
+          _buildSectionHeader('Appearance'),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('Theme'),
+              subtitle: Text(_themeLabel),
+              trailing: DropdownButton<ThemeVariant>(
+                value: _selectedTheme,
+                underline: const SizedBox(),
+                items: ThemeVariant.values.map((v) {
+                  return DropdownMenuItem(
+                    value: v,
+                    child: Text(AppTheme.variants[v] ?? v.name),
+                  );
+                }).toList(),
+                onChanged: _onThemeChanged,
+              ),
             ),
           ),
           const SizedBox(height: 24),

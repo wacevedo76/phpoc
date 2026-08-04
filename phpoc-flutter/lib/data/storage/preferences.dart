@@ -19,6 +19,7 @@ class AppPreferences {
   static const _keyDeviceUuid = 'device_uuid';
   static const _keyDeviceCookie = 'device_cookie';
   static const _keyHasExistingData = 'has_existing_data';
+  static const _keyThemeMode = 'theme_mode';
 
   // ── Worker URL ───────────────────────────────────────────
 
@@ -86,6 +87,22 @@ class AppPreferences {
       return;
     }
     await _prefs!.setBool(_keyHasExistingData, value);
+  }
+
+  // ── Theme Mode ──────────────────────────────────────────
+
+  /// Returns 'light', 'dark', or 'system' (default).
+  Future<String> getThemeMode() async {
+    if (_isTest) return _store![_keyThemeMode] as String? ?? 'system';
+    return _prefs!.getString(_keyThemeMode) ?? 'system';
+  }
+
+  Future<void> setThemeMode(String mode) async {
+    if (_isTest) {
+      _store![_keyThemeMode] = mode;
+      return;
+    }
+    await _prefs!.setString(_keyThemeMode, mode);
   }
 
   // ── Clear ────────────────────────────────────────────────
