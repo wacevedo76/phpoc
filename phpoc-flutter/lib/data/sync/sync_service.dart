@@ -402,8 +402,10 @@ class SyncService {
   /// Convert a staging row to a flat DTO compatible with old consumers.
   Map<String, dynamic> _stagingRowToDto(Map<String, dynamic> row) {
     final activityData = _decodeActivityBlob(row['activity'] as String?);
+    final activityId = row['activity_id'];
     return {
-      'activity_id': row['activity_id'],
+      'activity_id': activityId,
+      'entry_id': activityId, // bridge: dashboard uses entry_id
       'title': activityData['title'] ?? row['title'] ?? '',
       'start_epoch': activityData['start_epoch'] ?? row['start_epoch'] ?? 0,
       'end_epoch': activityData['end_epoch'] ?? row['end_epoch'],
@@ -625,6 +627,11 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
 
   Future<void> endByEntryId(String entryId, int endEpoch) async {
+    if (stagingStore != null) {
+      await end(entryId, endEpoch);
+      return;
+    }
+
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndexById(entries, entryId);
     final entry = entries[foundIndex];
@@ -650,6 +657,11 @@ class SyncService {
   }
 
   Future<void> pauseByEntryId(String entryId, int pauseEpoch) async {
+    if (stagingStore != null) {
+      await pause(entryId, pauseEpoch);
+      return;
+    }
+
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndexById(entries, entryId);
     await _local.addPause(foundIndex, pauseEpoch);
@@ -657,6 +669,11 @@ class SyncService {
   }
 
   Future<void> unpauseByEntryId(String entryId, int unpauseEpoch) async {
+    if (stagingStore != null) {
+      await unpause(entryId, unpauseEpoch);
+      return;
+    }
+
     final entries = await _local.readEntries();
     final foundIndex = _findActiveEntryIndexById(entries, entryId);
     await _local.closePause(foundIndex, unpauseEpoch);
@@ -774,6 +791,15 @@ class SyncService {
   // Helpers
   // ═════════════════════════════════════════════════════════════
 
+  /// Check whether a staging row is committed, checking both the row-level
+  /// flag and the committed field inside the activity JSON blob.
+  bool _rowIsCommitted(Map<String, dynamic> row) {
+    if (row['committed'] == true) return true;
+    final activity = _decodeActivityBlob(row['activity'] as String?);
+    if (activity['committed'] == true) return true;
+    return false;
+  }
+
   /// Build the activity data map for new captures.
   Map<String, dynamic> _buildActivityData({
     required String title,
@@ -882,13 +908,18 @@ class SyncService {
       // Get all ended entries
       final ended = await stagingStore!.getRowsByStatus('ended');
 
+      // Filter out already-committed entries (seeded by ledger pull service).
+      // An entry is committed if it has a row-level committed flag OR the
+      // activity JSON blob has committed=true.
+      final uncommitted = ended.where((r) => !_rowIsCommitted(r)).toList();
+
       // Filter by selectedIds if provided (F2)
       List<Map<String, dynamic>> toCommit;
       if (selectedIds != null) {
         final selectedSet = selectedIds.toSet();
-        toCommit = ended.where((r) => selectedSet.contains(r['activity_id'])).toList();
+        toCommit = uncommitted.where((r) => selectedSet.contains(r['activity_id'])).toList();
       } else {
-        toCommit = ended;
+        toCommit = uncommitted;
       }
 
       // F6, F7: no-op when nothing to commit
@@ -903,9 +934,17 @@ class SyncService {
 
       final hashPrefix = ledgerEngine!.commit(toCommit);
 
-      // F3: delete committed rows from staging
+      // F3: mark committed rows (preserve for History display;
+      //     Sync tab filters them out via the committed flag).
       for (final row in toCommit) {
-        await stagingStore!.deleteRow(row['activity_id'] as String);
+        // Update row-level committed flag
+        row['committed'] = true;
+        // Update committed flag inside the activity JSON blob too,
+        // since _stagingRowToDto reads committed from the blob first.
+        final act = _decodeActivityBlob(row['activity'] as String?);
+        act['committed'] = true;
+        row['activity'] = json.encode(act);
+        await stagingStore!.putRow(row, preserveUpdatedAt: true);
       }
 
       // F4, F5: push to remote if configured

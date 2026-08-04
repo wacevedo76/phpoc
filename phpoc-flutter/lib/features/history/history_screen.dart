@@ -30,7 +30,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   _HistoryScreenState()
       : _calendarMonth = DateTime.now().month,
-        _calendarYear = DateTime.now().year;
+        _calendarYear = DateTime.now().year,
+        _selectedCalendarDate = FormatUtils.epochToDateStr(
+            DateTime.now().millisecondsSinceEpoch);
 
   @override
   void initState() {

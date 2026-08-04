@@ -388,7 +388,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ],
           Text(
             'Started: ${FormatUtils.dateTime(DateTime.fromMillisecondsSinceEpoch(startEpoch))}',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: const Color(0xFFFF00FF),
+            ),
           ),
         ],
       ),
@@ -518,8 +520,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                FormatUtils.date(startDt),
-                style: Theme.of(context).textTheme.bodySmall,
+                FormatUtils.dateTime(startDt),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFFF00FF),
+                ),
               ),
               AnimatedCrossFade(
                 firstChild: const SizedBox.shrink(),

@@ -50,15 +50,24 @@ class LedgerEngine {
   String? commit(List<Map<String, dynamic>> entries) {
     if (entries.isEmpty) return null;
 
+    // Normalize: extract fields from 'activity' JSON blob for entries migrated
+    // from old KV store (which only have 'activity' populated, not row-level extra fields)
+    entries = _normalizeEntries(entries);
+
     // Validate
     for (final entry in entries) {
       final title = entry['title'];
-      if (title is! String) {
-        throw Exception('Entry title must be a string');
+      if (title is! String || title.isEmpty) {
+        throw Exception(
+          'Entry title must be a non-empty string (got ${title.runtimeType})',
+        );
       }
       final startEpoch = entry['start_epoch'];
       if (startEpoch is! int || startEpoch <= 0) {
-        throw Exception('Entry start_epoch must be a positive integer');
+        throw Exception(
+          'Entry start_epoch must be a positive integer '
+          '(got ${startEpoch.runtimeType}: $startEpoch)',
+        );
       }
     }
 
@@ -282,6 +291,76 @@ class LedgerEngine {
   // ═══════════════════════════════════════════════════════════════
   // Internal helpers
   // ═══════════════════════════════════════════════════════════════
+
+  /// Normalize staging entries by extracting fields from the 'activity' JSON
+  /// blob when they are missing at the row level.
+  ///
+  /// Entries migrated from the old KV store only have the 'activity' blob
+  /// populated; row-level extra fields like start_epoch, title, duration,
+  /// tags, and pauses are absent. Extract them so the rest of commit()
+  /// operates on a uniform shape.
+  List<Map<String, dynamic>> _normalizeEntries(
+      List<Map<String, dynamic>> entries) {
+    return entries.map((entry) {
+      final activityStr = entry['activity'] as String?;
+      if (activityStr == null || activityStr.isEmpty) return entry;
+
+      Map<String, dynamic> activity;
+      try {
+        activity = jsonDecode(activityStr) as Map<String, dynamic>;
+      } catch (_) {
+        return entry;
+      }
+
+      // Only fill in fields that are missing at the row level
+      final result = Map<String, dynamic>.from(entry);
+      for (final field in ['title', 'duration', 'tags', 'pauses', 'comment']) {
+        if (!result.containsKey(field) && activity.containsKey(field)) {
+          result[field] = activity[field];
+        }
+      }
+
+      // start_epoch: row level has int; activity blob may have start_epoch
+      // (int from newer clients) or startTime_enc (encrypted string from
+      // old Flutter entries — unusable without decryption, skip).
+      // Also coerce double → int (json.decode may produce double for large numbers)
+      // and String → int via tryParse.
+      if (!result.containsKey('start_epoch') ||
+          result['start_epoch'] is! int ||
+          (result['start_epoch'] as int) <= 0) {
+        result['start_epoch'] = _coerceEpoch(activity['start_epoch']);
+      }
+      // Second pass: if still missing/bad after activity blob check
+      if (!result.containsKey('start_epoch') ||
+          result['start_epoch'] is! int ||
+          (result['start_epoch'] as int) <= 0) {
+        // Try row-level value with coercion too
+        result['start_epoch'] = _coerceEpoch(entry['start_epoch']);
+      }
+
+      // end_epoch
+      if (!result.containsKey('end_epoch')) {
+        final activityEnd = activity['end_epoch'];
+        if (activityEnd is int) {
+          result['end_epoch'] = activityEnd;
+        }
+      }
+
+      return result;
+    }).toList();
+  }
+
+  /// Coerce a value to an epoch int (double, String, or int). Returns null
+  /// when coercion is impossible.
+  int? _coerceEpoch(dynamic value) {
+    if (value is int && value > 0) return value;
+    if (value is double && value > 0) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    return null;
+  }
 
   /// Prepare entries for commit: encrypt fields, compute hashes.
   List<Map<String, dynamic>> _prepareEntries(List<Map<String, dynamic>> entries) {

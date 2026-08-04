@@ -101,16 +101,29 @@ class StagingMigration {
       // C5: preserve original encrypted data blob as JSON
       final activity = json.encode(data);
 
-      // C6: use migration time for updated_at
+      // C6: extract fields from data into row-level extras for commit() compat.
+      // Old KV entries use startTime_enc (encrypted), not start_epoch (plaintext).
+      // Only extract fields that are already plaintext.
+      final startEpoch = data['start_epoch'];
+      final entryEndEpoch = data['end_epoch'];
+
+      // C7: use migration time for updated_at
       await stagingStore.putRow({
         'activity_id': activityId,
         'activity_status': activityStatus,
         'activity': activity,
         'updated_at': now,
+        if (startEpoch is int && startEpoch > 0) 'start_epoch': startEpoch,
+        'title': data['title'] ?? '',
+        'duration': data['duration'] ?? 0,
+        if (entryEndEpoch is int) 'end_epoch': entryEndEpoch,
+        'tags': data['tags'] ?? [],
+        'pauses': data['pauses'] ?? [],
+        if (data['comment'] != null) 'comment': data['comment'],
       });
     }
 
-    // C7: set migration marker
+    // C8: set migration marker
     try {
       await legacyStorage.set('migrated_v1', true);
     } catch (_) {}

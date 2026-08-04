@@ -478,7 +478,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     setState(() => _saving.add(idx));
     try {
       final sync = ref.read(syncServiceProvider);
-      final originalIdx = _uncommittedEntries[idx]['entry_index'] as int? ?? idx;
+      final entry = _uncommittedEntries[idx];
+
+      // Use activity_id (staging store) or entry_id (local cache) — never
+      // the index, because _uncommittedEntries is a filtered subset whose
+      // indices don't match getAllRows().
+      final id = entry['activity_id'] as String? ??
+          entry['entry_id'] as String?;
+
       final encryptFields = <String>{};
       if (es.encryptTitle) encryptFields.add('title');
       if (es.encryptTags) encryptFields.add('tags');
@@ -499,12 +506,18 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       }
 
       fields['duration'] = _computeDuration(
-        startEpoch: _uncommittedEntries[idx]['start_epoch'] as int? ?? 0,
+        startEpoch: entry['start_epoch'] as int? ?? 0,
         endEpoch: es.endEpoch,
         pauses: es.pauses,
       );
 
-      await sync.modify(originalIdx, fields, encryptFields: encryptFields);
+      if (id != null) {
+        await sync.modify(id, fields, encryptFields: encryptFields);
+      } else {
+        // Legacy fallback: index-based for old local cache entries
+        final legacyIdx = entry['entry_index'] as int? ?? idx;
+        await sync.modify(legacyIdx, fields, encryptFields: encryptFields);
+      }
 
       await _refreshStatus();
       if (mounted) {
@@ -688,7 +701,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
               const SizedBox(height: 2),
               Text(
                 FormatUtils.date(startDt),
-                style: Theme.of(context).textTheme.bodySmall,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFFF00FF),
+                ),
               ),
               AnimatedCrossFade(
                 firstChild: const SizedBox.shrink(),

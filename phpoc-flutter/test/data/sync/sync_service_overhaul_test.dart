@@ -554,11 +554,16 @@ void main() {
       expect(hash, isA<String>());
       expect(hash!.length, greaterThanOrEqualTo(10));
 
-      // After commit, staging should be clean of ended entries
+      // After commit, entries remain in staging as committed
+      // (for History display; Sync tab filters by committed flag)
       final store = StagingStore(db);
       final remaining = await store.getRowsByStatus('ended');
-      expect(remaining, isEmpty,
-          reason: 'commitAndSync should remove committed entries');
+      expect(remaining.length, 3,
+          reason: 'committed entries stay in staging for History display');
+      for (final r in remaining) {
+        expect(r['committed'], true,
+            reason: 'committed entries must be marked committed=true');
+      }
       await db.close();
     });
 
@@ -573,15 +578,18 @@ void main() {
       final hash = await sync.commitAndSync(selectedIds: [ids[0]]);
       expect(hash, isNotNull);
 
-      // Only ids[0] should be removed
-      expect(await store.getRow(ids[0]), isNull);
+      // Only ids[0] should be marked committed; others unchanged
+      final committed = await store.getRow(ids[0]);
+      expect(committed, isNotNull,
+          reason: 'committed entry stays in staging for History display');
+      expect(committed!['committed'], true);
       expect(await store.getRow(ids[1]), isNotNull);
       expect(await store.getRow(ids[2]), isNotNull);
       await db.close();
     });
 
     // F3
-    test('F3: after commit, committed activity_ids are deleted from staging', () async {
+    test('F3: after commit, entries are marked committed (stay for History)', () async {
       final db = AppDatabase.inMemory();
       final store = StagingStore(db);
       final sync = await _makeSync(db: db);
@@ -590,8 +598,11 @@ void main() {
       await sync.commitAndSync();
 
       for (final id in ids) {
-        expect(await store.getRow(id), isNull,
-            reason: 'Committed entries must be removed from staging');
+        final row = await store.getRow(id);
+        expect(row, isNotNull,
+            reason: 'Committed entries stay in staging for History/Dashboard');
+        expect(row!['committed'], true,
+            reason: 'Committed entries must be marked committed=true');
       }
       await db.close();
     });
@@ -749,9 +760,13 @@ void main() {
       // Should still commit locally even without transport
       expect(hash, isNotNull);
 
-      // Staging should be cleaned
+      // Staging should retain entries with committed=true
       final remaining = await store.getRowsByStatus('ended');
-      expect(remaining, isEmpty);
+      expect(remaining.length, 2,
+          reason: 'committed entries stay in staging for History');
+      for (final r in remaining) {
+        expect(r['committed'], true);
+      }
       await db.close();
     });
   });
