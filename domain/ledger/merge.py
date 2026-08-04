@@ -280,7 +280,7 @@ class LedgerMerge:
         identity_secret: Optional[str] = None,
     ) -> None:
         """Verify seal integrity, prev_hash linkage, entry hashes,
-        and optional identity signatures for every block.
+        and optional identity seals for every block.
 
         Raises ValueError on validation failure.
         """
@@ -313,7 +313,7 @@ class LedgerMerge:
             ):
                 raise ValueError(
                     f"{label} chain validation failed: block {i} seal, "
-                    f"signature, or entry hash is invalid"
+                    f"seal, or entry hash is invalid"
                 )
 
     @staticmethod
@@ -323,7 +323,7 @@ class LedgerMerge:
         master_key: str,
         identity_secret: Optional[str] = None,
     ) -> bool:
-        """Verify a single block: seal, optional signature, and entry hashes.
+        """Verify a single block: seal, optional identity seal, and entry hashes.
 
         Matches LedgerChain._verifyBlockData() from JS but operates on raw
         dicts (no store dependency).

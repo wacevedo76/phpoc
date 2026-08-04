@@ -39,6 +39,14 @@
 ### ✅ B-02 UI Layer: ImportScreen, sheets, provider, route, settings — 4-Phase TDD Complete (2026-08-03)
 - 40 assertions → 40 GREEN → 7 Phase 4 improvements.
 
+### ✅ I-04: Rename HMAC "signature" → "seal"/"tag" — 4-Phase TDD Complete (2026-08-04)
+- 50 assertions → 50 GREEN → 8 Phase 4 improvements (clarity: docstrings + var rename)
+- `security/crypto.py` — `verify_seal`/`verifySeal` renamed `signature` → `seal_hex` (4 locations)
+- `domain/ledger/chain.py` — param rename + 5 docstring/variable updates
+- `domain/ledger/merge.py` — 3 docstring updates
+- `docs/spec/PHPSPEC.md` — all block schemas, §5.2, §5.3, §9, §10: `signature` → `identity_seal`
+- 2428 passed, 0 regressions
+
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
 - **Tech stack:** Riverpod + go_router + SQLite + SharedPreferences
@@ -53,15 +61,7 @@
 
 ## Immediate Next Steps 🎯
 
-### 🔜 I-04: Rename HMAC "signature" → "seal"/"tag" — Phase 3 ✅
-
-**Blueprint:** `docs/planning/I04_SIGNATURE_RENAME_PHASE1.md` — 50 assertions.
-**Phase 3:** 50/50 GREEN. Full suite: 2428 passed, 0 regressions.
-  - `security/crypto.py` — `verify_seal`/`verifySeal` renamed `signature` → `seal_hex` (4 locations)
-  - `domain/ledger/chain.py` — `verify_seal` renamed `signature` → `seal_hex` (1 location)
-  - `docs/spec/PHPSPEC.md` — all block schemas, §5.2, §5.3, §9, §10: `signature` → `identity_seal`
-  - 7 test files updated: `test_content_hash_required.py`, `test_i01_key_rotation_chain.py`, `test_i01_key_rotation_edges.py`, `test_i01_key_rotation_orchestration.py`, `test_ledger_merge.py`, `test_migration.py`, `test_phase3_ledger_engine.py`
-**Next action:** Phase 4 (REFACTOR: code review for modularity, clarity, security, conciseness).
+_(None specified — check `docs/planning/BACKLOG.md` for the next task.)
 
 ---
 

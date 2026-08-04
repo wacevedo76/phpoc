@@ -219,7 +219,7 @@ class LedgerChain:
         date_str: str,
         key_version: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Build a day block with proper sealing and optional identity signature.
+        """Build a day block with proper sealing and optional identity seal.
 
         Matches the exact structure produced by core/ledger.py sync_day().
         callers must provide prev_hash (resolved from the last chain block).
@@ -234,7 +234,7 @@ class LedgerChain:
 
         Returns:
             A day block dict with type, day_index, date, prev_hash, entries,
-            day_hash, and optionally signature.
+            day_hash, and optionally identity_seal.
         """
         last = self.get_last_block()
         day_index = 1
@@ -373,7 +373,7 @@ class LedgerChain:
         if not ledger:
             return True
 
-        verify_signatures = self.identity_secret is not None
+        verify_identity_seals = self.identity_secret is not None
 
         # Determine whether content_hash is required from genesis format_version
         genesis = ledger[0] if ledger else None
@@ -401,7 +401,7 @@ class LedgerChain:
             # 3. Identity seal (if present — supports both 'identity_seal' and legacy 'signature')
             hash_key = LedgerChain._hash_key_for_block(current)
             identity_seal = current.get("identity_seal") or current.get("signature")
-            if verify_signatures and identity_seal:
+            if verify_identity_seals and identity_seal:
                 if not self.crypto.verify_mac(
                     current[hash_key], identity_seal, self.identity_secret
                 ):
@@ -478,7 +478,7 @@ class LedgerChain:
 
         For block 0 (genesis), checks type + seal. For subsequent blocks,
         checks prev_hash linkage against the preceding block, plus seal +
-        signature + entry hashes.
+        identity seal + entry hashes.
 
         Args:
             index: Block index.

@@ -3,8 +3,8 @@
 > **Plan:** BACKLOG.md §Step 2 — I-04
 > **Flaw doc:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` — Step 2 (naming fixes)
 > **Purpose:** Blueprint of all needed test assertions before writing any test code.
-> **Status:** ✅ Phase 1 (test exploration) → 🔜 Phase 2 (RED: test definition) complete
-> **Next Phase:** Phase 3 (GREEN: implementation)
+> **Status:** ✅ Phase 1 → ✅ Phase 2 → ✅ Phase 3 → ✅ Phase 4 (4-Phase TDD complete)
+> **Next Phase:** Done.
 
 ## Architecture Overview
 
