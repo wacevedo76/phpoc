@@ -104,7 +104,7 @@ class AbstractCryptoManager(ABC):
     @abstractmethod
     def seal(self, data_str: str) -> str: pass
     @abstractmethod
-    def verify_seal(self, data_str: str, signature: str) -> bool: pass
+    def verify_seal(self, data_str: str, seal_hex: str) -> bool: pass
     @abstractmethod
     def mac(self, data_str: str, identity_secret: bytes) -> str: pass
     @abstractmethod
@@ -112,9 +112,9 @@ class AbstractCryptoManager(ABC):
 
     # ── CamelCase aliases for JS-ported modules (LedgerMerge) ──────
 
-    def verifySeal(self, data_str: str, signature: str, master_key: str = "") -> bool:
+    def verifySeal(self, data_str: str, seal_hex: str, master_key: str = "") -> bool:
         """CamelCase alias: delegates to verify_seal, ignores master_key."""
-        return self.verify_seal(data_str, signature)
+        return self.verify_seal(data_str, seal_hex)
 
     def verifyMac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
         """CamelCase alias: delegates to verify_mac."""
@@ -212,10 +212,10 @@ class CryptoManager(AbstractCryptoManager):
         key = self._derive_sub_key(b"integrity-key-salt", 32)
         return hmac.new(key, data_str.encode(), hashlib.sha256).hexdigest()
 
-    def verify_seal(self, data_str: str, signature: str) -> bool:
+    def verify_seal(self, data_str: str, seal_hex: str) -> bool:
         """Verifies an HMAC-SHA256 seal (integrity tag)."""
         expected = self.seal(data_str)
-        return hmac.compare_digest(expected, signature)
+        return hmac.compare_digest(expected, seal_hex)
 
 # ── Key Derivation ────────────────────────────────────────────────
 
@@ -306,8 +306,8 @@ class NoAuthCryptoManager(AbstractCryptoManager):
         raise ValueError("Cannot decrypt without passphrase")
     def seal(self, data_str: str) -> str:
         return hashlib.sha256(data_str.encode()).hexdigest()
-    def verify_seal(self, data_str: str, signature: str) -> bool:
-        return self.seal(data_str) == signature
+    def verify_seal(self, data_str: str, seal_hex: str) -> bool:
+        return self.seal(data_str) == seal_hex
     def mac(self, data_str: str, identity_secret: bytes) -> str:
         return "unsigned"
     def verify_mac(self, data_str: str, mac_tag: str, identity_secret: bytes) -> bool:

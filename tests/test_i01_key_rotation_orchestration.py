@@ -68,8 +68,8 @@ class _MockCrypto:
         key = self._derive_sub_key(b"integrity-key-salt", 32)
         return hmac.new(key, data_str.encode(), hashlib.sha256).hexdigest()
 
-    def verify_seal(self, data_str, signature):
-        return hmac.compare_digest(self.seal(data_str), signature)
+    def verify_seal(self, data_str, seal_hex):
+        return hmac.compare_digest(self.seal(data_str), seal_hex)
 
     def mac(self, data_str, identity_secret):
         return hmac.new(identity_secret, data_str.encode(), hashlib.sha256).hexdigest()

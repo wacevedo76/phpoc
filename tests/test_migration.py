@@ -89,10 +89,10 @@ class _MockCrypto:
         key = hmac.new(self.mk, b"integrity-key-salt", hashlib.sha256).digest()
         return hmac.new(key, data_str.encode(), hashlib.sha256).hexdigest()
 
-    def verify_seal(self, data_str: str, signature: str) -> bool:
+    def verify_seal(self, data_str: str, seal_hex: str) -> bool:
         """Verify an HMAC-SHA256 seal."""
         expected = self.seal(data_str)
-        return hmac.compare_digest(expected, signature)
+        return hmac.compare_digest(expected, seal_hex)
 
     def sign(self, data_str: str, identity_secret: bytes) -> str:
         """HMAC-SHA256 signature."""

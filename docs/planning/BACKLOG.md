@@ -136,39 +136,37 @@ B-02's scope (debounced auto-push on mutation) is folded into B-03 deliverable #
 *After Phase 1. Small, low-risk changes that improve correctness.
 Ordered per flaw-doc recommended attack sequence: naming → salt → integrity → platform warnings.*
 
-### I-04 ✅~~🟠~~: Rename HMAC "signature" → "seal"/"tag"
+### I-04 🟠: Rename HMAC "signature" → "seal"/"tag" — PENDING
 
+**Status:** 🔜 Not started. No Phase 1 blueprint yet.
 **Why:** Misleads implementers about security properties. Must happen before real Ed25519 is added.
 **Flaw doc attack order:** Step 2 (naming fixes).
 
+**Partial progress (from I-01 key rotation work):**
+- ✅ Block field name `identity_seal` used in `build_day_block()` (Python + JS)
+- ✅ Dual field acceptance: `identity_seal || signature` in both `chain.py` and `chain.js`
+- ✅ Methods `mac()` and `verifyMac()` added to `crypto.py`
+
+**Remaining:**
 | File | Change |
 |------|--------|
-| `docs/spec/PHPSPEC.md` §2.7, §4, §5.3 | Rename `signature` field → `identity_seal`; rename `sign()` → `mac()`, `verify_signature()` → `verify_mac()` |
-| `security/crypto.py` | Rename `sign()` → `mac()`; rename `verifySignature()` → `verifyMac()` |
-| `domain/ledger/chain.py` | Update field references |
-| `phpoc-web/src/ledger/chain.js` | Update field references |
-| All test files | Update field names |
+| `docs/spec/PHPSPEC.md` §2.7, §4, §5.3 | Rename `signature` field → `identity_seal` in all block type tables, examples, and validation rules (~10 occurrences) |
+| `security/crypto.py` | Rename `signature` parameter → `seal_hex` in `verify_seal()` (3 locations: abstract base, JS bridge, seal implementation) |
+| `domain/ledger/chain.py` | Rename `signature` parameter in `verify_seal()` |
+| All test files | Update field names and parameter names |
 
-**Effort:** ~2 hours. **Blocked by:** nothing. **Blocks:** I-01 (key rotation).
-
-**Next action:** Pick up after Phase 1. Start with spec rename, then code.
+**Effort:** ~1 hour (mostly spec + parameter rename, field-level rename already done). **Blocked by:** nothing.
 
 ### I-05 ✅: Per-user PBKDF2 salt
 
 **Why:** Fixed `b"session-salt"` enables cross-user rainbow tables when passphrases are reused.
 **Flaw doc attack order:** Step 3 (salt fix).
 
-| File | Change |
-|------|--------|
-| `docs/spec/PHPSPEC.md` §2.4 | Document salt derivation from `identity_pub_key` |
-| `security/auth.py` | Derive salt: `SHA-256(identity_pub_key)[:16]` instead of `b"session-salt"` |
-| `cli/onboarding.py` | Use new salt for seed encryption during init |
-| `tests/test_auth.py` | Update salt expectations |
-| All decryption paths | Must try both old salt and new salt (backward compat) |
-
-**Effort:** ~1 hour code + migration for existing ledgers. **Blocked by:** nothing. **Blocks:** nothing.
-
-**Next action:** Add backward-compat salt detection (try new salt first, fall back to old).
+**Completed:**
+- ✅ `security/auth.py`: `derive_pdk_salt()` — `SHA-256(identity_pub_key)[:16]` per-user salt
+- ✅ `get_pdk_salt_from_genesis()` — reads genesis pub_key, falls back to `b"session-salt"` for old ledgers
+- ✅ `OLD_SALT = b"session-salt"` — backward-compat salt detection (tries new first, falls back)
+- ✅ `docs/spec/PHPSPEC.md` §2.4 updated
 
 ### I-06 🟠→✅: Make `content_hash` required at v0.4.0+
 

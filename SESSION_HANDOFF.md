@@ -28,32 +28,16 @@
 
 ## Completed ✅
 
+> **Archived:** B-02 (Web + Flutter + UI), B-04, B-05b, B-05c, B-06, Flutter Staging Schema Overhaul, commit prev_hash fix, and sync workflow tasks → `docs/planning/archive/SESSION_HISTORY_2026-08-03.md`
+
 ### ✅ B-02 Web: Cross-ledger entry migration — 4-Phase TDD Complete (2026-08-03)
-- 30 assertions → 55 GREEN tests → Phase 4: 7 improvements across 2 files.
-- New: `import_entries.js` (EntryImporter), `import_service.js` (ImportService + data classes).
-- Modified: `App.jsx` (+/import route), `Settings.jsx` (+import tile).
-- Phase 4: extracted `_entryData`, `_coerceField`, `_deriveDate` helpers; `_validateSeed`, `_collectTargetData`, `_parseChainBuffer` in ImportService; DRY self-import guard; deduped date-derivation logic. Full suite: 55/55.
+- 30 assertions → 55 GREEN → 7 Phase 4 improvements.
 
 ### ✅ B-02: Cross-ledger entry import (Flutter) — 4-Phase TDD Complete (2026-08-01)
-- 79 assertions → 79 GREEN tests → Phase 4: 5 improvements across 1 file.
-- New: `import_result.dart`, `import_service.dart`, `import_screen.dart`, `import_providers.dart`.
-- Full suite: 1456/1478 (22 pre-existing).
+- 79 assertions → 79 GREEN → 5 Phase 4 improvements.
 
 ### ✅ B-02 UI Layer: ImportScreen, sheets, provider, route, settings — 4-Phase TDD Complete (2026-08-03)
-- 40 assertions → 40 GREEN tests → Phase 4: 7 improvements across 2 files.
-- Phase 4: extracted `_extractSeedAndFile` pattern-match helper (DRY, ~24 lines → ~7), cleaned dead code in `resetToReady()` (11→3 lines), switch pattern matching in `_showProgressSheet`, fixed typo `dragRun()`→`dryRun()`, TODO marker on `_pickFile()`.
-- Files: `import_providers.dart`, `import_screen.dart`, `import_preview_sheet.dart`, `import_progress_sheet.dart`, `app_router.dart`, `settings_screen.dart`.
-- Full suite: 1472/1493 (22 pre-existing).
-
-### ✅ Flutter Staging Schema Overhaul — 4-Phase TDD Complete (2026-07-28)
-- 110 assertions → 111 GREEN tests → Phase 4: 6 improvements (conciseness + clarity) across 3 files. Full suite: 1339/1341.
-- New: `activity_id.dart`, `staging_store.dart`, `migration.dart`, `staging_hash_index.dart`. Modified: `merge_engine.dart`, `sync_service.dart`, `sync_screen.dart`.
-
-### ✅ Sync-to-remote _dependents.isEmpty assertion (2026-07-28)
-- `ref.watch` → `ref.read` in `_buildPushToCloudButton()`. L6 regression test 24/24.
-
-### ✅ Flutter File Import, Dashboard, Settings, Genesis Export, Push Service, Block Reconstruction, RESTORE_CLOUD_ERRORS
-- All completed via 4-Phase TDD (2026-07-28). Details archived to `docs/planning/archive/SESSION_HISTORY_2026-07-25.md`.
+- 40 assertions → 40 GREEN → 7 Phase 4 improvements.
 
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
@@ -61,37 +45,25 @@
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 - **Test ledger:** `testdata/ledger.json` — 31 blocks, 146 entries, Python-encrypted hex fields
 
-## Sync Workflow — Abstracted Tasks (from docs/design/workflows/)
+## Sync Workflow — Abstracted Tasks
 
-| # | Task | Flutter Status |
+| # | Task | Status |
 |---|---|---|
-| T1 | Genesis Gate | ✅ `GenesisGate.check()` wired |
-| T2 | Cookie Check | ✅ Phase 4 complete (7/7 GREEN — K7 configurable TTL wired) |
-| T3 | Cookie Compare | ✅ Group M tests written (10/10 GREEN) |
-| T4 | Blob Pull | ✅ `_pullRemoteBlob()` wired |
-| T5 | Merge | ✅ `MergeEngine.mergeMaps()` wired |
-| T6 | Blob Push | ✅ `_pushBlobOnly()` wired |
-| T7 | Cookie Push | ✅ `_pushCookie()` wired |
-| T8 | Commit to Ledger | ✅ Phase 4 complete (14 Group N + 5 Group R = 19 tests GREEN) |
-
-### ✅ Commit prev_hash mismatch fix — 4-Phase TDD Complete (2026-07-28)
-- 17 assertions → 10 RED → 10 GREEN → 5 Phase 4 improvements. Full suite: 1356/1358.
+| T1–T8 | Genesis Gate, Cookie Check/Compare, Blob Pull/Push, Merge, Commit | ✅ All 8/8 complete |
 
 ## Immediate Next Steps 🎯
 
-### ✅ B-06: Wire staging sync into restoreFromCloud — 4-Phase TDD Complete (2026-07-31)
-**Blueprint:** `docs/planning/flutter/B06_STAGING_SYNC_IN_RESTORE_PHASE1.md` — 12 assertions.
-**Phases 2-3:** 9/9 B-06 tests GREEN (A5, A11-A15, G1, G5, G6). 1-line fix: `await syncService.initialPull()` in `restoreFromCloud()`.
-**Phase 4:** 4 improvements in `onboarding_service.dart` — extracted `_ensureNoLedger` (4 duplicates), `_validateSeedAndPassphrase` (3 duplicates), `_pullFromCloud` (~100→~25 lines); reused `_postImportSetup` in 3 methods. Full suite: 1419/1426 (7 pre-existing flaky).
+### 🔜 I-04: Rename HMAC "signature" → "seal"/"tag" — Phase 3 ✅
 
-### ✅ B-05c: CLI Staging Format Alignment — 4-Phase TDD Complete (2026-07-30)
-52/52 GREEN + 3 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
+**Blueprint:** `docs/planning/I04_SIGNATURE_RENAME_PHASE1.md` — 50 assertions.
+**Phase 3:** 50/50 GREEN. Full suite: 2428 passed, 0 regressions.
+  - `security/crypto.py` — `verify_seal`/`verifySeal` renamed `signature` → `seal_hex` (4 locations)
+  - `domain/ledger/chain.py` — `verify_seal` renamed `signature` → `seal_hex` (1 location)
+  - `docs/spec/PHPSPEC.md` — all block schemas, §5.2, §5.3, §9, §10: `signature` → `identity_seal`
+  - 7 test files updated: `test_content_hash_required.py`, `test_i01_key_rotation_chain.py`, `test_i01_key_rotation_edges.py`, `test_i01_key_rotation_orchestration.py`, `test_ledger_merge.py`, `test_migration.py`, `test_phase3_ledger_engine.py`
+**Next action:** Phase 4 (REFACTOR: code review for modularity, clarity, security, conciseness).
 
-### ✅ B-05b: Cross-Platform Staging Format Alignment — 4-Phase TDD Complete (2026-07-30)
-165 GREEN + 5 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
-
-### ✅ B-04: Flutter — Wire cross-device sync for row-level staging — 4-Phase TDD Complete (2026-07-28)
-54/54 GREEN + 5 Phase 4 improvements. Details archived to `docs/planning/archive/SESSION_HISTORY_2026-08-01.md`.
+---
 
 ## Known Issues
 - 2 pre-existing restore_integration flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation

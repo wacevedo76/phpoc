@@ -170,9 +170,9 @@ class LedgerChain:
         """Compute an HMAC-SHA256 seal over a dict by serializing with sort_keys=True."""
         return self.crypto.seal(json.dumps(data, sort_keys=True))
 
-    def verify_seal(self, data: dict, signature: str) -> bool:
+    def verify_seal(self, data: dict, seal_hex: str) -> bool:
         """Verify an HMAC-SHA256 seal over a dict."""
-        return self.crypto.verify_seal(json.dumps(data, sort_keys=True), signature)
+        return self.crypto.verify_seal(json.dumps(data, sort_keys=True), seal_hex)
 
     def compute_identity_mac(self, data_str: str, identity_secret: Optional[bytes]) -> Optional[str]:
         """Compute an identity MAC, or None if no secret is configured."""

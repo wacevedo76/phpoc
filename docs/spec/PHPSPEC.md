@@ -580,7 +580,7 @@ Every block has these common fields:
 | `prev_hash` | string (hex) | ✅ | SHA-256-like hash of the preceding block (64 hex chars). For Genesis, `"0" * 64`. |
 | `date` | string | ✅ | ISO date when this block was created: `"YYYY-MM-DD"` |
 | `{type}_hash` | string (hex) | ✅ | The block's seal (HMAC-SHA256). Field name varies by type (see below). |
-| `signature` | string (hex) | ⚠️ Optional | Identity signature over the block hash (HMAC-SHA256). |
+| `identity_seal` | string (hex) | ⚠️ Optional | Identity seal over the block hash (HMAC-SHA256). |
 
 ---
 
@@ -606,7 +606,7 @@ The first block in every ledger. Created once during `phpoc init`. Contains the 
   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "entries": [],
   "day_hash": "<hex: seal of this block>",
-  "signature": "<hex: identity signature over day_hash>"
+  "identity_seal": "<hex: identity seal over day_hash>"
 }
 ```
 
@@ -622,7 +622,7 @@ The first block in every ledger. Created once during `phpoc init`. Contains the 
 | `prev_hash` | string | ✅ | All zeros — 64 hex characters |
 | `entries` | array | ✅ | Always `[]` for genesis |
 | `day_hash` | string | ✅ | HMAC-SHA256 seal of this block (see §5.2) |
-| `signature` | string | ⚠️ | Identity signature over `day_hash` |
+| `identity_seal` | string | ⚠️ | Identity seal over `day_hash` |
 
 #### Identity Object
 
@@ -651,7 +651,7 @@ An optional marker block inserted when a sync crosses a year boundary (e.g., syn
   "prev_hash": "<hex: previous block's hash>",
   "date": "2026-01-03",
   "year_hash": "<hex: seal of this block>",
-  "signature": "<hex: identity signature>"
+  "identity_seal": "<hex: identity seal>"
 }
 ```
 
@@ -664,7 +664,7 @@ An optional marker block inserted when a sync crosses a year boundary (e.g., syn
 | `prev_hash` | string | ✅ | Hash of the preceding block |
 | `date` | string | ✅ | Date of the *next* sync (not the year end) |
 | `year_hash` | string | ✅ | HMAC-SHA256 seal of this block |
-| `signature` | string | ⚠️ | Identity signature over `year_hash` |
+| `identity_seal` | string | ⚠️ | Identity seal over `year_hash` |
 
 **Insertion condition:** Created when `curr_date.year > prev_date.year` and the previous block is not already a year_summary.
 
@@ -685,7 +685,7 @@ An optional marker block inserted when a sync crosses a month boundary. Like the
   "prev_hash": "<hex: previous block's hash>",
   "date": "2026-01-03",
   "month_hash": "<hex: seal of this block>",
-  "signature": "<hex: identity signature>"
+  "identity_seal": "<hex: identity seal>"
 }
 ```
 
@@ -698,7 +698,7 @@ An optional marker block inserted when a sync crosses a month boundary. Like the
 | `prev_hash` | string | ✅ | Hash of the preceding block |
 | `date` | string | ✅ | Date of the *next* sync |
 | `month_hash` | string | ✅ | HMAC-SHA256 seal of this block |
-| `signature` | string | ⚠️ | Identity signature over `month_hash` |
+| `identity_seal` | string | ⚠️ | Identity seal over `month_hash` |
 
 **Insertion condition:** Created when `curr_date.month > prev_date.month` and the previous block is not already a month_summary.
 
@@ -723,7 +723,7 @@ The primary data block. Contains a list of entries for a single date. Created du
     { "hash": "<hex>", "data": { ... } }
   ],
   "day_hash": "<hex: seal of this block>",
-  "signature": "<hex: identity signature>"
+  "identity_seal": "<hex: identity seal>"
 }
 ```
 
@@ -737,7 +737,7 @@ The primary data block. Contains a list of entries for a single date. Created du
 | `prev_hash` | string | ✅ | Hash of the preceding block (summary or previous day) |
 | `entries` | array | ✅ | Array of entry objects (see §4.5). May be empty. |
 | `day_hash` | string | ✅ | HMAC-SHA256 seal of this block |
-| `signature` | string | ⚠️ | Identity signature over `day_hash` |
+| `identity_seal` | string | ⚠️ | Identity seal over `day_hash` |
 
 > **`day_index` semantics:** The index increments monotonically across consecutive day blocks. When a summary block (year or month) intervenes, the next day block resets to `1`. This lets verifiers detect missing day blocks within a summary period.
 
@@ -890,7 +890,7 @@ Where `hash_field(block)` resolves to `block["day_hash"]`, `block["year_hash"]`,
 
 ### 5.2 Block Sealing (HMAC-SHA256)
 
-Every block carries a cryptographic **seal** — an HMAC-SHA256 computed over the block's content with the seal field itself and the `signature` field excluded.
+Every block carries a cryptographic **seal** — an HMAC-SHA256 computed over the block's content with the seal field itself and the `identity_seal` field excluded.
 
 The seal is computed using the **sealing sub-key** derived from the Master Key:
 
@@ -906,8 +906,8 @@ def compute_seal(block: dict, master_key: bytes) -> str:
         "day": "day_hash",
     }.get(block.get("type", "day"))
     
-    # Exclude the seal field and the identity signature
-    check_data = {k: v for k, v in block.items() if k not in (hash_key, "signature")}
+    # Exclude the seal field and the identity seal
+    check_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal")}
     
     # Canonical JSON (sorted keys, no extra whitespace)
     data_str = json.dumps(check_data, sort_keys=True)
@@ -923,21 +923,21 @@ def compute_seal(block: dict, master_key: bytes) -> str:
 
 > The sealing sub-key is distinct from encryption/integrity sub-keys because it uses a fixed salt (`b"integrity-key-salt"`) rather than a per-operation random salt.
 
-### 5.3 Identity Signatures
+### 5.3 Identity Seal
 
-When the identity secret is available (see §2.7.2), each block may carry an identity signature over its seal:
+When the identity secret is available (see §2.7.2), each block may carry an identity seal (MAC) over its seal:
 
 ```python
-def compute_signature(block_hash: str, identity_secret: bytes) -> str:
+def compute_identity_mac(block_hash: str, identity_secret: bytes) -> str:
     return hmac.new(identity_secret, block_hash.encode('utf-8'), hashlib.sha256).hexdigest()
 
 # Verify:
-#   compute_signature(block[hash_key], identity_secret) == block["signature"]
+#   compute_identity_mac(block[hash_key], identity_secret) == block["identity_seal"]
 ```
 
-**Validation rule:** If the block has a `signature` field (non-empty) and the identity secret is available, verify that the signature matches. If the identity secret is unavailable, skip signature verification.
+**Validation rule:** If the block has an `identity_seal` field (non-empty) and the identity secret is available, verify that the MAC matches. If the identity secret is unavailable, skip identity seal verification.
 
-> **On signature absence:** Signatures are optional. A valid ledger may have unsigned blocks. Verification should succeed whether or not signatures are present — treat missing signatures as "skip" rather than "fail."
+> **On seal absence:** Identity seals are optional. A valid ledger may have unsealed blocks. Verification should succeed whether or not seals are present — treat missing seals as "skip" rather than "fail."
 
 ### 5.4 Entry Hash Verification
 
@@ -1045,9 +1045,9 @@ def verify(ledger: list, master_key: bytes, identity_secret: bytes = None) -> bo
         if not _verify_seal(current, master_key):
             return False
         
-        # 5.3: Check identity signature (if available)
-        if identity_secret and current.get("signature"):
-            if not _verify_signature(current, identity_secret):
+        # 5.3: Check identity seal (if available)
+        if identity_secret and current.get("identity_seal"):
+            if not _verify_identity_seal(current, identity_secret):
                 return False
         
         # 5.4 & 5.5: Check entry hashes and content hashes
@@ -1495,8 +1495,8 @@ def upgrade_020_to_030(ledger: list, master_key, identity_secret=None) -> list:
         block["prev_hash"] = prev_hash
         # Recompute this block's seal with the updated prev_hash
         block[hash_key] = compute_seal(block, master_key)
-        if identity_secret and block.get("signature"):
-            block["signature"] = compute_signature(block[hash_key], identity_secret)
+        if identity_secret and block.get("identity_seal"):
+            block["identity_seal"] = compute_identity_mac(block[hash_key], identity_secret)
         new_ledger.append(block)
     
     return new_ledger
@@ -1587,7 +1587,7 @@ Below is a complete annotated ledger with three blocks: Genesis, Month Summary, 
   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "entries": [],
   "day_hash": "abc123def456...",
-  "signature": "sig_abc123..."
+  "identity_seal": "sig_abc123..."
 }
 ```
 
@@ -1596,7 +1596,7 @@ Below is a complete annotated ledger with three blocks: Genesis, Month Summary, 
 - `day_index` is always `0` for genesis.
 - `entries` is always an empty array.
 - `day_hash` is the HMAC-SHA256 seal of this block (see §5.2).
-- `signature` is over `day_hash` using the identity secret.
+- `identity_seal` is over `day_hash` using the identity secret.
 
 ---
 
@@ -1611,7 +1611,7 @@ Inserted because the first sync happened in a different month from genesis creat
   "prev_hash": "abc123def456...",
   "date": "2026-05-01",
   "month_hash": "def456abc123...",
-  "signature": "sig_def456..."
+  "identity_seal": "sig_def456..."
 }
 ```
 
@@ -1675,7 +1675,7 @@ Inserted because the first sync happened in a different month from genesis creat
     }
   ],
   "day_hash": "789abc012def...",
-  "signature": "sig_789abc..."
+  "identity_seal": "sig_789abc..."
 }
 ```
 
@@ -1711,7 +1711,7 @@ Block 2 (day):       day_hash   = 789abc012def...
                      entries[1].hash = SHA-256(entries[1].data)  ✓ self-consistent
 ```
 
-> **Verification:** Any consumer with the Master Key and (optionally) the identity secret can traverse this chain and independently verify every seal, signature, entry hash, and content hash. No external state or network access required.
+> **Verification:** Any consumer with the Master Key and (optionally) the identity secret can traverse this chain and independently verify every seal, identity seal, entry hash, and content hash. No external state or network access required.
 
 ---
 
