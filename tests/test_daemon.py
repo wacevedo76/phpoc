@@ -38,10 +38,10 @@ class TestDebounceQueue(unittest.TestCase):
         # Import late so the import doesn't fail at module level
         # if cli/daemon.py hasn't been written yet.
         try:
-            from cli.daemon import DebounceQueue
+            from phpoc_cli.daemon import DebounceQueue
             self.cls = DebounceQueue
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_is_ready_false_before_any_trigger(self):
         """No trigger ever called → is_ready() returns False."""
@@ -108,10 +108,10 @@ class TestPhDaemonIsRunning(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_no_pid_file_returns_false(self):
         """PID file doesn't exist → _is_running() returns False."""
@@ -160,10 +160,10 @@ class TestPhDaemonStart(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_start_when_already_running_prints_warning(self):
         """start() called while _is_running() → prints warning, no fork."""
@@ -219,10 +219,10 @@ class TestPhDaemonStop(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_stop_when_not_running_prints_message(self):
         """stop() called while not running → prints message, no kill."""
@@ -291,10 +291,10 @@ class TestPhDaemonStatus(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_status_when_not_running(self):
         """status() called while not running → 'not running' message."""
@@ -380,10 +380,10 @@ class TestPhDaemonDaemonize(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     @patch("os.setsid")
     @patch("os.open")
@@ -453,10 +453,10 @@ class TestEventLoop(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def setUp_loop_components(self):
         """Helper: wire up mock watcher, debounce, worker."""
@@ -472,8 +472,8 @@ class TestEventLoop(unittest.TestCase):
         """_run_event_loop() creates watcher, debounce, worker, then loops."""
         with (
             patch.object(self.daemon, "_create_file_watcher") as mock_create_watcher,
-            patch("cli.daemon.DebounceQueue") as mock_dq_cls,
-            patch("cli.daemon_sync.SyncWorker") as mock_sw_cls,
+            patch("phpoc_cli.daemon.DebounceQueue") as mock_dq_cls,
+            patch("phpoc_cli.daemon_sync.SyncWorker") as mock_sw_cls,
             patch("signal.signal"),
             patch("time.sleep", side_effect=StopIteration),  # Break loop after 1 iter
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -493,8 +493,8 @@ class TestEventLoop(unittest.TestCase):
             patch.object(self.daemon, "_create_file_watcher",
                          return_value=MagicMock(has_changes=MagicMock(
                              side_effect=[True, StopIteration]))),
-            patch("cli.daemon.DebounceQueue") as mock_dq_cls,
-            patch("cli.daemon_sync.SyncWorker"),
+            patch("phpoc_cli.daemon.DebounceQueue") as mock_dq_cls,
+            patch("phpoc_cli.daemon_sync.SyncWorker"),
             patch("signal.signal"),
             patch("time.sleep", side_effect=[None, StopIteration]),
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -514,8 +514,8 @@ class TestEventLoop(unittest.TestCase):
             patch.object(self.daemon, "_create_file_watcher",
                          return_value=MagicMock(has_changes=MagicMock(
                              side_effect=[False, StopIteration]))),
-            patch("cli.daemon.DebounceQueue") as mock_dq_cls,
-            patch("cli.daemon_sync.SyncWorker") as mock_sw_cls,
+            patch("phpoc_cli.daemon.DebounceQueue") as mock_dq_cls,
+            patch("phpoc_cli.daemon_sync.SyncWorker") as mock_sw_cls,
             patch("signal.signal"),
             patch("time.sleep", side_effect=[None, StopIteration]),
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -540,8 +540,8 @@ class TestEventLoop(unittest.TestCase):
             patch.object(self.daemon, "_create_file_watcher",
                          return_value=MagicMock(has_changes=MagicMock(
                              side_effect=[False, StopIteration]))),
-            patch("cli.daemon.DebounceQueue") as mock_dq_cls,
-            patch("cli.daemon_sync.SyncWorker") as mock_sw_cls,
+            patch("phpoc_cli.daemon.DebounceQueue") as mock_dq_cls,
+            patch("phpoc_cli.daemon_sync.SyncWorker") as mock_sw_cls,
             patch("signal.signal"),
             patch("time.sleep", side_effect=[None, StopIteration]),
             patch.object(self.daemon, "_time_since_last_refresh", return_value=61),
@@ -566,8 +566,8 @@ class TestEventLoop(unittest.TestCase):
             patch.object(self.daemon, "_create_file_watcher",
                          return_value=MagicMock(has_changes=MagicMock(
                              side_effect=[False, StopIteration]))),
-            patch("cli.daemon.DebounceQueue"),
-            patch("cli.daemon_sync.SyncWorker"),
+            patch("phpoc_cli.daemon.DebounceQueue"),
+            patch("phpoc_cli.daemon_sync.SyncWorker"),
             patch("signal.signal"),
             patch("time.sleep") as mock_sleep,
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -584,8 +584,8 @@ class TestEventLoop(unittest.TestCase):
         """Loop calls signal.signal(SIGTERM, handler) for graceful shutdown."""
         with (
             patch.object(self.daemon, "_create_file_watcher"),
-            patch("cli.daemon.DebounceQueue"),
-            patch("cli.daemon_sync.SyncWorker"),
+            patch("phpoc_cli.daemon.DebounceQueue"),
+            patch("phpoc_cli.daemon_sync.SyncWorker"),
             patch("signal.signal") as mock_signal,
             patch("time.sleep", side_effect=StopIteration),
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -604,8 +604,8 @@ class TestEventLoop(unittest.TestCase):
         """When _running becomes False, _cleanup() is called."""
         with (
             patch.object(self.daemon, "_create_file_watcher"),
-            patch("cli.daemon.DebounceQueue"),
-            patch("cli.daemon_sync.SyncWorker"),
+            patch("phpoc_cli.daemon.DebounceQueue"),
+            patch("phpoc_cli.daemon_sync.SyncWorker"),
             patch("signal.signal"),
             patch("time.sleep", return_value=None),
             patch.object(self.daemon, "_time_since_last_refresh", return_value=0),
@@ -633,10 +633,10 @@ class TestFileWatcher(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_create_file_watcher_returns_object_with_has_changes(self):
         """_create_file_watcher() returns an object that has has_changes()."""
@@ -679,10 +679,10 @@ class TestPublishStatus(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon import PhDaemon
+            from phpoc_cli.daemon import PhDaemon
             self.daemon = PhDaemon(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon.py not yet implemented")
 
     def test_publish_creates_status_file(self):
         """Calling _publish_status() creates sync_status.json."""

@@ -10,9 +10,9 @@ from security.crypto import AbstractCryptoManager, CryptoManager
 from domain.staging.service import StagingService
 from domain.staging.service import SyncCheckResult
 from domain.ledger.engine import LedgerEngine
-from cli.trace import trace
-from cli.background import _show_sync_notifications, _spawn_background_sync_check
-from cli.wal import _write_wal_pending, _spawn_background_push
+from phpoc_cli.trace import trace
+from phpoc_cli.background import _show_sync_notifications, _spawn_background_sync_check
+from phpoc_cli.wal import _write_wal_pending, _spawn_background_push
 
 logger = logging.getLogger(__name__)
 

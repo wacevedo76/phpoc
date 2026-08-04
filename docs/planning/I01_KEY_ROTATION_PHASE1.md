@@ -55,7 +55,7 @@ defines a three-part design:
 | `domain/ledger/index_manager.py` | Versioned index encryption key | `IndexManager.__init__` accepts optional `key_version`; `_flush`/`_load` use versioned key |
 | `domain/staging/service.py` | Re-encrypt staging with new MK on rotation | New `_reencrypt_staging(mk)` method; called during rotation |
 | `domain/cookie/device_cookie.py` | Re-derive cookie with new MK on rotation | New `recreate(device_id, key_version, data_dir)` static method |
-| `cli/rotate_keys.py` **(new)** | `ph rotate-keys` command: soft + hard modes | New file: `RotateKeysCommand` with `--full` flag |
+| `phpoc_cli/rotate_keys.py` **(new)** | `ph rotate-keys` command: soft + hard modes | New file: `RotateKeysCommand` with `--full` flag |
 | `phpoc-web/src/crypto/index.js` | JS `deriveMk()`, `CryptoManager` with versioned MK | Web equivalents of Python crypto changes |
 | `phpoc-web/src/ledger/chain.js` | `keyVersion` in block build/verify | Web equivalents of chain changes |
 | `phpoc-web/src/sync/` | Multi-MK session cache, staging re-encrypt | Web equivalents of auth + staging changes |

@@ -27,7 +27,7 @@ See full investigation in the session preceding this plan for network trace data
 ### Fix
 Remove the `check_and_sync` call from the `view` command handler in `main.py`. The re-auth logic in `_sync_before_command` already handles `REAUTH_NEEDED` — but currently it prints a message and returns `False` (aborting). Instead, consolidate the re-auth + rebuild flow from `main.py` into `_sync_before_command` so that read commands that get `REAUTH_NEEDED` auto-handle it (matching the write-command pattern already in `main.py`).
 
-**Scope:** `main.py` (remove call), `cli/interface.py` (consolidate re-auth in `_sync_before_command`)
+**Scope:** `main.py` (remove call), `phpoc_cli/interface.py` (consolidate re-auth in `_sync_before_command`)
 
 ### 4-Phase TDD Plan
 - **Phase 1:** Blueprint tests for `_sync_before_command` re-auth flow — cover: cookie mismatch triggers login, login rebuilds staging service, second call no-ops
@@ -45,7 +45,7 @@ Remove the `check_and_sync` call from the `view` command handler in `main.py`. T
 ### Fix
 Replace the in-memory cache with a persistent local cache (JSON file at `<data_dir>/remote_ledger_cache.json`). Store: `{block_index: {date, entries[{title, startTime_enc, ...}]}}` with a TTL (e.g., 60 seconds). On startup, load the cache. Only pull blocks with indices higher than the max cached index. Invalidate on explicit `ph sync`.
 
-**Scope:** `cli/interface.py` (`_sync_remote_ledger_and_dedup` method)
+**Scope:** `phpoc_cli/interface.py` (`_sync_remote_ledger_and_dedup` method)
 
 ### 4-Phase TDD Plan
 - **Phase 1:** Blueprint tests for persistent cache — cover: cache hit skips pull, cache miss pulls all, stale cache (TTL expired) re-pulls, `ph sync` invalidates cache, partial cache (some blocks cached) pulls only missing

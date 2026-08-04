@@ -9,9 +9,9 @@ All 40 tests GREEN across `tests/test_migration.py` (26 PY), `phpoc-web/test/led
 
 Results: 1580/1580 PY + 571 JS pass.
 
-New file: `cli/migrate.py` — `migrate_chain(chain, master_key_hex, ledger_path=None)` function: backup, strip format_version, rename day_hash→block_hash, fix prev_hash chain, recompute all seals.
+New file: `phpoc_cli/migrate.py` — `migrate_chain(chain, master_key_hex, ledger_path=None)` function: backup, strip format_version, rename day_hash→block_hash, fix prev_hash chain, recompute all seals.
 
-Source changes (13 Python): `core/factory.py`, `domain/ledger/chain.py`, `domain/ledger/merge.py`, `security/auth.py`, `cli/onboarding_file.py`, `domain/ledger/remote_sync.py`, `domain/ledger/engine.py`, `domain/ledger/summary_policy.py`, `core/sync/orchestrator.py`, `cli/onboarding.py`, `compat/v0_3_0.py`, `cli/migrate.py` (new).
+Source changes (13 Python): `core/factory.py`, `domain/ledger/chain.py`, `domain/ledger/merge.py`, `security/auth.py`, `phpoc_cli/onboarding_file.py`, `domain/ledger/remote_sync.py`, `domain/ledger/engine.py`, `domain/ledger/summary_policy.py`, `core/sync/orchestrator.py`, `phpoc_cli/onboarding.py`, `compat/v0_3_0.py`, `phpoc_cli/migrate.py` (new).
 
 Source changes (5 JS): `phpoc-web/src/ledger/chain.js`, `phpoc-web/src/ledger/merge.js`, `phpoc-web/src/ledger/utils.js`, `phpoc-web/src/services/ledger_import.js`, `phpoc-web/src/sync/genesis_gate.js`.
 

@@ -418,10 +418,10 @@ class TestE2E_01_HappyPath(unittest.TestCase):
 
     def _run_onboarding(self):
         """Run the onboarding pipeline with mocks for auth/passphrase steps."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         # Mock RecoveryAuthenticator to return our test seed immediately
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -550,9 +550,9 @@ class TestE2E_02_WrongSeed(unittest.TestCase):
 
     def _run_onboarding_with_wrong_seed(self):
         """Run onboarding with a wrong seed (WRONG_MK instead of TEST_MK)."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = WRONG_MK  # wrong!
@@ -611,9 +611,9 @@ class TestE2E_02_WrongSeed(unittest.TestCase):
 
     def test_15_friendly_error_message(self):
         """Wrong seed produces a friendly message, not a traceback."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = WRONG_MK
@@ -670,9 +670,9 @@ class TestE2E_03_EmptyRemote(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run_onboarding_empty(self):
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -712,9 +712,9 @@ class TestE2E_03_EmptyRemote(unittest.TestCase):
 
     def test_21_prints_no_blocks_message(self):
         """Prints informative 'no blocks' message."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -771,9 +771,9 @@ class TestE2E_04_NoStagingBlob(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self):
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -856,9 +856,9 @@ class TestE2E_05_StagingKeyMismatch(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self):
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -918,9 +918,9 @@ class TestE2E_05_StagingKeyMismatch(unittest.TestCase):
 
     def test_33_prominent_warning_printed(self):
         """User sees a prominent warning about staging corruption."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -973,9 +973,9 @@ class TestE2E_06_ChainDivergence(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self):
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -1015,9 +1015,9 @@ class TestE2E_06_ChainDivergence(unittest.TestCase):
 
     def test_37_clear_error_message_printed(self):
         """User sees a clear message about the corrupted chain."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -1117,9 +1117,9 @@ class TestE2E_07_FullRoundTrip(unittest.TestCase):
 
     def _onboard_device2(self) -> bool:
         """Run onboarding for device 2 against the same transport."""
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
-        with patch("cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
+        with patch("phpoc_cli.onboarding.RecoveryAuthenticator") as mock_auth_cls:
             mock_auth = MagicMock()
             mock_auth.authenticate.return_value = True
             mock_auth.get_key.return_value = TEST_MK
@@ -1461,7 +1461,7 @@ class TestE2E_09_RegistryIntegrationWithOnboarding(unittest.TestCase):
             "y",        # overwrite? (ledger already exists from Happy Path test? No, tmp dir is fresh)
         ]
 
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         config_mgr = self._make_config_manager()
         ok = run_onboarding(
@@ -1485,7 +1485,7 @@ class TestE2E_09_RegistryIntegrationWithOnboarding(unittest.TestCase):
         mock_getpass.side_effect = ["pw1", "pw1"]
         mock_input.side_effect = [TEST_SEED, "y"]
 
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         config_mgr = self._make_config_manager()
         ok = run_onboarding(
@@ -1509,7 +1509,7 @@ class TestE2E_09_RegistryIntegrationWithOnboarding(unittest.TestCase):
         mock_getpass.side_effect = ["pw1", "pw1"]
         mock_input.side_effect = [TEST_SEED, "y"]
 
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         config_mgr = self._make_config_manager()
         ok = run_onboarding(
@@ -1531,7 +1531,7 @@ class TestE2E_09_RegistryIntegrationWithOnboarding(unittest.TestCase):
         mock_getpass.side_effect = ["pw1", "pw1"]
         mock_input.side_effect = [TEST_SEED, "y"]
 
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         config_mgr = self._make_config_manager()
         ok = run_onboarding(
@@ -1553,7 +1553,7 @@ class TestE2E_09_RegistryIntegrationWithOnboarding(unittest.TestCase):
         mock_getpass.side_effect = ["pw1", "pw1"]
         mock_input.side_effect = [WRONG_SEED, "y"]
 
-        from cli.onboarding import run_onboarding
+        from phpoc_cli.onboarding import run_onboarding
 
         config_mgr = self._make_config_manager()
         ok = run_onboarding(
@@ -1698,7 +1698,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
             "y",             # overwrite? (ledger might pre-exist)
         ]
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1717,7 +1717,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
             "y",
         ]
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1733,7 +1733,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
         """Selecting 0 cancels and returns False."""
         mock_input.side_effect = ["0"]
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1759,7 +1759,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
             "y",            # overwrite prompt (if reached)
         ]
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1786,7 +1786,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
 
         # Cancel to avoid infinite loop
         mock_input.side_effect = ["0"]
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1803,7 +1803,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
         # Patch get_registry to return an empty registry (no built-ins)
         mock_get_registry.return_value = TransportRegistry()
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1835,7 +1835,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
         registry.register(canceller)
 
         mock_input.side_effect = ["1"]
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,
@@ -1882,7 +1882,7 @@ class TestE2E_10_OnboardingPicker(unittest.TestCase):
         )
         registry.register(full_provider)
 
-        from cli.onboarding import run_onboarding_picker
+        from phpoc_cli.onboarding import run_onboarding_picker
         result = run_onboarding_picker(
             data_dir=self.data_dir,
             config_manager=self.config_mgr,

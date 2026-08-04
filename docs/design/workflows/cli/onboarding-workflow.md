@@ -9,8 +9,8 @@
 | File | Concern |
 |---|---|
 | `main.py` | Dispatches `ph onboarding` → remote, `ph onboarding http` → HTTP, `ph onboarding file <path>` → local |
-| `cli/onboarding.py` | Remote orchestration: `run_onboarding()` (git), `run_onboarding_http()` (Cloudflare R2) — transport setup, pull ledger/staging/index, extract identity, set passphrase, verify |
-| `cli/onboarding_file.py` | File orchestration: `run_onboarding_file()` — format detection (v1/v2/chain), seal verification, passphrase prompt, verify |
+| `phpoc_cli/onboarding.py` | Remote orchestration: `run_onboarding()` (git), `run_onboarding_http()` (Cloudflare R2) — transport setup, pull ledger/staging/index, extract identity, set passphrase, verify |
+| `phpoc_cli/onboarding_file.py` | File orchestration: `run_onboarding_file()` — format detection (v1/v2/chain), seal verification, passphrase prompt, verify |
 | `core/sync/transport.py` | `create_transport_from_config()` — factory for `HttpStagingTransport` or `GitStagingTransport` |
 | `core/sync/git_transport.py` | `GitStagingTransport` — git-based pull/push for remote onboarding |
 | `domain/ledger/remote_sync.py` | `RemoteLedgerSync` — pull/verify ledger blocks + index from remote |

@@ -30,7 +30,7 @@ from storage.implementations.file_staging import FileStagingStore
 from storage.implementations.file_index import FileIndexStore
 
 # Import the command under test — currently placeholders, so tests will be RED
-from cli.rotate_keys import RotateKeysCommand
+from phpoc_cli.rotate_keys import RotateKeysCommand
 
 
 # ══════════════════════════════════════════════════════════════════

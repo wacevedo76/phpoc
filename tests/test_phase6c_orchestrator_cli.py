@@ -200,7 +200,7 @@ class TestCLIInterfaceAdapter(unittest.TestCase):
             staging_store=MagicMock())
         self.ledger_engine._index = MagicMock()
         self.ledger_engine._index.get_all.return_value = {}
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         self.cli = CLIInterface(self.staging_service, self.ledger_engine, self.crypto)
 
     def test_current_init_smoke(self):
@@ -227,7 +227,7 @@ class TestCLIInterfaceAdapter(unittest.TestCase):
 
     def test_resolve_title_by_name(self):
         """_resolve_title returns title for string match."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         # Mock: one active task
         self.store.read_staging.return_value = [
             {"data": {"title": "Run", "is_active": True, "startTime_enc": "1000",
@@ -241,18 +241,18 @@ class TestCLIInterfaceAdapter(unittest.TestCase):
 
     def test_normalize_tag_args(self):
         """Static tag normalization works."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         result = CLIInterface._normalize_tag_args(["  HI ", "there", " HI "])
         self.assertEqual(result, ["hi", "there"])
 
     def test_normalize_tag_args_none(self):
         """None input returns None."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         self.assertIsNone(CLIInterface._normalize_tag_args(None))
 
     def test_normalize_tag_args_all_empty(self):
         """All-empty input returns None."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         self.assertIsNone(CLIInterface._normalize_tag_args(["", "  "]))
 
 

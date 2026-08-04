@@ -34,7 +34,7 @@ from typing import Optional, Dict, Any, List
 
 HAS_MIGRATE_MODULE = False
 try:
-    from cli.migrate import migrate_chain  # noqa: F401 — may not exist yet
+    from phpoc_cli.migrate import migrate_chain  # noqa: F401 — may not exist yet
     HAS_MIGRATE_MODULE = True
 except ImportError:
     pass
@@ -596,7 +596,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D1: format_version stripped ──────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d1_migrate_strips_format_version(self):
         """After migration, no block contains format_version key."""
         old_chain = self._build_old_format_chain()
@@ -607,7 +607,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D2: Genesis hash field renamed ───────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d2_migrate_renames_genesis_hash(self):
         """Genesis block has block_hash, no day_hash after migration."""
         old_chain = self._build_old_format_chain()
@@ -620,7 +620,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D3: Seals recomputed ─────────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d3_migrate_recomputes_all_seals(self):
         """Every block's seal is different from pre-migration seal."""
         old_chain = self._build_old_format_chain()
@@ -641,7 +641,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D4: prev_hash chain fixes ────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d4_migrate_fixes_prev_hash_chain(self):
         """After migration, block N prev_hash == block N-1 hash field."""
         old_chain = self._build_old_format_chain()
@@ -656,7 +656,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D5: Entry data preserved ─────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d5_migrate_preserves_entry_data(self):
         """Entry hashes and data unchanged after migration."""
         old_chain = self._build_old_format_chain()
@@ -676,7 +676,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D6: Identity preserved ───────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d6_migrate_preserves_identity(self):
         """Genesis identity fields unchanged after migration."""
         old_chain = self._build_old_format_chain()
@@ -692,7 +692,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D7: Backup created ──────────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d7_migrate_creates_backup(self):
         """Original ledger.json copied to ledger.json.bak before migration."""
         old_chain = self._build_old_format_chain()
@@ -713,7 +713,7 @@ class TestGroupDMigrationCommand(unittest.TestCase):
 
     # ── D8: Idempotent migration ─────────────────────────────────────────
 
-    @unittest.skipUnless(HAS_MIGRATE_MODULE, "cli/migrate.py module not available yet (RED phase)")
+    @unittest.skipUnless(HAS_MIGRATE_MODULE, "phpoc_cli/migrate.py module not available yet (RED phase)")
     def test_d8_migrate_noop_on_already_migrated(self):
         """Running migrate on already-migrated chain is idempotent."""
         old_chain = self._build_old_format_chain()
@@ -780,7 +780,7 @@ class TestGroupEAuthVerification(unittest.TestCase):
 
 HAS_ONBOARDING_FILE = True
 try:
-    from cli.onboarding_file import _validate_raw_chain, _import_raw_chain  # noqa: F401
+    from phpoc_cli.onboarding_file import _validate_raw_chain, _import_raw_chain  # noqa: F401
 except ImportError:
     HAS_ONBOARDING_FILE = False
 
@@ -865,7 +865,7 @@ class TestGroupFImportAfterMigration(unittest.TestCase):
     # ── F1: Import migrated chain ───────────────────────────────────────
 
     @unittest.skipUnless(HAS_ONBOARDING_FILE,
-                         "cli/onboarding_file module not available")
+                         "phpoc_cli/onboarding_file module not available")
     def test_f1_import_migrated_chain(self):
         """_import_raw_chain accepts chain with block_hash on genesis."""
         from security.crypto import CryptoManager
@@ -898,7 +898,7 @@ class TestGroupFImportAfterMigration(unittest.TestCase):
     # ── F2: Import old chain rejected ───────────────────────────────────
 
     @unittest.skipUnless(HAS_ONBOARDING_FILE,
-                         "cli/onboarding_file module not available")
+                         "phpoc_cli/onboarding_file module not available")
     def test_f2_import_rejects_old_chain(self):
         """Importing pre-migration chain (format_version in seal) is rejected."""
         chain = self._build_old_chain_with_fv_in_seal()
@@ -919,7 +919,7 @@ class TestGroupFImportAfterMigration(unittest.TestCase):
 
 HAS_VERIFY_FN = False
 try:
-    from cli.migrate import _verify_migrated_chain  # noqa: F401
+    from phpoc_cli.migrate import _verify_migrated_chain  # noqa: F401
     HAS_VERIFY_FN = True
 except ImportError:
     pass
@@ -957,7 +957,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         chain = [genesis, day1, day2]
 
         # Use migrate_chain to produce a verified result
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         return migrate_chain(chain, MASTER_KEY_HEX)
 
     # ── G1: Happy path — properly migrated chain passes verification ─────
@@ -967,7 +967,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         """A properly migrated chain passes _verify_migrated_chain without error."""
         chain = self._build_properly_migrated_chain()
         # Calling _verify_migrated_chain directly should not raise
-        from cli.migrate import _compute_integrity_key, _verify_migrated_chain
+        from phpoc_cli.migrate import _compute_integrity_key, _verify_migrated_chain
         ikey = _compute_integrity_key(MASTER_KEY)
         try:
             _verify_migrated_chain(chain, ikey)
@@ -983,7 +983,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         # Tamper: add format_version to block 1
         chain[1]["format_version"] = "0.3.0"
 
-        from cli.migrate import _compute_integrity_key, _verify_migrated_chain
+        from phpoc_cli.migrate import _compute_integrity_key, _verify_migrated_chain
         ikey = _compute_integrity_key(MASTER_KEY)
         with self.assertRaises(ValueError,
                                msg="Must reject chain with format_version in a block"):
@@ -998,7 +998,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         # Tamper: rename block_hash back to day_hash on genesis
         chain[0]["day_hash"] = chain[0].pop("block_hash")
 
-        from cli.migrate import _compute_integrity_key, _verify_migrated_chain
+        from phpoc_cli.migrate import _compute_integrity_key, _verify_migrated_chain
         ikey = _compute_integrity_key(MASTER_KEY)
         with self.assertRaises(ValueError,
                                msg="Must reject genesis with day_hash after migration"):
@@ -1014,7 +1014,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         tampered_hash = "f" * 64
         chain[1]["day_hash"] = tampered_hash
 
-        from cli.migrate import _compute_integrity_key, _verify_migrated_chain
+        from phpoc_cli.migrate import _compute_integrity_key, _verify_migrated_chain
         ikey = _compute_integrity_key(MASTER_KEY)
         with self.assertRaises(ValueError,
                                msg="Must reject block with invalid seal"):
@@ -1029,7 +1029,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
         # Tamper: break prev_hash on block 2
         chain[2]["prev_hash"] = "b" * 64
 
-        from cli.migrate import _compute_integrity_key, _verify_migrated_chain
+        from phpoc_cli.migrate import _compute_integrity_key, _verify_migrated_chain
         ikey = _compute_integrity_key(MASTER_KEY)
         with self.assertRaises(ValueError,
                                msg="Must reject chain with broken prev_hash linkage"):
@@ -1042,7 +1042,7 @@ class TestGroupGPostMigrationVerification(unittest.TestCase):
 
 HAS_HASH_KEY_FN = False
 try:
-    from cli.migrate import _hash_key_for_block_type  # noqa: F401
+    from phpoc_cli.migrate import _hash_key_for_block_type  # noqa: F401
     HAS_HASH_KEY_FN = True
 except ImportError:
     pass
@@ -1057,7 +1057,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
                          "_hash_key_for_block_type not available yet (RED phase)")
     def test_h1_genesis_returns_block_hash_field(self):
         """Genesis block → returns 'block_hash' field name."""
-        from cli.migrate import _hash_key_for_block_type
+        from phpoc_cli.migrate import _hash_key_for_block_type
         block = {"type": "genesis", "block_hash": "abc"}
         self.assertEqual(_hash_key_for_block_type(block), "block_hash")
 
@@ -1065,7 +1065,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
                          "_hash_key_for_block_type not available yet (RED phase)")
     def test_h2_day_returns_day_hash_field(self):
         """Day block → returns 'day_hash' field name."""
-        from cli.migrate import _hash_key_for_block_type
+        from phpoc_cli.migrate import _hash_key_for_block_type
         block = {"type": "day", "day_hash": "abc"}
         self.assertEqual(_hash_key_for_block_type(block), "day_hash")
 
@@ -1073,7 +1073,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
                          "_hash_key_for_block_type not available yet (RED phase)")
     def test_h3_month_summary_returns_month_hash_field(self):
         """Month summary → returns 'month_hash' field name."""
-        from cli.migrate import _hash_key_for_block_type
+        from phpoc_cli.migrate import _hash_key_for_block_type
         block = {"type": "month_summary", "month_hash": "abc"}
         self.assertEqual(_hash_key_for_block_type(block), "month_hash")
 
@@ -1081,7 +1081,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
                          "_hash_key_for_block_type not available yet (RED phase)")
     def test_h4_year_summary_returns_year_hash_field(self):
         """Year summary → returns 'year_hash' field name."""
-        from cli.migrate import _hash_key_for_block_type
+        from phpoc_cli.migrate import _hash_key_for_block_type
         block = {"type": "year_summary", "year_hash": "abc"}
         self.assertEqual(_hash_key_for_block_type(block), "year_hash")
 
@@ -1089,7 +1089,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
                          "_hash_key_for_block_type not available yet (RED phase)")
     def test_h5_unknown_type_defaults_day_hash(self):
         """Unknown type → returns 'day_hash' as safe default."""
-        from cli.migrate import _hash_key_for_block_type
+        from phpoc_cli.migrate import _hash_key_for_block_type
         block = {"type": "bogus", "bogus_hash": "abc"}
         self.assertEqual(_hash_key_for_block_type(block), "day_hash")
 
@@ -1100,7 +1100,7 @@ class TestGroupHHashKeyForBlockType(unittest.TestCase):
 
 HAS_MIGRATE_ENTRY_HASH_FN = False
 try:
-    from cli.migrate import migrate_chain  # will recompute entry hashes in Phase 3
+    from phpoc_cli.migrate import migrate_chain  # will recompute entry hashes in Phase 3
     HAS_MIGRATE_ENTRY_HASH_FN = True
 except ImportError:
     pass
@@ -1183,7 +1183,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
         old_entry_hashes = [e["hash"] for e in chain[1]["entries"]]
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         new_entry_hashes = [e["hash"] for e in migrated[1]["entries"]]
@@ -1213,7 +1213,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
         original_entries = [e["data"] for e in chain[1]["entries"]]
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         migrated_entries = [e["data"] for e in migrated[1]["entries"]]
@@ -1233,7 +1233,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
         old_day_hash = chain[1]["day_hash"]
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         new_day_hash = migrated[1]["day_hash"]
@@ -1251,7 +1251,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         """D4: Chain prev_hash linkage remains valid after migration."""
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
 
-        from cli.migrate import migrate_chain, get_block_hash
+        from phpoc_cli.migrate import migrate_chain, get_block_hash
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         for i in range(1, len(migrated)):
@@ -1270,7 +1270,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         """D5: Migrated chain passes full verify()."""
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         # Build LedgerChain and verify — use _MockLedgerStore defined above
@@ -1291,7 +1291,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         """D6: Migration is idempotent — running twice produces same result."""
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         first = migrate_chain(chain, MASTER_KEY_HEX)
         second = migrate_chain(first, MASTER_KEY_HEX)
 
@@ -1309,7 +1309,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
 
         # First migration converts to canonical
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         first = migrate_chain(chain, MASTER_KEY_HEX)
 
         # Second migration should not change canonical entries
@@ -1334,7 +1334,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         """D8: Migration handles chain with nosort+indent2 entries (user's format)."""
         chain = self._build_chain_with_legacy_entries("nosort_indent2")
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         # All entry hashes must now be canonical
@@ -1366,7 +1366,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
                     if ch:
                         original_content_hashes.append(ch)
 
-        from cli.migrate import migrate_chain
+        from phpoc_cli.migrate import migrate_chain
         migrated = migrate_chain(chain, MASTER_KEY_HEX)
 
         # Verify content hashes are preserved
@@ -1401,7 +1401,7 @@ class TestGroupIMigrateEntryHashRecomputation(unittest.TestCase):
         try:
             ledger_path.write_text(json.dumps(chain, indent=2))
 
-            from cli.migrate import migrate_chain
+            from phpoc_cli.migrate import migrate_chain
             migrate_chain(chain, MASTER_KEY_HEX, ledger_path=str(ledger_path))
 
             backup_path = tmpdir / "ledger.json.bak"

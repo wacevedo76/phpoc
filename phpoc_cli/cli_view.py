@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Optional
 
 from domain.interfaces.view import ViewInterface
-from cli.cli_parsers import parse_time_input
+from phpoc_cli.cli_parsers import parse_time_input
 
 
 class CLIView(ViewInterface):

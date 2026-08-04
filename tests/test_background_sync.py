@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
-from cli.background import (
+from phpoc_cli.background import (
     _write_notification,
     _read_notification,
     _clear_notification,
@@ -60,14 +60,14 @@ class TestCookieRenewalThreshold(unittest.TestCase):
         created_ms = int(time.time() * 1000) - age_minutes * 60 * 1000
         self.meta_path.write_text(json.dumps({"creation_time": created_ms}))
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_threshold_09_renews_at_90pct(self, mock_session):
         """threshold=0.9, TTL=30min → renew at 27+ min (90%), skip at 26 min."""
         mock_session.__truediv__ = lambda self, other: self.session_file
         mock_session.exists.return_value = True
         mock_session.read_bytes.return_value = b"\x01" * 32
 
-        with patch("cli.background._SESSION_FILE", self.session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", self.session_file):
             # 26 min: 86.7% used → below 0.9 → no renewal
             self._set_cookie_age(26)
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
@@ -78,7 +78,7 @@ class TestCookieRenewalThreshold(unittest.TestCase):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
             self.assertTrue(result, "28 min is 93.3% >= 90% → should renew")
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_threshold_10_renews_only_at_boundary(self, mock_session):
         """threshold=1.0 → renew only at the exact TTL boundary (>=100%).
 
@@ -87,7 +87,7 @@ class TestCookieRenewalThreshold(unittest.TestCase):
         the last millisecond before expiry. This means threshold=1.0 is essentially
         "renew at the last possible moment" rather than "never."
         """
-        with patch("cli.background._SESSION_FILE", self.session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", self.session_file):
             # 29.5 min (98.3%) → still below 1.0 → no renewal
             self._set_cookie_age(29.5)
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=1.0)
@@ -98,10 +98,10 @@ class TestCookieRenewalThreshold(unittest.TestCase):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=1.0)
             self.assertTrue(result, "30 min is exactly 100% → renew at boundary")
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_threshold_05_renews_at_50pct(self, mock_session):
         """threshold=0.5 → renew at 15+ minutes."""
-        with patch("cli.background._SESSION_FILE", self.session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", self.session_file):
             # 14 min: 46.7% used → below 0.5 → no renewal
             self._set_cookie_age(14)
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.5)
@@ -112,10 +112,10 @@ class TestCookieRenewalThreshold(unittest.TestCase):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.5)
             self.assertTrue(result, "16 min is 53.3% >= 50% → should renew")
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_threshold_00_renews_always(self, mock_session):
         """threshold=0.0 → renew on every check (fraction_used 0.0 >= 0.0 is always true)."""
-        with patch("cli.background._SESSION_FILE", self.session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", self.session_file):
             # Brand new cookie (0 min old) → 0% used, but 0.0 >= 0.0 → renews
             self._set_cookie_age(0)
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.0)
@@ -131,29 +131,29 @@ class TestCookieRenewalThreshold(unittest.TestCase):
         result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
         self.assertFalse(result)
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_no_session_file_no_renewal(self, mock_session):
         """No session key cached → no renewal (graceful skip)."""
         self._set_cookie_age(28)
-        with patch("cli.background._SESSION_FILE", self.tmp / "nonexistent"):
+        with patch("phpoc_cli.background._SESSION_FILE", self.tmp / "nonexistent"):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
             self.assertFalse(result, "No session file → skip renewal")
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_bad_session_key_length_no_renewal(self, mock_session):
         """Session file with wrong key length (not 32 bytes) → no renewal."""
         self._set_cookie_age(28)
         bad_session = self.tmp / "bad_session"
         bad_session.write_text("not a 32-byte key")
-        with patch("cli.background._SESSION_FILE", bad_session):
+        with patch("phpoc_cli.background._SESSION_FILE", bad_session):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
             self.assertFalse(result, "Bad key length → skip renewal")
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_push_cookie_called_on_renewal(self, mock_session):
         """Successful renewal calls remote_sync.push_cookie with JSON bytes."""
         self._set_cookie_age(28)
-        with patch("cli.background._SESSION_FILE", self.session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", self.session_file):
             result = _try_renew_aging_cookie(self.tmp, self.remote_sync, 30, renewal_threshold=0.9)
             self.assertTrue(result)
             # Verify push was called with JSON-encoded cookie bytes
@@ -287,7 +287,7 @@ class TestCookieCheckFlow(unittest.TestCase):
             })
         )
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_cookie_check_calls_renewal(self, mock_session):
         """When cookie is aging and session key exists, renewal is attempted."""
         self._set_meta_age(28)
@@ -299,7 +299,7 @@ class TestCookieCheckFlow(unittest.TestCase):
         dev_identity.device_id = "test-device"
         self.remote_sync._device_id_provider.get_device_identity.return_value = dev_identity
 
-        with patch("cli.background._SESSION_FILE", session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", session_file):
             _run_cookie_check(
                 data_dir=self.tmp,
                 remote_sync=self.remote_sync,
@@ -314,12 +314,12 @@ class TestCookieCheckFlow(unittest.TestCase):
             "Aging cookie + session → should push renewed cookie",
         )
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_no_session_skips_renewal(self, mock_session):
         """Aging cookie but no session → no renewal, no notification (cookies match)."""
         self._set_meta_age(28)  # 93% used → would renew if session existed
 
-        with patch("cli.background._SESSION_FILE", self.tmp / "nonexistent"):
+        with patch("phpoc_cli.background._SESSION_FILE", self.tmp / "nonexistent"):
             _run_cookie_check(
                 data_dir=self.tmp,
                 remote_sync=self.remote_sync,
@@ -337,14 +337,14 @@ class TestCookieCheckFlow(unittest.TestCase):
             "Cookies match → no notification even without renewal",
         )
 
-    @patch("cli.background._SESSION_FILE")
+    @patch("phpoc_cli.background._SESSION_FILE")
     def test_fresh_cookie_no_renewal(self, mock_session):
         """Fresh cookie (5 min old) → threshold not hit → no renewal."""
         self._set_meta_age(5)
         session_file = self.tmp / "session"
         session_file.write_bytes(b"\x01" * 32)
 
-        with patch("cli.background._SESSION_FILE", session_file):
+        with patch("phpoc_cli.background._SESSION_FILE", session_file):
             _run_cookie_check(
                 data_dir=self.tmp,
                 remote_sync=self.remote_sync,
@@ -477,14 +477,14 @@ class TestViewIntegration(unittest.TestCase):
         self.staging._local._store.read_entries.return_value = []
 
     def _make_cli(self):
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         return CLIInterface(
             staging_service=self.staging,
             ledger_engine=MagicMock(),
             crypto=MagicMock(),
         )
 
-    @patch("cli.interface._spawn_background_sync_check")
+    @patch("phpoc_cli.interface._spawn_background_sync_check")
     def test_view_active_spawns_background(self, mock_spawn):
         """view_active with remote configured → spawns background check."""
         cli = self._make_cli()
@@ -496,7 +496,7 @@ class TestViewIntegration(unittest.TestCase):
         # Verify it was called with our staging service (identity check)
         self.assertIs(mock_spawn.call_args[0][0], self.staging)
 
-    @patch("cli.interface._spawn_background_sync_check")
+    @patch("phpoc_cli.interface._spawn_background_sync_check")
     def test_view_active_no_remote_no_spawn(self, mock_spawn):
         """view_active without remote → no background spawn."""
         self.staging._remote = None
@@ -527,9 +527,9 @@ class TestViewIntegration(unittest.TestCase):
         # Override config path for the background handler
         with patch("storage.implementations.file_config._resolve_config_path",
                    return_value=config_file):
-            with patch("cli.background._run_cookie_check_with_cleanup") as mock_check:
+            with patch("phpoc_cli.background._run_cookie_check_with_cleanup") as mock_check:
                 with patch("core.sync.git_transport.GitStagingTransport"):
-                    from cli.background import handle_background_sync_check
+                    from phpoc_cli.background import handle_background_sync_check
                     handle_background_sync_check(str(self.tmp))
 
         # Verify parameters passed correctly

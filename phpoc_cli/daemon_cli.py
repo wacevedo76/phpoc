@@ -4,7 +4,7 @@ Each handler receives a ``PhDaemon`` instance and the parsed ``args`` namespace.
 """
 
 from pathlib import Path
-from cli.daemon import PhDaemon
+from phpoc_cli.daemon import PhDaemon
 
 
 def handle_daemon_start(daemon: PhDaemon, args) -> None:

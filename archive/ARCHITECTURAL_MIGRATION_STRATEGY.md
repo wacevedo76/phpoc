@@ -51,7 +51,7 @@ core/
   ├── sync_confirmation.py ← SyncStrategy interface + InteractiveCLIStrategy (CLI in core/)
   └── factory.py        ← LedgerFactory.initialize()
 
-cli/
+phpoc_cli/
   └── interface.py      ← CLIInterface (thin wrapper, some direct storage access)
 
 storage/
@@ -72,10 +72,10 @@ security/
 | `print()` calls in domain layer | `core/ledger.py` | 🔴 High |
 | `plain:` prefix checked everywhere | `core/ledger.py` (7+ methods) | 🔴 High |
 | InteractiveStrategy with `print()`/`input()` in `core/` | `core/sync_confirmation.py` | 🔴 High |
-| CLI handler functions in `main.py` instead of `cli/` | `main.py` (300+ lines of handlers) | 🟡 Medium |
+| CLI handler functions in `main.py` instead of `phpoc_cli/` | `main.py` (300+ lines of handlers) | 🟡 Medium |
 | Single storage interface for 4 concerns | `storage/interface.py` | 🟡 Medium |
 | Summary cadence hardcoded | `core/ledger.py` (within sync methods) | 🟢 Low |
-| View assumes CLI exclusively | `cli/interface.py`, `main.py` | 🟢 Low |
+| View assumes CLI exclusively | `phpoc_cli/interface.py`, `main.py` | 🟢 Low |
 
 ---
 
@@ -89,7 +89,7 @@ security/
 │                                                           │
 │  interfaces/view.py         ← AbstractViewInterface       │
 │                                                           │
-│  cli/                       ← CLIView + CLIStrategy       │
+│  phpoc_cli/                       ← CLIView + CLIStrategy       │
 │    ├── cli_view.py          ← CLIView(view interface impl)│
 │    ├── cli_parsers.py       ← _parse_time_input & friends │
 │    └── strategies.py        ← InteractiveCLIStrategy      │
@@ -719,7 +719,7 @@ class SyncStrategy(ABC):
 
 ### Item 4: Eliminate `plain:` Prefix Leakage
 
-**Problem:** The `plain:` prefix convention is checked in 7+ methods across `core/ledger.py`, plus in `cli/interface.py` (which decrypts fields directly). Every new method that reads staging must remember to handle `startswith("plain:")`. In multi-device mode, remote entries won't have `plain:` — they'll be real ciphertext from another device's encrypt, making the format detection even more complex.
+**Problem:** The `plain:` prefix convention is checked in 7+ methods across `core/ledger.py`, plus in `phpoc_cli/interface.py` (which decrypts fields directly). Every new method that reads staging must remember to handle `startswith("plain:")`. In multi-device mode, remote entries won't have `plain:` — they'll be real ciphertext from another device's encrypt, making the format detection even more complex.
 
 **Target:** The `plain:` prefix is **entirely internal** to `LocalStagingCache`. No other component ever sees it.
 
@@ -729,7 +729,7 @@ class SyncStrategy(ABC):
 |------|---------|--------|
 | `security/crypto.py` | `NoAuthCryptoManager` (strips `plain:` prefix) | **Removed** — staging handles its own format |
 | `core/ledger.py` | 7+ methods with `startswith("plain:")` | All moved to `domain/staging/local_cache.py` |
-| `cli/interface.py` | `_print_entry()` decrypts fields directly | Calls `StagingService.get_entries()` → gets DTOs |
+| `phpoc_cli/interface.py` | `_print_entry()` decrypts fields directly | Calls `StagingService.get_entries()` → gets DTOs |
 | `core/ledger.py` `_reconcile_plain_pauses()` | Checks for `plain:` and re-encrypts | Moved to `LocalStagingCache._to_plain()` |
 | `core/ledger.py` `_normalize_staging_entry()` | Converts hex→plain: before sync | Moved to `LocalStagingCache._from_plain()` |
 
@@ -803,7 +803,7 @@ The CLI never sees `plain:`. The DTO returned by `get_entries()` has `start_epoc
 
 ```
 domain/interfaces/view.py    ← ViewInterface (abstract)
-cli/
+phpoc_cli/
   ├── cli_view.py            ← CLIView (implements ViewInterface)
   ├── cli_parsers.py         ← Time input parsing (CLI-specific)
   └── strategies.py          ← InteractiveCLIStrategy (moved from core/sync_confirmation.py)
@@ -916,7 +916,7 @@ class CLIView(ViewInterface):
     # ... remaining methods follow same pattern
 ```
 
-**InteractiveCLIStrategy (moved to `cli/strategies.py`):**
+**InteractiveCLIStrategy (moved to `phpoc_cli/strategies.py`):**
 
 ```python
 class InteractiveCLIStrategy(SyncStrategy):
@@ -953,13 +953,13 @@ class AutoSyncStrategy(SyncStrategy):
 
 | Current Location | New Location | Reason |
 |-----------------|-------------|--------|
-| `core/sync_confirmation.py` (InteractiveCLIStrategy) | `cli/strategies.py` | CLI-specific implementation |
+| `core/sync_confirmation.py` (InteractiveCLIStrategy) | `phpoc_cli/strategies.py` | CLI-specific implementation |
 | `core/sync_confirmation.py` (SyncStrategy interface) | `core/sync/decision.py` | Abstract interface stays in core |
-| `main.py` `_print_staging_line()` | `cli/cli_view.py` `render_entry_line()` | Belongs in view layer |
-| `main.py` `_parse_time_input()` | `cli/cli_parsers.py` | CLI-specific input parsing |
-| `main.py` `_handle_modify()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
-| `main.py` `_handle_remove()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
-| `main.py` `_handle_review()` | `cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `main.py` `_print_staging_line()` | `phpoc_cli/cli_view.py` `render_entry_line()` | Belongs in view layer |
+| `main.py` `_parse_time_input()` | `phpoc_cli/cli_parsers.py` | CLI-specific input parsing |
+| `main.py` `_handle_modify()` | `phpoc_cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `main.py` `_handle_remove()` | `phpoc_cli/cli_view.py` (as method) | Interactive CLI workflow |
+| `main.py` `_handle_review()` | `phpoc_cli/cli_view.py` (as method) | Interactive CLI workflow |
 | `core/ledger.py` `print()` calls | Replaced with `view.notify()/warn()` | Domain should never print |
 
 ---
@@ -1956,10 +1956,10 @@ See commit [`ab86b8b`](https://github.com/.../commit/ab86b8b).
 Abstract interface:
 - `domain/interfaces/view.py`  ← ViewInterface (14 display + 6 input methods, all no-op defaults)
 
-CLI files (extracted from main.py, cli/interface.py, core/sync_confirmation.py):
-- `cli/cli_parsers.py`         ← parse_time_input() (from main.py)
-- `cli/cli_view.py`            ← CLIView(ViewInterface) — 830 lines
-- `cli/strategies.py`          ← InteractiveCLIStrategy + AutoSyncStrategy
+CLI files (extracted from main.py, phpoc_cli/interface.py, core/sync_confirmation.py):
+- `phpoc_cli/cli_parsers.py`         ← parse_time_input() (from main.py)
+- `phpoc_cli/cli_view.py`            ← CLIView(ViewInterface) — 830 lines
+- `phpoc_cli/strategies.py`          ← InteractiveCLIStrategy + AutoSyncStrategy
                                    + SyncDecision + SyncStrategy
 
 Tests:
@@ -1969,14 +1969,14 @@ Tests:
 
 | Source | Target |
 |--------|--------|
-| `main.py` `_parse_time_input()` | `cli/cli_parsers.py` `parse_time_input()` |
-| `main.py` `_handle_modify()` | `cli/cli_view.py` `interactive_modify()` |
-| `main.py` `_handle_remove()` | `cli/cli_view.py` `interactive_remove()` |
-| `main.py` `_handle_review()` | `cli/cli_view.py` `interactive_review()` |
-| `main.py` `_print_staging_line()` | `cli/cli_view.py` `_print_staging_line()` |
-| `main.py` `_list_tags()` | `cli/cli_view.py` `render_tags()` |
-| `cli/interface.py` `CLIInterface` | `cli/cli_view.py` `CLIView` (all methods) |
-| `core/sync_confirmation.py` strategies | `cli/strategies.py` |
+| `main.py` `_parse_time_input()` | `phpoc_cli/cli_parsers.py` `parse_time_input()` |
+| `main.py` `_handle_modify()` | `phpoc_cli/cli_view.py` `interactive_modify()` |
+| `main.py` `_handle_remove()` | `phpoc_cli/cli_view.py` `interactive_remove()` |
+| `main.py` `_handle_review()` | `phpoc_cli/cli_view.py` `interactive_review()` |
+| `main.py` `_print_staging_line()` | `phpoc_cli/cli_view.py` `_print_staging_line()` |
+| `main.py` `_list_tags()` | `phpoc_cli/cli_view.py` `render_tags()` |
+| `phpoc_cli/interface.py` `CLIInterface` | `phpoc_cli/cli_view.py` `CLIView` (all methods) |
+| `core/sync_confirmation.py` strategies | `phpoc_cli/strategies.py` |
 
 **Key design decisions:**
 - ViewInterface uses duck-typed abstract with no-op defaults (not ABC) — views override only what their medium supports
@@ -2127,7 +2127,7 @@ in Phase 5 (Sync Orchestrator).
 | `core/sync/transport.py` | 45 | `AbstractStagingTransport` (2-method interface: pull/push) |
 | `core/sync/orchestrator.py` | 209 | `SyncOrchestrator` — full sync lifecycle coordinator |
 | `domain/staging/service.py` | +99 | Wire `check_and_sync()` into all 7 mutations; auth cache (30min); `_raw_to_dtos()` converter |
-| `cli/strategies.py` | -54 | Import `SyncDecision`/`SyncStrategy` from `core/sync/decision.py` |
+| `phpoc_cli/strategies.py` | -54 | Import `SyncDecision`/`SyncStrategy` from `core/sync/decision.py` |
 
 **Modified (backward compat):**
 | File | Change |
@@ -2228,7 +2228,7 @@ sync_orchestrator = SyncOrchestrator(staging_service=staging_service,
 |---|----------|------|------------|
 | O1 | Current tests test `core/ledger.py` directly — refactoring will break them | 🟡 Medium | Keep old class as a thin wrapper that delegates to new classes. Tests pass without changes. Remove wrapper once all callers migrate. |
 | O2 | `NoAuthCryptoManager` is used in many places — removing it affects `add/start/end/pause/unpause` commands | 🟡 Medium | `StagingService` will handle `plain:` internally. The `add`/`start`/`end` commands in `main.py` just need to call `StagingService.capture()` instead of `ledger.capture_habit()`. The `NoAuthCryptoManager` class can be deprecated but kept until all callers migrate. |
-| O3 | `main.py` has 300+ lines of handler functions that read/write staging directly | 🟡 Medium | Move handlers to `cli/cli_view.py` Phase 1. Then have them call `StagingService` Phase 2. Incremental — each handler is a self-contained migration. |
+| O3 | `main.py` has 300+ lines of handler functions that read/write staging directly | 🟡 Medium | Move handlers to `phpoc_cli/cli_view.py` Phase 1. Then have them call `StagingService` Phase 2. Incremental — each handler is a self-contained migration. |
 | O4 | `plain:` prefix convention requires testing for every staging operation | 🟢 Low | `LocalStagingCache` is the single point of truth. Unit test its `_to_plain()` and `_from_plain()` methods. Integration tests verify that `get_entries()` never returns `plain:`-prefixed values. |
 | O5 | Remote transport (git) not yet implemented — can't fully test RemoteStagingSync | 🟢 Low | `RemoteStagingSync` can be tested with an in-memory mock transport. The `AbstractStagingTransport` interface is minimal (pull/push). Git implementation can be added later. |
 | O6 | DeviceIdentityProvider is new code with no existing equivalent | 🟢 Low | Default implementation derives from Master Key via HMAC — same primitives already in use. Test with known MK and compare outputs. |
@@ -2265,10 +2265,10 @@ The migration introduces new files and classes but should not change existing be
 | Component | File | Test Focus | Status |
 |-----------|------|------------|--------|
 | `ViewInterface` | `domain/interfaces/view.py` | All 20 methods, no-op defaults, string return types | ✅ 5 tests |
-| `CLIView` | `cli/cli_view.py` | Entry formatting, tag rendering, interactive workflows, prompt parsing, edge cases | ✅ 44 tests |
-| `InteractiveCLIStrategy` | `cli/strategies.py` | Three-stage flow, edit menu, sync confirmation, empty state | ✅ 8 tests |
-| `AutoSyncStrategy` | `cli/strategies.py` | Selects all, empty pending returns cancelled | ✅ 3 tests |
-| `SyncDecision` | `cli/strategies.py` | Properties, cancellation, empty state | ✅ 2 tests |
+| `CLIView` | `phpoc_cli/cli_view.py` | Entry formatting, tag rendering, interactive workflows, prompt parsing, edge cases | ✅ 44 tests |
+| `InteractiveCLIStrategy` | `phpoc_cli/strategies.py` | Three-stage flow, edit menu, sync confirmation, empty state | ✅ 8 tests |
+| `AutoSyncStrategy` | `phpoc_cli/strategies.py` | Selects all, empty pending returns cancelled | ✅ 3 tests |
+| `SyncDecision` | `phpoc_cli/strategies.py` | Properties, cancellation, empty state | ✅ 2 tests |
 | **Total** | `tests/test_phase1b_view_interface.py` | | **✅ 62 tests** |
 
 ### Unit Tests (Phase 2 ✅ — 112 tests, all passing)

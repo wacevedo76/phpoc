@@ -47,7 +47,7 @@ features.
   `tempfile` — no `pip install` required.
 - The format must be simple enough for anyone to re-implement without a
   dependency manager.
-- This constraint applies to the Python CLI core (`cli/`, `core/`, `domain/`,
+- This constraint applies to the Python CLI core (`phpoc_cli/`, `core/`, `domain/`,
   `security/`, `storage/`). External implementations (phpoc-web, phpoc-crypto-core,
   worker) are independent packages with their own dependency policies.
 - When a zero-dep constraint blocks a feature (e.g., real Ed25519 signatures),

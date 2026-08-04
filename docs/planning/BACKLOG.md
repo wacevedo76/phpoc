@@ -254,7 +254,7 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **Why:** One MK protects everything forever. Compromise = permanent, catastrophic, no remediation path.
 **Flaw doc severity:** Critical — the single biggest architectural gap in the protocol.
-**Status:** ✅ Phases 1-4 complete (2026-07-17). ADR-026 implemented: `derive_mk()` + versioned `CryptoManager` in crypto.py, multi-version `verify()`/`verify_block()` with `get_mk_for_version` in chain.py, `get_mk()`/`key_version`/`_keys` in auth.py, `RotateKeysCommand` skeleton in cli/rotate_keys.py, JS `deriveMk()` + `CryptoManager` in phpoc-web. 95/95 PY + 13/13 JS GREEN. 5 Phase-4 improvements.
+**Status:** ✅ Phases 1-4 complete (2026-07-17). ADR-026 implemented: `derive_mk()` + versioned `CryptoManager` in crypto.py, multi-version `verify()`/`verify_block()` with `get_mk_for_version` in chain.py, `get_mk()`/`key_version`/`_keys` in auth.py, `RotateKeysCommand` skeleton in phpoc_cli/rotate_keys.py, JS `deriveMk()` + `CryptoManager` in phpoc-web. 95/95 PY + 13/13 JS GREEN. 5 Phase-4 improvements.
 
 **Required:** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
 
@@ -292,7 +292,7 @@ cannot actually be rotated — it's all infrastructure and no action.
 - Update `key_version` on all blocks
 - Recompute all seals, MACs, and `prev_hash` links
 
-**Files:** `cli/rotate_keys.py` (main), `security/auth.py` (`_keys` population),
+**Files:** `phpoc_cli/rotate_keys.py` (main), `security/auth.py` (`_keys` population),
 `domain/ledger/chain.py` (re-seal helpers), `storage/` (backup).
 
 **Effort:** Medium. **Next action:** Phase 1 (test blueprint) → Phase 2-4 TDD.
@@ -523,7 +523,7 @@ ledger's last entry (no overlaps). The newer ledger is retired after migration.
 The protocol has all the building blocks (two seeds → two `CryptoManager`s, versioned MK
 derivation, export/import formats) but no packaged command.
 
-**Deliverable:** `cli/import_ledger.py` — `ph import-ledger --seed <seed>` or `--file <path>` command.
+**Deliverable:** `phpoc_cli/import_ledger.py` — `ph import-ledger --seed <seed>` or `--file <path>` command.
 Also: `phpoc-web/src/ledger/import_entries.js`, `lib/services/import_service.dart`.
 
 **Effort:** Medium (~1 day). **Depends on:** I-01 (versioned MK) ✅, I-01a (rotation execution) ✅,

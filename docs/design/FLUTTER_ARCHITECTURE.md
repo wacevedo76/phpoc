@@ -29,7 +29,7 @@
 ### CLI Architecture (Python — reference implementation)
 
 ```
-cli/          ← Commands, display, onboarding, daemon
+phpoc_cli/          ← Commands, display, onboarding, daemon
 core/         ← Factory, sync orchestrator, transports
 domain/       ← Ledger engine, staging service, merge, cookies
 storage/      ← Abstract interfaces + file-based implementations

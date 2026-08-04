@@ -66,7 +66,7 @@ except Exception as e:
 
 # CLIInterface with new deps
 try:
-    from cli.interface import CLIInterface
+    from phpoc_cli.interface import CLIInterface
     import inspect
     sig = inspect.signature(CLIInterface.__init__)
     params = list(sig.parameters.keys())
@@ -97,10 +97,10 @@ except Exception as e:
 
 # New strategies importable
 try:
-    from cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy as NewInteractive
-    check("cli.strategies importable", True)
+    from phpoc_cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy as NewInteractive
+    check("phpoc_cli.strategies importable", True)
 except Exception as e:
-    check("cli.strategies importable", False, str(e))
+    check("phpoc_cli.strategies importable", False, str(e))
 
 # Domain components
 try:
@@ -197,7 +197,7 @@ print("5. CLIInterface no self.ledger references")
 print("=" * 70)
 
 try:
-    with open("cli/interface.py") as f:
+    with open("phpoc_cli/interface.py") as f:
         content = f.read()
     # Exclude comment references / string literals
     import ast

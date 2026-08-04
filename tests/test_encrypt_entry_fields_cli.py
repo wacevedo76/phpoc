@@ -857,7 +857,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F1: [encrypted] when no MK ──
     def test_F1_render_entry_line_shows_encrypted_placeholder(self):
         """render_entry_line() shows [encrypted] when entry has has_encrypted_fields and no title."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 0, "title": "",
@@ -872,7 +872,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F2: decrypted when MK available ──
     def test_F2_render_entry_line_shows_decrypted_with_mk(self):
         """render_entry_line() shows decrypted title when title is available."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 1, "title": "MyTask",
@@ -887,7 +887,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F3: normal title for plaintext ──
     def test_F3_render_entry_line_shows_normal_title_for_plaintext(self):
         """render_entry_line() shows normal title for plaintext entries."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 2, "title": "PlainTask",
@@ -902,7 +902,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F4: non-encrypted fields visible ──
     def test_F4_non_encrypted_fields_visible(self):
         """render_entry_line() shows tags/time/duration when plaintext."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 3, "title": "Task",
@@ -917,7 +917,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F5: [encrypted] for encrypted tags ──
     def test_F5_render_entry_line_shows_encrypted_for_tags(self):
         """render_entry_line() shows [encrypted] for tags when has_encrypted_fields and no tags."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 4, "title": "",
@@ -932,7 +932,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F6: sync preview respects privacy ──
     def test_F6_render_overview_shows_encrypted_placeholder(self):
         """render_overview() shows [encrypted] for pending encrypted entries."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         from io import StringIO
         import sys
         view = CLIView(MagicMock())
@@ -956,7 +956,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F7: ph view --show-encrypted ──
     def test_F7_ph_view_shows_decrypted_when_available(self):
         """CLI view shows decrypted title when title available in entry."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         # When title is in the DTO (decrypted), it shows normally
         entry = {
@@ -972,7 +972,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F8: date range ──
     def test_F8_render_entry_line_shows_date(self):
         """render_entry_line() shows date field."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 6, "title": "Task",
@@ -987,7 +987,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F9: ph list shows [encrypted] ──
     def test_F9_encrypted_entry_no_title_shows_placeholder(self):
         """Entry with has_encrypted_fields and empty title shows [encrypted]."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 7, "title": "",
@@ -1002,7 +1002,7 @@ class TestGroupF_Display(unittest.TestCase):
     # ── F10: ph list shows decrypted when title present ──
     def test_F10_encrypted_entry_with_title_shows_real_title(self):
         """Entry with has_encrypted_fields and non-empty title shows real title."""
-        from cli.cli_view import CLIView
+        from phpoc_cli.cli_view import CLIView
         view = CLIView(MagicMock())
         entry = {
             "entry_index": 8, "title": "RealTask",

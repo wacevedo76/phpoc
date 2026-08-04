@@ -16,7 +16,7 @@ Three serialization contexts currently diverge:
 | CLI entry hash | `domain/ledger/chain.py:build_day_block()` | `json.dumps(data, sort_keys=True, indent=2)` | Already canonical ✓ |
 | Web entry hash | `phpoc-web/src/ledger/utils.js:computeEntryHash()` | `JSON.stringify(data, null, 2)` | Must sort keys like Python |
 | Verification flex | `domain/ledger/chain.py:_verify_entry_hash_flex()` | 2 formats (sort+i2, sort+cmp) | 3 formats (+nosort+i2 for legacy) |
-| Migration | `cli/migrate.py:migrate_chain()` | Preserves entry hashes as-is | Recomputes entry hashes to canonical |
+| Migration | `phpoc_cli/migrate.py:migrate_chain()` | Preserves entry hashes as-is | Recomputes entry hashes to canonical |
 
 ### Entry Hash Format Matrix
 

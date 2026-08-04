@@ -30,7 +30,7 @@ PDK  = PBKDF2-HMAC-SHA256(passphrase, salt, 600000, 32)
 **Modules affected:**
 - `security/auth.py` — `PassphraseAuthenticator.authenticate()` + new `derive_pdk_salt()` helper
 - `core/factory.py` — init flow (uses old salt, relies on first-auth upgrade)
-- `cli/onboarding.py` / `cli/onboarding_file.py` — passphrase setting paths
+- `phpoc_cli/onboarding.py` / `phpoc_cli/onboarding_file.py` — passphrase setting paths
 - `scripts/change_passphrase.py` — standalone passphrase changer
 - `phpoc-crypto-core/` — `derive_pdk()` needs salt parameter
 - `phpoc-web/` — `derivePdk()` needs salt parameter; call sites need pub_key → salt
@@ -79,8 +79,8 @@ PDK  = PBKDF2-HMAC-SHA256(passphrase, salt, 600000, 32)
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
-| D1 | `_recover_ledger()` derives new PDK with per-user salt from genesis `identity_pub_key` | Onboarding re-encrypts with new salt | `cli/onboarding.py` sets new passphrase during import |
-| D2 | `_set_passphrase()` in `cli/onboarding_file.py` uses per-user salt | File import passphrase set | Same fix needed in file onboarding path |
+| D1 | `_recover_ledger()` derives new PDK with per-user salt from genesis `identity_pub_key` | Onboarding re-encrypts with new salt | `phpoc_cli/onboarding.py` sets new passphrase during import |
+| D2 | `_set_passphrase()` in `phpoc_cli/onboarding_file.py` uses per-user salt | File import passphrase set | Same fix needed in file onboarding path |
 | D3 | `scripts/change_passphrase.py` uses per-user salt | Standalone passphrase changer | External script must also use new salt |
 | D4 | Changing passphrase with old-salt ledger → seed encrypted with new salt | Upgrade during passphrase change | Any passphrase change is an opportunity to upgrade |
 | D5 | Recovery flow (ph recover) uses per-user salt for new seed encryption | Recovery compatibility | Recovery reads passphrase and re-encrypts seed |

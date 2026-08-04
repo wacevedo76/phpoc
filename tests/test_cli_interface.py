@@ -21,7 +21,7 @@ from io import StringIO
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from domain.staging.service import SyncCheckResult
-from cli.interface import CLIInterface
+from phpoc_cli.interface import CLIInterface
 
 
 # ============================================================================
@@ -145,9 +145,9 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         original_staging = self.cli._staging
         original_ledger = self.cli._ledger_engine
 
-        with patch('cli.interface.CryptoManager', create=True) as mock_cm, \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True) as mock_le:
+        with patch('phpoc_cli.interface.CryptoManager', create=True) as mock_cm, \
+             patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
+             patch('phpoc_cli.interface.LedgerEngine', create=True) as mock_le:
             self.cli._sync_before_command(require_auth=False)
 
         # No new CryptoManager, StagingService, or LedgerEngine created
@@ -316,8 +316,8 @@ class TestGroupD_CheckAndSyncCount(unittest.TestCase):
 
         with patch.object(self.cli, '_sync_before_command',
                           wraps=self.cli._sync_before_command) as mock_sync, \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'):
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'):
             mock_sync.return_value = True
             self.cli.view_active()
 
@@ -366,8 +366,8 @@ class TestGroupD_CheckAndSyncCount(unittest.TestCase):
 
         with patch.object(self.cli, '_sync_before_command',
                           return_value=True), \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'), \
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli.view_active()
 
@@ -629,7 +629,7 @@ import time as _time
 from pathlib import Path as _Path
 
 # _RemoteLedgerCache will be defined in cli/interface.py during Phase 3
-from cli.interface import _RemoteLedgerCache  # noqa: E402 — RED: ImportError
+from phpoc_cli.interface import _RemoteLedgerCache  # noqa: E402 — RED: ImportError
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -910,7 +910,7 @@ class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
         mock_cache = self._fresh_cache_mock()
         mock_rs_class = MagicMock()
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache) as mock_cache_cls, \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class):
@@ -925,7 +925,7 @@ class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
         """B2: Dedup works from cached block data."""
         mock_cache = self._fresh_cache_mock(blocks=dict(_SAMPLE_BLOCKS))
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch.object(self.cli, '_remove_committed_from_staging') as mock_rm, \
              patch('domain.ledger.remote_sync.RemoteLedgerSync'):
@@ -947,7 +947,7 @@ class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
         self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
         self.mock_staging._local.read_entries.return_value = []
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch.object(self.cli, '_remove_committed_from_staging'), \
              patch.object(self.cli, '_merge_remote_index'), \
@@ -969,7 +969,7 @@ class TestGroupB_CacheHitSkipPull(_BaseCacheIntegration):
             remote_index=dict(_SAMPLE_REMOTE_INDEX)
         )
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch.object(self.cli, '_remove_committed_from_staging'), \
              patch.object(self.cli, '_merge_remote_index') as mock_merge, \
@@ -1006,7 +1006,7 @@ class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1050,7 +1050,7 @@ class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1081,7 +1081,7 @@ class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1103,7 +1103,7 @@ class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1132,7 +1132,7 @@ class TestGroupC_CacheMissPartial(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1172,7 +1172,7 @@ class TestGroupD_TTLExpiry(_BaseCacheIntegration):
         )
         mock_rs_class = MagicMock(return_value=mock_rs)
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1192,7 +1192,7 @@ class TestGroupD_TTLExpiry(_BaseCacheIntegration):
         mock_cache.is_fresh.return_value = True
         mock_rs_class = MagicMock()
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache) as mock_cache_cls, \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class):
@@ -1212,7 +1212,7 @@ class TestGroupD_TTLExpiry(_BaseCacheIntegration):
         mock_cache.is_fresh.return_value = True
         mock_rs_class = MagicMock()
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache) as mock_cache_cls, \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class):
@@ -1251,7 +1251,7 @@ class TestGroupE_CacheInvalidation(_BaseCacheIntegration):
         mock_rs_class = MagicMock(return_value=mock_rs)
 
         # First call: cache is fresh, no pull
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1265,7 +1265,7 @@ class TestGroupE_CacheInvalidation(_BaseCacheIntegration):
 
         # Second call: cache is stale, full pull
         mock_rs_class.reset_mock()
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    mock_rs_class), \
@@ -1285,11 +1285,11 @@ class TestGroupE_CacheInvalidation(_BaseCacheIntegration):
         old_store = MagicMock()
         self.mock_staging._local._store = old_store
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache) as mock_cache_cls, \
-             patch('cli.interface.CryptoManager', create=True) as mock_cm, \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True) as mock_le:
+             patch('phpoc_cli.interface.CryptoManager', create=True) as mock_cm, \
+             patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
+             patch('phpoc_cli.interface.LedgerEngine', create=True) as mock_le:
             mock_cm_instance = MagicMock()
             mock_cm.return_value = mock_cm_instance
             mock_ss_instance = MagicMock()
@@ -1308,7 +1308,7 @@ class TestGroupE_CacheInvalidation(_BaseCacheIntegration):
         """E3: Cross-invocation persistence — whole point of F2."""
         mock_cache = self._fresh_cache_mock()
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache) as mock_cache_cls, \
              patch('domain.ledger.remote_sync.RemoteLedgerSync'), \
              patch.object(self.cli, '_remove_committed_from_staging'), \
@@ -1347,7 +1347,7 @@ class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
         )
 
         # First call: cache stale → full pull
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    MagicMock(return_value=mock_rs)), \
@@ -1367,7 +1367,7 @@ class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
         # SAME RemoteLedgerSync instance. But since the method creates a new
         # RemoteLedgerSync when needed, we verify the class is not called.
         mock_rs2 = MagicMock()
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    MagicMock(return_value=mock_rs2)), \
@@ -1387,7 +1387,7 @@ class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
         self.mock_ledger_engine.get_day_blocks.return_value = []
         self.mock_staging._local.read_entries.return_value = []
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch.object(self.cli, '_remove_committed_from_staging'), \
              patch.object(self.cli, '_merge_remote_index'), \
@@ -1420,7 +1420,7 @@ class TestGroupF_IntegrationE2E(_BaseCacheIntegration):
             remote_index=_SAMPLE_REMOTE_INDEX,
         )
 
-        with patch('cli.interface._RemoteLedgerCache',
+        with patch('phpoc_cli.interface._RemoteLedgerCache',
                    return_value=mock_cache), \
              patch('domain.ledger.remote_sync.RemoteLedgerSync',
                    MagicMock(return_value=mock_rs)), \

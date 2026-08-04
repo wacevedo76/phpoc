@@ -41,7 +41,7 @@ peer-to-peer communication.
 | File | Concern | Key exports |
 |---|---|---|
 | `main.py` | CLI entry: arg parsing, component wiring, auth tiers, command dispatch | `main()`, `StagingService(...)` creation |
-| `cli/interface.py` | `CLIInterface`: command implementations, `_sync_before_command()` gate | `CLIInterface` |
+| `phpoc_cli/interface.py` | `CLIInterface`: command implementations, `_sync_before_command()` gate | `CLIInterface` |
 | `domain/staging/service.py` | `StagingService`: CRUD + `check_and_sync()` + `push_to_remote()` + `_reconcile_and_claim()` | `StagingService`, `SyncCheckResult` |
 | `domain/staging/local_cache.py` | `LocalStagingCache`: CRUD with `plain:` prefix convention, entry_id generation | `LocalStagingCache` |
 | `domain/staging/remote_sync.py` | `RemoteStagingSync`: blob obfuscation, pull/push, cookie I/O | `RemoteStagingSync`, `BLOB_KEY_MISMATCH` |
@@ -49,9 +49,9 @@ peer-to-peer communication.
 | `domain/cookie/device_cookie.py` | `DeviceCookie`: TTL check, specifier compare, create/destroy, parse remote | `DeviceCookie` |
 | `core/sync/transport.py` | `AbstractStagingTransport`, `HttpStagingTransport`, `create_transport_from_config()` | Transport classes |
 | `storage/implementations/file_staging.py` | `FileStagingStore`: read/write staging.json on disk | `FileStagingStore` |
-| `cli/onboarding.py` | `run_onboarding()`: second-machine import (pull ledger + staging + index from remote) | `run_onboarding()` |
-| `cli/wal.py` | Write-ahead log: `_write_wal_pending()`, `_spawn_background_push()`, `_replay_wal()` | WAL helpers |
-| `cli/daemon.py` | `PhDaemon`: persistent background sync (Phase C) | `PhDaemon` |
+| `phpoc_cli/onboarding.py` | `run_onboarding()`: second-machine import (pull ledger + staging + index from remote) | `run_onboarding()` |
+| `phpoc_cli/wal.py` | Write-ahead log: `_write_wal_pending()`, `_spawn_background_push()`, `_replay_wal()` | WAL helpers |
+| `phpoc_cli/daemon.py` | `PhDaemon`: persistent background sync (Phase C) | `PhDaemon` |
 | `security/device_identity.py` | `RandomUUIDDeviceIdentityProvider`: per-machine UUID derivation | Device identity |
 
 ## Data Paths (per machine)

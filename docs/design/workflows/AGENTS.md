@@ -6,7 +6,7 @@ the modules, decision trees, invariants, diagnostic checkpoints, and known gaps
 for a single workflow so an agent can trace issues without reading source.
 
 ## Ownership
-- `cli/` — CLI-specific workflows (`ph` command, daemon, background sync)
+- `phpoc_cli/` — CLI-specific workflows (`ph` command, daemon, background sync)
 - `web/` — Web-specific workflows (React app, sync, auth, import/export)
 - `Cross_Device_Staging-Workflow.md` — Cross-device staging sharing: CLI ↔ Web via Worker/R2
 
@@ -22,18 +22,18 @@ exports), Key Invariants (what must never break), Diagnostic Checkpoints
 - Keep workflow docs in sync with module paths and exported function names.
 
 ## Work Guidance
-- Start new workflow docs from the existing templates in `web/` or `cli/`.
+- Start new workflow docs from the existing templates in `web/` or `phpoc_cli/`.
 - Module Map: every source file touched by the workflow with exact path and exports.
 - Decision trees: ASCII-branch style showing every possible path and outcome.
 - Diagnostic checkpoints: numbered table — what to check + exact code expression.
 - Key invariants: numbered list — behaviors that must never regress.
 - Known gaps: only things that exist as source but aren't wired, or real limitations.
-- Add new CLI workflows to `cli/`, web workflows to `web/`.
+- Add new CLI workflows to `phpoc_cli/`, web workflows to `web/`.
 
 ## Verification
 None — workflow docs are specifications, verified indirectly through test suites.
 
 ## Child DOX Index
-- `cli/AGENTS.md` — CLI workflow specifications
+- `phpoc_cli/AGENTS.md` — CLI workflow specifications
 - `web/AGENTS.md` — Web workflow specifications
 - `Cross_Device_Staging-Workflow.md` — Cross-device staging sharing: sync gate, merge engine, device cookie, genesis gate across CLI and Web

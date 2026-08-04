@@ -21,7 +21,7 @@ from typing import Optional, Dict, Any
 
 HAS_I01_ORCH = False
 try:
-    from cli.rotate_keys import RotateKeysCommand  # noqa: F811
+    from phpoc_cli.rotate_keys import RotateKeysCommand  # noqa: F811
     HAS_I01_ORCH = True
 except (ImportError, ModuleNotFoundError):
     RotateKeysCommand = None
@@ -127,7 +127,7 @@ class TestSoftRotation(unittest.TestCase):
         genesis = _make_genesis(mk_version=1, crypto=crypto_v1)
 
         # After soft rotation, key_version should be 2
-        from cli.rotate_keys import RotateKeysCommand
+        from phpoc_cli.rotate_keys import RotateKeysCommand
         # The command should produce a rotated genesis with key_version=2
         cmd = RotateKeysCommand()
         self.assertTrue(hasattr(cmd, "soft_rotate") or hasattr(cmd, "execute"),

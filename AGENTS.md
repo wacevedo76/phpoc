@@ -110,7 +110,7 @@ When the user requests a durable behavior change, record it here or in the relev
 ## Child DOX Index
 
 ### Source Code
-- `cli/AGENTS.md` — CLI interface layer: commands, display, daemon, onboarding, background sync
+- `phpoc_cli/AGENTS.md` — CLI interface layer: commands, display, daemon, onboarding, background sync
 - `core/AGENTS.md` — Core orchestration: factory, sync orchestrator, transports, sync confirmation
 - `domain/AGENTS.md` — Domain logic: ledger chain, staging service, device cookies, view interfaces
   - `domain/ledger/AGENTS.md` — Ledger engine: chain building, sealing, verification, index, summaries

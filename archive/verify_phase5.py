@@ -61,8 +61,8 @@ from core.sync_confirmation import AutoSyncStrategy, InteractiveCLIStrategy, Syn
 check("core/sync_confirmation shim still importable", True)
 
 # 7. Old cli.strategies still works
-from cli.strategies import AutoSyncStrategy as CliAuto, InteractiveCLIStrategy as CliInteractive
-check("cli.strategies still importable", True)
+from phpoc_cli.strategies import AutoSyncStrategy as CliAuto, InteractiveCLIStrategy as CliInteractive
+check("phpoc_cli.strategies still importable", True)
 
 
 # ═════════════════════════════════════════════════════════════════════

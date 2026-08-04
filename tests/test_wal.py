@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
-from cli.wal import (
+from phpoc_cli.wal import (
     _write_wal_pending,
     _read_wal,
     _clear_wal,
@@ -32,7 +32,7 @@ from cli.wal import (
     format_wal_status,
     STALE_WAL_MAX_AGE_MS,
 )
-from cli.background import SYNC_NOTIFICATION_FILENAME, SYNC_CHECK_LOCK_FILENAME
+from phpoc_cli.background import SYNC_NOTIFICATION_FILENAME, SYNC_CHECK_LOCK_FILENAME
 
 
 # ======================================================================
@@ -244,7 +244,7 @@ class TestWalCrashRecovery(unittest.TestCase):
             {"entry_id": "b", "data": {"title": "New entry"}},
         ]
 
-        with patch("cli.wal._SESSION_FILE") as mock_sf:
+        with patch("phpoc_cli.wal._SESSION_FILE") as mock_sf:
             mock_sf.exists.return_value = False
             result = _replay_wal(self.tmp, self.staging)
 
@@ -259,7 +259,7 @@ class TestWalCrashRecovery(unittest.TestCase):
             {"entry_id": "b", "data": {"title": "New entry"}},
         ]
 
-        with patch("cli.wal._SESSION_FILE") as mock_sf:
+        with patch("phpoc_cli.wal._SESSION_FILE") as mock_sf:
             mock_sf.exists.return_value = True
             mock_sf.read_bytes.return_value = b"\x01" * 32
             result = _replay_wal(self.tmp, self.staging)
@@ -274,7 +274,7 @@ class TestWalCrashRecovery(unittest.TestCase):
             {"entry_id": "b", "data": {"title": "New entry"}},
         ]
 
-        with patch("cli.wal._SESSION_FILE") as mock_sf:
+        with patch("phpoc_cli.wal._SESSION_FILE") as mock_sf:
             mock_sf.exists.return_value = True
             mock_sf.read_bytes.return_value = b"too-short"
             result = _replay_wal(self.tmp, self.staging)
@@ -290,7 +290,7 @@ class TestWalCrashRecovery(unittest.TestCase):
         ]
         self.staging.push_to_remote.side_effect = RuntimeError("push failed")
 
-        with patch("cli.wal._SESSION_FILE") as mock_sf:
+        with patch("phpoc_cli.wal._SESSION_FILE") as mock_sf:
             mock_sf.exists.return_value = True
             mock_sf.read_bytes.return_value = b"\x01" * 32
             result = _replay_wal(self.tmp, self.staging)
@@ -380,9 +380,9 @@ class TestBackgroundPushSpawn(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
 
-    @patch("cli.background._should_spawn_background_check", return_value=True)
-    @patch("cli.background._write_lock_file", return_value=True)
-    @patch("cli.wal.subprocess.Popen")
+    @patch("phpoc_cli.background._should_spawn_background_check", return_value=True)
+    @patch("phpoc_cli.background._write_lock_file", return_value=True)
+    @patch("phpoc_cli.wal.subprocess.Popen")
     def test_spawn_called_with_correct_args(self, mock_popen, mock_lock, mock_debounce):
         """Subprocess is spawned with correct Python module and --dir arg."""
         result = _spawn_background_push(self.tmp)
@@ -404,17 +404,17 @@ class TestBackgroundPushSpawn(unittest.TestCase):
         self.assertIs(kwargs.get("stderr"), subprocess.DEVNULL)
         self.assertTrue(kwargs.get("start_new_session"))
 
-    @patch("cli.background._should_spawn_background_check", return_value=False)
+    @patch("phpoc_cli.background._should_spawn_background_check", return_value=False)
     def test_debounce_blocks_spawn(self, mock_debounce):
         """When debounce says no, no subprocess is spawned."""
-        with patch("cli.wal.subprocess.Popen") as mock_popen:
+        with patch("phpoc_cli.wal.subprocess.Popen") as mock_popen:
             result = _spawn_background_push(self.tmp)
             self.assertFalse(result)
             mock_popen.assert_not_called()
 
-    @patch("cli.background._should_spawn_background_check", return_value=True)
-    @patch("cli.background._write_lock_file", return_value=True)
-    @patch("cli.wal.subprocess.Popen", side_effect=OSError("fork failed"))
+    @patch("phpoc_cli.background._should_spawn_background_check", return_value=True)
+    @patch("phpoc_cli.background._write_lock_file", return_value=True)
+    @patch("phpoc_cli.wal.subprocess.Popen", side_effect=OSError("fork failed"))
     def test_spawn_failure_releases_lock(self, mock_popen, mock_lock, mock_debounce):
         """If Popen raises, lock file is cleaned up."""
         result = _spawn_background_push(self.tmp)
@@ -423,11 +423,11 @@ class TestBackgroundPushSpawn(unittest.TestCase):
         lock_path = self.tmp / SYNC_CHECK_LOCK_FILENAME
         self.assertFalse(lock_path.exists())
 
-    @patch("cli.background._should_spawn_background_check", return_value=True)
-    @patch("cli.background._write_lock_file", return_value=False)
+    @patch("phpoc_cli.background._should_spawn_background_check", return_value=True)
+    @patch("phpoc_cli.background._write_lock_file", return_value=False)
     def test_lock_failure_skips_spawn(self, mock_lock, mock_debounce):
         """If lock file can't be written, no subprocess is spawned."""
-        with patch("cli.wal.subprocess.Popen") as mock_popen:
+        with patch("phpoc_cli.wal.subprocess.Popen") as mock_popen:
             result = _spawn_background_push(self.tmp)
             self.assertFalse(result)
             mock_popen.assert_not_called()
@@ -458,7 +458,7 @@ class TestBackgroundPushExecution(unittest.TestCase):
             "storage": {"data_dir": str(self.tmp)},
         }))
 
-    @patch("cli.wal._SESSION_FILE")
+    @patch("phpoc_cli.wal._SESSION_FILE")
     def test_background_push_no_session_writes_notification(self, mock_sf):
         """No session file → auth_needed notification written, WAL preserved."""
         mock_sf.exists.return_value = False
@@ -479,7 +479,7 @@ class TestBackgroundPushExecution(unittest.TestCase):
         self.assertTrue(has_pending_wal(self.tmp),
                         "WAL preserved when no session key")
 
-    @patch("cli.wal._SESSION_FILE")
+    @patch("phpoc_cli.wal._SESSION_FILE")
     def test_background_push_no_wal_is_noop(self, mock_sf):
         """No WAL → _background_push returns immediately."""
         _clear_wal(self.tmp)
@@ -492,7 +492,7 @@ class TestBackgroundPushExecution(unittest.TestCase):
             _background_push(str(self.tmp))
             mock_ss.assert_not_called()
 
-    @patch("cli.wal._SESSION_FILE")
+    @patch("phpoc_cli.wal._SESSION_FILE")
     @patch("domain.staging.service.StagingService")
     def test_background_push_with_session_pushes_and_clears_wal(
         self, mock_staging_cls, mock_sf
@@ -529,7 +529,7 @@ class TestBackgroundPushExecution(unittest.TestCase):
         # Stale notification should be cleared
         self.assertFalse(notif_path.exists())
 
-    @patch("cli.wal._SESSION_FILE")
+    @patch("phpoc_cli.wal._SESSION_FILE")
     @patch("domain.staging.service.StagingService")
     def test_background_push_failure_preserves_wal(
         self, mock_staging_cls, mock_sf
@@ -552,7 +552,7 @@ class TestBackgroundPushExecution(unittest.TestCase):
         self.assertTrue(has_pending_wal(self.tmp),
                         "WAL preserved after push failure")
 
-    @patch("cli.wal._SESSION_FILE")
+    @patch("phpoc_cli.wal._SESSION_FILE")
     def test_background_push_no_remote_config(self, mock_sf):
         """No remote configured → no push, WAL preserved."""
         mock_sf.exists.return_value = True
@@ -614,15 +614,15 @@ class TestWriteIntegration(unittest.TestCase):
         crypto = MagicMock()
         crypto.master_key = b"\x01" * 32
 
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         self.cli = CLIInterface(
             staging_service=self.staging,
             ledger_engine=MagicMock(),
             crypto=crypto,
         )
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_start_writes_wal(self, mock_wal, mock_spawn):
         """add_start calls _write_wal_pending with staging entries and device_id."""
         mock_device_id = "test-device-1234"
@@ -637,50 +637,50 @@ class TestWriteIntegration(unittest.TestCase):
         self.assertIsInstance(args[1], list)  # staging_entries
         self.assertEqual(args[2], mock_device_id)  # device_id
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_end_writes_wal(self, mock_wal, mock_spawn):
         """add_end calls _write_wal_pending."""
         self.cli.add_end("Work")
         mock_wal.assert_called_once()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_oneoff_writes_wal(self, mock_wal, mock_spawn):
         """add_oneoff calls _write_wal_pending."""
         self.cli.add_oneoff("Test", 1000, 2000)
         mock_wal.assert_called_once()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_pause_writes_wal(self, mock_wal, mock_spawn):
         """add_pause calls _write_wal_pending."""
         self.cli.add_pause("Work")
         mock_wal.assert_called_once()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_unpause_writes_wal(self, mock_wal, mock_spawn):
         """add_unpause calls _write_wal_pending."""
         self.cli.add_unpause("Work")
         mock_wal.assert_called_once()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending")
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending")
     def test_view_active_no_wal(self, mock_wal, mock_spawn):
         """view_active (read-only) does NOT write WAL."""
         self.cli.view_active()
         mock_wal.assert_not_called()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_start_spawns_background_push(self, mock_wal, mock_spawn):
         """add_start spawns a background push after writing WAL."""
         self.cli.add_start("Test task")
         mock_spawn.assert_called_once_with(self.tmp)
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=True)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=True)
     def test_add_start_wal_before_spawn(self, mock_wal, mock_spawn):
         """WAL is written BEFORE background push is spawned (crash safety)."""
         call_order = []
@@ -691,8 +691,8 @@ class TestWriteIntegration(unittest.TestCase):
         self.assertEqual(call_order, ["wal", "spawn"],
                          "WAL must be written before spawn (crash safety)")
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending", return_value=False)
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending", return_value=False)
     def test_add_start_still_spawns_even_if_wal_write_fails(self, mock_wal, mock_spawn):
         """Even if WAL write fails, background push is still attempted.
 
@@ -702,8 +702,8 @@ class TestWriteIntegration(unittest.TestCase):
         self.cli.add_start("Test task")
         mock_spawn.assert_called_once()
 
-    @patch("cli.interface._spawn_background_push")
-    @patch("cli.interface._write_wal_pending")
+    @patch("phpoc_cli.interface._spawn_background_push")
+    @patch("phpoc_cli.interface._write_wal_pending")
     def test_no_remote_no_wal_no_spawn(self, mock_wal, mock_spawn):
         """No remote configured → no WAL, no spawn."""
         self.staging._remote = None
@@ -761,7 +761,7 @@ class TestSyncStatus(unittest.TestCase):
 
     def test_status_wal_and_remote_mismatch(self):
         """WAL exists + cookie mismatch → both states reflected in status."""
-        from cli.background import _write_notification, SYNC_NOTIFICATION_FILENAME
+        from phpoc_cli.background import _write_notification, SYNC_NOTIFICATION_FILENAME
 
         self._write_wal(age_minutes=3)
 

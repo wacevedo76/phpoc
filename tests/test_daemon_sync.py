@@ -30,10 +30,10 @@ class TestSyncWorkerSession(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker
+            from phpoc_cli.daemon_sync import SyncWorker
             self.worker = SyncWorker(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
 
     def test_get_session_key_returns_file_content(self):
         """Session file exists with 32 bytes → returns those bytes."""
@@ -75,10 +75,10 @@ class TestSyncWorkerSync(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker
+            from phpoc_cli.daemon_sync import SyncWorker
             self.worker = SyncWorker(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
 
     def test_sync_skips_when_no_session(self):
         """No session key → sync() returns result with skipped=True, reason='no_session'."""
@@ -126,10 +126,10 @@ class TestSyncWorkerPushRetry(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker
+            from phpoc_cli.daemon_sync import SyncWorker
             self.worker = SyncWorker(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
         self.fake_key = b"k" * 32
         self.mock_service = MagicMock()
 
@@ -222,10 +222,10 @@ class TestSyncWorkerPullCheck(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker
+            from phpoc_cli.daemon_sync import SyncWorker
             self.worker = SyncWorker(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
 
     def test_pull_check_skips_when_no_session(self):
         """No session → pull_check() returns skipped result."""
@@ -269,10 +269,10 @@ class TestSyncWorkerResult(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker, SyncResult
+            from phpoc_cli.daemon_sync import SyncWorker, SyncResult
             self.SyncResult = SyncResult
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
 
     def test_success_result_has_required_attrs(self):
         """SyncResult(success=True) has success, error_count, last_error fields."""
@@ -311,10 +311,10 @@ class TestSyncWorkerFlow(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         try:
-            from cli.daemon_sync import SyncWorker
+            from phpoc_cli.daemon_sync import SyncWorker
             self.worker = SyncWorker(self.tmp)
         except ImportError:
-            self.skipTest("cli/daemon_sync.py not yet implemented")
+            self.skipTest("phpoc_cli/daemon_sync.py not yet implemented")
 
     def test_full_sync_cycle_with_session(self):
         """Complete cycle: has session → pushes → returns success result."""

@@ -22,7 +22,7 @@ duplicate `check_and_sync` + re-auth blocks in `main.py` are removed.
 **Modules:**
 
 ```
-main.py                              cli/interface.py
+main.py                              phpoc_cli/interface.py
 ┌─────────────────────────┐          ┌──────────────────────────────────┐
 │ view command handler     │          │ CLIInterface                     │
 │                          │          │                                  │
@@ -36,7 +36,7 @@ main.py                              cli/interface.py
 └─────────────────────────┘          └──────────────────────────────────┘
 ```
 
-**Scope:** `main.py` (remove duplicate calls), `cli/interface.py` (consolidate
+**Scope:** `main.py` (remove duplicate calls), `phpoc_cli/interface.py` (consolidate
 re-auth in `_sync_before_command` for `require_auth=False`).
 
 ## Test Groups

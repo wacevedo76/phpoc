@@ -190,7 +190,7 @@ Two code paths disagree on whether `signature` should be included in the JSON te
 |------|------|-----------------------|
 | Creation (CLI) | `core/factory.py` line ~52 | ✅ Yes — `"signature": ""` is in the JSON before `crypto.seal()` |
 | Creation (Web) | `phpoc-web/src/ledger/chain.js` line ~264 | ❌ No — comment says "without seal / signature" |
-| Verification (file import) | `cli/onboarding_file.py` line ~260 | ❌ No — `if k not in (hash_field, "signature")` |
+| Verification (file import) | `phpoc_cli/onboarding_file.py` line ~260 | ❌ No — `if k not in (hash_field, "signature")` |
 | Verification (session cache) | `security/auth.py` line ~147 | ❌ No — same exclusion pattern |
 
 **The web never had this bug** — its `buildGenesisBlock` builds `genesisContent` without `signature`, seals it, then adds `signature` after. The CLI includes `"signature": ""` in the dict before sealing, which produces a different JSON string and therefore a different SHA-256 hash.

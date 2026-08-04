@@ -224,7 +224,7 @@ def _prompt_git() -> PromptResult:
     The config_update includes ``remote.git_remote_url`` and
     ``remote.transport = "git"``.
     """
-    from cli.onboarding import _prompt_git_remote_url
+    from phpoc_cli.onboarding import _prompt_git_remote_url
     url = _prompt_git_remote_url()
     if url is None:
         return None, None
@@ -249,7 +249,7 @@ def _prompt_http_cloudflare() -> PromptResult:
 
     Reuses the existing ``cli.onboarding._prompt_http_transport()`` logic.
     """
-    from cli.onboarding import _prompt_http_transport
+    from phpoc_cli.onboarding import _prompt_http_transport
     return _prompt_http_transport()
 
 

@@ -13,7 +13,7 @@ I-01 built the crypto primitives: versioned MK derivation (`derive_mk`), per-blo
 and a multi-MK session cache (`_keys` dict) in `PassphraseAuthenticator`.
 
 I-01a closes the gap between "infrastructure exists" and "the user can actually
-rotate their keys." It implements the orchestration methods in `cli/rotate_keys.py`
+rotate their keys." It implements the orchestration methods in `phpoc_cli/rotate_keys.py`
 that wire together auth, crypto, chain, staging, index, and cookie components:
 
 ```
@@ -201,8 +201,8 @@ I-01a tests the **orchestration layer** that wires them together. Key difference
 
 | File | Change | Tests |
 |------|--------|-------|
-| `cli/rotate_keys.py` | Fill in `soft_rotate()`, `hard_rotate()`, `create_backup()`, helper methods | S, H, E, I |
-| `cli/cli_parsers.py` | Wire `ph rotate-keys` + `--full` flag | I8 |
+| `phpoc_cli/rotate_keys.py` | Fill in `soft_rotate()`, `hard_rotate()`, `create_backup()`, helper methods | S, H, E, I |
+| `phpoc_cli/cli_parsers.py` | Wire `ph rotate-keys` + `--full` flag | I8 |
 | `tests/test_i01_rotatekeys_execution.py` | **New file:** S + H + E group tests with real temp dirs | 38 tests |
 | `tests/test_i01_rotatekeys_integration.py` | **New file:** I group integration tests | 8 tests |
 | `tests/test_i01_key_rotation_orchestration.py` | Existing — Groups F + G (26 tests). These mock-based tests serve as design contracts; I-01a execution tests replace the mocks with real I/O. | Keep as-is or refactor |

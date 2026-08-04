@@ -133,7 +133,7 @@ class InteractiveCLIStrategy(SyncStrategy):
     def _edit_single(self, entry, target_idx, overrides, excluded, view):
         import time as _time_module
         import re as _re_module
-        from cli.cli_parsers import parse_time_input as _parse_time
+        from phpoc_cli.cli_parsers import parse_time_input as _parse_time
 
         current_override = overrides.get(target_idx, {})
         current_end = current_override.get("end_epoch", entry["end_epoch"])
@@ -245,7 +245,7 @@ class InteractiveCLIStrategy(SyncStrategy):
     def _parse_end(end_input, entry):
         """Parse end time input into epoch ms. Returns None on failure."""
         import re as _re
-        from cli.cli_parsers import parse_time_input as _pt
+        from phpoc_cli.cli_parsers import parse_time_input as _pt
 
         end_input = end_input.strip()
         # Try offset from current end

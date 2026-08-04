@@ -71,7 +71,7 @@ User is already in the app (Ledger A loaded, authenticated)
 | Summary policy (`YearMonthSummaryPolicy`) | `domain/ledger/summary_policy.py` | Insert summary blocks between target and new entries |
 | Index rebuild (`IndexManager`) | `domain/ledger/index_manager.py` | Rebuild blind index after migration |
 | Staging `activity_id` | §8.1 | Cross-client entry identity |
-| Backup infrastructure | `cli/rotate_keys.py:create_backup()` | Backup source ledger before migration |
+| Backup infrastructure | `phpoc_cli/rotate_keys.py:create_backup()` | Backup source ledger before migration |
 
 ## Architecture Overview
 
@@ -134,7 +134,7 @@ Where `source` is either:
 
 | File | Client | Role | Change |
 |------|--------|------|--------|
-| `cli/import_ledger.py` | CLI | `ph import-ledger` command | **New** |
+| `phpoc_cli/import_ledger.py` | CLI | `ph import-ledger` command | **New** |
 | `domain/ledger/import_entries.py` | CLI | `EntryImporter`: decrypt, re-encrypt, verify, rebuild | **New** |
 | `domain/ledger/engine.py` | CLI | Passthrough for rebuild helpers | Minor (may reuse existing methods) |
 | `phpoc-web/src/ledger/import_entries.js` | Web | `EntryImporter` JS equivalent | **New** |

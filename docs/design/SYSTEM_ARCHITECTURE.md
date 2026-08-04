@@ -35,7 +35,7 @@ tracking. It has four major subsystems:
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                     CLI (Python)                          │
-│  main.py → cli/ → core/sync/ → domain/ → security/       │
+│  main.py → phpoc_cli/ → core/sync/ → domain/ → security/       │
 │  Pure Python stdlib. Reference implementation.            │
 │  Local JSON files on disk.                                │
 └──────────────────────┬───────────────────────────────────┘
@@ -81,7 +81,7 @@ tracking. It has four major subsystems:
 
 | Component | Language | Lines | Key Docs |
 |-----------|----------|-------|----------|
-| **CLI core** | Python 3.x | ~12,000 | `main.py`, `cli/`, `core/`, `domain/`, `security/`, `storage/` |
+| **CLI core** | Python 3.x | ~12,000 | `main.py`, `phpoc_cli/`, `core/`, `domain/`, `security/`, `storage/` |
 | **Web app** | JavaScript (React) | ~8,000 | `phpoc-web/src/` |
 | **Crypto core** | Rust (ring) | ~1,500 | `phpoc-crypto-core/src/` |
 | **Worker** | TypeScript | ~200 | `worker/src/` |
@@ -612,7 +612,7 @@ src/
 
 ```
 main.py                     # CLI entry: argparse, auth tiers, dispatch
-cli/                        # Interface + display layer
+phpoc_cli/                        # Interface + display layer
 ├── interface.py            # view_active, show_rep, list_habits
 ├── strategies.py           # InteractiveCLIStrategy (sync confirmation UI)
 ├── onboarding.py           # Unified onboarding pipeline (remote + file import)

@@ -27,7 +27,7 @@ from enum import Enum
 
 from security.crypto import AbstractCryptoManager, PureAESCTR
 from security.device_identity import AbstractDeviceIdentityProvider
-from cli.trace import trace
+from phpoc_cli.trace import trace
 
 _logger = logging.getLogger(__name__)
 

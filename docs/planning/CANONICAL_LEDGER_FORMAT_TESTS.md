@@ -36,10 +36,10 @@ are unaffected.
 | `domain/ledger/chain.py` | Sealing: exclude `format_version` from seal data. Verification: handle `block_hash` on genesis. |
 | `domain/ledger/merge.py` | `_verify_block_data`: use `block_hash` for genesis, exclude `format_version` |
 | `security/auth.py` | `_verify_cached_key`: use `block_hash` for genesis |
-| `cli/onboarding_file.py` | `_validate_raw_chain`: use `block_hash` for genesis, exclude `format_version` |
+| `phpoc_cli/onboarding_file.py` | `_validate_raw_chain`: use `block_hash` for genesis, exclude `format_version` |
 | `domain/ledger/remote_sync.py` | Pull verification: same as chain.py |
 | `main.py` | New `ph migrate` subcommand |
-| `cli/migrate.py` (new) | Migration logic: read chain, strip `format_version`, recompute all seals, fix prev_hash links, rename genesis hash field, save |
+| `phpoc_cli/migrate.py` (new) | Migration logic: read chain, strip `format_version`, recompute all seals, fix prev_hash links, rename genesis hash field, save |
 
 ### JavaScript
 

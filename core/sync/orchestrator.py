@@ -141,7 +141,7 @@ class SyncOrchestrator:
         # Step 4: user confirmation
         sync_decision: Optional[SyncDecision] = None
         if not skip_confirmation and pending and self._view is not None:
-            from cli.strategies import InteractiveCLIStrategy
+            from phpoc_cli.strategies import InteractiveCLIStrategy
             strategy = InteractiveCLIStrategy()
             sync_decision = strategy.decide(pending, self._view)
             if sync_decision.cancelled:

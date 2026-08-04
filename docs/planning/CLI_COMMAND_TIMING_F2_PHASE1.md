@@ -47,7 +47,7 @@ TTL: 60 seconds. Cache is invalidated on explicit `ph sync` or re-auth.
 ### Modules Involved
 | Module | Role | Changes |
 |---|---|---|
-| `cli/interface.py` | `CLIInterface` — hosts `_sync_remote_ledger_and_dedup()` + `list_habits()` | Add `_RemoteLedgerCache`, refactor `_sync_remote_ledger_and_dedup` to use it |
+| `phpoc_cli/interface.py` | `CLIInterface` — hosts `_sync_remote_ledger_and_dedup()` + `list_habits()` | Add `_RemoteLedgerCache`, refactor `_sync_remote_ledger_and_dedup` to use it |
 | `domain/ledger/remote_sync.py` | `RemoteLedgerSync` — already provides `_list_remote_block_indices()`, `pull_block_by_index()`, `pull_index()` | No changes (already testable) |
 | `main.py` | Passes `data_dir` — accessible via `self._staging._data_dir` | No changes |
 | `tests/test_cli_interface.py` | Existing test file — 24 F1 tests, Groups A–F | Add ~23 F2 tests, Groups A–F |
@@ -140,5 +140,5 @@ TTL: 60 seconds. Cache is invalidated on explicit `ph sync` or re-auth.
 
 ### Dependencies
 - `domain/ledger/remote_sync.RemoteLedgerSync` — already provides `_list_remote_block_indices()`, `pull_block_by_index()`, `pull_index()`
-- `cli/interface.CLIInterface` — hosts the cache; needs `_staging._data_dir` for file path
+- `phpoc_cli/interface.CLIInterface` — hosts the cache; needs `_staging._data_dir` for file path
 - Mocking: `RemoteLedgerSync`, `StagingService`, `LedgerEngine` — same patterns as F1 tests

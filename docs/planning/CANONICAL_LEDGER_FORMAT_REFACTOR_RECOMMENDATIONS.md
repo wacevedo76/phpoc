@@ -24,7 +24,7 @@
 
 ## 1. 🔴 HIGH — Add post-migration self-verification to `migrate_chain()`
 
-**File:** `cli/migrate.py`
+**File:** `phpoc_cli/migrate.py`
 
 **Problem:** `migrate_chain()` recomputes all seals, fixes prev_hash links, then writes
 the result without verifying the output chain. A bug in seal computation (e.g., wrong
@@ -40,7 +40,7 @@ that checks:
 
 **Estimated lines:** ~15 (actual: ~55 with full error messages and tests)
 
-**Status:** ✅ Implemented (2026-07-03). `_verify_migrated_chain()` added to `cli/migrate.py`,
+**Status:** ✅ Implemented (2026-07-03). `_verify_migrated_chain()` added to `phpoc_cli/migrate.py`,
 called at step 7 before writing output. 5 new tests in Group G of `tests/test_migration.py`.
 
 ---
@@ -60,8 +60,8 @@ or inlined in **8 different locations** across the Python codebase:
 | `domain/ledger/merge.py:282` | Static method `_get_block_hash()` | Method |
 | `domain/ledger/chain.py:~220` | Inline expression in `append_blocks()` and `verify()` | Inline |
 | `domain/ledger/summary_policy.py:94` | Inline expression | Inline |
-| `cli/migrate.py:55` | Module-level function | Function |
-| `cli/onboarding_file.py` | Inline via `BLOCK_HASH_FIELD` dict approach | Dict lookup |
+| `phpoc_cli/migrate.py:55` | Module-level function | Function |
+| `phpoc_cli/onboarding_file.py` | Inline via `BLOCK_HASH_FIELD` dict approach | Dict lookup |
 | `core/sync/orchestrator.py:505` | Inline expression | Inline |
 | `compat/v0_3_0.py` | Inline expression (in `sync_day_with_selection`, `sync_day`) | Inline |
 
@@ -85,14 +85,14 @@ Then import and use in all 8 files. The JS side already has this in `utils.js:ge
 
 **Status:** ✅ Implemented (2026-07-03). Created `domain/ledger/helpers.py` with `get_block_hash(block)`.
 Updated 9 source files:
-- `cli/migrate.py` — replaced module-level `_get_block_hash()`
+- `phpoc_cli/migrate.py` — replaced module-level `_get_block_hash()`
 - `domain/ledger/remote_sync.py` — replaced static method `_get_block_hash()`
 - `domain/ledger/merge.py` — replaced static method `_get_block_hash()`
 - `domain/ledger/summary_policy.py` — replaced `_get_prev_hash()`
 - `domain/ledger/chain.py` — replaced 4 inline patterns in `append_blocks()`, `verify()`, `verify_block()`
 - `core/sync/orchestrator.py` — replaced `RemoteLedgerSync._get_block_hash()` + 2 inlines in `_is_same_genesis()`
-- `cli/onboarding_file.py` — replaced 3 inline patterns
-- `cli/onboarding.py` — replaced 1 inline pattern
+- `phpoc_cli/onboarding_file.py` — replaced 3 inline patterns
+- `phpoc_cli/onboarding.py` — replaced 1 inline pattern
 - `domain/ledger/engine.py` — replaced 2 inline patterns
 12 new unit tests in `tests/test_ledger_helpers.py` (Groups A+B).
 **Deferred:** `compat/v0_3_0.py` (COLD compat layer — 6 sites left as-is).
@@ -140,7 +140,7 @@ in `tests/test_phase3_ledger_engine.py` (Group H).
 
 ## 4. 🟢 LOW — Rename `_get_hash_key` → `_hash_key_for_block_type` in `migrate.py`
 
-**File:** `cli/migrate.py`
+**File:** `phpoc_cli/migrate.py`
 
 **Problem:** `_get_hash_key(block)` returns the *field name* (e.g., `"block_hash"`) while
 `_get_block_hash(block)` returns the *hash value* (e.g., `"abc123..."`). The similar names
@@ -152,7 +152,7 @@ field name string, not a hash value.
 **Estimated lines:** ~3
 
 **Status:** ✅ Implemented (2026-07-03). Renamed function definition + 3 call sites in
-`cli/migrate.py`. 5 new tests in `tests/test_migration.py` (Group H).
+`phpoc_cli/migrate.py`. 5 new tests in `tests/test_migration.py` (Group H).
 
 ---
 

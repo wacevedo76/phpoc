@@ -285,7 +285,7 @@ class PhDaemon:
         debounce = DebounceQueue(timeout_ms=500)
 
         # Lazy-import SyncWorker here to avoid circular imports at module level
-        from cli.daemon_sync import SyncWorker
+        from phpoc_cli.daemon_sync import SyncWorker
         self._sync_worker = SyncWorker(self._data_dir)
 
         # Set up SIGTERM handler for graceful shutdown
@@ -353,6 +353,6 @@ class PhDaemon:
 
     def _session_status(self) -> str:
         """Return ``'authenticated'`` or ``'no_session'`` based on session file."""
-        from cli.daemon_sync import SyncWorker
+        from phpoc_cli.daemon_sync import SyncWorker
         key = SyncWorker._get_session_key(SyncWorker)
         return "authenticated" if key else "no_session"

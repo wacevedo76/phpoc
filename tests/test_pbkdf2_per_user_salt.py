@@ -588,7 +588,7 @@ class TestGroupD_PassphraseChange(unittest.TestCase):
 
     def test_D1_recover_ledger_uses_per_user_salt(self):
         """D1: _recover_ledger() derives PDK with per-user salt from genesis identity_pub_key."""
-        from cli.onboarding import _recover_ledger
+        from phpoc_cli.onboarding import _recover_ledger
         seed, mk, pub_key, old_pdk = self._create_minimal_ledger()
 
         # We can't easily test interactive getpass, but we can verify
@@ -604,7 +604,7 @@ class TestGroupD_PassphraseChange(unittest.TestCase):
 
     def test_D2_set_passphrase_uses_per_user_salt(self):
         """D2: _set_passphrase() in onboarding_file.py uses per-user salt."""
-        from cli.onboarding_file import _set_passphrase
+        from phpoc_cli.onboarding_file import _set_passphrase
         seed, mk, pub_key, old_pdk = self._create_minimal_ledger()
 
         # Verify ledger has identity_pub_key available for salt derivation

@@ -20,10 +20,10 @@ The user runs a harmless read command and gets locked out. The data exists on R2
 
 ## Root Cause
 
-`_sync_before_command` in `cli/interface.py` treats `REAUTH_NEEDED` as a hard block for all commands, including reads:
+`_sync_before_command` in `phpoc_cli/interface.py` treats `REAUTH_NEEDED` as a hard block for all commands, including reads:
 
 ```python
-# cli/interface.py line 27
+# phpoc_cli/interface.py line 27
 def _sync_before_command(self, require_auth: bool = False) -> bool:
     result = self._staging.check_and_sync(timeout_ms=500)
 
@@ -44,7 +44,7 @@ def _sync_before_command(self, require_auth: bool = False) -> bool:
 And callers like `view_active()` bail immediately:
 
 ```python
-# cli/interface.py line 239
+# phpoc_cli/interface.py line 239
 def view_active(self, ...):
     if not self._sync_before_command(require_auth=False):
         return  # ← Shows nothing, not even local data
@@ -148,7 +148,7 @@ def _sync_before_command_readonly(self) -> bool:
 | File | Change |
 |---|---|
 | `domain/staging/service.py` | Add `check_and_sync_readonly()` method |
-| `cli/interface.py` | Add `_sync_before_command_readonly()`; redirect `view_active`, `list_entries`, `tag_*` to use it |
+| `phpoc_cli/interface.py` | Add `_sync_before_command_readonly()`; redirect `view_active`, `list_entries`, `tag_*` to use it |
 | `tests/test_cli_interface.py` | Add tests: read command with specifier mismatch shows data, write command still blocks |
 | `tests/test_staging_readonly.py` | (new) Unit tests for `check_and_sync_readonly()` |
 

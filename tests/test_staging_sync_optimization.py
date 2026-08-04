@@ -1040,7 +1040,7 @@ except ImportError:
                 return f
     pytest = _MockPytest()
 
-from cli.trace import trace  # noqa: F401
+from phpoc_cli.trace import trace  # noqa: F401
 from domain.staging.service import StagingService, SyncCheckResult
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine

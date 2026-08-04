@@ -145,8 +145,8 @@ All notable changes to the PH Ledger (phpoc) project.
   end-before-start guard, filter dedup, multiple spanning entries, full output
   rendering.
 
-**Metrics:** 972 tests, 0 failures. 2 files changed: `cli/cli_parsers.py` (+19),
-`cli/interface.py` (+85).
+**Metrics:** 972 tests, 0 failures. 2 files changed: `phpoc_cli/cli_parsers.py` (+19),
+`phpoc_cli/interface.py` (+85).
 
 **ADR:** ADR-020 adopted — display-layer fix only. Fix C (split at sync) rejected.
 
@@ -200,13 +200,13 @@ All 7 phases of the architectural migration from monolithic `core/ledger.py` to 
 
 ### Fixed
 - `core/factory.py`: Config directory now created before writing identity/ledger files — fixes `FileNotFoundError` on first `init`
-- `cli/interface.py`: Removed duplicate `show_rep()` method that was overriding the first definition
-- `cli/interface.py`: Fixed `list_habits()` — synced entries were collected but never printed; added `_print_entry()` helper and unified date iteration
+- `phpoc_cli/interface.py`: Removed duplicate `show_rep()` method that was overriding the first definition
+- `phpoc_cli/interface.py`: Fixed `list_habits()` — synced entries were collected but never printed; added `_print_entry()` helper and unified date iteration
 - `main.py`: `verify` command now prints `True`/`False` result (was silently returning)
 
 ### Added
-- `cli/interface.py`: `list_habits()` now splits into `{all, synced, staged}` subcommands with date filtering
-- `cli/interface.py`: `show_rep()` extracted from duplicate code into standalone method
+- `phpoc_cli/interface.py`: `list_habits()` now splits into `{all, synced, staged}` subcommands with date filtering
+- `phpoc_cli/interface.py`: `show_rep()` extracted from duplicate code into standalone method
 - `tests/test_modular.py`: Added tests for `list all`, `list synced`, `list staged`, and date filtering
 - `archive/IMPLEMENTATION_GUIDE.md`: Complete rewrite — organized by DESIGN_GOALS.md design principles with full command reference, auth model, file structure, and troubleshooting
 
@@ -244,7 +244,7 @@ All 7 phases of the architectural migration from monolithic `core/ledger.py` to 
 ## [0.0.2] — 30287e4
 
 ### Changed
-- Modularization checkpoint: split monolith into `core/`, `security/`, `storage/`, `cli/` packages
+- Modularization checkpoint: split monolith into `core/`, `security/`, `storage/`, `phpoc_cli/` packages
 - Abstract storage interface (`AbstractLedgerStore`) for future database backends
 - Abstract crypto interface (`AbstractCryptoManager`) allowing `NoAuthCryptoManager` fallback
 

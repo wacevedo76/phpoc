@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from security.crypto import CryptoManager
-from cli.migrate import migrate_chain
+from phpoc_cli.migrate import migrate_chain
 
 
 LEDGER_PATH = Path.home() / ".local/share/phpoc/ledger.json"

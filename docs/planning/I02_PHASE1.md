@@ -11,7 +11,7 @@ I-02 has two distinct privacy leaks that both expose plaintext metadata next to 
 ### Sub-task A: Blind Index Encryption (index.json / `ledger:index`)
 `index.json` stores `{date: {activity_title: total_duration_ms}}` in plaintext JSON. This reveals what activities the user does, for how long, and on which dates — next to the fully encrypted ledger. The index is used by `ph rep` (CLI) and `ph phpoc-web` query APIs.
 
-**Flow:** `LedgerEngine.commit()` → `IndexManager.update()` → `IndexManager._flush()` → `store.write_index()` (plain JSON to disk)  |  `cli/interface.py show_rep()` → `IndexManager.get_all()` → reads plaintext
+**Flow:** `LedgerEngine.commit()` → `IndexManager.update()` → `IndexManager._flush()` → `store.write_index()` (plain JSON to disk)  |  `phpoc_cli/interface.py show_rep()` → `IndexManager.get_all()` → reads plaintext
 **JS mirror:** `LedgerEngine.commit()` → `IndexManager.update()` → `IndexManager._flush()` → `store.set('ledger:index', ...)` (plain JSON to IndexedDB)
 
 ### Sub-task B: Staging Field Key Encryption (staging.json / IndexedDB entries)
@@ -178,5 +178,5 @@ Both Python (CLI) and JS (web) must produce identical derived keys and index blo
 - `phpoc-web/src/ledger/index_manager.js` — `_flush()` / `reload()` encryption
 - `phpoc-web/src/sync/local_cache.js` — `_dtoToRaw()` / `_rawToDto()` key name encryption
 - `phpoc-web/src/crypto/index.js` — matching key derivation
-- `cli/interface.py` — may need decryption before `show_rep()` (or IndexManager handles it)
+- `phpoc_cli/interface.py` — may need decryption before `show_rep()` (or IndexManager handles it)
 - `docs/spec/PHPSPEC.md` — document encrypted index + staging field key format

@@ -10,7 +10,7 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `SYSTEM_ARCHITECTURE.md` — Comprehensive system architecture: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core, web app, CLI (synthesizes ADRs + directives + design goals)
 - `DESIGN_MULTI_DEVICE_SESSION.md` — Multi-device session architecture
 - `ARCHITECTURAL_MIGRATION_STRATEGY.md` — Historical 7-phase migration record (complete)
-- `workflows/` — User-facing and system workflow specifications (cli/ and web/)
+- `workflows/` — User-facing and system workflow specifications (phpoc_cli/ and web/)
 - `flaws/ISSUES_TO_ADDRESS.md` — Guiding document: 17 design flaws organized by severity with dependency graph and recommended attack order
 - `flaws/PHPSPEC-Design_Flaws.md` — Brutally honest assessment of PHPSPEC design conflicts and weaknesses
 - `FLUTTER_ARCHITECTURE.md` — Flutter mobile architecture: comparative analysis (web vs CLI), state management (Riverpod), navigation (go_router), data layer (SQLite/drift), flutter_rust_bridge integration, project structure, screen inventory (2026-07-17)

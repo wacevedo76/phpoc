@@ -11,7 +11,7 @@
 
 ## Context
 
-The CLI (`docs/design/workflows/cli/CLI_Staging_Interaction-Workflow.md`) and the
+The CLI (`docs/design/workflows/phpoc_cli/CLI_Staging_Interaction-Workflow.md`) and the
 Cross-Device protocol (`docs/design/workflows/Cross_Device_Staging-Workflow.md`)
 share the same underlying staging protocol — both push/pull the same R2 paths,
 use identical merge logic, device cookies, and obfuscation. However, the **auth

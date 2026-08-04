@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from cli.trace import trace
+from phpoc_cli.trace import trace
 from domain.cookie.device_cookie import DeviceCookie, META_FILE
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine

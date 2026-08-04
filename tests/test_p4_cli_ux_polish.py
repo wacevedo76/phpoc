@@ -21,7 +21,7 @@ from io import StringIO
 from unittest.mock import MagicMock, patch
 
 from domain.staging.service import SyncCheckResult
-from cli.interface import CLIInterface
+from phpoc_cli.interface import CLIInterface
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -89,7 +89,7 @@ class TestGroupA_TagsCodePathUnification(unittest.TestCase):
             '_sync_before_command',
             body_text,
             "A1 FAIL: 'ph tags' handler does not call "
-            "cli._sync_before_command(). Expected unified sync path."
+            "phpoc_cli._sync_before_command(). Expected unified sync path."
         )
         # Verify it does NOT contain its own duplicate check_and_sync block
         self.assertNotIn(
@@ -290,9 +290,9 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
         self.cli._auth = mock_auth
 
         # Test that require_auth=False returns True (non-blocking)
-        with patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
+        with patch('phpoc_cli.interface.CryptoManager', create=True), \
+             patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
+             patch('phpoc_cli.interface.LedgerEngine', create=True), \
              patch.object(self.cli, '_sync_remote_ledger_and_dedup'):
             mock_ss_instance = MagicMock()
             mock_ss_instance._reconcile_and_claim.return_value = \
@@ -334,8 +334,8 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
 
         with patch.object(self.cli, '_sync_before_command',
                           return_value=True) as mock_sync, \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'), \
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli.view_active()
 
@@ -442,9 +442,9 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
         self.cli._auth = mock_auth
 
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout, \
-             patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
+             patch('phpoc_cli.interface.CryptoManager', create=True), \
+             patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
+             patch('phpoc_cli.interface.LedgerEngine', create=True), \
              patch.object(self.cli, '_sync_remote_ledger_and_dedup'):
             mock_ss_instance = MagicMock()
             mock_ss_instance._reconcile_and_claim.return_value = \
@@ -493,8 +493,8 @@ class TestGroupB_NonBlockingReads(unittest.TestCase):
 
         with patch.object(self.cli, '_sync_before_command',
                           return_value=True), \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'), \
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli.view_active()
 
@@ -662,8 +662,8 @@ class TestGroupD_Regression(unittest.TestCase):
 
         with patch.object(self.cli, '_sync_before_command',
                           return_value=True), \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'), \
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli.view_active()
 
@@ -767,8 +767,8 @@ class TestGroupD_Regression(unittest.TestCase):
         # view_active output
         with patch.object(self.cli, '_sync_before_command',
                           return_value=True), \
-             patch('cli.interface._show_sync_notifications'), \
-             patch('cli.interface._spawn_background_sync_check'), \
+             patch('phpoc_cli.interface._show_sync_notifications'), \
+             patch('phpoc_cli.interface._spawn_background_sync_check'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             self.cli.view_active()
         view_output = mock_stdout.getvalue()
@@ -829,9 +829,9 @@ class TestGroupE_EdgeCases(unittest.TestCase):
         mock_auth.get_key.return_value = b'\x01' * 32
         self.cli._auth = mock_auth
 
-        with patch('cli.interface.CryptoManager', create=True), \
-             patch('cli.interface.StagingService', create=True) as mock_ss, \
-             patch('cli.interface.LedgerEngine', create=True), \
+        with patch('phpoc_cli.interface.CryptoManager', create=True), \
+             patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
+             patch('phpoc_cli.interface.LedgerEngine', create=True), \
              patch.object(self.cli, '_sync_remote_ledger_and_dedup'), \
              patch('sys.stdout', new_callable=StringIO) as mock_stdout:
             mock_ss_instance = MagicMock()

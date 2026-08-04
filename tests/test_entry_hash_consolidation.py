@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any, List
 
 HAS_ONBOARDING_HASH_FUNCTIONS = False
 try:
-    from cli.onboarding_file import (
+    from phpoc_cli.onboarding_file import (
         _verify_ledger_entry_hash,
         _verify_entry_hash,
         _verify_entry_hash_updated,
@@ -392,7 +392,7 @@ class TestGroupDEndToEndImport(unittest.TestCase):
         sort+indent2 staging entries trigger mismatch warnings. After Phase 3,
         indent2 format is also recognized, so no warnings.
         """
-        from cli.onboarding_file import _import_v1
+        from phpoc_cli.onboarding_file import _import_v1
 
         staging_entries = []
         for i in range(3):
@@ -447,7 +447,7 @@ class TestGroupDEndToEndImport(unittest.TestCase):
         RED: sort+indent2 entries currently cause warnings. After Phase 3,
         both formats are accepted, so no warnings.
         """
-        from cli.onboarding_file import _import_v2
+        from phpoc_cli.onboarding_file import _import_v2
 
         mk = b"0" * 32
         from security.crypto import CryptoManager

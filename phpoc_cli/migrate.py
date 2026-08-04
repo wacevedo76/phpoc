@@ -14,7 +14,7 @@ The migration:
   7. Creates a backup (ledger.json.bak) if a file path is provided
 
 Usage:
-  from cli.migrate import migrate_chain
+  from phpoc_cli.migrate import migrate_chain
   migrated = migrate_chain(chain, master_key_hex, ledger_path="/path/to/ledger.json")
 """
 

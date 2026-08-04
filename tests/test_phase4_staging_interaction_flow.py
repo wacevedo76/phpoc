@@ -84,7 +84,7 @@ except ImportError:
 
 # Fallback SyncDecision if neither exists
 try:
-    from cli.strategies import SyncDecision as CLISyncDecision
+    from phpoc_cli.strategies import SyncDecision as CLISyncDecision
     SYNC_DECISION_CLASS = CLISyncDecision
 except ImportError:
     @dataclass

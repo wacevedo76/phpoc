@@ -16,8 +16,8 @@
 | `core/sync/transport.py` | Transport abstraction: `HttpStagingTransport`, `GitStagingTransport`, `AbstractStagingTransport` |
 | `security/crypto.py` | `CryptoManager`, `NoAuthCryptoManager` |
 | `security/auth.py` | Passphrase + recovery authenticators |
-| `cli/interface.py` | CLI command dispatch; calls `StagingService` methods |
-| `cli/daemon_sync.py` | Background daemon sync (Phase C) |
+| `phpoc_cli/interface.py` | CLI command dispatch; calls `StagingService` methods |
+| `phpoc_cli/daemon_sync.py` | Background daemon sync (Phase C) |
 | `tests/test_staging_sync_optimization.py` | Test suite (all passing); uses `TransportSpy` |
 
 ## Data Paths

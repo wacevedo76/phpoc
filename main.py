@@ -14,9 +14,9 @@ from storage.implementations.file_config import FileConfigStore, _resolve_config
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 from core.factory import LedgerFactory
-from cli.interface import CLIInterface
-from cli.cli_view import CLIView
-from cli.trace import trace
+from phpoc_cli.interface import CLIInterface
+from phpoc_cli.cli_view import CLIView
+from phpoc_cli.trace import trace
 from domain.staging.service import StagingService, SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
@@ -277,7 +277,7 @@ def main():
 
     # Activate trace logging if config debug.trace_enabled is true
     if CONFIG.get("debug.trace_enabled"):
-        from cli.trace import enable_tracing
+        from phpoc_cli.trace import enable_tracing
         enable_tracing()
 
     # Handle 'config' subcommand before auth (no auth needed)
@@ -312,7 +312,7 @@ def main():
                     p.unlink()
                     print(f"  Deleted: {p.name}")
             # Clear WAL if present
-            from cli.wal import _wal_path
+            from phpoc_cli.wal import _wal_path
             wal_path = _wal_path(CONFIG_DIR)
             if wal_path.exists():
                 wal_path.unlink()
@@ -362,7 +362,7 @@ def main():
     if args.command == "onboarding":
         if not args.onboarding_method:
             # Bare 'ph onboarding' — interactive provider picker
-            from cli.onboarding import run_onboarding_picker
+            from phpoc_cli.onboarding import run_onboarding_picker
             ok = run_onboarding_picker(
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
@@ -371,7 +371,7 @@ def main():
             # Git transport ("remote" is deprecated backward compat alias)
             if args.onboarding_method == "remote":
                 print("Note: 'ph onboarding remote' is deprecated. Use 'ph onboarding git' instead.")
-            from cli.onboarding import run_onboarding
+            from phpoc_cli.onboarding import run_onboarding
             from core.sync.transport_registry import get_registry
             registry = get_registry()
             provider = registry.get("git")
@@ -404,14 +404,14 @@ def main():
                 return
             # Save config
             CONFIG.write(config_update)
-            from cli.onboarding import run_onboarding
+            from phpoc_cli.onboarding import run_onboarding
             ok = run_onboarding(
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
                 transport=transport,
             )
         elif args.onboarding_method == "file":
-            from cli.onboarding_file import run_onboarding_file
+            from phpoc_cli.onboarding_file import run_onboarding_file
             ok = run_onboarding_file(
                 data_dir=CONFIG_DIR,
                 config_manager=CONFIG,
@@ -564,7 +564,7 @@ def main():
 
     # --- Hidden internal command (background sync check, spawned by Phase A) ---
     if args.command == "_background_sync_check":
-        from cli.background import handle_background_sync_check
+        from phpoc_cli.background import handle_background_sync_check
         data_dir_str = str(CONFIG_DIR)
         if args.data_dir:
             data_dir_str = args.data_dir
@@ -573,7 +573,7 @@ def main():
 
     # --- Hidden internal command (background push, spawned by Phase B) ---
     if args.command == "_background_push":
-        from cli.wal import _background_push
+        from phpoc_cli.wal import _background_push
         data_dir_str = str(CONFIG_DIR)
         if args.data_dir:
             data_dir_str = args.data_dir
@@ -582,7 +582,7 @@ def main():
 
     # --- Daemon subcommand (Phase C) ---
     if args.command == "daemon":
-        from cli.daemon import PhDaemon
+        from phpoc_cli.daemon import PhDaemon
         daemon = PhDaemon(CONFIG_DIR)
         if args.daemon_action == "start":
             daemon.start()
@@ -596,7 +596,7 @@ def main():
 
     # --- Transport subcommand ---
     if args.command == "transport":
-        from cli.transport_cmd import run_transport_command
+        from phpoc_cli.transport_cmd import run_transport_command
         run_transport_command(args, CONFIG, CONFIG_PATH)
         return
 
@@ -665,7 +665,7 @@ def main():
     # Skipped for 'dev' commands — they are diagnostic-only and must not mutate
     # staging state (would corrupt troubleshooting information).
     if transport is not None and CONFIG_DIR and args.command != "dev":
-        from cli.wal import _replay_wal
+        from phpoc_cli.wal import _replay_wal
         _replay_wal(CONFIG_DIR, staging_service)
     sync_orchestrator = SyncOrchestrator(
         staging_service=staging_service,
@@ -815,7 +815,7 @@ def main():
                 print(f"Failed to fetch remote device cookie: {e}")
         elif dev_action == "push-status":
             import json as _json
-            from cli.wal import _wal_path
+            from phpoc_cli.wal import _wal_path
             wal_path = _wal_path(CONFIG_DIR)
             print("=== Push Status ===")
             if wal_path.exists():

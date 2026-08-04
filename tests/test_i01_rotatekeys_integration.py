@@ -27,7 +27,7 @@ from storage.implementations.file_ledger import FileLedgerStore
 from storage.implementations.file_staging import FileStagingStore
 from storage.implementations.file_index import FileIndexStore
 
-from cli.rotate_keys import RotateKeysCommand
+from phpoc_cli.rotate_keys import RotateKeysCommand
 
 
 # ══════════════════════════════════════════════════════════════════

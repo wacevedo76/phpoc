@@ -13,9 +13,9 @@ from datetime import datetime
 from unittest.mock import patch, MagicMock
 
 from domain.interfaces.view import ViewInterface
-from cli.cli_parsers import parse_time_input
-from cli.cli_view import CLIView
-from cli.strategies import SyncDecision, SyncStrategy, AutoSyncStrategy, InteractiveCLIStrategy
+from phpoc_cli.cli_parsers import parse_time_input
+from phpoc_cli.cli_view import CLIView
+from phpoc_cli.strategies import SyncDecision, SyncStrategy, AutoSyncStrategy, InteractiveCLIStrategy
 
 
 # =============================================================================

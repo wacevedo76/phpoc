@@ -10,7 +10,7 @@ Core business logic for the PH Ledger — ledger chain building and verification
 - `domain/interfaces/` — Abstract view interface
 
 ## Local Contracts
-- Domain modules must not import from `cli/` (no UI dependencies)
+- Domain modules must not import from `phpoc_cli/` (no UI dependencies)
 - Domain modules may import from `security/`, `storage/`
 - Staging format uses `NoAuthCryptoManager` with `"plain:..."` prefix
 - Sync converts hex-encrypted → plain: at the boundary
@@ -20,7 +20,7 @@ Core business logic for the PH Ledger — ledger chain building and verification
 - Ledger chain: Genesis → Year Summary → Month Summary → Day blocks, each sealed + signed
 - Content hash: SHA-256 of resolved plaintext fields — survives re-encryption
 - Merge engine deduplicates by `entry_id`
-- Never import from cli/ or main.py
+- Never import from phpoc_cli/ or main.py
 
 ## Verification
 - Tests: `test_phase2_staging_service.py`, `test_phase3_ledger_engine.py`, `test_phase4_staging_interaction_flow.py`, `test_phase6a_staging_equivalence.py`, `test_phase6b_ledger_equivalence.py`

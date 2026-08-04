@@ -3,7 +3,7 @@
 Logs are written to staging_log/ at the repo root, one file per invocation.
 
 Usage:
-    from cli.trace import trace, trace_enabled
+    from phpoc_cli.trace import trace, trace_enabled
 
     @trace
     def my_method(self, ...):
@@ -69,7 +69,7 @@ def enable_tracing():
     """Globally enable trace logging.
 
     Called from main.py when config debug.trace_enabled is True.
-    Also usable on the fly: from cli.trace import enable_tracing
+    Also usable on the fly: from phpoc_cli.trace import enable_tracing
     """
     global trace_enabled
     trace_enabled = True

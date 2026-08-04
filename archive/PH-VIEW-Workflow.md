@@ -264,7 +264,7 @@ R2 (Cloudflare Worker):
 | File | Role |
 |------|------|
 | main.py | CLI parsing, initial auth, wiring |
-| cli/interface.py | _sync_before_command(), view_active() |
+| phpoc_cli/interface.py | _sync_before_command(), view_active() |
 | domain/staging/service.py | check_and_sync() — the auth gate |
 | domain/cookie/device_cookie.py | Cookie read/write/compare |
 | domain/staging/remote_sync.py | Blob obfuscation, transport pull/push |

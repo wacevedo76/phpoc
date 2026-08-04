@@ -837,7 +837,7 @@ Three approaches were considered (see [BACKLOG P11](BACKLOG.md#-p11-day-boundary
 ### Decision
 Adopt **Fix A + Fix B** — a combined display-layer solution with no data model changes:
 
-**Fix A — Display marker:** `_print_entry` in `cli/interface.py` appends a `⏭` marker to any entry whose end date (UTC) differs from its start date:
+**Fix A — Display marker:** `_print_entry` in `phpoc_cli/interface.py` appends a `⏭` marker to any entry whose end date (UTC) differs from its start date:
 
 ```
 [23:30 - 01:30] Late Night Coding (120m) ⏭
@@ -861,7 +861,7 @@ Adopt **Fix A + Fix B** — a combined display-layer solution with no data model
 ### Consequences
 - **Positive:** Clear visual cue for spanning entries. Date filters find activities that belong to the filtered day. Zero data model changes. 32 new tests (972 total). No regression.
 - **Negative:** The `⏭` marker is display-only — tools reading raw JSON won't see it (they compute dates independently). Fix B adds a decrypt-and-compare step per previous-day entry during filtered listing.
-- **Implementation scope:** `cli/interface.py:_print_entry()` (marker), `cli/interface.py:list_habits()` (peek logic), `cli/cli_parsers.py:parse_time_input()` (hour wrapping + auto-advance). No engine/chain/staging changes.
+- **Implementation scope:** `phpoc_cli/interface.py:_print_entry()` (marker), `phpoc_cli/interface.py:list_habits()` (peek logic), `phpoc_cli/cli_parsers.py:parse_time_input()` (hour wrapping + auto-advance). No engine/chain/staging changes.
 - **All 972 tests pass.** 2 files changed, 104 lines added.
 
 ---
@@ -1252,7 +1252,7 @@ Both offer free tiers that cover this usage indefinitely.
 - `core/sync/http_transport.py` — new, ~100 lines
 - `core/sync/transport.py` — unchanged (interface already exists)
 - `main.py` — 1-line change (`HttpStagingTransport` instead of `GitStagingTransport`)
-- `cli/interface.py` — remove `git pull --rebase` fallbacks (no longer needed)
+- `phpoc_cli/interface.py` — remove `git pull --rebase` fallbacks (no longer needed)
 - `domain/` — unchanged (all domain logic is transport-agnostic)
 - `tests/` — add `test_http_transport.py` (~20 tests against a mock HTTP server)
 
@@ -1853,7 +1853,7 @@ that MK_v1 cannot derive the keys used by MK_v2.
 | **Key mgmt** | `security/auth.py` | On auth: derive all MKs v1..N, cache in session |
 | **Chain** | `domain/ledger/chain.py` | `key_version` on block build; per-block MK selection in `verify()` |
 | **Engine** | `domain/ledger/engine.py` | `key_version` passthrough from genesis to block build |
-| **Rotation** | `cli/rotate_keys.py` (new) | `ph rotate-keys` command: soft + hard modes |
+| **Rotation** | `phpoc_cli/rotate_keys.py` (new) | `ph rotate-keys` command: soft + hard modes |
 | **Index** | `domain/ledger/index_manager.py` | Rebuild index with versioned index key on rotation |
 | **Staging** | `domain/staging/service.py` | Re-encrypt staging with new MK on rotation |
 | **Cookie** | `domain/cookie/device_cookie.py` | Re-derive cookie with new MK on rotation |

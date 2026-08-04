@@ -18,7 +18,7 @@ from pathlib import Path
 
 HAS_I01_EDGES = False
 try:
-    from cli.rotate_keys import RotateKeysCommand  # noqa: F811
+    from phpoc_cli.rotate_keys import RotateKeysCommand  # noqa: F811
     from security.crypto import CryptoManager, derive_mk, NoAuthCryptoManager
     HAS_I01_EDGES = True
 except (ImportError, ModuleNotFoundError):

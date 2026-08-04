@@ -2,7 +2,7 @@ import unittest
 import time
 import io
 import sys
-from cli.interface import CLIInterface
+from phpoc_cli.interface import CLIInterface
 
 
 class TestDateFilterFormatParsing(unittest.TestCase):

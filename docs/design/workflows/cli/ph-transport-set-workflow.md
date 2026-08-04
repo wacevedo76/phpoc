@@ -9,8 +9,8 @@
 | File | Concern |
 |---|---|
 | `main.py:245-252` | Argparse setup — `transport` command, subparsers, `transport_type` + `http_provider` args |
-| `main.py:555-556` | Dispatch → `cli/transport_cmd.run_transport_command()` |
-| `cli/transport_cmd.py` | Full transport management: `_show_transport`, `_set_transport`, `_switch_to_git`, `_switch_to_http_generic`, `_switch_to_cloudflare` |
+| `main.py:555-556` | Dispatch → `phpoc_cli/transport_cmd.run_transport_command()` |
+| `phpoc_cli/transport_cmd.py` | Full transport management: `_show_transport`, `_set_transport`, `_switch_to_git`, `_switch_to_http_generic`, `_switch_to_cloudflare` |
 | `security/config_manager.py` | `ConfigManager` — reads/writes `~/.config/phpoc/config.json` with DEFAULTS merge |
 | `storage/implementations/file_config.py` | `FileConfigStore` — file-backed `AbstractConfigStore` |
 | `storage/config_store.py` | `AbstractConfigStore` — interface for config read/write |

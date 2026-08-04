@@ -6,7 +6,7 @@
 # sync debugging phase. This script:
 #   1. Removes "from cli.trace import trace" import lines from 5 files
 #   2. Removes all "@trace" decorator lines from those same files
-#   3. Deletes cli/trace.py (the trace module)
+#   3. Deletes phpoc_cli/trace.py (the trace module)
 #   4. Deletes staging_log/ directory
 #
 # Safe to run multiple times — each operation is idempotent.
@@ -22,7 +22,7 @@ echo "=== Removing trace-logging code from $REPO_ROOT ==="
 # 1. Remove "from cli.trace import trace" import lines
 # ------------------------------------------------------------------
 FILES_WITH_IMPORT=(
-  "cli/interface.py"
+  "phpoc_cli/interface.py"
   "domain/staging/service.py"
   "domain/staging/remote_sync.py"
   "main.py"
@@ -57,12 +57,12 @@ for f in "${FILES_WITH_IMPORT[@]}"; do
 done
 
 # ------------------------------------------------------------------
-# 3. Delete cli/trace.py
+# 3. Delete phpoc_cli/trace.py
 # ------------------------------------------------------------------
 echo ""
-echo "--- Deleting cli/trace.py ---"
-if [ -f "cli/trace.py" ]; then
-  rm -v "cli/trace.py"
+echo "--- Deleting phpoc_cli/trace.py ---"
+if [ -f "phpoc_cli/trace.py" ]; then
+  rm -v "phpoc_cli/trace.py"
 else
   echo "  (already removed)"
 fi

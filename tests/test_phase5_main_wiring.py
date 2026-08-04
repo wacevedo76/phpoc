@@ -36,7 +36,7 @@ class TestSyncCommandStrategySelection(unittest.TestCase):
     def test_sync_without_yes_uses_interactive_strategy(self):
         """Sync command without --yes uses InteractiveCLIStrategy."""
         args = self._make_args(yes=False, till=None)
-        from cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
         strategy = AutoSyncStrategy() if getattr(args, 'yes', False) \
                    else InteractiveCLIStrategy()
         self.assertIsInstance(strategy, InteractiveCLIStrategy)
@@ -44,28 +44,28 @@ class TestSyncCommandStrategySelection(unittest.TestCase):
     def test_sync_with_yes_uses_auto_strategy(self):
         """Sync command with --yes uses AutoSyncStrategy."""
         args = self._make_args(yes=True, till=None)
-        from cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
         strategy = AutoSyncStrategy() if getattr(args, 'yes', False) \
                    else InteractiveCLIStrategy()
         self.assertIsInstance(strategy, AutoSyncStrategy)
 
     def test_sync_without_yes_imports_from_cli_strategies(self):
         """Verify InteractiveCLIStrategy exists in cli.strategies."""
-        from cli.strategies import InteractiveCLIStrategy
-        from cli.strategies import AutoSyncStrategy
+        from phpoc_cli.strategies import InteractiveCLIStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy
         strategy = AutoSyncStrategy() if False else InteractiveCLIStrategy()
         self.assertIsInstance(strategy, InteractiveCLIStrategy)
 
     def test_sync_with_yes_imports_auto_from_cli_strategies(self):
         """Verify AutoSyncStrategy exists in cli.strategies."""
-        from cli.strategies import AutoSyncStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy
         strategy = AutoSyncStrategy()
         self.assertIsInstance(strategy, AutoSyncStrategy)
 
     def test_both_strategies_are_sync_strategies(self):
         """Both strategies are instances of SyncStrategy (abstract base)."""
         from core.sync import SyncStrategy
-        from cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy, InteractiveCLIStrategy
         self.assertTrue(issubclass(AutoSyncStrategy, SyncStrategy))
         self.assertTrue(issubclass(InteractiveCLIStrategy, SyncStrategy))
 
@@ -246,14 +246,14 @@ class TestCLIInterfaceDateFilters(unittest.TestCase):
 
     def test_resolve_date_filters_default(self):
         """No filters returns (None, None)."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         from_str, to_str = CLIInterface._resolve_date_filters()
         self.assertIsNone(from_str)
         self.assertIsNone(to_str)
 
     def test_resolve_date_filters_with_days(self):
         """Days parameter sets from_date to N days ago."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         import datetime
         from_str, to_str = CLIInterface._resolve_date_filters(days=7)
         # from_str should be ~7 days ago
@@ -262,7 +262,7 @@ class TestCLIInterfaceDateFilters(unittest.TestCase):
 
     def test_resolve_date_filters_from_override(self):
         """Explicit --from overrides days."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         from_str, to_str = CLIInterface._resolve_date_filters(
             days=30, from_date="2026-06-01"
         )
@@ -270,7 +270,7 @@ class TestCLIInterfaceDateFilters(unittest.TestCase):
 
     def test_resolve_date_filters_to_override(self):
         """Explicit --to overrides days."""
-        from cli.interface import CLIInterface
+        from phpoc_cli.interface import CLIInterface
         _, to_str = CLIInterface._resolve_date_filters(
             days=900, to_date="2026-06-15"
         )
@@ -325,7 +325,7 @@ class TestSyncWithTillDate(unittest.TestCase):
 class TestCoreSyncConfirmationRemoval(unittest.TestCase):
     """Verify that nothing depends on core/sync_confirmation anymore.
 
-    After Phase 5, main.py will import from cli.strategies instead of
+    After Phase 5, main.py will import from phpoc_cli.strategies instead of
     core/sync_confirmation, making the deprecated shim removable.
     """
 
@@ -516,7 +516,7 @@ class TestSyncOrchestratorReplacesSyncWithStrategy(unittest.TestCase):
 
     def test_auto_strategy_covers_default_sync(self):
         """AutoSyncStrategy selects all pending entries."""
-        from cli.strategies import AutoSyncStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy
         strategy = AutoSyncStrategy()
         pending = [
             {"entry_index": 0, "title": "A"},
@@ -528,7 +528,7 @@ class TestSyncOrchestratorReplacesSyncWithStrategy(unittest.TestCase):
 
     def test_auto_strategy_empty_pending(self):
         """AutoSyncStrategy returns cancelled=False with empty list."""
-        from cli.strategies import AutoSyncStrategy
+        from phpoc_cli.strategies import AutoSyncStrategy
         strategy = AutoSyncStrategy()
         decision = strategy.decide([])
         self.assertFalse(decision.cancelled)

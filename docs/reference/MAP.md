@@ -13,15 +13,15 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `lib/core/crypto/crypto_service.dart` | HOT | Pure-Dart crypto shim (74 tests), to be replaced by native FFI backend |
 | `../phpoc-crypto-core/src/frb.rs` | HOT | **NEW (Phase 3)** — flutter_rust_bridge Rust API surface (23 functions, mirrors wasm.rs), compiles with flutter_rust_bridge v2.12.0 |
 | `main.py` | HOT | CLI entry — argparse, auth tiers, staging + orchestrator wiring |
-| `cli/interface.py` | HOT | Display: `view_active`, `show_rep`, `list_habits` |
-| `cli/strategies.py` | COLD | `InteractiveCLIStrategy` — sync confirmation UI |
-| `cli/background.py` | COLD | Phase A instant reads, background sync check |
-| `cli/daemon.py` | COLD | `PhDaemon` lifecycle |
-| `cli/wal.py` | COLD | Write-ahead log, background push |
-| `cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import, uses canonical `staging/blob` path |
-| `cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
-| `cli/migrate.py` | NEW | `migrate_chain()` — canonical format migration (I-07/I-17) |
-| `cli/transport_cmd.py` | COLD | `ph transport` subcommand |
+| `phpoc_cli/interface.py` | HOT | Display: `view_active`, `show_rep`, `list_habits` |
+| `phpoc_cli/strategies.py` | COLD | `InteractiveCLIStrategy` — sync confirmation UI |
+| `phpoc_cli/background.py` | COLD | Phase A instant reads, background sync check |
+| `phpoc_cli/daemon.py` | COLD | `PhDaemon` lifecycle |
+| `phpoc_cli/wal.py` | COLD | Write-ahead log, background push |
+| `phpoc_cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import, uses canonical `staging/blob` path |
+| `phpoc_cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
+| `phpoc_cli/migrate.py` | NEW | `migrate_chain()` — canonical format migration (I-07/I-17) |
+| `phpoc_cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | HOT | `SyncOrchestrator` — sync lifecycle coordinator + same-genesis merge via `LedgerMerge.merge()` |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
 | `core/sync/git_transport.py` | COLD | `GitStagingTransport` |
@@ -197,9 +197,9 @@ Key test files:
 | `../design/SYSTEM_ARCHITECTURE.md` | 🟢 **NEW** — Comprehensive system architecture document: key hierarchy, chain, staging, transport, multi-device sync, cross-platform, crypto core, web, CLI, invariants |
 | `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-026) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
-| `../design/workflows/cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
-| `../design/workflows/cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
-| `../design/workflows/cli/CLI_Staging_Interaction-Workflow.md` | CLI staging interaction + multi-machine sharing via Worker/R2 |
+| `../design/workflows/phpoc_cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
+| `../design/workflows/phpoc_cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
+| `../design/workflows/phpoc_cli/CLI_Staging_Interaction-Workflow.md` | CLI staging interaction + multi-machine sharing via Worker/R2 |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `../design/workflows/web/Local_Import-Export-Workflow.md` | File-based import/export workflow: v1/v2/raw-chain, two-phase validation, genesis gating |

@@ -220,8 +220,8 @@ cli_view.py rendering and reveal behavior
 | `domain/staging/service.py` | `capture()`, `modify()`: accept and forward encryption flags |
 | `domain/ledger/engine.py` | `_build_day_block()`: preserve `_enc` fields; `_update_index()`: skip encrypted-title entries |
 | `domain/ledger/chain.py` | `_decrypt_entry_fields()`: add title_enc/tags_enc/comment_enc/duration_enc to decrypt set; `verify()`: entry hash verification handles canonical plaintext |
-| `cli/cli_view.py` | `render_entry_line()`: `[encrypted]` display + reveal logic; `render_overview()`: respect encryption in sync preview |
-| `cli/interface.py` | Encryption flag handling in command dispatch |
-| `cli/strategies.py` | Pass encryption flags from commands to service layer |
-| `cli/cli_parsers.py` | Parse encryption flags (⚠️ specific names TBD) |
+| `phpoc_cli/cli_view.py` | `render_entry_line()`: `[encrypted]` display + reveal logic; `render_overview()`: respect encryption in sync preview |
+| `phpoc_cli/interface.py` | Encryption flag handling in command dispatch |
+| `phpoc_cli/strategies.py` | Pass encryption flags from commands to service layer |
+| `phpoc_cli/cli_parsers.py` | Parse encryption flags (⚠️ specific names TBD) |
 | `security/crypto.py` | No changes needed — field-agnostic encrypt/decrypt already handles any string |

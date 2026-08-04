@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from cli.background import (
+from phpoc_cli.background import (
     _SESSION_FILE,
     _write_notification,
     SYNC_NOTIFICATION_FILENAME,
@@ -232,7 +232,7 @@ def _spawn_background_push(data_dir: Path) -> bool:
         data_dir = Path(data_dir)
 
     # Use the same debounce lock from Phase A to prevent concurrent pushes
-    from cli.background import (
+    from phpoc_cli.background import (
         _should_spawn_background_check,
         _write_lock_file,
         _clear_lock_file,
@@ -276,7 +276,7 @@ def _background_push(data_dir_str: str):
 
     # Clean up the sync_check.lock on exit (created by the spawner).
     # Use a try/finally so the lock is always released, even on crash.
-    from cli.background import _clear_lock_file, SYNC_CHECK_LOCK_FILENAME
+    from phpoc_cli.background import _clear_lock_file, SYNC_CHECK_LOCK_FILENAME
     lock_path = data_dir / SYNC_CHECK_LOCK_FILENAME
     try:
         if not data_dir.exists():

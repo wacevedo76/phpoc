@@ -149,7 +149,7 @@ Either: CLI's `_raw_entry_to_dto` recognizes flat format, or web wraps entries i
 **Severity:** Breaks file onboarding and session cache verification
 **Files:**
 - `core/factory.py` lines 52–58 (creation)
-- `cli/onboarding_file.py` line 260 (verification)
+- `phpoc_cli/onboarding_file.py` line 260 (verification)
 - `security/auth.py` line 147 (`_verify_cached_key`)
 
 ### What happens

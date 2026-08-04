@@ -16,7 +16,7 @@ import time
 
 from security.crypto import AbstractCryptoManager
 from storage.interface import AbstractLedgerStore
-from cli.trace import trace
+from phpoc_cli.trace import trace
 
 
 class _LegacyChainAdapter:

@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.sync.transport import AbstractStagingTransport
-from cli.trace import trace
+from phpoc_cli.trace import trace
 
 logger = logging.getLogger(__name__)
 

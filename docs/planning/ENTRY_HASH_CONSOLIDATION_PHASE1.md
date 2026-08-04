@@ -12,9 +12,9 @@ The codebase has four entry hash verification functions spread across two module
 | Function | Module | Formats checked | Entry shape | Used by |
 |---|---|---|---|---|
 | `_verify_entry_hash_flex` | `domain/ledger/chain.py` | 3-way (sort+indent2, sort+compact, nosort+indent2) | Raw data dict + stored hash | `LedgerChain.verify()` |
-| `_verify_ledger_entry_hash` | `cli/onboarding_file.py` | 2-way (sort+compact, sort+indent2) — **missing nosort+indent2** | Entry with `data` + `hash` keys | `_validate_raw_chain()` |
-| `_verify_entry_hash` | `cli/onboarding_file.py` | 1-way (sort+compact, field subset) — **missing indent2** | Staging entry dict with `hash` key | `_import_v1()`, `_import_v2()` |
-| `_verify_entry_hash_updated` | `cli/onboarding_file.py` | 1-way (sort+compact, all−hash−entry_index) — **missing indent2** | Staging entry dict with `hash` key | `_import_v1()`, `_import_v2()` |
+| `_verify_ledger_entry_hash` | `phpoc_cli/onboarding_file.py` | 2-way (sort+compact, sort+indent2) — **missing nosort+indent2** | Entry with `data` + `hash` keys | `_validate_raw_chain()` |
+| `_verify_entry_hash` | `phpoc_cli/onboarding_file.py` | 1-way (sort+compact, field subset) — **missing indent2** | Staging entry dict with `hash` key | `_import_v1()`, `_import_v2()` |
+| `_verify_entry_hash_updated` | `phpoc_cli/onboarding_file.py` | 1-way (sort+compact, all−hash−entry_index) — **missing indent2** | Staging entry dict with `hash` key | `_import_v1()`, `_import_v2()` |
 
 **Problem:** `onboarding_file.py` functions use inline hash logic that duplicates `_verify_entry_hash_flex` and misses the nosort+indent2 legacy format. After cross-client canonicalization (`compute_entry_hash` uses sort+indent2), staging entry hashes produced by the web app and migrated chains use indent=2, but the onboarding verification functions only recognize sort+compact (no indent).
 

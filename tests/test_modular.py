@@ -13,7 +13,7 @@ from security.auth import PassphraseAuthenticator, RecoveryAuthenticator
 from security.recovery import RecoveryManager
 from storage.file_store import LedgerStore
 from core.factory import LedgerFactory
-from cli.interface import CLIInterface
+from phpoc_cli.interface import CLIInterface
 
 # --- Test Crypto Manager ---
 class TestCrypto(unittest.TestCase):

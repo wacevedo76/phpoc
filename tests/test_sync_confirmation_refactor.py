@@ -424,7 +424,7 @@ class RefactoredInteractiveCLIStrategy:
 
 # Need SyncDecision from existing module
 from core.sync.decision import SyncDecision
-from cli.strategies import AutoSyncStrategy
+from phpoc_cli.strategies import AutoSyncStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -243,7 +243,7 @@ class TestConfigCLICommand(unittest.TestCase):
             mgr = ConfigManager(store)
             mgr.write(mgr.read())
 
-            from cli.interface import CLIInterface
+            from phpoc_cli.interface import CLIInterface
             # CLIInterface needs a config display method or we test separately
             # Test that ConfigManager.get() works for the config show command
             self.assertEqual(mgr.get("auth.cache_timeout_minutes"), 30)

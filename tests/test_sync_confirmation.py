@@ -11,7 +11,7 @@ from security.crypto import CryptoManager, NoAuthCryptoManager
 from security.recovery import RecoveryManager
 from storage.file_store import LedgerStore
 from core.factory import LedgerFactory
-from cli.interface import CLIInterface
+from phpoc_cli.interface import CLIInterface
 
 
 def _setup_ledger(test_dir):

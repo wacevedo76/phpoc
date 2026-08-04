@@ -120,5 +120,5 @@ These tests likely already pass (dual acceptance is already implemented).
 | `docs/spec/PHPSPEC.md` | Rename `signature` → `identity_seal` in all block schemas (~10 occurrences) | Phase 3 |
 | `tests/test_naming_i04.py` | Add Groups F–I tests | Phase 2 |
 | `tests/*.py` (~12 files) | Update fake `verify_seal` parameter name | Phase 3 |
-| `cli/*.py` (~5 files) | Update `"signature"` exclusion key → `"identity_seal"` (dual already there) | Phase 3 |
+| `phpoc_cli/*.py` (~5 files) | Update `"signature"` exclusion key → `"identity_seal"` (dual already there) | Phase 3 |
 | `core/factory.py` | Update `"signature"` → `"identity_seal"` in genesis bootstrapping | Phase 3 |
