@@ -381,18 +381,24 @@ export class LedgerMerge {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, identity_seal, signature, and format_version
-    // I-07: format_version excluded from seal computation.
+    // Build check data: everything except the hash key, identity_seal, and
+    // legacy signature. Flutter includes format_version + key_version in the
+    // seal (unlike Python/wallet which exclude them). Web-created blocks
+    // don't have these fields so the seal is unchanged either way.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') {
         checkData[k] = v;
       }
     }
 
     // 1. Block seal
+    // Primary: derived seal key via WASM (matches Python per PHPSPEC §5.2)
     if (!crypto.verifySeal(jsonSort(checkData), block[hashKey], masterKey)) {
-      return false;
+      // Backward compat: raw MK (old Flutter blocks pre-2026-07)
+      if (crypto.hmacHex(masterKey, jsonSort(checkData)) !== block[hashKey]) {
+        return false;
+      }
     }
 
     // 2. Identity seal (supports both 'identity_seal' and legacy 'signature')

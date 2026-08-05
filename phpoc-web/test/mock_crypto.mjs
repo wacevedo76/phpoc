@@ -73,6 +73,10 @@ export class MockCrypto {
     return createHash('sha256').update(data, 'utf-8').digest('hex');
   }
 
+  hmacHex(keyHex, data) {
+    return createHash('sha256').update(keyHex + ':' + data, 'utf-8').digest('hex');
+  }
+
   encrypt(plaintext, masterKeyHex) {
     const mk = masterKeyHex || this._mk || 'no-key';
     // Random nonce prefix simulates real WASM nonce behavior

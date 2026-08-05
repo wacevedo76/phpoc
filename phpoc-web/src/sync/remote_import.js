@@ -425,52 +425,74 @@ export class WorkerImportSource {
     }
 
     const genesisBlock = genesis;
-    const genesisHash = genesis.day_hash || null;
+    // I-17: genesis uses block_hash (new format) with day_hash fallback (legacy)
+    const genesisHash = genesis.block_hash || genesis.day_hash || null;
 
     const BLOCK_HASH_FIELD = {
-      genesis: 'day_hash',
       year_summary: 'year_hash',
       month_summary: 'month_hash',
       day: 'day_hash',
     };
 
+    /**
+     * Resolve the actual hash field + value for a block.
+     * I-17: genesis blocks use block_hash (new) or day_hash (legacy).
+     */
+    const _getBlockHashInfo = (block, blockType) => {
+      if (blockType === 'genesis') {
+        if (typeof block.block_hash === 'string' && block.block_hash.length === 64) {
+          return { field: 'block_hash', value: block.block_hash };
+        }
+        return { field: 'day_hash', value: block.day_hash };
+      }
+      const field = BLOCK_HASH_FIELD[blockType];
+      if (!field) return null;
+      return { field, value: block[field] };
+    };
+
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       const blockType = block.type || 'day';
-      const hashField = BLOCK_HASH_FIELD[blockType];
+      const hashInfo = _getBlockHashInfo(block, blockType);
 
-      if (!hashField) {
+      if (!hashInfo) {
         throw new Error(`Unknown block type "${blockType}" at index ${i}`);
       }
 
-      const blockHash = block[hashField];
+      const { field: hashField, value: blockHash } = hashInfo;
       if (typeof blockHash !== 'string' || blockHash.length !== 64) {
         throw new Error(`Missing or invalid ${hashField} at block index ${i}`);
       }
 
       // Verify per-block seal.
-      // Excluded fields must match Python's migrate.py:
-      //   hashField, signature, identity_seal, format_version, key_version
+      // Excluded fields match Flutter's _sealBlock: hashField, identity_seal,
+      // and legacy signature. format_version and key_version ARE included in
+      // the seal by Flutter (unlike Python/wallet which exclude them).
       const checkData = {};
       for (const key of Object.keys(block).sort()) {
-        if (key !== hashField && key !== 'signature' && key !== 'format_version' &&
-            key !== 'identity_seal' && key !== 'key_version') {
+        if (key !== hashField && key !== 'signature' &&
+            key !== 'identity_seal') {
           checkData[key] = block[key];
         }
       }
       const sealPayload = WorkerImportSource._jsonSort(checkData);
+      // Primary: derived seal key via WASM (matches Python per PHPSPEC §5.2)
       if (!crypto.verifySeal(sealPayload, blockHash, masterKey)) {
-        throw new Error(
-          `Block seal verification failed at index ${i} (${blockType}, date: ${block.date || 'unknown'})`
-        );
+        // Backward compat: raw MK (old Flutter blocks pre-2026-07)
+        const legacySeal = crypto.hmacHex(masterKey, sealPayload);
+        if (legacySeal !== blockHash) {
+          throw new Error(
+            `Block seal verification failed at index ${i} (${blockType}, date: ${block.date || 'unknown'})`
+          );
+        }
       }
 
       // Verify prev_hash chain linkage (skip genesis)
       if (i > 0) {
         const prevBlock = blocks[i - 1];
         const prevType = prevBlock.type || 'day';
-        const prevHashField = BLOCK_HASH_FIELD[prevType];
-        const expectedPrevHash = prevBlock[prevHashField];
+        const prevHashInfo = _getBlockHashInfo(prevBlock, prevType);
+        const expectedPrevHash = prevHashInfo?.value;
 
         if (block.prev_hash !== expectedPrevHash) {
           throw new Error(

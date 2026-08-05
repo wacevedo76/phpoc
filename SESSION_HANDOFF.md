@@ -9,7 +9,7 @@
 > **Full issue queue:** `docs/planning/BACKLOG.md`
 
 ## Current State
-- **Branch:** `feature/flutter-mobile`
+- **Branch:** `main`
 - **Flutter test suite:** 1472/1493 passing (22 failing: all pre-existing flaky/date-gated)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 
@@ -47,9 +47,16 @@
 - `docs/spec/PHPSPEC.md` — all block schemas, §5.2, §5.3, §9, §10: `signature` → `identity_seal`
 - 2428 passed, 0 regressions
 
+### ✅ Biometric Authentication (Flutter) — 4-Phase TDD Complete (2026-08-04)
+- 38 assertions → 85 GREEN → 2 Phase 4 improvements
+- **Improvements:**
+  - `auth_service.dart`: Removed redundant PDK derivation in `changePassphrase()` (was calling decrypt twice)
+  - `settings_screen.dart`: Consolidated `_showPassphrasePrompt()` and `_showPassphrasePromptForBiometric()` into single parameterized method (~30 lines removed)
+- **Files changed:** `auth_service.dart`, `settings_screen.dart`
+
 ## Flutter Mobile App
 - **Flutter:** 3.44.6 (stable) | **Emulator:** `pixel_6_avg` (API 35, x86_64)
-- **Tech stack:** Riverpod + go_router + SQLite + SharedPreferences
+- **Tech stack:** Riverpod + go_router + SQLite + SharedPreferences + flutter_secure_storage
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 - **Test ledger:** `testdata/ledger.json` — 31 blocks, 146 entries, Python-encrypted hex fields
 
@@ -61,7 +68,8 @@
 
 ## Immediate Next Steps 🎯
 
-_(None specified — check `docs/planning/BACKLOG.md` for the next task.)
+### 🔜 Next Task
+- _(None actively queued — check BACKLOG.md or ask user)
 
 ---
 

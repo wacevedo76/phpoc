@@ -99,8 +99,13 @@ export class LedgerChain {
    * @returns {boolean} True if the seal is valid.
    */
   verifySeal(data, sealHex) {
-    // Primary: Python-compatible JSON format (cross-platform)
+    // Primary: derived seal key via WASM (matches Python per PHPSPEC §5.2)
     if (this.crypto.verifySeal(jsonSort(data), sealHex, this.masterKey)) {
+      return true;
+    }
+    // Backward compat: raw MK (old Flutter blocks pre-2026-07)
+    const canonicalJson = jsonSort(data);
+    if (this.crypto.hmacHex(this.masterKey, canonicalJson) === sealHex) {
       return true;
     }
     // Fallback: pre-migration compact JSON format (JS-only)
@@ -518,11 +523,13 @@ export class LedgerChain {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, identity_seal, signature, format_version, and key_version.
-    // Must match Python migrate.py exclusion list exactly.
+    // Build check data: everything except the hash key, identity_seal, and
+    // legacy signature. Flutter includes format_version + key_version in the
+    // seal (unlike Python/wallet which exclude them). Web-created blocks
+    // don't have these fields so the seal is unchanged either way.
     const checkData = {};
     for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
+      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') {
         checkData[k] = v;
       }
     }
