@@ -1,24 +1,70 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/storage/preferences.dart';
+import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider;
+import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/features/auth/unlock_screen.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
+import 'package:phpoc_flutter/services/auth_service.dart';
 
 import 'test_helpers.dart';
 
-/// Unlock Screen tests — Group C (12 assertions)
+// ═══════════════════════════════════════════════════════════════
+// Spy AuthService with biometric stubs for widget tests
+// ═══════════════════════════════════════════════════════════════
+
+/// Configurable spy for widget-level biometric tests.
 ///
-///   C1:  Widget smoke test
-///   C2:  Shows passphrase text field
-///   C3:  Passphrase field is obscured (obscureText: true)
-///   C4:  Passphrase field has visibility toggle (eye icon)
-///   C5:  Empty passphrase + "Unlock" → validation error
-///   C6:  Passphrase < 8 chars → validation error
-///   C7:  Wrong passphrase → error message
-///   C8:  Correct passphrase → calls authService.unlock() then goToReady()
-///   C9:  After unlock → router redirects to /
-///   C10: "Unlock" button disabled / spinner during validation
-///   C11: Error state clears when user starts typing again
-///   C12: Biometric icon/button shown when available (optional)
+/// Unlike the service-level spy, this returns configurable values
+/// so widget tests can verify UI visibility and tap behavior.
+class _BioWidgetAuthService extends AuthService {
+  bool biometricsAvailable = false;
+  bool biometricEnabled = false;
+  bool unlockResult = false;
+  bool unlockThrows = false;
+  String unlockError = '';
+  bool unlockCalled = false;
+
+  _BioWidgetAuthService({
+    required super.crypto,
+    required super.db,
+    required super.preferences,
+    required super.securePreferences,
+  });
+
+  Future<bool> isBiometricsAvailable() async => biometricsAvailable;
+
+  bool isBiometricEnabled() => biometricEnabled;
+
+  Future<bool> unlockWithBiometric() async {
+    unlockCalled = true;
+    if (unlockThrows) throw AuthException(unlockError);
+    return unlockResult;
+  }
+
+  // enrollBiometric + disableBiometric not used by unlock screen
+  Future<void> enrollBiometric() async {}
+
+  Future<void> disableBiometric() async {}
+}
+
+_BioWidgetAuthService _makeBioAuthServiceForWidget() {
+  final crypto = CryptoService()..initialize();
+  return _BioWidgetAuthService(
+    crypto: crypto,
+    db: AppDatabase.inMemory(),
+    preferences: AppPreferences.testInstance(),
+    securePreferences: SecurePreferences.testInstance(),
+  );
+}
+
+/// Unlock Screen tests — Group C (11) + Group D (8) = 19 assertions
+///
+///   C1–C11: Passphrase unlock UI
+///   D1–D8:  Biometric unlock UI (Phase 2 RED — biometric methods not yet implemented)
 
 void main() {
   group('C: UnlockScreen', () {
@@ -198,16 +244,259 @@ void main() {
         // In Phase 3, previous error text should be gone
       }
     });
+  });
 
-    // C12 — Biometric icon/button when biometric is available
-    testWidgets('C12: biometric icon shown when biometric auth is available',
-        (tester) async {
+  // ═══════════════════════════════════════════════════════════════
+  // Group D: UnlockScreen — Biometric UI (D1–D8)
+  //
+  // Phase 2 RED: All tests will fail because the biometric UI elements
+  // (fingerprint icon, error messages, etc.) are not yet implemented.
+  // D1–D3 check for biometric icon visibility; D4 tests tap action;
+  // D5–D8 test success/cancel/failure/cold-reboot UX flows.
+  // ═══════════════════════════════════════════════════════════════
+
+  group('D: UnlockScreen — Biometric UI', () {
+    _BioWidgetAuthService? _spyAuth;
+
+    /// Pump UnlockScreen with a [_BioWidgetAuthService] override.
+    Future<void> _pumpBioUnlockScreen(
+      WidgetTester tester, {
+      bool biometricsAvailable = false,
+      bool biometricEnabled = false,
+      bool unlockResult = false,
+    }) async {
+      _spyAuth = null;
       await pumpScreenWidget(tester, const UnlockScreen(),
-          initialPhase: AppPhase.auth);
+          initialPhase: AppPhase.auth,
+          overrides: [
+            authServiceProvider.overrideWith((ref) {
+              final testAuth = _makeBioAuthServiceForWidget();
+              testAuth.biometricsAvailable = biometricsAvailable;
+              testAuth.biometricEnabled = biometricEnabled;
+              testAuth.unlockResult = unlockResult;
+              _spyAuth = testAuth;
+              return testAuth;
+            }),
+          ]);
+      // Let async _checkBiometricState (initState) complete
+      await tester.pump();
+    }
 
-      // In Phase 3, a fingerprint/face icon should appear when available
-      // For Phase 2 RED: this is optional (Phase 8), may be stubbed
-      // This test is informational — biometric is not yet implemented
+    // D1 — Fingerprint icon visible when biometrics available and enabled
+    testWidgets('D1: fingerprint icon visible when biometrics available and '
+        'enabled', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true, biometricEnabled: true);
+
+      // In Phase 3: an IconButton with Icons.fingerprint appears
+      final fingerprintIcon = find.byWidgetPredicate((w) {
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      expect(fingerprintIcon, findsOneWidget,
+          reason: 'Fingerprint icon must be visible when biometrics are '
+              'available and enabled');
+    });
+
+    // D2 — Fingerprint icon NOT visible when biometrics unavailable
+    testWidgets('D2: fingerprint icon NOT visible when biometrics unavailable',
+        (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: false, biometricEnabled: true);
+
+      final fingerprintIcon = find.byWidgetPredicate((w) {
+        if (w is Icon) return w.icon == Icons.fingerprint;
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      expect(fingerprintIcon, findsNothing,
+          reason: 'Fingerprint icon must NOT appear when biometric hardware '
+              'is unavailable');
+    });
+
+    // D3 — Fingerprint icon NOT visible when not enabled
+    testWidgets('D3: fingerprint icon NOT visible when biometrics available '
+        'but not enabled', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true, biometricEnabled: false);
+
+      final fingerprintIcon = find.byWidgetPredicate((w) {
+        if (w is Icon) return w.icon == Icons.fingerprint;
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      expect(fingerprintIcon, findsNothing,
+          reason: 'Fingerprint icon must NOT appear when biometrics are '
+              'available but user has not opted in');
+    });
+
+    // D4 — Tapping fingerprint icon calls unlockWithBiometric()
+    testWidgets('D4: tapping fingerprint icon calls unlockWithBiometric()',
+        (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true, biometricEnabled: true);
+
+      // In Phase 3: tap the fingerprint icon → calls unlockWithBiometric()
+      final fingerprintButton = find.byWidgetPredicate((w) {
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      if (fingerprintButton.evaluate().isNotEmpty) {
+        await tester.tap(fingerprintButton);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(_spyAuth?.unlockCalled, isTrue,
+          reason: 'Tapping the fingerprint icon must trigger '
+              'unlockWithBiometric()');
+    });
+
+    // D5 — On biometric success, screen transitions to ready
+    testWidgets('D5: on biometric success, screen transitions to ready '
+        '(no passphrase prompt)', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true,
+          biometricEnabled: true,
+          unlockResult: true);
+
+      // In Phase 3: after biometric success, goToReady() is called
+      // and the app transitions away from the unlock screen
+
+      // Tap the fingerprint button
+      final fingerprintButton = find.byWidgetPredicate((w) {
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      if (fingerprintButton.evaluate().isNotEmpty) {
+        await tester.tap(fingerprintButton);
+        // Use pump() instead of pumpAndSettle() — the spinner is infinite
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(UnlockScreen)));
+      final phase = container.read(appLifecycleProvider).phase;
+
+      expect(phase, AppPhase.ready,
+          reason: 'Successful biometric unlock must transition to ready phase');
+    });
+
+    // D6 — On biometric cancel, passphrase field remains
+    testWidgets('D6: on biometric cancel, passphrase field remains (no error, '
+        'no transition)', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true,
+          biometricEnabled: true,
+          unlockResult: false); // simulate cancel
+
+      // In Phase 3: user cancels biometric → passphrase field stays
+      // No error message, no transition
+      expect(find.byType(TextField), findsAtLeastNWidgets(1),
+          reason: 'Passphrase field must remain after biometric cancel');
+
+      // Phase should still be auth
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(UnlockScreen)));
+      final phase = container.read(appLifecycleProvider).phase;
+      expect(phase, AppPhase.auth,
+          reason: 'After biometric cancel, app must stay on unlock screen');
+    });
+
+    // D7 — On biometric failure, meaningful message shown + passphrase available
+    testWidgets('D7: on biometric failure, meaningful message shown + '
+        'passphrase field available', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true, biometricEnabled: true);
+      _spyAuth?.unlockThrows = true;
+      _spyAuth?.unlockError = 'Biometric authentication failed';
+
+      // In Phase 3: biometric fails → error message displayed
+      // Passphrase field remains available for fallback
+      final fingerprintButton = find.byWidgetPredicate((w) {
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      if (fingerprintButton.evaluate().isNotEmpty) {
+        await tester.tap(fingerprintButton);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // In Phase 3: error text should appear
+      expect(
+        find.textContaining('failed'),
+        findsOneWidget,
+        reason: 'Biometric failure must show a meaningful error message',
+      );
+
+      // Passphrase field must still be available
+      expect(find.byType(TextField), findsAtLeastNWidgets(1),
+          reason: 'Passphrase fallback must be available after biometric '
+              'failure');
+    });
+
+    // D8 — On cold reboot error, passphrase field shown without scary error
+    testWidgets('D8: on cold reboot error, passphrase field shown without '
+        'scary error message', (tester) async {
+      await _pumpBioUnlockScreen(tester,
+          biometricsAvailable: true, biometricEnabled: true);
+      _spyAuth?.unlockThrows = true;
+      _spyAuth?.unlockError = 'Device credential required after restart';
+
+      // In Phase 3: cold reboot → biometric unavailable → passphrase shown
+      // The error message must NOT be a cryptic stack trace
+      final fingerprintButton = find.byWidgetPredicate((w) {
+        if (w is IconButton) {
+          final icon = w.icon;
+          if (icon is Icon) return icon.icon == Icons.fingerprint;
+        }
+        return false;
+      });
+
+      if (fingerprintButton.evaluate().isNotEmpty) {
+        await tester.tap(fingerprintButton);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // In Phase 3: passphrase field must be present (not hidden behind error)
+      expect(find.byType(TextField), findsAtLeastNWidgets(1),
+          reason: 'Passphrase field must be visible after cold reboot — '
+              'biometric is unavailable, fallback to passphrase');
+
+      // Must NOT show a raw exception message
+      expect(
+        find.textContaining('PlatformException'),
+        findsNothing,
+        reason: 'Cold reboot error must be user-friendly, not a raw platform '
+            'exception',
+      );
     });
   });
 }

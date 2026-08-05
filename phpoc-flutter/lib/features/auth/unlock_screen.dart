@@ -20,6 +20,10 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
   bool _obscureText = true;
   bool _isLoading = false;
   String? _errorMessage;
+  String? _bioErrorMessage;
+  bool _isBioLoading = false;
+  bool _biometricsAvailable = false;
+  bool _biometricEnabled = false;
 
   @override
   void dispose() {
@@ -80,10 +84,63 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     }
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricState();
+  }
+
+  Future<void> _checkBiometricState() async {
+    final authService = ref.read(authServiceProvider);
+    final available = await authService.isBiometricsAvailable();
+    final enabled = authService.isBiometricEnabled();
+    if (!mounted) return;
+    setState(() {
+      _biometricsAvailable = available;
+      _biometricEnabled = enabled;
+    });
+  }
+
+  Future<void> _biometricUnlock() async {
+    setState(() {
+      _isBioLoading = true;
+      _bioErrorMessage = null;
+    });
+
+    try {
+      final authService = ref.read(authServiceProvider);
+      final success = await authService.unlockWithBiometric();
+
+      if (!mounted) return;
+
+      if (success) {
+        final lifecycle = ref.read(appLifecycleProvider.notifier);
+        lifecycle.goToReady();
+      } else {
+        // Biometric failed or cancelled — user can fall back to passphrase.
+        // No error message unless the auth service threw (unexpected).
+        setState(() => _isBioLoading = false);
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isBioLoading = false;
+        _bioErrorMessage = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isBioLoading = false;
+        _bioErrorMessage = 'Biometric authentication unavailable';
+      });
+    }
+  }
+
   void _onPassphraseChanged(String value) {
     setState(() {
       // Clear error when user starts typing
       _errorMessage = null;
+      _bioErrorMessage = null;
     });
   }
 
@@ -109,6 +166,34 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 24),
+                // ── Biometric unlock ──────────────────────────
+                if (_biometricsAvailable && _biometricEnabled) ...[
+                  _isBioLoading
+                      ? const SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.fingerprint, size: 48),
+                          color: Theme.of(context).colorScheme.primary,
+                          onPressed: _biometricUnlock,
+                        ),
+                  const SizedBox(height: 8),
+                  if (_bioErrorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _bioErrorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
                 // Passphrase field with visibility toggle
                 TextField(
                   controller: _passphraseController,

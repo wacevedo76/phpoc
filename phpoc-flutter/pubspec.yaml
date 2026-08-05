@@ -30,6 +30,9 @@ dependencies:
   # File picker
   file_picker: ^11.0.2
 
+  # Biometric authentication
+  local_auth: ^2.3.0
+
   # HTTP
   http: ^1.2.0
 

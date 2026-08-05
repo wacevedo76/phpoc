@@ -154,12 +154,12 @@ class CryptoService {
     return _hmacSha256Hex(mkHex, 'blob-obfuscation', truncate: 32);
   }
 
-  /// Derive seal sub-key (32 bytes = 64 hex chars).
+  /// Derive seal sub-key for block sealing (32 bytes = 64 hex chars).
   ///
-  /// HMAC-SHA256(MK, "phpoc:seal-key")
+  /// HMAC-SHA256(MK, "integrity-key-salt")
   String deriveSealKey(String mkHex) {
     _requireInitialized();
-    return _hmacSha256Hex(mkHex, 'phpoc:seal-key');
+    return _hmacSha256Hex(mkHex, 'integrity-key-salt');
   }
 
   /// Derive field token key for blind index (16 bytes = 32 hex chars).
@@ -468,18 +468,29 @@ class CryptoService {
 
   // ── Group F: HMAC / Sealing / Signing ─────────────────────────
 
-  /// Create an HMAC-SHA256 seal over data using the master key.
+  /// Create an HMAC-SHA256 seal over data using a derived seal sub-key.
+  ///
+  /// Per PHPSPEC §5.2:
+  ///   seal_key = HMAC-SHA256(MK, "integrity-key-salt")
+  ///   seal = HMAC-SHA256(seal_key, data)
   String seal(String data, String mkHex) {
     _requireInitialized();
-    return _hmacSha256Hex(mkHex, data);
+    _validateHex(mkHex, 64);
+    final sealKey = deriveSealKey(mkHex);
+    return _hmacSha256Hex(sealKey, data);
   }
 
   /// Verify an HMAC-SHA256 seal.
+  ///
+  /// Tries derived seal key first (matches WASM/Python), then raw MK
+  /// for backward compatibility with old Flutter blocks.
   bool verifySeal(String data, String sealHex, String mkHex) {
     _requireInitialized();
     _validateHex(mkHex, 64);
-    final expected = seal(data, mkHex);
-    return _constantTimeEqualsHex(expected, sealHex);
+    // New: derived seal key (matches WASM/Python per PHPSPEC §5.2)
+    if (_constantTimeEqualsHex(seal(data, mkHex), sealHex)) return true;
+    // Backward compat: raw MK (old Flutter blocks pre-2026-07)
+    return _constantTimeEqualsHex(_hmacSha256Hex(mkHex, data), sealHex);
   }
 
   /// Sign data with a secret key (HMAC-SHA256).

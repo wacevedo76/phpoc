@@ -30,6 +30,7 @@ class SecurePreferences {
   SecurePreferences._({required this._isTest, this._secureStorage});
 
   static const _keyApiKey = 'worker_api_key';
+  static const _keyBiometricMk = 'biometric_mk';
 
   static const _linuxKeyringHint =
       'On Linux, gnome-keyring must be installed and running. '
@@ -124,6 +125,67 @@ class SecurePreferences {
 
   /// Returns a hint for users when the keyring is not available.
   static String get linuxKeyringHint => _linuxKeyringHint;
+
+  // ── Biometric Master Key ────────────────────────────────
+
+  /// Store the master key hex for biometric unlock.
+  Future<void> setBiometricMk(String mkHex) async {
+    if (_isTest) {
+      _testStore[_keyBiometricMk] = mkHex;
+      return;
+    }
+    if (_useFallback) {
+      _fallbackStore[_keyBiometricMk] = mkHex;
+      return;
+    }
+    try {
+      await _secureStorage!.write(key: _keyBiometricMk, value: mkHex);
+    } on PlatformException catch (e) {
+      if (_isLinuxKeyringError(e)) {
+        _enableFallback(mkHex);
+        _fallbackStore[_keyBiometricMk] = mkHex;
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  /// Retrieve the master key hex for biometric unlock, or null.
+  Future<String?> getBiometricMk() async {
+    if (_isTest) return _testStore[_keyBiometricMk];
+    if (_useFallback) return _fallbackStore[_keyBiometricMk];
+    try {
+      return await _secureStorage!.read(key: _keyBiometricMk);
+    } on PlatformException catch (e) {
+      if (_isLinuxKeyringError(e)) {
+        _enableFallback(null);
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  /// Remove the stored biometric master key.
+  Future<void> deleteBiometricMk() async {
+    if (_isTest) {
+      _testStore.remove(_keyBiometricMk);
+      return;
+    }
+    if (_useFallback) {
+      _fallbackStore.remove(_keyBiometricMk);
+      return;
+    }
+    try {
+      await _secureStorage!.delete(key: _keyBiometricMk);
+    } on PlatformException catch (e) {
+      if (_isLinuxKeyringError(e)) {
+        _enableFallback(null);
+        _fallbackStore.remove(_keyBiometricMk);
+        return;
+      }
+      rethrow;
+    }
+  }
 
   // ── Factories ────────────────────────────────────────────
 

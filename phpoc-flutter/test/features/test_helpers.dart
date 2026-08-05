@@ -59,7 +59,13 @@ List<Override> defaultScreenOverrides() {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);
       final db = ref.watch(data_providers.databaseProvider);
       final prefs = ref.watch(data_providers.appPreferencesProvider);
-      return AuthService(crypto: crypto, db: db, preferences: prefs);
+      final securePrefs = ref.watch(data_providers.securePreferencesProvider);
+      return AuthService(
+        crypto: crypto,
+        db: db,
+        preferences: prefs,
+        securePreferences: securePrefs,
+      );
     }),
     data_providers.onboardingServiceProvider.overrideWith((ref) {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);

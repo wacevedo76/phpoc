@@ -1,9 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:local_auth/local_auth.dart';
+
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
+import '../../data/storage/secure_preferences.dart';
 
 /// Authentication service — passphrase-based key derivation and session management.
 ///
@@ -23,6 +27,8 @@ class AuthService {
   final CryptoService crypto;
   final AppDatabase db;
   final AppPreferences preferences;
+  final SecurePreferences securePreferences;
+  final LocalAuthentication _localAuth = LocalAuthentication();
 
   bool _isUnlocked = false;
   bool get isUnlocked => _isUnlocked;
@@ -31,6 +37,7 @@ class AuthService {
     required this.crypto,
     required this.db,
     required this.preferences,
+    required this.securePreferences,
   });
 
   /// Derive master key from passphrase + seed and cache it.
@@ -154,31 +161,28 @@ class AuthService {
           'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
     }
 
-    // 3. Verify old passphrase against stored genesis
+    // 3. Validate old passphrase + decrypt seed in one pass
     final genesis = await _findGenesisBlock();
     if (genesis == null) {
       throw AuthException('No genesis block found — cannot change passphrase');
     }
 
     final oldPdk = crypto.derivePdk(oldPassphrase, CryptoService.pdkIterations);
-    _decryptSeedFromGenesis(oldPdk, genesis); // throws AuthException on failure
-
-    // 4. Decrypt the current seed from genesis using old PDK
     final currentSeedB64 = _decryptSeedFromGenesis(oldPdk, genesis);
 
-    // 5. Derive new PDK and re-encrypt seed
+    // 4. Derive new PDK and re-encrypt seed
     final newPdk = crypto.derivePdk(newPassphrase, CryptoService.pdkIterations);
     final newEncryptedSeed = crypto.encrypt(currentSeedB64, newPdk);
 
-    // 6. Build new genesis data: {"seed": "<encrypted_hex>"}
+    // 5. Build new genesis data: {"seed": "<encrypted_hex>"}
     final genesisData = json.encode({'seed': newEncryptedSeed});
     final dataEncB64 = base64.encode(utf8.encode(genesisData));
 
-    // 7. Re-seal with existing MK (MK doesn't change — it's seed-derived)
+    // 6. Re-seal with existing MK (MK doesn't change — it's seed-derived)
     final mk = crypto.getMasterKey()!;
     final newSeal = crypto.seal(dataEncB64, mk);
 
-    // 8. Replace genesis block in database
+    // 7. Replace genesis block in database
     await db.customStatement(
       'DELETE FROM blocks WHERE block_id = ?',
       [genesis.blockId],
@@ -196,6 +200,115 @@ class AuthService {
 
     // MK stays the same (seed-derived).
     // isUnlocked stays true.
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Biometric Authentication
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Check if biometric hardware is present and fingerprints/face are enrolled.
+  ///
+  /// Returns false on emulators, devices without sensors, or devices with
+  /// sensors but no enrolled biometrics.
+  Future<bool> isBiometricsAvailable() async {
+    try {
+      final isDeviceSupported = await _localAuth.isDeviceSupported();
+      if (!isDeviceSupported) return false;
+
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+      return availableBiometrics.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether the user has opted into biometric unlock.
+  ///
+  /// Stored in SharedPreferences (non-sensitive boolean flag).
+  bool isBiometricEnabled() {
+    return preferences.isBiometricEnabled();
+  }
+
+  /// Encrypt the current MK and store the ciphertext for biometric unlock.
+  ///
+  /// Must be called while unlocked (MK in memory). The MK hex is stored in
+  /// flutter_secure_storage. On Android, flutter_secure_storage is backed by
+  /// EncryptedSharedPreferences (Keystore-protected).
+  ///
+  /// Throws [AuthException] if not unlocked.
+  Future<void> enrollBiometric() async {
+    if (!_isUnlocked) {
+      throw AuthException('Must be unlocked to enroll biometric');
+    }
+
+    final mk = crypto.getMasterKey();
+    if (mk == null) {
+      throw AuthException('No master key available for enrollment');
+    }
+
+    // Store MK hex in secure storage (already encrypted at rest)
+    await securePreferences.setBiometricMk(mk);
+
+    // Persist the opt-in flag
+    await preferences.setBiometricEnabled(true);
+  }
+
+  /// Trigger biometric prompt and derive MK from stored ciphertext on success.
+  ///
+  /// Returns true on success (MK now cached in CryptoService). Returns false
+  /// if biometrics fail, are unavailable, or the user cancels.
+  ///
+  /// Does not throw — failures are expected (wrong finger, cancel, cold reboot).
+  /// Callers should fall back to passphrase entry on false.
+  Future<bool> unlockWithBiometric() async {
+    // Gate checks
+    if (!isBiometricEnabled()) return false;
+    final available = await isBiometricsAvailable();
+    if (!available) return false;
+
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Authenticate to unlock PH Ledger',
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          biometricOnly: true,
+        ),
+      );
+
+      if (!authenticated) return false;
+
+      // Read stored MK from secure storage
+      final mk = await securePreferences.getBiometricMk();
+      if (mk == null) return false;
+
+      // Cache MK in crypto service and mark as unlocked
+      crypto.setMasterKey(mk);
+      _isUnlocked = true;
+      return true;
+    } catch (_) {
+      // Cold reboot, PlatformException, etc. — return false for fallback
+      return false;
+    }
+  }
+
+  /// Remove stored MK ciphertext and clear the biometric opt-in flag.
+  ///
+  /// Safe to call in any state.
+  Future<void> disableBiometric() async {
+    await securePreferences.deleteBiometricMk();
+    await preferences.setBiometricEnabled(false);
+  }
+
+  /// Allow test subclasses to mark the session as unlocked without going
+  /// through the full unlock flow (needed because [_isUnlocked] is private).
+  @visibleForTesting
+  void notifyUnlocked() {
+    _isUnlocked = true;
+  }
+
+  @visibleForTesting
+  void notifyLocked() {
+    _isUnlocked = false;
   }
 
   // ═══════════════════════════════════════════════════════════════

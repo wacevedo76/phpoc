@@ -44,6 +44,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isExporting = false;
   final _exportPassphraseController = TextEditingController();
 
+  // Biometric state
+  bool _biometricsAvailable = false;
+  bool _biometricEnabled = false;
+
   // Theme state
   ThemeVariant _selectedTheme = ThemeVariant.greenLight;
   String get _themeLabel => AppTheme.variants[_selectedTheme] ?? 'Green – Light';
@@ -68,6 +72,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final sync = ref.read(syncServiceProvider);
     final prefs = ref.read(appPreferencesProvider);
     final securePrefs = ref.read(securePreferencesProvider);
+    final auth = ref.read(authServiceProvider);
+
+    // Load biometric state
+    auth.isBiometricsAvailable().then((available) {
+      if (!mounted) return;
+      setState(() {
+        _biometricsAvailable = available;
+        _biometricEnabled = auth.isBiometricEnabled();
+      });
+    });
 
     // Load theme preference
     prefs.getThemeMode().then((mode) {
@@ -233,7 +247,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _exportSeed() async {
     // Prompt for passphrase re-authentication
-    final passphrase = await _showPassphrasePrompt();
+    final passphrase = await _showPassphrasePrompt(
+      hintText: 'Enter your passphrase to export seed',
+      confirmLabel: 'Export',
+    );
     if (passphrase == null || !mounted) return; // User canceled
 
     setState(() => _isExporting = true);
@@ -278,7 +295,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<String?> _showPassphrasePrompt() async {
+  /// Reusable passphrase verification dialog.
+  ///
+  /// Shows an AlertDialog with a single obscured TextField.
+  /// Returns the entered passphrase, or null if cancelled.
+  Future<String?> _showPassphrasePrompt({
+    required String hintText,
+    required String confirmLabel,
+  }) async {
     final controller = TextEditingController();
 
     final value = await showDialog<String>(
@@ -290,10 +314,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           controller: controller,
           obscureText: true,
           autofocus: true,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Passphrase',
-            hintText: 'Enter your passphrase to export seed',
-            border: OutlineInputBorder(),
+            hintText: hintText,
+            border: const OutlineInputBorder(),
           ),
           onSubmitted: (value) {
             if (value.isNotEmpty) Navigator.of(ctx).pop(value);
@@ -309,7 +333,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               final v = controller.text;
               if (v.isNotEmpty) Navigator.of(ctx).pop(v);
             },
-            child: const Text('Export'),
+            child: Text(confirmLabel),
           ),
         ],
       ),
@@ -477,6 +501,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  // ── Biometric Toggle ────────────────────────────────────────
+
+  Future<void> _onBiometricToggle(bool value) async {
+    if (value) {
+      // Enroll: require passphrase verification
+      final passphrase = await _showPassphrasePrompt(
+        hintText: 'Enter your passphrase to enable biometric unlock',
+        confirmLabel: 'Verify',
+      );
+      if (passphrase == null || !mounted) {
+        setState(() => _biometricEnabled = false);
+        return;
+      }
+
+      try {
+        final auth = ref.read(authServiceProvider);
+        await auth.reauthenticate(passphrase);
+
+        if (!mounted) return;
+        await auth.enrollBiometric();
+
+        if (!mounted) return;
+        setState(() => _biometricEnabled = true);
+      } on AuthException catch (e) {
+        if (!mounted) return;
+        setState(() => _biometricEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } else {
+      final auth = ref.read(authServiceProvider);
+      await auth.disableBiometric();
+      if (!mounted) return;
+      setState(() => _biometricEnabled = false);
+    }
+  }
+
   // ── Lock ─────────────────────────────────────────────────────
 
   void _lock() {
@@ -601,6 +663,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Card(
             child: Column(
               children: [
+                if (_biometricsAvailable)
+                  Column(
+                    children: [
+                      SwitchListTile(
+                        secondary: const Icon(Icons.fingerprint),
+                        title: const Text('Unlock with fingerprint'),
+                        value: _biometricEnabled,
+                        onChanged: _onBiometricToggle,
+                      ),
+                      const Divider(height: 1),
+                    ],
+                  ),
                 ListTile(
                   leading: const Icon(Icons.key),
                   title: const Text('Change Passphrase'),

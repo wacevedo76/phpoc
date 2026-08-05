@@ -85,12 +85,18 @@ final syncServiceProvider = Provider<SyncService>((ref) {
   );
 });
 
-/// Auth service provider — injects crypto, db, preferences.
+/// Auth service provider — injects crypto, db, preferences, securePrefs.
 final authServiceProvider = Provider<AuthService>((ref) {
   final crypto = ref.watch(cryptoServiceProvider);
   final db = ref.watch(databaseProvider);
   final prefs = ref.watch(appPreferencesProvider);
-  return AuthService(crypto: crypto, db: db, preferences: prefs);
+  final securePrefs = ref.watch(securePreferencesProvider);
+  return AuthService(
+    crypto: crypto,
+    db: db,
+    preferences: prefs,
+    securePreferences: securePrefs,
+  );
 });
 
 /// Onboarding service provider — injects all deps.

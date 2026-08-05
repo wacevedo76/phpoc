@@ -20,6 +20,7 @@ class AppPreferences {
   static const _keyDeviceCookie = 'device_cookie';
   static const _keyHasExistingData = 'has_existing_data';
   static const _keyThemeMode = 'theme_mode';
+  static const _keyBiometricEnabled = 'biometric_enabled';
 
   // ── Worker URL ───────────────────────────────────────────
 
@@ -103,6 +104,23 @@ class AppPreferences {
       return;
     }
     await _prefs!.setString(_keyThemeMode, mode);
+  }
+
+  // ── Biometric Enabled ───────────────────────────────────
+
+  /// Whether the user has opted into biometric unlock.
+  /// Returns false by default (opt-in).
+  bool isBiometricEnabled() {
+    if (_isTest) return _store![_keyBiometricEnabled] as bool? ?? false;
+    return _prefs!.getBool(_keyBiometricEnabled) ?? false;
+  }
+
+  Future<void> setBiometricEnabled(bool value) async {
+    if (_isTest) {
+      _store![_keyBiometricEnabled] = value;
+      return;
+    }
+    await _prefs!.setBool(_keyBiometricEnabled, value);
   }
 
   // ── Clear ────────────────────────────────────────────────
