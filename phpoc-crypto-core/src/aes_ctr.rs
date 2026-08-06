@@ -86,6 +86,9 @@ pub fn encrypt(plaintext: &str, master_key: &[u8; 32]) -> String {
 /// Supports both current format (with auth tag, len >= 56)
 /// and legacy format (without auth tag, len < 56).
 ///
+/// When the canonical PHPSPEC scheme (HMAC-derived keys) fails, falls back
+/// to Flutter/Dart scheme: aesKey = MK[:16], HMAC(aesKey, salt‖nonce‖ct).
+///
 /// # Arguments
 /// * `hex_data` - Hex-encoded ciphertext.
 /// * `master_key` - 32-byte Master Key.
@@ -104,36 +107,53 @@ pub fn decrypt(hex_data: &str, master_key: &[u8; 32]) -> Result<String> {
 
     let salt: [u8; 16] = data[..16].try_into().unwrap();
     let nonce: [u8; 8] = data[16..24].try_into().unwrap();
+    let flutter_aes_key: [u8; 16] = master_key[..16].try_into().unwrap();
     let (enc_key, integrity_key) = derive_encryption_keys(master_key, &salt);
 
-    // Detect format: current (with tag) vs legacy (no tag)
-    // Current format:   salt(16) + nonce(8) + ciphertext(N) + tag(32)
-    // Legacy format:    salt(16) + nonce(8) + ciphertext(N)
-    //
-    // Minimum current format = 16 + 8 + 0 + 32 = 56 bytes
+    // Detect format: full (with tag ≥ 56 bytes) vs short (no tag)
     let has_tag = data.len() >= 56;
 
     if has_tag {
         let ciphertext = &data[24..data.len() - 32];
         let stored_tag = &data[data.len() - 32..];
 
-        // Verify auth tag BEFORE decrypting
+        // ── Path 1: Canonical PHPSPEC (HMAC-derived sub-keys) ──
         let mut auth_data = nonce.to_vec();
         auth_data.extend_from_slice(ciphertext);
         let signing_key = hmac::Key::new(hmac::HMAC_SHA256, &integrity_key);
         let expected_tag = hmac::sign(&signing_key, &auth_data);
 
-        if expected_tag.as_ref() != stored_tag {
-            // Tag mismatch: could be legacy format where the trailing 32 bytes
-            // are actually ciphertext, not a tag. Fall through to legacy path.
-            return decrypt_inner(&data[24..], &enc_key, &nonce);
+        if expected_tag.as_ref() == stored_tag {
+            return decrypt_inner(ciphertext, &enc_key, &nonce);
         }
 
-        // Tag verified — decrypt ciphertext portion
-        decrypt_inner(ciphertext, &enc_key, &nonce)
+        // ── Path 2: Legacy Flutter (raw mk[:16], salt‖nonce‖ct auth) ──
+        let mut flutter_auth_data = salt.to_vec();
+        flutter_auth_data.extend_from_slice(&nonce);
+        flutter_auth_data.extend_from_slice(ciphertext);
+        let flutter_signing_key = hmac::Key::new(hmac::HMAC_SHA256, &flutter_aes_key);
+        let flutter_expected_tag = hmac::sign(&flutter_signing_key, &flutter_auth_data);
+
+        if flutter_expected_tag.as_ref() == stored_tag {
+            return decrypt_inner(ciphertext, &flutter_aes_key, &nonce);
+        }
+
+        // ── Path 3: Raw (treat tag as ciphertext) ──
+        return decrypt_inner(&data[24..], &flutter_aes_key, &nonce);
     } else {
-        // Legacy format — no auth tag, entire tail is ciphertext
-        decrypt_inner(&data[24..], &enc_key, &nonce)
+        // ── Path 4: Short format (no auth tag) ──
+        let ciphertext = &data[24..];
+
+        // Try Flutter mk[:16] key first
+        if let Ok(result) = decrypt_inner(ciphertext, &flutter_aes_key, &nonce) {
+            // Validate: should be numeric (epoch timestamp)
+            if result.parse::<i64>().is_ok() {
+                return Ok(result);
+            }
+        }
+
+        // Fall back to canonical HMAC-derived key
+        decrypt_inner(ciphertext, &enc_key, &nonce)
     }
 }
 

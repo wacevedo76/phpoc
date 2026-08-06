@@ -63,18 +63,36 @@ pub fn derive_pdk(passphrase: &str, iterations: PdkIterations) -> [u8; 32] {
 ///
 /// # Returns
 /// 32-byte Master Key.
+///
+/// Handles both standard 32-byte base64 seeds and Flutter-style seeds
+/// which may have spurious trailing padding or be 33 bytes with a leading
+/// 0x00 byte (the extra byte is stripped automatically).
 pub fn derive_master_key(seed: &str) -> Result<[u8; 32]> {
     use base64::Engine;
+
+    // Try STANDARD first (handles proper = padding)
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(seed)
+        .or_else(|_| {
+            // Retry without padding using URL_SAFE_NO_PAD
+            let cleaned = seed.trim_end_matches('=');
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cleaned)
+        })
         .map_err(|e| CryptoError::InvalidBase64(e.to_string()))?;
+
+    // Handle 33-byte seeds: strip leading 0x00 (Flutter MK serialization quirk)
+    let decoded = if decoded.len() == 33 && decoded[0] == 0x00 {
+        &decoded[1..]
+    } else {
+        &decoded[..]
+    };
 
     if decoded.len() != 32 {
         return Err(CryptoError::InvalidKeyLength);
     }
 
     let mut key = [0u8; 32];
-    key.copy_from_slice(&decoded);
+    key.copy_from_slice(decoded);
     Ok(key)
 }
 

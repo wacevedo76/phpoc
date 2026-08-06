@@ -47,16 +47,11 @@ class LocalCache {
   String? _decrypt(String? value) {
     if (value == null) return null;
     if (value.startsWith('plain:')) return value.substring(6);
-    // Try standard decrypt (Flutter/Mobile format — raw mk[:16] AES key)
+    // Unified decrypt: canonical HMAC-derived (Python/WASM) then Flutter-legacy fallback
     try {
       return crypto.decryptWithCachedKey(value);
     } catch (_) {
-      // Try Python-compatible decrypt (CLI format — HMAC-sub-key derivation)
-      try {
-        return crypto.decryptFieldValueWithCachedKey(value);
-      } catch (_) {
-        return null;
-      }
+      return null;
     }
   }
 

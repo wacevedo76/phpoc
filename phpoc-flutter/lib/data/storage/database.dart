@@ -543,6 +543,11 @@ class BlockDao {
       [blockId],
     );
   }
+
+  /// Delete all blocks (used during chain migration).
+  void deleteAllBlocksSync() {
+    _db.customStatementSync('DELETE FROM blocks', []);
+  }
 }
 
 // ────────────────────────────────────────────────────────────

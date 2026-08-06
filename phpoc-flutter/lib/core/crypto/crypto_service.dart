@@ -97,11 +97,10 @@ class CryptoService {
     return decrypt(ciphertext, _bytesToHex(_masterKey!));
   }
 
-  /// Python-compatible field-level decrypt with cached master key.
+  /// Field-level decrypt with cached master key.
   ///
-  /// Uses HMAC-sub-key derivation (Python CryptoManager._derive_sub_key)
-  /// instead of raw key bytes. Use when decrypting field values produced
-  /// by the Python CLI (e.g., [startTime_enc], [endTime_enc]).
+  /// Delegates to [decrypt] which handles canonical, Flutter-legacy,
+  /// and raw formats. Kept for backward compatibility.
   String decryptFieldValueWithCachedKey(String ciphertext) {
     if (!hasMasterKey) {
       throw CryptoException('No master key cached. Call setMasterKey() first.');
@@ -172,19 +171,30 @@ class CryptoService {
 
   // ── Group C: AES-128-CTR Encrypt/Decrypt ──────────────────────
 
-  /// AES-128-CTR encrypt with HMAC-SHA256 authentication.
+  /// AES-128-CTR encrypt with HMAC-SHA256 authentication (canonical PHPSPEC §3).
   ///
-  /// [keyHex] — 64-char hex master key (first 16 bytes used for AES-128).
-  /// Returns hex-encoded: salt(16B) || nonce(8B) || ciphertext || auth_tag(32B).
+  /// Matches Python [CryptoManager.encrypt] and WASM [aes_ctr::encrypt] byte-for-byte:
+  ///   - aes_key  = HMAC-SHA256(MK, salt)[:16]
+  ///   - int_key  = HMAC-SHA256(MK, salt + "-integrity")[:32]
+  ///   - tag      = HMAC-SHA256(int_key, nonce ‖ ct)
+  ///
+  /// [keyHex] — 64-char hex master key.
+  /// Returns hex-encoded: salt(16B) ‖ nonce(8B) ‖ ciphertext ‖ tag(32B).
   String encrypt(String plaintext, String keyHex) {
     _requireInitialized();
     _validateHex(keyHex, 64);
     if (keyHex.isEmpty) throw CryptoException('Key must not be empty');
-    final key = Uint8List.fromList(_hexToBytes(keyHex));
-    final aesKey = Uint8List.sublistView(key, 0, 16); // AES-128 = 16 bytes
 
+    final mk = Uint8List.fromList(_hexToBytes(keyHex));
     final salt = _randomBytes(16);
     final nonce = _randomBytes(8);
+
+    // Canonical: derive sub-keys from MK + salt (PHPSPEC §3.3)
+    final aesKey = _hmacSha256Truncate(mk, salt, 16);
+    final intSalt = Uint8List(salt.length + 10)
+      ..setAll(0, salt)
+      ..setAll(salt.length, utf8.encode('-integrity'));
+    final integrityKey = _hmacSha256Truncate(mk, intSalt, 32);
 
     final ciphertext = _aesCtrProcess(
       utf8.encode(plaintext),
@@ -193,12 +203,11 @@ class CryptoService {
       encrypt: true,
     );
 
-    // Auth tag: HMAC-SHA256(aesKey, salt || nonce || ciphertext)
-    final authInput = Uint8List(salt.length + nonce.length + ciphertext.length)
-      ..setAll(0, salt)
-      ..setAll(salt.length, nonce)
-      ..setAll(salt.length + nonce.length, ciphertext);
-    final tag = _hmacSha256Full(aesKey, authInput);
+    // Auth tag: HMAC-SHA256(integrity_key, nonce ‖ ciphertext)
+    final authInput = Uint8List(nonce.length + ciphertext.length)
+      ..setAll(0, nonce)
+      ..setAll(nonce.length, ciphertext);
+    final tag = _hmacSha256Full(integrityKey, authInput);
 
     final result =
         Uint8List(salt.length + nonce.length + ciphertext.length + tag.length)
@@ -210,73 +219,18 @@ class CryptoService {
     return _bytesToHex(result);
   }
 
-  /// AES-128-CTR decrypt with HMAC-SHA256 authentication.
+  /// AES-128-CTR decrypt with HMAC-SHA256 authentication (canonical PHPSPEC §3).
   ///
-  /// [ciphertextHex] — hex-encoded: salt(16B) || nonce(8B) || ciphertext || auth_tag(32B).
-  /// [keyHex] — 64-char hex master key (first 16 bytes used for AES-128).
-  /// Throws [StateError] if authentication fails (wrong key or tampered data).
+  /// Primary path: canonical HMAC-derived sub-keys (matches Python/WASM).
+  /// Fallback path: legacy Flutter scheme (raw mk[:16] as AES key) for
+  /// pre-standardization data. Falls back to raw AES-CTR (no auth tag)
+  /// for very old legacy ciphertexts < 112 hex chars.
+  ///
+  /// [ciphertextHex] — hex-encoded: salt(16B) ‖ nonce(8B) ‖ ciphertext + tag(32B).
+  /// [keyHex] — 64-char hex master key.
+  /// Throws [CryptoException] if all decryption paths fail.
   String decrypt(String ciphertextHex, String keyHex) {
     _requireInitialized();
-    _validateHex(
-      ciphertextHex,
-      null,
-      112,
-    ); // min: salt(16)+nonce(8)+tag(32)=56 bytes → 112 hex
-    _validateHex(keyHex, 64);
-    if (ciphertextHex.isEmpty) {
-      throw CryptoException('Ciphertext must not be empty');
-    }
-    final key = Uint8List.fromList(_hexToBytes(keyHex));
-    final aesKey = Uint8List.sublistView(key, 0, 16);
-    final data = _hexToBytes(ciphertextHex);
-
-    // Minimum: salt(16) + nonce(8) + 0 plaintext + tag(32) = 56 bytes
-    if (data.length < 56) throw CryptoException('Ciphertext too short');
-
-    final salt = Uint8List.sublistView(data, 0, 16);
-    final nonce = Uint8List.sublistView(data, 16, 24);
-    final tag = Uint8List.sublistView(data, data.length - 32);
-    final ciphertext = Uint8List.sublistView(data, 24, data.length - 32);
-
-    // Verify auth tag
-    final authInput = Uint8List(salt.length + nonce.length + ciphertext.length)
-      ..setAll(0, salt)
-      ..setAll(salt.length, nonce)
-      ..setAll(salt.length + nonce.length, ciphertext);
-    final expectedTag = _hmacSha256Full(aesKey, authInput);
-
-    if (!_constantTimeEquals(tag, expectedTag)) {
-      throw CryptoException(
-        'Authentication failed: wrong key or tampered ciphertext',
-      );
-    }
-
-    final plaintextBytes = _aesCtrProcess(
-      ciphertext,
-      aesKey,
-      nonce,
-      encrypt: false,
-    );
-    return utf8.decode(plaintextBytes);
-  }
-
-  /// Python/CryptoManager-compatible field-level decrypt.
-  ///
-  /// Python's [CryptoManager.decrypt] uses HMAC-sub-key derivation
-  /// instead of raw key bytes:
-  ///   - aes_key  = HMAC-SHA256(mk, salt)[:16]
-  ///   - int_key  = HMAC-SHA256(mk, salt + b"-integrity")[:32]
-  ///   - tag      = HMAC-SHA256(int_key, nonce + ciphertext)
-  ///
-  /// This differs from [decrypt] which uses raw mk[:16] and a
-  /// different auth-tag construction. Use this method when the
-  /// ciphertext was produced by Python's CryptoManager (CLI / testdata).
-  ///
-  /// [ciphertextHex] — hex-encoded: salt(16B) + nonce(8B) + ciphertext + tag(32B).
-  /// [keyHex] — 64-char hex master key.
-  String decryptFieldValue(String ciphertextHex, String keyHex) {
-    _requireInitialized();
-    _validateHex(ciphertextHex, null, 112);
     _validateHex(keyHex, 64);
     if (ciphertextHex.isEmpty) {
       throw CryptoException('Ciphertext must not be empty');
@@ -284,41 +238,95 @@ class CryptoService {
     final mk = Uint8List.fromList(_hexToBytes(keyHex));
     final data = _hexToBytes(ciphertextHex);
 
-    if (data.length < 56) throw CryptoException('Ciphertext too short');
+    // Minimum: salt(16) + nonce(8) = 24 bytes
+    if (data.length < 24) throw CryptoException('Ciphertext too short');
 
     final salt = Uint8List.sublistView(data, 0, 16);
     final nonce = Uint8List.sublistView(data, 16, 24);
-    final tag = Uint8List.sublistView(data, data.length - 32);
-    final ciphertext = Uint8List.sublistView(data, 24, data.length - 32);
 
-    // Derive sub-keys (Python CryptoManager._derive_sub_key)
-    //   aes_key       = HMAC-SHA256(mk, salt)[:16]
-    //   integrity_key = HMAC-SHA256(mk, salt + "-integrity")[:32]
-    final aesKey = _hmacSha256Truncate(mk, salt, 16);
-    final intSalt = Uint8List(salt.length + 10)
-      ..setAll(0, salt)
-      ..setAll(salt.length, utf8.encode('-integrity'));
-    final integrityKey = _hmacSha256Truncate(mk, intSalt, 32);
+    // ── Detect format ──────────────────────────────────────
+    // Full format: salt(16) + nonce(8) + ct(N) + tag(32)  → ≥ 56 bytes
+    // Short format: salt(16) + nonce(8) + ct(N)            → < 56 bytes
+    final hasTag = data.length >= 56;
 
-    // Verify auth tag: HMAC-SHA256(integrity_key, nonce + ciphertext)
-    final authInput = Uint8List(nonce.length + ciphertext.length)
-      ..setAll(0, nonce)
-      ..setAll(nonce.length, ciphertext);
-    final expectedTag = _hmacSha256Full(integrityKey, authInput);
+    if (hasTag) {
+      final tag = Uint8List.sublistView(data, data.length - 32);
+      final ciphertext = Uint8List.sublistView(data, 24, data.length - 32);
 
-    if (!_constantTimeEquals(tag, expectedTag)) {
-      throw CryptoException(
-        'Authentication failed: wrong key or tampered ciphertext',
+      // ── Path 1: Canonical HMAC-derived sub-keys (Python/WASM) ──
+      final aesKey1 = _hmacSha256Truncate(mk, salt, 16);
+      final intSalt = Uint8List(salt.length + 10)
+        ..setAll(0, salt)
+        ..setAll(salt.length, utf8.encode('-integrity'));
+      final integrityKey = _hmacSha256Truncate(mk, intSalt, 32);
+
+      final authInput1 = Uint8List(nonce.length + ciphertext.length)
+        ..setAll(0, nonce)
+        ..setAll(nonce.length, ciphertext);
+      final expectedTag1 = _hmacSha256Full(integrityKey, authInput1);
+
+      if (_constantTimeEquals(tag, expectedTag1)) {
+        return utf8.decode(_aesCtrProcess(ciphertext, aesKey1, nonce, encrypt: false));
+      }
+
+      // ── Path 2: Legacy Flutter scheme (raw mk[:16], salt‖nonce‖ct auth) ──
+      final flutterAesKey = Uint8List.sublistView(mk, 0, 16);
+      final authInput2 = Uint8List(salt.length + nonce.length + ciphertext.length)
+        ..setAll(0, salt)
+        ..setAll(salt.length, nonce)
+        ..setAll(salt.length + nonce.length, ciphertext);
+      final expectedTag2 = _hmacSha256Full(flutterAesKey, authInput2);
+
+      if (_constantTimeEquals(tag, expectedTag2)) {
+        return utf8.decode(_aesCtrProcess(ciphertext, flutterAesKey, nonce, encrypt: false));
+      }
+
+      // Both auth paths failed — try raw decrypt (treat tag as ciphertext)
+      final plaintextBytes = _aesCtrProcess(
+        Uint8List.sublistView(data, 24),
+        flutterAesKey,
+        nonce,
+        encrypt: false,
       );
-    }
+      return utf8.decode(plaintextBytes);
+    } else {
+      // ── Path 3: Legacy short format (no auth tag) ────────
+      // Try mk[:16] as AES key (Flutter legacy)
+      final flutterAesKey = Uint8List.sublistView(mk, 0, 16);
+      final ciphertext = Uint8List.sublistView(data, 24);
 
-    final plaintextBytes = _aesCtrProcess(
-      ciphertext,
-      aesKey,
-      nonce,
-      encrypt: false,
-    );
-    return utf8.decode(plaintextBytes);
+      try {
+        final plaintextBytes = _aesCtrProcess(
+          ciphertext,
+          flutterAesKey,
+          nonce,
+          encrypt: false,
+        );
+        final result = utf8.decode(plaintextBytes);
+        // Validate: should parse as an integer (epoch timestamp)
+        int.parse(result);
+        return result;
+      } catch (_) {
+        // Try canonical HMAC-derived key for short format too
+        final aesKey = _hmacSha256Truncate(mk, salt, 16);
+        final plaintextBytes = _aesCtrProcess(
+          ciphertext,
+          aesKey,
+          nonce,
+          encrypt: false,
+        );
+        return utf8.decode(plaintextBytes);
+      }
+    }
+  }
+
+  /// Field-level decrypt (Python CLI compatible).
+  ///
+  /// Delegates to [decrypt] which handles canonical, Flutter-legacy,
+  /// and raw formats. Kept as a named method for backward compatibility
+  /// with callers that explicitly import this signature.
+  String decryptFieldValue(String ciphertextHex, String keyHex) {
+    return decrypt(ciphertextHex, keyHex);
   }
 
   /// HMAC-SHA256(key, msg) truncated to [length] bytes.
