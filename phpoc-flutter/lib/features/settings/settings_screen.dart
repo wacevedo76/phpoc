@@ -5,9 +5,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart'
-    show appPreferencesProvider, authServiceProvider, ledgerBackupServiceProvider,
-    onboardingServiceProvider, securePreferencesProvider, syncServiceProvider;
+    show appPreferencesProvider, authServiceProvider, cryptoServiceProvider, databaseProvider, ledgerBackupServiceProvider,
+    ledgerMigrationServiceProvider, onboardingServiceProvider, securePreferencesProvider, syncServiceProvider;
 import 'package:phpoc_flutter/data/sync/transport.dart' show HttpTransport;
+import 'package:phpoc_flutter/services/ledger_push_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/app.dart';
@@ -47,6 +48,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   // Biometric state
   bool _biometricsAvailable = false;
   bool _biometricEnabled = false;
+
+  // Migration state
+  bool _isMigrating = false;
+
+  // Push state
+  bool _isPushing = false;
 
   // Theme state
   ThemeVariant _selectedTheme = ThemeVariant.greenLight;
@@ -503,6 +510,124 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  // ── Push Ledger to Cloud ────────────────────────────────────
+
+  Future<void> _pushLedgerToCloud() async {
+    final sync = ref.read(syncServiceProvider);
+    if (!sync.isRemoteAvailable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Worker not configured')),
+        );
+      }
+      return;
+    }
+
+    final pushService = LedgerPushService(
+      db: ref.read(databaseProvider),
+      crypto: ref.read(cryptoServiceProvider),
+      transport: sync.transport!,
+    );
+
+    // Confirm before pushing — this overwrites whatever is on R2
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Push Ledger to Cloud'),
+        content: const Text(
+          'This will upload your full ledger chain to the remote Worker.\n\n'
+          'If a chain already exists on the Worker, it will be overwritten.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Push'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isPushing = true);
+
+    try {
+      final result = await pushService.pushAll();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.success
+                ? 'Pushed ${result.blocksPushed} blocks to cloud'
+                : 'Push partially failed: ${result.failedBlocks.length} blocks failed',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Push failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isPushing = false);
+    }
+  }
+
+  // ── Encryption Migration (dev only; removed before public launch) ──
+
+  Future<void> _migrateEncryption() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Migrate Encryption'),
+        content: const Text(
+          'This will re-encrypt all entry fields using the standardized '
+          'encryption scheme and rebuild the chain.\n\n'
+          'This is only needed for ledgers created before encryption was '
+          'standardized.\n\n'
+          'The operation runs in a transaction — any error will roll back '
+          'to the current state.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Migrate'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isMigrating = true);
+
+    try {
+      final migration = ref.read(ledgerMigrationServiceProvider);
+      final count = await migration.migrateChainEncryption();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Migration complete — $count blocks migrated')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Migration failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isMigrating = false);
+    }
+  }
+
   // ── Biometric Toggle ────────────────────────────────────────
 
   Future<void> _onBiometricToggle(bool value) async {
@@ -633,6 +758,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onTap: _toggleWorkerEditor,
                 ),
                 if (_showWorkerEditor) _buildWorkerEditor(),
+                if (_workerConnected) const Divider(height: 1),
+                if (_workerConnected)
+                  ListTile(
+                    leading: const Icon(Icons.cloud_upload_outlined),
+                    title: const Text('Push Ledger to Cloud'),
+                    subtitle: const Text(
+                      'Upload your full ledger chain to the remote Worker',
+                    ),
+                    enabled: !_isPushing,
+                    trailing: _isPushing
+                        ? const SizedBox(
+                            width: 20, height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : null,
+                    onTap: _pushLedgerToCloud,
+                  ),
               ],
             ),
           ),
@@ -724,12 +866,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // ── Data / Storage ───────────────────────────────────
           _buildSectionHeader('Data / Storage'),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.call_merge),
-              title: const Text('Import entries from another ledger'),
-              subtitle: const Text('Move entries from an old ledger'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => GoRouter.of(context).go('/import'),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.call_merge),
+                  title: const Text('Import entries from another ledger'),
+                  subtitle: const Text('Move entries from an old ledger'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => GoRouter.of(context).go('/import'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: Icon(Icons.enhanced_encryption_outlined,
+                      color: Theme.of(context).colorScheme.tertiary),
+                  title: const Text('Migrate Encryption'),
+                  subtitle: const Text('Standardize encryption (dev only)'),
+                  enabled: !_isMigrating,
+                  trailing: _isMigrating
+                      ? const SizedBox(
+                          width: 20, height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : null,
+                  onTap: _migrateEncryption,
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 24),

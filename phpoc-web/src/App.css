@@ -1301,6 +1301,48 @@ a { color: var(--accent-blue); text-decoration: none; }
   gap: 0.5rem;
 }
 
+.history-sort-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.history-sort-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.history-sort-segment {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+}
+
+.history-sort-segment .btn {
+  border: none;
+  border-radius: 0;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+
+.history-sort-segment .btn:not(.history-sort-active):hover {
+  background: var(--bg-hover);
+}
+
+.history-sort-segment .btn + .btn {
+  border-left: 1px solid var(--border-color);
+}
+
+.history-sort-active {
+  color: white !important;
+  background: var(--accent-blue) !important;
+}
+
 .history-list {
   flex: 1;
   overflow-y: auto;

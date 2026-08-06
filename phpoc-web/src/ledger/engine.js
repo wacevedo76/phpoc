@@ -230,6 +230,15 @@ export class LedgerEngine {
       days[dateStr].push(processed);
     }
 
+    // Sort within each day by title (matching Flutter engine behavior)
+    for (const dateStr of Object.keys(days)) {
+      days[dateStr].sort((a, b) => {
+        const titleA = (a.data && a.data.title) || '';
+        const titleB = (b.data && b.data.title) || '';
+        return titleA.localeCompare(titleB);
+      });
+    }
+
     return days;
   }
 

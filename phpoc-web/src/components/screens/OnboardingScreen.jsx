@@ -530,7 +530,6 @@ export default function OnboardingScreen({
         apiKey: workerApiKey.trim() || null,
         passphrase: connectPassphrase.trim(),
         userSeed: connectSeed.trim(),
-        format: 'blocks',
       });
       // Success — parent will transition phase to ready
     } catch (err) {

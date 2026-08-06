@@ -8,6 +8,7 @@ import '../../data/sync/staging_store.dart';
 import '../../data/sync/sync_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
+import '../../services/ledger_migration_service.dart';
 import '../../services/ledger_pull_service.dart';
 import '../../services/ledger_push_service.dart';
 import '../../services/onboarding_service.dart';
@@ -139,6 +140,15 @@ final ledgerEngineProvider = Provider<LedgerEngine>((ref) {
 final ledgerBackupServiceProvider = Provider<LedgerBackupService>((ref) {
   final db = ref.watch(databaseProvider);
   return LedgerBackupService(db: db);
+});
+
+/// Ledger migration service provider — injects crypto + database.
+/// Used for one-time encryption standardization (dev only, removed before
+/// public launch per BACKLOG.md).
+final ledgerMigrationServiceProvider = Provider<LedgerMigrationService>((ref) {
+  final db = ref.watch(databaseProvider);
+  final crypto = ref.watch(cryptoServiceProvider);
+  return LedgerMigrationService(db: db, crypto: crypto);
 });
 
 /// Ledger pull service provider — injects crypto, db, backup.

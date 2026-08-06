@@ -25,6 +25,7 @@ export default function History() {
     return d.toISOString().slice(0, 10);
   });
   const [filterTag, setFilterTag] = useState('');
+  const [sortBy, setSortBy] = useState('start'); // 'start' | 'duration'
 
   // Inline editing state (staging entries only, keyed by entry_id)
   const [editTags, setEditTags] = useState({});
@@ -302,8 +303,14 @@ export default function History() {
   }
   for (const date of Object.keys(grouped)) {
     grouped[date].sort((a, b) => {
+      // Uncommitted entries always come first
       if (a.committed !== b.committed) return a.committed ? 1 : -1;
-      return 0;
+      // Then sort by the selected criterion
+      if (sortBy === 'start') {
+        return (a.start_epoch || 0) - (b.start_epoch || 0);
+      }
+      // duration: descending (longest first)
+      return (b.duration || 0) - (a.duration || 0);
     });
   }
 
@@ -513,6 +520,25 @@ export default function History() {
               Clear
             </button>
           )}
+        </div>
+
+        {/* Sort toggle */}
+        <div className="history-sort-toggle">
+          <span className="history-sort-label">Sort:</span>
+          <div className="history-sort-segment">
+            <button
+              className={`btn${sortBy === 'start' ? ' history-sort-active' : ''}`}
+              onClick={() => setSortBy('start')}
+            >
+              By time
+            </button>
+            <button
+              className={`btn${sortBy === 'duration' ? ' history-sort-active' : ''}`}
+              onClick={() => setSortBy('duration')}
+            >
+              By duration
+            </button>
+          </div>
         </div>
 
         {uncommittedCount > 0 && (

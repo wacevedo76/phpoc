@@ -43,6 +43,19 @@ const ENTRIES_KEY = 'entries';
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /**
+ * Convert a Uint8Array to base64 without overflowing the call stack.
+ * `String.fromCharCode(...largeArray)` exceeds the max argument count.
+ */
+function bytesToBase64(bytes) {
+  const CHUNK = 0x8000; // 32 KB
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(parts.join(''));
+}
+
+/**
  * Simple in-memory fallback storage for environments where IndexedDB
  * is unavailable (e.g. Node.js testing, private browsing).
  */
@@ -833,25 +846,19 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
    * @param {string} opts.apiKey - API key
    * @param {string} opts.passphrase - User's passphrase
    * @param {string} opts.userSeed - Recovery seed
-   * @param {string} opts.format - 'blocks' (canonical ledger/blocks/ format)
    */
-  const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, userSeed, genesisBlock, chain, format }) => {
+  const connectToWorker = useCallback(async ({ baseUrl, apiKey, passphrase, userSeed }) => {
     setLoading(true);
 
     // ── 1. Initialize crypto — real WASM only, no fallback ────────
     const { CryptoService } = await import('../crypto/index.js');
     const crypto = await CryptoService.create();
+    console.log('[connectToWorker] crypto initialized');
     setCryptoStatus('wasm');
-
-    // ── CLI block format: fetch + deobfuscate + assemble chain ──
-    if (format !== 'blocks') {
-      setLoading(false);
-      throw new Error('Only blocks-format onboarding is supported.');
-    }
 
     if (!userSeed) {
       setLoading(false);
-      throw new Error('Recovery seed is required for CLI-format ledgers.');
+      throw new Error('Recovery seed is required.');
     }
 
     // Derive master key from passphrase + user seed
@@ -870,56 +877,29 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       apiKey: apiKey || null,
     });
 
-    // List and fetch all blocks
-    let blockFiles;
-    try {
-      blockFiles = await transport.listFiles('ledger/blocks/');
-    } catch (err) {
-      setLoading(false);
-      throw new Error(`Failed to list ledger blocks: ${err.message}`);
-    }
-
-    if (!blockFiles || blockFiles.length === 0) {
-      setLoading(false);
-      throw new Error('No ledger blocks found on remote.');
-    }
-
-    // Sort by sequence number (000000.json, 000001.json, ...)
-    blockFiles.sort();
-
-    // Fetch and deobfuscate each block
-    const assembledChain = [];
-    for (const filename of blockFiles) {
-      const path = `ledger/blocks/${filename}`;
-      let raw;
+    // ── Fetch genesis block for identity verification ──────────
+    let genesisBlock;
+    {
+      let genesisRaw;
       try {
-        raw = await transport.pull(path);
+        genesisRaw = await transport.pull('ledger/blocks/000000.json');
       } catch (err) {
         setLoading(false);
-        throw new Error(`Failed to fetch block ${filename}: ${err.message}`);
+        throw new Error(`Failed to fetch genesis block: ${err.message}`);
       }
-
-      if (raw === null || raw === undefined) {
+      if (!genesisRaw) {
         setLoading(false);
-        throw new Error(`Block ${filename} not found on remote.`);
+        throw new Error('Genesis block not found on remote.');
       }
-
-      // Deobfuscate: convert bytes to base64, then deobfuscate via WASM
-      let block;
       try {
-        const b64 = btoa(String.fromCharCode(...raw));
+        const b64 = bytesToBase64(genesisRaw);
         const plaintext = crypto.deobfuscateBlob(b64, masterKey);
-        block = JSON.parse(plaintext);
+        genesisBlock = JSON.parse(plaintext);
       } catch (err) {
         setLoading(false);
-        throw new Error(`Failed to deobfuscate block ${filename}. Wrong passphrase or seed.`);
+        throw new Error('Failed to deobfuscate genesis block. Wrong passphrase or seed.');
       }
-
-      assembledChain.push(block);
     }
-
-    chain = assembledChain;
-    genesisBlock = assembledChain.length > 0 ? assembledChain[0] : null;
 
     // Validate genesis block
     if (!genesisBlock || genesisBlock.type !== 'genesis') {
@@ -969,41 +949,60 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Wrong passphrase for this ledger.');
     }
 
-    // Verify chain integrity (prev_hash linkage across all blocks).
-    // Auto-repair: if genesis seal passed but block 1's prev_hash is broken,
-    // fix it in-memory — Flutter's _buildAndPersistGenesis replaces genesis
-    // without updating block 1's prev_hash (onboarding_service.dart).
+    console.log('[connectToWorker] genesis verified, pulling staging blob...');
+
+    // ── Pull staging blob and build chain locally ──────────────
+    // Staging is the shared cross-device truth. Each device builds its
+    // own chain from the same staging data — no chain push needed.
+    //
+    // Rows come in two formats:
+    //   - Flutter: {activity_id, activity_status, activity: "{...json...}", committed}
+    //   - Web:     {start_epoch, title, duration, ...}
+    // We normalize both to the engine's expected entry format.
+    let stagingEntries = [];
     try {
-      let chainRepaired = false;
-      for (let i = 1; i < assembledChain.length; i++) {
-        const prev = assembledChain[i - 1];
-        const curr = assembledChain[i];
-        const prevHash = prev.block_hash || prev.day_hash || prev.month_hash || prev.year_hash || '';
-        if (curr.prev_hash !== prevHash) {
-          // Allow auto-repair at block 1: genesis seal was already verified
-          if (i === 1 && genesisBlock && genesisBlock.block_hash) {
-            console.warn('Chain auto-repair: fixing block 1 prev_hash → genesis');
-            curr.prev_hash = genesisBlock.block_hash;
-            chainRepaired = true;
-          } else {
-            throw new Error(
-              `Chain linkage broken at block ${i}: ` +
-              `prev_hash ${curr.prev_hash?.slice(0, 8)}… ≠ expected ${prevHash.slice(0, 8)}…`
-            );
+      const stagingRaw = await transport.pull('staging/blob');
+      console.log('[connectToWorker] staging pulled, size:', stagingRaw?.length);
+      if (stagingRaw) {
+        const stagingB64 = bytesToBase64(stagingRaw);
+        const stagingJson = crypto.deobfuscateBlob(stagingB64, masterKey);
+        const stagingData = JSON.parse(stagingJson);
+        const rawRows = stagingData.entries || [];
+
+        // Normalize both Flutter and web formats to engine-compatible entries
+        for (const row of rawRows) {
+          // Skip active (in-progress) entries
+          const status = row.activity_status || row.is_active;
+          if (status === 'active' || row.is_active === true) continue;
+
+          // Flutter format: parse the activity JSON blob
+          if (row.activity && typeof row.activity === 'string') {
+            try {
+              const parsed = JSON.parse(row.activity);
+              if (parsed.start_epoch && parsed.title) {
+                stagingEntries.push({
+                  ...parsed,
+                  committed: row.committed || parsed.committed || false,
+                });
+              }
+            } catch (_) { /* skip unparseable */ }
+          } else if (row.start_epoch && row.title) {
+            // Web format: use directly
+            stagingEntries.push(row);
           }
         }
-      }
-      if (chainRepaired) {
-        console.warn('Chain auto-repaired: block 1 prev_hash fixed to match genesis.');
+        console.log('[connectToWorker] pulled', stagingEntries.length, 'staging entries');
       }
     } catch (err) {
-      setLoading(false);
-      throw err;
+      console.warn('[connectToWorker] staging pull failed, building from genesis only:', err.message);
     }
 
-    // ── Write everything to storage ────────────────────────────
+    // ── Write genesis + build chain via engine ─────────────────
     const storage = await createStorage();
     await storage.clear();
+
+    // Store genesis first so the engine chains off it
+    await storage.set('ledger:blocks', [genesisBlock]);
 
     await storage.set(STORED_SEED_KEY, userSeed);
 
@@ -1016,14 +1015,25 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       }
     }
 
-    await storage.set('ledger:blocks', chain);
+    // Commit staging entries to build day/summary blocks
+    if (stagingEntries.length > 0) {
+      try {
+        console.log('[connectToWorker] committing', stagingEntries.length, 'entries...');
+        const { LedgerEngine } = await import('../ledger/engine.js');
+        const engine = new LedgerEngine(crypto, storage, masterKey);
+        console.log('[connectToWorker] engine created, calling commit...');
+        await engine.commit(stagingEntries);
+        console.log('[connectToWorker] chain built from', stagingEntries.length, 'staging entries');
+      } catch (err) {
+        console.error('[connectToWorker] engine commit failed:', err.message);
+      }
+    }
+
+    // Read the full chain (genesis + day/summary blocks)
+    const chain = await storage.get('ledger:blocks') || [];
+    console.log('[connectToWorker] chain:', chain.length, 'blocks');
 
     // ── Extract entries from day blocks into staging ────────────
-    // The UI reads entries via ENTRIES_KEY (LocalCache.readEntries).
-    // LocalCache stores entries in raw format:
-    // { hash, data: {...}, committed: bool, block_index: number }
-    // Block entries already have { hash, data: {...} } — we add
-    // committed + block_index to mark them as on-chain.
     try {
       let allEntries = [];
       for (let i = 0; i < chain.length; i++) {
@@ -1044,8 +1054,6 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       if (allEntries.length > 0) {
         await storage.set(ENTRIES_KEY, allEntries);
         console.log('[connectToWorker] stored', allEntries.length, 'committed entries from', chain.length, 'blocks');
-      } else {
-        console.warn('[connectToWorker] no entries found in', chain.length, 'blocks');
       }
     } catch (e) {
       console.error('[connectToWorker] entry extraction failed:', e.message);
@@ -1551,7 +1559,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   goBackToLanding: () => void,
  *   login: (passphrase: string) => Promise<void>,
  *   createNewLedger: (passphrase: string, username: string, email: string) => Promise<{seed: string} | void>,
- *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, userSeed: string|null, genesisBlock: object|null, chain: object[]|null, format: string}) => Promise<void>,
+ *   connectToWorker: (opts: {baseUrl: string, apiKey: string, passphrase: string, userSeed: string}) => Promise<void>,
  *   importFromCloud: (opts: {baseUrl: string, apiKey: string, filename: string|null, source?: 'backup'|'chain', passphrase: string, seed: string|null, genesisBlock: object|null, authMode: string}) => Promise<void>,
  *   importLedger: (file: File, passphrase: string, seed: string) => Promise<void>,
  *   validateImport: (file: File, passphrase: string, seed: string) => Promise<{needsConfirmation: boolean, genesisCheck: string, stagingCount: number, blocksCount: number, importEntryCount: number, formatVersion: string}>,

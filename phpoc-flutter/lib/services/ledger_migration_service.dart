@@ -75,19 +75,28 @@ class LedgerMigrationService {
       final data = _decodeBlockData(block.dataEnc);
       final migratedData = _migrateBlockData(data, block.blockType);
 
+      // Ensure block-level fields match buildDayBlock output
+      // (legacy entries-only blocks lack day_index, key_version, etc.)
+      if (block.blockType == BlockType.day) {
+        migratedData['day_index'] ??= block.blockIndex;
+        migratedData['key_version'] ??= block.keyVersion;
+        migratedData['type'] ??= 'day';
+        if (!migratedData.containsKey('date')) {
+          migratedData['date'] = _dateFromBlockIndex(block.blockIndex);
+        }
+      }
+
+      // Set prev_hash
+      if (prevBlockHash != null) {
+        migratedData['prev_hash'] = prevBlockHash;
+      }
+
       // Recompute block hash
       final hashKey = _hashKeyForType(block.blockType);
       final newHash = _computeBlockHash(migratedData, hashKey);
       migratedData[hashKey] = newHash;
 
-      // Update prev_hash and compute identity_seal
-      if (block.blockType == BlockType.day ||
-          block.blockType == BlockType.month ||
-          block.blockType == BlockType.year) {
-        migratedData['prev_hash'] = prevBlockHash;
-      }
-
-      // Recompute identity seal with derived device secret
+      // Recompute identity seal
       String? identitySeal;
       try {
         final deviceSecret = crypto.getDeviceSecret(crypto.getMasterKey()!);
@@ -127,13 +136,65 @@ class LedgerMigrationService {
   // ── Internal helpers ─────────────────────────────────────
 
   /// Decode the base64-encoded block data JSON.
+  ///
+  /// Handles both normal block maps (`{"type":"day","entries":[...]}`)
+  /// and legacy entries-only arrays (`[{...},{...}]` from Bug C).
   Map<String, dynamic> _decodeBlockData(String dataEnc) {
     try {
       final jsonStr = utf8.decode(base64.decode(dataEnc));
-      return json.decode(jsonStr) as Map<String, dynamic>;
+      final parsed = json.decode(jsonStr);
+      if (parsed is List) {
+        // Legacy entries-only format — wrap into a Map
+        return _reconstructFromEntries(parsed);
+      }
+      return parsed as Map<String, dynamic>;
     } catch (e) {
       throw FormatException('Failed to decode block data: $e');
     }
+  }
+
+  /// Reconstruct block-level fields from a legacy entries-only array.
+  Map<String, dynamic> _reconstructFromEntries(List<dynamic> entries) {
+    // Derive date from earliest non-zero start_epoch
+    String date = '1970-01-01';
+    if (entries.isNotEmpty) {
+      int? earliestEpoch;
+      for (final entry in entries) {
+        if (entry is Map) {
+          final data = entry['data'] as Map?;
+          if (data != null) {
+            // Try encrypted field first, then plaintext fallback
+            final enc = data['startTime_enc'] as String?;
+            final pt = data['start_epoch'] as int?;
+            int? epoch;
+            if (enc != null && enc.isNotEmpty) {
+              try {
+                epoch = int.tryParse(crypto.decryptWithCachedKey(enc));
+              } catch (_) {}
+            }
+            epoch ??= pt;
+            if (epoch != null && epoch > 0) {
+              earliestEpoch = earliestEpoch == null
+                  ? epoch
+                  : (epoch < earliestEpoch ? epoch : earliestEpoch);
+            }
+          }
+        }
+      }
+      if (earliestEpoch != null && earliestEpoch > 0) {
+        final dt = DateTime.fromMillisecondsSinceEpoch(earliestEpoch);
+        date =
+            '${dt.year.toString().padLeft(4, "0")}'
+            '-${dt.month.toString().padLeft(2, "0")}'
+            '-${dt.day.toString().padLeft(2, "0")}';
+      }
+    }
+
+    return <String, dynamic>{
+      'type': 'day',
+      'date': date,
+      'entries': entries,
+    };
   }
 
   /// Re-encrypt encrypted fields in all entries of [data].
@@ -215,10 +276,11 @@ class LedgerMigrationService {
   }
 
   /// Extract the block hash from a stored block.
+  /// Falls back to DB blockId when data_enc is a legacy entries array.
   String _extractHash(Block block) {
     final data = _decodeBlockData(block.dataEnc);
     final hashKey = _hashKeyForType(block.blockType);
-    return (data[hashKey] as String?) ?? '';
+    return (data[hashKey] as String?) ?? block.blockId;
   }
 
   /// Determine the hash field name for a block type.
@@ -263,5 +325,15 @@ class LedgerMigrationService {
       return value.map(_sortMap).toList();
     }
     return value;
+  }
+
+  /// Fallback date for blocks missing a date field.
+  String _dateFromBlockIndex(int blockIndex) {
+    // Approximate: day 1 = 2025-08-01, each index adds a day
+    final base = DateTime(2025, 8, 1);
+    final dt = base.add(Duration(days: blockIndex - 1));
+    return '${dt.year.toString().padLeft(4, "0")}'
+        '-${dt.month.toString().padLeft(2, "0")}'
+        '-${dt.day.toString().padLeft(2, "0")}';
   }
 }

@@ -529,3 +529,18 @@ Also: `phpoc-web/src/ledger/import_entries.js`, `lib/services/import_service.dar
 **Effort:** Medium (~1 day). **Depends on:** I-01 (versioned MK) ✅, I-01a (rotation execution) ✅,
 I-06 (content_hash required) ✅, I-09 (device attribution) ✅.
 **Priority:** 🟢 Low — useful but not protocol-critical; workaround exists via manual export→import→commit.
+
+### Migration: Remove encryption migration code before public launch
+
+**Why:** The encryption migration (`LedgerMigrationService`, settings button) is a
+one-time fix for pre-standardization dev ledgers. New users will never need it —
+their ledgers are created with canonical encryption from genesis.
+
+**What to remove:**
+- `phpoc-flutter/lib/services/ledger_migration_service.dart` (entire file)
+- "Migrate Encryption" button in `settings_screen.dart`
+- `ledgerMigrationServiceProvider` in `providers.dart`
+- This backlog entry
+
+**Effort:** ~10 min. **Trigger:** Before public launch.
+**Priority:** 🟢 Low — harmless if left, but clutters the codebase.
