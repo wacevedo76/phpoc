@@ -1,6 +1,40 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 /**
+ * Password input with reveal toggle (eye icon).
+ */
+function PasswordInput({ id, className, placeholder, value, onChange, disabled, autoFocus, label }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="password-input-wrap">
+      {label && <label htmlFor={id} className="auth-label">{label}</label>}
+      <div className="password-input-row">
+        <input
+          id={id}
+          type={show ? 'text' : 'password'}
+          className={className}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          autoFocus={autoFocus}
+        />
+        <button
+          type="button"
+          className="password-toggle"
+          onClick={() => setShow(!show)}
+          disabled={disabled}
+          tabIndex={-1}
+          aria-label={show ? 'Hide' : 'Show'}
+        >
+          {show ? '🙈' : '👁'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Lightweight check: does IndexedDB hold existing ledger or staging data?
  * Returns { blocksCount, stagingCount } or null if IndexedDB unavailable.
  */
@@ -736,11 +770,10 @@ export default function OnboardingScreen({
             </div>
 
             <div className="form-group">
-              <label htmlFor="import-passphrase" className="auth-label">Passphrase</label>
-              <input
+              <PasswordInput
                 id="import-passphrase"
-                type="password"
                 className="auth-input"
+                label="Passphrase"
                 placeholder="Enter your passphrase"
                 value={importPassphrase}
                 onChange={(e) => setImportPassphrase(e.target.value)}
@@ -823,11 +856,10 @@ export default function OnboardingScreen({
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="cloud-api-key" className="auth-label">API Key</label>
-                  <input
+                  <PasswordInput
                     id="cloud-api-key"
-                    type="password"
                     className="auth-input"
+                    label="API Key"
                     placeholder="Shared API key"
                     value={cloudApiKey}
                     onChange={(e) => setCloudApiKey(e.target.value)}
@@ -941,11 +973,10 @@ export default function OnboardingScreen({
 
               <form className="auth-form" onSubmit={handleCloudImportSubmit}>
                 <div className="form-group">
-                  <label htmlFor="cloud-passphrase" className="auth-label">Passphrase</label>
-                  <input
+                  <PasswordInput
                     id="cloud-passphrase"
-                    type="password"
                     className="auth-input"
+                    label="Passphrase"
                     placeholder="Enter your passphrase"
                     value={cloudPassphrase}
                     onChange={(e) => setCloudPassphrase(e.target.value)}
@@ -1065,11 +1096,10 @@ export default function OnboardingScreen({
         </div>
 
         <div className="form-group">
-          <label htmlFor="new-passphrase" className="auth-label">Passphrase</label>
-          <input
+          <PasswordInput
             id="new-passphrase"
-            type="password"
             className="auth-input"
+            label="Passphrase"
             placeholder="Choose a strong passphrase"
             value={newPassphrase}
             onChange={(e) => setNewPassphrase(e.target.value)}
@@ -1078,11 +1108,10 @@ export default function OnboardingScreen({
         </div>
 
         <div className="form-group">
-          <label htmlFor="new-passphrase-confirm" className="auth-label">Confirm Passphrase</label>
-          <input
+          <PasswordInput
             id="new-passphrase-confirm"
-            type="password"
             className="auth-input"
+            label="Confirm Passphrase"
             placeholder="Re-enter your passphrase"
             value={newPassphraseConfirm}
             onChange={(e) => setNewPassphraseConfirm(e.target.value)}
@@ -1166,11 +1195,10 @@ export default function OnboardingScreen({
             </div>
 
             <div className="form-group">
-              <label htmlFor="worker-api-key" className="auth-label">API Key</label>
-              <input
+              <PasswordInput
                 id="worker-api-key"
-                type="password"
                 className="auth-input"
+                label="API Key"
                 placeholder="Shared API key"
                 value={workerApiKey}
                 onChange={(e) => setWorkerApiKey(e.target.value)}
@@ -1227,11 +1255,10 @@ export default function OnboardingScreen({
 
           <form className="auth-form" onSubmit={handleWorkerUnlock}>
             <div className="form-group">
-              <label htmlFor="connect-passphrase" className="auth-label">Passphrase</label>
-              <input
+              <PasswordInput
                 id="connect-passphrase"
-                type="password"
                 className="auth-input"
+                label="Passphrase"
                 placeholder="Enter your passphrase"
                 value={connectPassphrase}
                 onChange={(e) => setConnectPassphrase(e.target.value)}
@@ -1300,11 +1327,10 @@ export default function OnboardingScreen({
 
       <form className="auth-form" onSubmit={handleExportSubmit}>
         <div className="form-group">
-          <label htmlFor="export-passphrase" className="auth-label">Passphrase</label>
-          <input
+          <PasswordInput
             id="export-passphrase"
-            type="password"
             className="auth-input"
+            label="Passphrase"
             placeholder="Enter your passphrase"
             value={exportPassphrase}
             onChange={(e) => setExportPassphrase(e.target.value)}

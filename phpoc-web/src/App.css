@@ -178,6 +178,38 @@ a { color: var(--accent-blue); text-decoration: none; }
   border-color: var(--accent-blue);
 }
 
+/* Password input with reveal toggle */
+.password-input-row {
+  display: flex;
+  align-items: stretch;
+}
+.password-input-row .auth-input {
+  flex: 1;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+.password-toggle {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-left: none;
+  border-radius: 0 var(--border-radius-sm) var(--border-radius-sm) 0;
+  color: var(--text-secondary);
+  padding: 0 0.75rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+}
+.password-toggle:hover {
+  background: var(--bg-elevated);
+}
+.password-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .auth-error-msg {
   color: var(--accent-red);
   font-size: 0.85rem;

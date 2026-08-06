@@ -84,17 +84,51 @@ export function rawCommittedEntryToDTO(rawEntry, crypto) {
   try {
     const data = rawEntry.data || {};
 
-    // Decrypt timestamp fields from hex ciphertext
-    const startEpochStr = data.startTime_enc
-      ? crypto.decryptWithCachedKey(data.startTime_enc)
-      : null;
-    const startEpoch = startEpochStr ? parseInt(startEpochStr, 10) : null;
-    if (!startEpoch) return null;
+    // Decrypt timestamp fields from hex ciphertext (web format).
+    // Fall back to plaintext fields (Flutter format: start_epoch, end_epoch).
+    let startEpoch = null;
+    if (data.startTime_enc) {
+      try {
+        const startEpochStr = crypto.decryptWithCachedKey(data.startTime_enc);
+        startEpoch = startEpochStr ? parseInt(startEpochStr, 10) : null;
+      } catch (e) {
+        console.warn('rawCommittedEntryToDTO: decrypt startTime_enc failed for',
+          data.title || '(no title)', 'hash:', rawEntry.hash?.slice(0,16), 'error:', e.message);
+      }
+    }
+    if (startEpoch == null && data.start_epoch != null) {
+      startEpoch = typeof data.start_epoch === 'number'
+        ? data.start_epoch
+        : parseInt(String(data.start_epoch), 10);
+    }
+    // Fallback: use block date as approximate epoch (day-level accuracy)
+    // for legacy entries whose encrypted timestamps can't be decrypted.
+    if (startEpoch == null && data._blockDate) {
+      const d = new Date(data._blockDate + 'T00:00:00Z');
+      startEpoch = Math.floor(d.getTime() / 1000);
+      console.warn('rawCommittedEntryToDTO: using block date fallback for',
+        data.title || '(no title)', 'hash:', rawEntry.hash?.slice(0,16),
+        'date:', data._blockDate, 'epoch:', startEpoch);
+    }
+    if (!startEpoch) {
+      console.warn('rawCommittedEntryToDTO: skipped entry — no valid startEpoch',
+        'title:', data.title || '(no title)',
+        'hash:', rawEntry.hash?.slice(0,16),
+        'has_startTime_enc:', !!data.startTime_enc,
+        'has_start_epoch:', !!data.start_epoch);
+      return null;
+    }
 
-    const endEpochStr = data.endTime_enc
-      ? crypto.decryptWithCachedKey(data.endTime_enc)
-      : null;
-    const endEpoch = endEpochStr ? parseInt(endEpochStr, 10) : null;
+    let endEpoch = null;
+    if (data.endTime_enc) {
+      const endEpochStr = crypto.decryptWithCachedKey(data.endTime_enc);
+      endEpoch = endEpochStr ? parseInt(endEpochStr, 10) : null;
+    }
+    if (endEpoch == null && data.end_epoch != null) {
+      endEpoch = typeof data.end_epoch === 'number'
+        ? data.end_epoch
+        : parseInt(String(data.end_epoch), 10);
+    }
 
     // Decrypt metadata
     let metadata = {};

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
-import '../../core/models/entry.dart';
 import '../../core/models/pull_result.dart';
+import '../../core/utils/format_utils.dart';
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
@@ -409,6 +411,10 @@ class OnboardingService {
 
     // Post-import: Flutter-format genesis, device identity, flag
     await _postImportSetup(passphrase, seedB64);
+
+    // Seed staging from imported blocks (in addition to the explicit
+    // staging entries above) so committed ledger entries are visible.
+    await _seedStagingFromImportedBlocks();
   }
 
   /// Import a v1 export (format_version: "1").
@@ -451,59 +457,358 @@ class OnboardingService {
 
     // Post-import: Flutter-format genesis, device identity, flag
     await _postImportSetup(passphrase, seedB64);
+
+    // Seed staging table from imported blocks so Dashboard/History
+    // can display committed ledger entries without a separate sync step.
+    await _seedStagingFromImportedBlocks();
   }
 
-  /// Write staging entries from a parsed JSON list into the database.
+  /// Write staging entries from a parsed JSON list into the staging table.
   ///
   /// Accepts a [List] from either v1 ("entries" key) or v2 ("staging" key)
-  /// format. Each element is mapped via [_mapStagingEntry] which handles
-  /// both Python and Flutter field name conventions.
+  /// format. Each element is converted to a row in the [StagingStore] so
+  /// Dashboard and History screens can display imported entries.
+  ///
+  /// Handles both Python export field names ("hash", "metadata") and
+  /// Flutter internal field names ("content_hash", "metadata_enc").
   Future<void> _writeStagingEntries(dynamic entries) async {
     if (entries is! List) return;
+    final store = syncService.stagingStore;
+    if (store == null) return;
+
     for (final entry in entries) {
-      if (entry is Map<String, dynamic>) {
-        await db.entryDao.insertEntry(_mapStagingEntry(entry));
+      if (entry is! Map<String, dynamic>) continue;
+
+      final activityId = (entry['entry_id'] as String?)?.isNotEmpty == true
+          ? entry['entry_id'] as String
+          : _generateActivityId();
+      final isActive = entry['is_active'] as bool? ?? false;
+      final pauses = (entry['pauses'] as List<dynamic>?) ?? <dynamic>[];
+
+      final activityData = {
+        'entry_id': entry['entry_id'] ?? '',
+        'hash': entry['hash'] ?? entry['content_hash'] ?? '',
+        'title': entry['title'] ?? '',
+        'start_epoch': entry['start_epoch'] ?? 0,
+        'end_epoch': entry['end_epoch'],
+        'duration': entry['duration'] ?? 0,
+        'is_active': isActive,
+        'is_paused': entry['is_paused'] ?? false,
+        'pauses': pauses,
+        'tags': entry['tags'] ?? <dynamic>[],
+        'comment': entry['comment'] ?? '',
+        'media': entry['media'] ?? <dynamic>[],
+        'device_uuid': entry['device_uuid'] ?? '',
+        'committed': entry['committed'] ?? false,
+      };
+
+      try {
+        await store.putRow({
+          'activity_id': activityId,
+          'activity_status': isActive ? 'active' : 'ended',
+          'activity': jsonEncode(activityData),
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+          'committed': entry['committed'] ?? false,
+        });
+      } catch (_) {
+        // Best-effort: staging write failure does not block import
       }
     }
   }
 
-  /// Map a staging entry JSON map (v1/v2 export format) to an [Entry].
+  /// Seed the staging table with entries extracted from imported ledger
+  /// blocks (raw chain and v2 imports).
   ///
-  /// Handles both Python export field names ("hash", "metadata") and
-  /// Flutter internal field names ("content_hash", "metadata_enc").
-  /// The dual-key resolution exists because Python CLI exports use "hash"
-  /// while the Flutter internal Entry model uses "content_hash".
-  Entry _mapStagingEntry(Map<String, dynamic> json) {
-    final contentHash =
-        (json['hash'] ?? json['content_hash']) as String?;
-    final metadataEnc = (json['metadata_enc'] as String?) ??
-        (json['metadata'] is Map ? jsonEncode(json['metadata']) : null);
+  /// Reads non-genesis, non-summary blocks from the database, decodes their
+  /// base64-encoded entry arrays, decrypts encrypted fields with the master
+  /// key, and writes each completed entry as a row to the [StagingStore].
+  /// This mirrors [LedgerPullService._seedStagingFromBlocks] for cloud pulls.
+  ///
+  /// Entries already present in staging (matched by entry_id) are skipped.
+  Future<void> _seedStagingFromImportedBlocks() async {
+    final mkHex = crypto.getMasterKey();
+    if (mkHex == null) return;
 
-    return Entry(
-      entryId: (json['entry_id'] as String?) ?? '',
-      title: (json['title'] as String?) ?? '',
-      startEpoch: (json['start_epoch'] as int?) ?? 0,
-      endEpoch: json['end_epoch'] as int?,
-      isActive: (json['is_active'] as bool?) ?? false,
-      committed: (json['committed'] as bool?) ?? false,
-      tags: (json['tags'] as List<dynamic>?)?.cast<String>() ?? const [],
-      pauses: _parsePausesList(json['pauses']),
-      metadataEnc: metadataEnc,
-      deviceUuid: json['device_uuid'] as String?,
-      contentHash: contentHash,
-    );
+    final store = syncService.stagingStore;
+    if (store == null) return;
+
+    // Collect existing entry hashes AND entry_ids to avoid duplicates.
+    // Raw chain entries use content_hash (no entry_id), while v1/v2
+    // staging exports have entry_id. We track both to deduplicate either.
+    final existingRows = await store.getAllRows();
+    final existingHashes = <String>{};
+    for (final row in existingRows) {
+      try {
+        final data = jsonDecode(row['activity'] as String? ?? '{}')
+            as Map<String, dynamic>;
+        final h = data['hash'] as String?;
+        if (h != null && h.isNotEmpty) existingHashes.add(h);
+        final eid = data['entry_id'] as String?;
+        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
+      } catch (_) {}
+    }
+
+    // Read all blocks from the database.
+    final blocks = await db.blockDao.getAllBlocks();
+
+    for (final block in blocks) {
+      // Skip genesis and summary blocks — only day blocks have entries.
+      if (block.blockType == BlockType.genesis ||
+          block.blockType == BlockType.month ||
+          block.blockType == BlockType.year) {
+        continue;
+      }
+
+      // Decode data_enc: base64 → UTF-8 JSON array of PHPSPEC entry objects.
+      List<dynamic> entriesList;
+      try {
+        final jsonStr = utf8.decode(base64.decode(block.dataEnc));
+        entriesList = jsonDecode(jsonStr) as List<dynamic>;
+      } catch (_) {
+        continue; // Corrupted or genesis-format data_enc — skip
+      }
+
+      for (final raw in entriesList) {
+        if (raw is! Map<String, dynamic>) continue;
+
+        // PHPSPEC entry format: {hash, data: {title, startTime_enc, ...}}
+        final entryData = raw['data'] as Map<String, dynamic>? ?? raw;
+        final entryHash = raw['hash'] as String? ?? '';
+        final eid = entryData['entry_id'] as String?;
+
+        // Dedup: skip if this entry (by hash or entry_id) is already in staging.
+        if (entryHash.isNotEmpty && existingHashes.contains(entryHash)) {
+          continue;
+        }
+        if (eid != null && eid.isNotEmpty && existingHashes.contains(eid)) {
+          continue;
+        }
+        if (entryHash.isNotEmpty) existingHashes.add(entryHash);
+        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
+
+        // Only seed completed entries.
+        final isActive = entryData['is_active'] as bool? ?? false;
+        if (isActive) continue;
+        if (entryData['is_paused'] == true) continue;
+
+        final activityId = (eid != null && eid.length == 10)
+            ? eid
+            : _generateActivityId();
+
+        // Decrypt time fields (encrypted in block storage).
+        final startEpoch =
+            _decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
+        final endEpoch =
+            _decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
+        final pauses =
+            _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
+
+        final activity = jsonEncode({
+          'entry_id': eid ?? '',
+          'hash': raw['hash'] ?? '',
+          'title': entryData['title'] ?? '',
+          'start_epoch': startEpoch,
+          'end_epoch': endEpoch,
+          'duration': entryData['duration'] as int? ?? 0,
+          'is_active': false,
+          'is_paused': false,
+          'pauses': pauses,
+          'tags': entryData['tags'] ?? <dynamic>[],
+          'comment': entryData['comment'] ?? '',
+          'media': entryData['media'] ?? <dynamic>[],
+          'device_uuid': entryData['device_uuid'] ?? '',
+          'committed': true,
+        });
+
+        try {
+          await store.putRow({
+            'activity_id': activityId,
+            'activity_status': 'ended',
+            'activity': activity,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'committed': true,
+          });
+        } catch (_) {
+          // Best-effort: staging seed failure does not block import
+        }
+      }
+    }
   }
 
-  /// Parse a list of pause records from JSON.
-  List<PauseRecord> _parsePausesList(dynamic pauses) {
-    if (pauses is! List) return const [];
-    return pauses
-        .whereType<Map<String, dynamic>>()
-        .map((p) => PauseRecord(
-              startEpoch: (p['start_epoch'] as int?) ?? 0,
-              endEpoch: p['end_epoch'] as int?,
-            ))
-        .toList();
+  /// Generate a 10-character alphanumeric activity_id.
+  String _generateActivityId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final buf = StringBuffer();
+    for (var i = 0; i < 10; i++) {
+      buf.write(
+          chars[(DateTime.now().microsecondsSinceEpoch + i * 7919) %
+              chars.length]);
+    }
+    return buf.toString();
+  }
+
+  /// Decrypt a field value trying both encryption schemes.
+  ///
+  /// Flutter engine (engine.dart) encrypts with [encrypt] (raw-mk scheme),
+  /// while Python CLI blocks use [decryptFieldValue] (HMAC-derived sub-keys).
+  /// Both produce distinct auth tags, so we try each until one authenticates.
+  String? _decryptFieldValue(String encHex, String mkHex) {
+    if (encHex.isEmpty) return null;
+    // Try Flutter/symmetric scheme first (dominant for locally-committed blocks)
+    try {
+      return crypto.decrypt(encHex, mkHex);
+    } catch (_) {
+      // Fall through to Python scheme
+    }
+    // Try Python/CryptoManager scheme (imported CLI / testdata blocks)
+    try {
+      return crypto.decryptFieldValue(encHex, mkHex);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Decrypt an encrypted epoch string to an int. Returns 0 on null or
+  /// failure.
+  int _decryptEpoch(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return 0;
+    final plain = _decryptFieldValue(encHex, mkHex);
+    return (plain != null) ? (int.tryParse(plain) ?? 0) : 0;
+  }
+
+  /// Decrypt an encrypted pauses JSON array string.
+  List<dynamic> _decryptPauses(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return <dynamic>[];
+    final plain = _decryptFieldValue(encHex, mkHex);
+    if (plain == null) return <dynamic>[];
+    try {
+      final decoded = jsonDecode(plain);
+      return (decoded is List) ? decoded : <dynamic>[];
+    } catch (_) {
+      return <dynamic>[];
+    }
+  }
+
+  /// One-time repair: seed staging from ledger blocks and backfill
+  /// comment/media fields into existing staging entries.
+  ///
+  /// Safe to call at any time — dedup prevents duplicate entries and
+  /// only missing fields are updated.
+  ///
+  /// Returns the number of entries seeded or updated (0 if nothing to repair).
+  Future<int> repairMissingStagingEntries() async {
+    // Only run if the master key is available (post-auth).
+    if (!crypto.hasMasterKey) return 0;
+
+    final store = syncService.stagingStore;
+    if (store == null) return 0;
+
+    final stagingCount = await store.count();
+    final blockCount = (await db.blockDao.getAllBlocks())
+        .where((b) => b.blockType == BlockType.day)
+        .length;
+
+    debugPrint(
+        '[OnboardingService] Repair: seeding staging from $blockCount blocks '
+        '(staging has $stagingCount entries)');
+
+    // 1. Seed any entries not yet in staging.
+    await _seedStagingFromImportedBlocks();
+
+    // 2. Backfill comment / media from block entries into existing
+    //    staging entries that were created before these fields were stored.
+    await _backfillCommentAndMedia();
+
+    return blockCount;
+  }
+
+  /// Update existing staging entries with comment/media from block data.
+  ///
+  /// Matches staging entries to block entries by hash. For entries where
+  /// the staging blob is missing comment/media but the block entry has it,
+  /// writes the updated blob back to the staging table.
+  Future<void> _backfillCommentAndMedia() async {
+    final mkHex = crypto.getMasterKey();
+    if (mkHex == null) return;
+
+    final store = syncService.stagingStore;
+    if (store == null) return;
+
+    // Build a map of hash → block entry data for quick lookup.
+    final blockEntriesByHash = <String, Map<String, dynamic>>{};
+    final blocks = await db.blockDao.getAllBlocks();
+    for (final block in blocks) {
+      if (block.blockType == BlockType.genesis ||
+          block.blockType == BlockType.month ||
+          block.blockType == BlockType.year) {
+        continue;
+      }
+      List<dynamic> entriesList;
+      try {
+        final jsonStr = utf8.decode(base64.decode(block.dataEnc));
+        entriesList = jsonDecode(jsonStr) as List<dynamic>;
+      } catch (_) {
+        continue;
+      }
+      for (final raw in entriesList) {
+        if (raw is! Map<String, dynamic>) continue;
+        final h = raw['hash'] as String?;
+        if (h != null && h.isNotEmpty) {
+          blockEntriesByHash[h] = raw['data'] as Map<String, dynamic>? ?? raw;
+        }
+      }
+    }
+
+    // Scan staging entries and update those missing comment/media.
+    final rows = await store.getAllRows();
+    int updated = 0;
+    for (final row in rows) {
+      try {
+        final activityData =
+            jsonDecode(row['activity'] as String? ?? '{}') as Map<String, dynamic>;
+        final hash = activityData['hash'] as String? ?? '';
+
+        // Skip entries that already have a comment.
+        if (activityData['comment'] != null &&
+            activityData['comment'] is String &&
+            (activityData['comment'] as String).isNotEmpty) {
+          continue;
+        }
+
+        final blockData = blockEntriesByHash[hash];
+        if (blockData == null) continue;
+
+        final comment = blockData['comment'];
+        final media = blockData['media'];
+
+        bool changed = false;
+        if (comment != null && comment is String && comment.isNotEmpty) {
+          activityData['comment'] = comment;
+          changed = true;
+        }
+        if (media != null && media is List && media.isNotEmpty) {
+          activityData['media'] = media;
+          changed = true;
+        }
+
+        if (changed) {
+          await store.putRow({
+            'activity_id': row['activity_id'],
+            'activity_status': row['activity_status'],
+            'activity': jsonEncode(activityData),
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'committed': activityData['committed'] ?? false,
+          });
+          updated++;
+        }
+      } catch (_) {
+        // Best-effort per entry
+      }
+    }
+
+    debugPrint(
+        '[OnboardingService] Backfill: updated $updated staging entries '
+        'with comment/media from block data');
   }
 
   /// Common post-import setup: Flutter-format genesis, device identity,
@@ -535,6 +840,10 @@ class OnboardingService {
     final pdk = crypto.derivePdk(passphrase, CryptoService.pdkIterations);
     final mk = crypto.deriveMasterKey(seedB64);
 
+    // Cache MK so downstream operations (staging seeding, entry decryption)
+    // have access to the key without requiring a separate re-auth step.
+    crypto.setMasterKey(mk);
+
     // Encrypt seed base64 string with PDK (seedB64 is already a valid UTF-8 string)
     final encryptedSeed = crypto.encrypt(seedB64, pdk);
 
@@ -542,11 +851,21 @@ class OnboardingService {
     final genesisData = json.encode({'seed': encryptedSeed});
     final dataEncB64 = base64.encode(utf8.encode(genesisData));
 
-    // Seal with MK
-    final seal = crypto.seal(dataEncB64, mk);
+    // Identity seal (HMAC of data_enc — bound to the encrypted seed data)
+    final identitySeal = crypto.seal(dataEncB64, mk);
 
-    // Generate block ID
-    final blockId = crypto.sha256('genesis:$seedB64:${DateTime.now().millisecondsSinceEpoch}');
+    // Block hash: HMAC seal over genesis fields matching Python's
+    // core/factory.py seal computation ({type, day_index, date, prev_hash, entries}).
+    final now = DateTime.now();
+    final nowSeconds = now.millisecondsSinceEpoch ~/ 1000;
+    final genesisPayload = json.encode({
+      'type': 'genesis',
+      'day_index': 0,
+      'date': FormatUtils.epochToIsoDate(nowSeconds),
+      'prev_hash': Block.genesisPrevHash,
+      'entries': <dynamic>[],
+    });
+    final blockId = crypto.seal(genesisPayload, mk);
 
     // Replace any existing genesis block(s) from R2 import with Flutter format.
     // R2 blocks may use cross-client genesis structures that AuthService can't read.
@@ -558,10 +877,17 @@ class OnboardingService {
       blockIndex: 0,
       keyVersion: 1,
       dataEnc: dataEncB64,
-      identitySeal: seal,
+      identitySeal: identitySeal,
       prevHash: Block.genesisPrevHash,
-      createdAt: DateTime.now().millisecondsSinceEpoch,
+      createdAt: nowSeconds,
     ));
+
+    // Update block 1's prev_hash to point to the new genesis block.
+    // Without this, replacing genesis creates a chain linkage break
+    // because block 1 still points to the old genesis hash.
+    await db.customStatement(
+      'UPDATE blocks SET prev_hash = ? WHERE block_type = ? AND block_index = ?',
+      [blockId, BlockType.day.name, 1]);
   }
 }
 

@@ -357,19 +357,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       if (!mounted) return;
 
-      final path = await FilePicker.saveFile(
+      // Use saveFile with bytes to handle Android content URIs correctly.
+      // File(path).writeAsString() fails on Android because saveFile returns
+      // a content:// URI, not a file path that dart:io can write to.
+      final result = await FilePicker.saveFile(
         dialogTitle: 'Save Ledger Backup',
         fileName: 'phpoc_ledger_backup.json',
         type: FileType.custom,
         allowedExtensions: ['json'],
+        bytes: utf8.encode(json),
       );
 
-      if (path != null && mounted) {
-        final file = File(path);
-        await file.writeAsString(json);
+      if (result != null && mounted) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ledger backup saved to $path')),
+          SnackBar(content: Text('Ledger backup saved')),
         );
       }
     } catch (e) {

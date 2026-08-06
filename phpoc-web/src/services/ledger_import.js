@@ -292,23 +292,32 @@ function _importRawChain(blocks, crypto, masterKey) {
 
     // Verify per-block seal: HMAC of block content.
     //
+    // Skip genesis blocks (i === 0): Flutter exports use a different
+    // genesis format where block_hash is not an HMAC seal. Genesis
+    // integrity is validated through chain linkage (day 1's prev_hash
+    // must match genesis block_hash) and during onboarding MK derivation.
+    //
     // Excluded from seal payload (must match Python's migrate.py):
     //   - hashField   — the seal/hash itself (day_hash, month_hash, year_hash, block_hash)
+    //   - block_hash  — convenience duplicate of hashField (added by Flutter export)
     //   - signature   — identity signature (PHPSPEC §5.3)
     //   - identity_seal — server-side identity binding (added after seal is computed)
     //   - format_version — stripped by I-07, must not affect seal
     //   - key_version   — ADR-026 key versioning metadata, must not affect seal
     const checkData = {};
     for (const key of Object.keys(block).sort()) {
-      if (key !== hashField && key !== 'signature' && key !== 'format_version' &&
-          key !== 'identity_seal' && key !== 'key_version') {
+      if (key !== hashField && key !== 'block_hash' && key !== 'signature' && 
+          key !== 'format_version' && key !== 'identity_seal' && 
+          key !== 'key_version') {
         checkData[key] = block[key];
       }
     }
     const sealPayload = jsonSort(checkData);
     const sealValid = crypto.verifySeal(sealPayload, blockHash, masterKey);
 
-    if (!sealValid) {
+    // Genesis blocks (i === 0) from Flutter exports use a non-HMAC block_hash.
+    // Skip seal verification for genesis; trust chain linkage (day 1 prev_hash).
+    if (!sealValid && i > 0) {
       throw new Error(
         `importLedger: block seal verification failed at index ${i} ` +
         `(${blockType}, date: ${block.date || 'unknown'}) — ` +

@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/core/utils/format_utils.dart';
-import 'package:phpoc_flutter/data/storage/providers.dart' show syncServiceProvider;
+import 'package:phpoc_flutter/data/storage/providers.dart'
+    show onboardingServiceProvider, syncServiceProvider;
 
 /// Dashboard — active task card, uncommitted entries, collapsible new task.
 ///
@@ -40,6 +40,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<Map<String, dynamic>> _activeTasks = [];
   List<Map<String, dynamic>> _uncommittedEntries = [];
   bool _isLoading = true;
+  bool _repairRun = false;
   Timer? _minuteTimer;
 
   @override
@@ -74,6 +75,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   Future<void> _loadData() async {
     final sync = ref.read(syncServiceProvider);
+
+    // One-time repair: seed staging from ledger blocks for ledgers
+    // imported before the staging-seeding fix was deployed.
+    if (!_repairRun) {
+      _repairRun = true;
+      try {
+        final onboarding = ref.read(onboardingServiceProvider);
+        final seeded = await onboarding.repairMissingStagingEntries();
+        if (seeded > 0) {
+          debugPrint('[Dashboard] Repair seeded ~$seeded entries');
+        }
+      } catch (_) {
+        // Best-effort — loading continues regardless of repair outcome.
+      }
+    }
+
     final activeList = await sync.getActive();
     final entries = await sync.getEntries();
     if (mounted) {

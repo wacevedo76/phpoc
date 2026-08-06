@@ -475,16 +475,25 @@ export class WorkerImportSource {
           checkData[key] = block[key];
         }
       }
-      const sealPayload = WorkerImportSource._jsonSort(checkData);
+
+      // Try multiple serialization formats for cross-client compatibility:
+      // 1. Flutter: compact JSON in insertion order (from deobfuscated block)
+      // 2. Python:  sorted keys with ": " ", " separators
+      const sealPayloadFlutter = JSON.stringify(checkData);
+      const sealPayloadPython = WorkerImportSource._jsonSort(checkData);
+
       // Primary: derived seal key via WASM (matches Python per PHPSPEC §5.2)
-      if (!crypto.verifySeal(sealPayload, blockHash, masterKey)) {
-        // Backward compat: raw MK (old Flutter blocks pre-2026-07)
-        const legacySeal = crypto.hmacHex(masterKey, sealPayload);
-        if (legacySeal !== blockHash) {
-          throw new Error(
-            `Block seal verification failed at index ${i} (${blockType}, date: ${block.date || 'unknown'})`
-          );
-        }
+      let sealValid = crypto.verifySeal(sealPayloadFlutter, blockHash, masterKey);
+      if (!sealValid) sealValid = crypto.verifySeal(sealPayloadPython, blockHash, masterKey);
+      // Backward compat: raw MK (old Flutter blocks pre-2026-07)
+      if (!sealValid) {
+        const legacySeal = crypto.hmacHex(masterKey, sealPayloadFlutter);
+        sealValid = (legacySeal === blockHash);
+      }
+      if (!sealValid) {
+        throw new Error(
+          `Block seal verification failed at index ${i} (${blockType}, date: ${block.date || 'unknown'})`
+        );
       }
 
       // Verify prev_hash chain linkage (skip genesis)

@@ -24,6 +24,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   DateTime? _filterTo;
   String? _selectedCalendarDate;
   int? _expandedIndex;
+  int _sortMode = 0; // 0 = by time, 1 = by duration
 
   int _calendarMonth;
   int _calendarYear;
@@ -171,6 +172,25 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       groups.putIfAbsent(dateStr, () => []).add(entry);
     }
 
+    // Sort entries within each date group according to sort mode.
+    for (final entries in groups.values) {
+      if (_sortMode == 1) {
+        // By duration: longest first
+        entries.sort((a, b) {
+          final da = a['duration'] as int? ?? 0;
+          final db = b['duration'] as int? ?? 0;
+          return db.compareTo(da);
+        });
+      } else {
+        // By time: earliest first (start_epoch ascending)
+        entries.sort((a, b) {
+          final sa = a['start_epoch'] as int? ?? 0;
+          final sb = b['start_epoch'] as int? ?? 0;
+          return sa.compareTo(sb);
+        });
+      }
+    }
+
     final now = DateTime.now();
     final todayStr = FormatUtils.epochToDateStr(now.millisecondsSinceEpoch);
     final yesterdayStr = FormatUtils.epochToDateStr(
@@ -202,6 +222,22 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       appBar: AppBar(
         title: const Text('History'),
         actions: [
+          // Sort mode dropdown
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _sortMode,
+              icon: const Icon(Icons.sort, size: 20),
+              style: Theme.of(context).textTheme.bodySmall,
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('By Time')),
+                DropdownMenuItem(value: 1, child: Text('By Duration')),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _sortMode = v);
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.calendar_month),
             onPressed: _pickDateRange,

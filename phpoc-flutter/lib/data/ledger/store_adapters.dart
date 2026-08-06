@@ -35,7 +35,7 @@ class LedgerBlockStore {
         identitySeal: map['identity_seal'] as String?,
         prevHash: map['prev_hash'] as String? ?? '',
         createdAt: map['created_at'] as int? ??
-            DateTime.now().millisecondsSinceEpoch,
+            (DateTime.now().millisecondsSinceEpoch ~/ 1000),
       ));
     }
   }

@@ -356,6 +356,10 @@ export class SyncService {
         const block = blocks[bi];
         if (!block.entries || !Array.isArray(block.entries)) continue;
         for (const raw of block.entries) {
+          // Pass block date as fallback for entries whose startTime_enc can't be decrypted
+          if (block.date && raw.data && !raw.data._blockDate) {
+            raw.data._blockDate = block.date;
+          }
           const dto = rawCommittedEntryToDTO(raw, this._crypto);
           if (dto) {
             const eid = dto.entry_id;

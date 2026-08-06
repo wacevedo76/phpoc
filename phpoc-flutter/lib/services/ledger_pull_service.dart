@@ -272,15 +272,17 @@ class LedgerPullService {
   /// never block the pull result.
   Future<void> _seedStagingFromBlocks(
       List<Map<String, dynamic>> blocks) async {
-    // Collect existing activity_ids to avoid duplicates
+    // Collect existing entry hashes AND entry_ids to avoid duplicates.
     final existingRows = await stagingStore.getAllRows();
-    final existingIds = <String>{};
+    final existingHashes = <String>{};
     for (final row in existingRows) {
       try {
         final activityData =
             jsonDecode(row['activity'] as String? ?? '{}') as Map<String, dynamic>;
+        final h = activityData['hash'] as String?;
+        if (h != null && h.isNotEmpty) existingHashes.add(h);
         final eid = activityData['entry_id'] as String?;
-        if (eid != null) existingIds.add(eid);
+        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
       } catch (_) {}
     }
 
@@ -292,11 +294,14 @@ class LedgerPullService {
 
         // Extract entry data: PHPSPEC format wraps in {hash, data: {...}}
         final entryData = raw['data'] as Map<String, dynamic>? ?? raw;
+        final entryHash = raw['hash'] as String? ?? '';
         final eid = entryData['entry_id'] as String?;
 
-        // Dedup: skip if already in staging
-        if (eid != null && existingIds.contains(eid)) continue;
-        if (eid != null) existingIds.add(eid);
+        // Dedup: skip if this entry (by hash or entry_id) is already in staging
+        if (entryHash.isNotEmpty && existingHashes.contains(entryHash)) continue;
+        if (eid != null && eid.isNotEmpty && existingHashes.contains(eid)) continue;
+        if (entryHash.isNotEmpty) existingHashes.add(entryHash);
+        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
 
         // Skip active / paused entries — only completed entries go to staging
         final isActive = entryData['is_active'] as bool? ?? false;
@@ -329,6 +334,8 @@ class LedgerPullService {
           'is_paused': false,
           'pauses': pauses,
           'tags': entryData['tags'] ?? <dynamic>[],
+          'comment': entryData['comment'] ?? '',
+          'media': entryData['media'] ?? <dynamic>[],
           'device_uuid': deviceUuid,
           'committed': true,  // Already committed to ledger — skip staging area
         });
@@ -358,22 +365,38 @@ class LedgerPullService {
     return buf.toString();
   }
 
+  /// Decrypt a field value trying both encryption schemes.
+  ///
+  /// Flutter engine encrypts with [CryptoService.encrypt] (raw-mk scheme),
+  /// while Python CLI blocks use HMAC-derived sub-keys. Both produce distinct
+  /// auth tags, so we try each until one authenticates.
+  String? _decryptFieldValue(String encHex, String mkHex) {
+    if (encHex.isEmpty) return null;
+    // Flutter/symmetric scheme (dominant for locally-committed blocks)
+    try {
+      return crypto.decrypt(encHex, mkHex);
+    } catch (_) {}
+    // Python/CryptoManager scheme (imported CLI / testdata blocks)
+    try {
+      return crypto.decryptFieldValue(encHex, mkHex);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Decrypt an encrypted epoch string to an int. Returns 0 on null or failure.
   int _decryptEpoch(String? encHex, String mkHex) {
     if (encHex == null || encHex.isEmpty) return 0;
-    try {
-      final plain = crypto.decryptFieldValue(encHex, mkHex);
-      return int.tryParse(plain) ?? 0;
-    } catch (_) {
-      return 0;
-    }
+    final plain = _decryptFieldValue(encHex, mkHex);
+    return (plain != null) ? (int.tryParse(plain) ?? 0) : 0;
   }
 
   /// Decrypt an encrypted pauses JSON array string.
   List<dynamic> _decryptPauses(String? encHex, String mkHex) {
     if (encHex == null || encHex.isEmpty) return <dynamic>[];
+    final plain = _decryptFieldValue(encHex, mkHex);
+    if (plain == null) return <dynamic>[];
     try {
-      final plain = crypto.decryptFieldValue(encHex, mkHex);
       final decoded = jsonDecode(plain);
       return (decoded is List) ? decoded : <dynamic>[];
     } catch (_) {

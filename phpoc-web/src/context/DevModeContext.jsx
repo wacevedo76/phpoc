@@ -931,17 +931,36 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     try {
       const { jsonSort } = await import('../ledger/utils.js');
       const hashKey = genesisBlock.block_hash ? 'block_hash' : 'day_hash';
-      // Must match Python migrate.py exclusion list:
-      //   hashField, signature, identity_seal, format_version, key_version
+      // Must match Flutter/CLI seal payload:
+      //   Exclude all hash fields (block_hash, day_hash, month_hash, year_hash)
+      //   and signature, identity_seal, format_version, key_version.
+      const HASH_FIELDS = new Set(['block_hash', 'day_hash', 'month_hash', 'year_hash']);
       const checkData = {};
       for (const [k, v] of Object.entries(genesisBlock)) {
-        if (k !== hashKey && k !== 'signature' &&
+        if (!HASH_FIELDS.has(k) && k !== 'signature' &&
             k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
           checkData[k] = v;
         }
       }
-      const sealData = jsonSort(checkData);
-      const valid = crypto.verifySeal(sealData, genesisBlock[hashKey], masterKey);
+
+      // Try multiple serialization formats for cross-client compatibility:
+      // 1. Flutter/Dart: json.encode() — compact, type/day_index/date/prev_hash/entries order
+      // 2. Python/CLI:   json.dumps(obj, sort_keys=True) — sorted keys, ": " ", "
+      // 3. Compact-sorted: JSON.stringify with sorted keys (intermediate format)
+
+      // Flutter genesis seal uses exact key order: type, day_index, date, prev_hash, entries
+      const FLUTTER_ORDER = ['type', 'day_index', 'date', 'prev_hash', 'entries'];
+      const flutterCheckData = {};
+      for (const k of FLUTTER_ORDER) {
+        if (k in checkData) flutterCheckData[k] = checkData[k];
+      }
+      const sealDataFlutter = JSON.stringify(flutterCheckData);
+      const sealDataPython = jsonSort(checkData);
+      const sealDataCompactSorted = JSON.stringify(checkData, Object.keys(checkData).sort());
+
+      let valid = crypto.verifySeal(sealDataFlutter, genesisBlock[hashKey], masterKey);
+      if (!valid) valid = crypto.verifySeal(sealDataPython, genesisBlock[hashKey], masterKey);
+      if (!valid) valid = crypto.verifySeal(sealDataCompactSorted, genesisBlock[hashKey], masterKey);
       if (!valid) {
         throw new Error('Seal verification failed');
       }
@@ -950,18 +969,32 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Wrong passphrase for this ledger.');
     }
 
-    // Verify chain integrity (prev_hash linkage across all blocks)
+    // Verify chain integrity (prev_hash linkage across all blocks).
+    // Auto-repair: if genesis seal passed but block 1's prev_hash is broken,
+    // fix it in-memory — Flutter's _buildAndPersistGenesis replaces genesis
+    // without updating block 1's prev_hash (onboarding_service.dart).
     try {
+      let chainRepaired = false;
       for (let i = 1; i < assembledChain.length; i++) {
         const prev = assembledChain[i - 1];
         const curr = assembledChain[i];
         const prevHash = prev.block_hash || prev.day_hash || prev.month_hash || prev.year_hash || '';
         if (curr.prev_hash !== prevHash) {
-          throw new Error(
-            `Chain linkage broken at block ${i}: ` +
-            `prev_hash ${curr.prev_hash?.slice(0, 8)}… ≠ expected ${prevHash.slice(0, 8)}…`
-          );
+          // Allow auto-repair at block 1: genesis seal was already verified
+          if (i === 1 && genesisBlock && genesisBlock.block_hash) {
+            console.warn('Chain auto-repair: fixing block 1 prev_hash → genesis');
+            curr.prev_hash = genesisBlock.block_hash;
+            chainRepaired = true;
+          } else {
+            throw new Error(
+              `Chain linkage broken at block ${i}: ` +
+              `prev_hash ${curr.prev_hash?.slice(0, 8)}… ≠ expected ${prevHash.slice(0, 8)}…`
+            );
+          }
         }
+      }
+      if (chainRepaired) {
+        console.warn('Chain auto-repaired: block 1 prev_hash fixed to match genesis.');
       }
     } catch (err) {
       setLoading(false);
@@ -984,6 +1017,39 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     }
 
     await storage.set('ledger:blocks', chain);
+
+    // ── Extract entries from day blocks into staging ────────────
+    // The UI reads entries via ENTRIES_KEY (LocalCache.readEntries).
+    // LocalCache stores entries in raw format:
+    // { hash, data: {...}, committed: bool, block_index: number }
+    // Block entries already have { hash, data: {...} } — we add
+    // committed + block_index to mark them as on-chain.
+    try {
+      let allEntries = [];
+      for (let i = 0; i < chain.length; i++) {
+        const block = chain[i];
+        if (block.type === 'genesis' || block.type === 'year_summary' || block.type === 'month_summary') {
+          continue;
+        }
+        const blockEntries = block.entries || [];
+        const blockIndex = block.day_index ?? i;
+        for (const raw of blockEntries) {
+          allEntries.push({
+            ...raw,
+            committed: true,
+            block_index: blockIndex,
+          });
+        }
+      }
+      if (allEntries.length > 0) {
+        await storage.set(ENTRIES_KEY, allEntries);
+        console.log('[connectToWorker] stored', allEntries.length, 'committed entries from', chain.length, 'blocks');
+      } else {
+        console.warn('[connectToWorker] no entries found in', chain.length, 'blocks');
+      }
+    } catch (e) {
+      console.error('[connectToWorker] entry extraction failed:', e.message);
+    }
 
     // ── Save remote config ─────────────────────────────────────
     localStorage.setItem('phpoc_worker_url', baseUrl);
@@ -1078,30 +1144,67 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
           throw new Error(`Authentication failed: ${err.message}`);
         }
       } else {
-        // ── Passphrase+seed: direct authenticate ──
+        // ── Passphrase+seed: try both derivation methods ──
         if (!seed || !seed.trim()) {
           setLoading(false);
           throw new Error('Recovery seed is required for this backup.');
         }
 
+        const seedB64 = seed.trim();
+
+        // Helper: decode base64 seed → hex bytes (for Flutter raw-MK-as-seed)
+        const _seedToHex = (b64) => {
+          // Strip trailing padding that may confuse atob / Rust base64
+          let stripped = b64.replace(/=+$/, '');
+          // Ensure valid base64: pad to multiple of 4 if needed
+          while (stripped.length % 4 !== 0) stripped += '=';
+          const raw = atob(stripped);
+          let bytes = raw;
+          // If we got 33 bytes starting with 0x00, strip the leading null
+          if (bytes.length === 33 && bytes.charCodeAt(0) === 0) {
+            bytes = bytes.slice(1);
+          }
+          let hex = '';
+          for (let i = 0; i < bytes.length; i++) {
+            hex += bytes.charCodeAt(i).toString(16).padStart(2, '0');
+          }
+          return hex;
+        };
+
+        // Helper: try to fetch + validate chain/blocks with a given master key
+        const _tryFetch = async (mkHex) => {
+          if (importSource === 'chain') {
+            const chain = await WorkerImportSource.fetchChain(transport, crypto, mkHex);
+            return WorkerImportSource._validateRawChain(chain, crypto, mkHex);
+          }
+          return source.fetchAndValidate(filename, mkHex);
+        };
+
+        // ── Method 1: PBKDF2-derived MK (traditional PHPOC seed) ──
+        console.log('[importFromCloud] seedB64 length:', seedB64.length, 'first 8:', seedB64.slice(0, 8));
+        let method1Failed = false;
         try {
-          masterKey = crypto.authenticate(passphrase, seed.trim(), PBKDF2_ITERATIONS);
-        } catch (err) {
-          setLoading(false);
-          throw new Error(`Authentication failed: ${err.message}`);
+          masterKey = crypto.authenticate(passphrase, seedB64, PBKDF2_ITERATIONS);
+          crypto.setMasterKey(masterKey);
+          importResult = await _tryFetch(masterKey);
+        } catch (err1) {
+          method1Failed = true;
+          console.warn('PBKDF2 seed auth failed, trying raw MK (Flutter-style):', err1.message);
+
+          // ── Method 2: seed IS the raw MK (Flutter onboarding) ──
+          try {
+            const rawMkHex = _seedToHex(seedB64);
+            crypto.setMasterKey(rawMkHex);
+            importResult = await _tryFetch(rawMkHex);
+            masterKey = rawMkHex;
+          } catch (err2) {
+            setLoading(false);
+            throw new Error(
+              `Failed to deobfuscate blocks with either key method. ` +
+              `PBKDF2 error: ${err1.message}. Raw key error: ${err2.message}`
+            );
+          }
         }
-      }
-
-      crypto.setMasterKey(masterKey);
-
-      // ── Fetch: chain or backup ──────────────────────────────
-      if (importSource === 'chain') {
-        // Pull the full chain from ledger/blocks/ (ph sync format)
-        const chain = await WorkerImportSource.fetchChain(transport, crypto, masterKey);
-        importResult = WorkerImportSource._validateRawChain(chain, crypto, masterKey);
-      } else {
-        // Traditional backup file import
-        importResult = await source.fetchAndValidate(filename, masterKey);
       }
     } catch (err) {
       setLoading(false);

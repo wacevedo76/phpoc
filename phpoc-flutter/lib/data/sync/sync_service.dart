@@ -321,10 +321,12 @@ class SyncService {
     return _local.readEntries();
   }
 
-  /// Get active entries (status="active") — K2.
+  /// Get active entries (status="active" or "paused") — K2.
   Future<List<Map<String, dynamic>>> getActive() async {
     if (stagingStore != null) {
-      final rows = await stagingStore!.getRowsByStatus('active');
+      final activeRows = await stagingStore!.getRowsByStatus('active');
+      final pausedRows = await stagingStore!.getRowsByStatus('paused');
+      final rows = [...activeRows, ...pausedRows];
       return rows.map(_stagingRowToDto).toList();
     }
     final entries = await _local.readEntries();
@@ -414,6 +416,8 @@ class SyncService {
       'is_paused': activityData['is_paused'] ?? false,
       'pauses': activityData['pauses'] ?? row['pauses'] ?? [],
       'tags': activityData['tags'] ?? row['tags'] ?? [],
+      'comment': activityData['comment'] ?? row['comment'] ?? '',
+      'media': activityData['media'] ?? row['media'] ?? [],
       'device_uuid': activityData['device_uuid'] ?? '',
       'activity_status': row['activity_status'],
       'updated_at': row['updated_at'],

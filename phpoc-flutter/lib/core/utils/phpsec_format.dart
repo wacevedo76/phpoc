@@ -77,18 +77,18 @@ class PhpSpecFormat {
     final sealField = sealFieldNames[typeStr] ?? '${typeStr}_hash';
     final entries = extractEntries(block.dataEnc);
 
+    // All blocks include date (Python genesis seal includes date per
+    // core/factory.py — genesis is NOT sealed without it).
+    // Must be placed before prev_hash so that key order matches
+    // _buildAndPersistGenesis seal payload: type, day_index, date, prev_hash, entries
     final result = <String, dynamic>{
       kType: typeStr,
       kDayIndex: block.blockIndex,
+      kDate: FormatUtils.epochToIsoDate(block.createdAt),
       kPrevHash: block.prevHash,
       kEntries: entries,
       sealField: block.blockId,
     };
-
-    // Only non-genesis blocks include date (genesis is sealed without it).
-    if (block.blockType != BlockType.genesis) {
-      result[kDate] = FormatUtils.epochToIsoDate(block.createdAt);
-    }
 
     // Include block_hash as a convenience for consumers (same as seal field).
     result[kBlockHash] = block.blockId;

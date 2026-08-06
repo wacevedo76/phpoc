@@ -130,6 +130,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
   Future<void> _commitToLedger() async {
     setState(() => _committing = true);
+    // Defer to avoid InheritedElement dependency tracking issues.
+    await Future.delayed(Duration.zero);
+    if (!mounted) return;
     try {
       final sync = ref.read(syncServiceProvider);
       final hash = await sync.commitEntries();
@@ -168,9 +171,34 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
+  /// Show a confirmation dialog before pushing — warns that remote data
+  /// will be replaced by the local ledger.
   Future<void> _pushToCloud() async {
     final pushSvc = ref.read(ledgerPushServiceProvider);
     if (pushSvc == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Overwrite Remote Ledger?'),
+        content: const Text(
+          'This will erase all existing data on the remote location '
+          'and replace it with your local ledger. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Push'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
 
     setState(() => _pushing = true);
     try {
@@ -206,6 +234,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       _isSyncing = true;
       _errorMessage = null;
     });
+
+    // Defer to next frame to avoid InheritedElement dependency tracking
+    // issues (Flutter issue #106546, #106549).
+    await Future.delayed(Duration.zero);
+    if (!mounted) return;
 
     try {
       final sync = ref.read(syncServiceProvider);
