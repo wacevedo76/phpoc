@@ -405,15 +405,34 @@ class SyncService {
   Map<String, dynamic> _stagingRowToDto(Map<String, dynamic> row) {
     final activityData = _decodeActivityBlob(row['activity'] as String?);
     final activityId = row['activity_id'];
+
+    // Detect encrypted sensitive fields (A1–A3)
+    final titleEnc = activityData['title_enc'] as String?;
+    final tagsEnc = activityData['tags_enc'] as String?;
+    final commentEnc = activityData['comment_enc'] as String?;
+    final isEncrypted = (titleEnc != null && titleEnc.isNotEmpty) ||
+        (tagsEnc != null && tagsEnc.isNotEmpty) ||
+        (commentEnc != null && commentEnc.isNotEmpty);
+
+    // A8: when encrypted and no plaintext title, show [Encrypted]
+    final plainTitle = activityData['title'] as String? ?? row['title'] as String? ?? '';
+    final displayTitle = (isEncrypted && plainTitle.isEmpty)
+        ? '[Encrypted]'
+        : plainTitle;
+
     return {
       'activity_id': activityId,
       'entry_id': activityId, // bridge: dashboard uses entry_id
-      'title': activityData['title'] ?? row['title'] ?? '',
+      'title': displayTitle,
       'start_epoch': activityData['start_epoch'] ?? row['start_epoch'] ?? 0,
       'end_epoch': activityData['end_epoch'] ?? row['end_epoch'],
       'duration': activityData['duration'] ?? row['duration'] ?? 0,
       'is_active': activityData['is_active'] ?? true,
       'is_paused': activityData['is_paused'] ?? false,
+      'is_sensitive_encrypted': isEncrypted,
+      'title_enc': titleEnc,
+      'tags_enc': tagsEnc,
+      'comment_enc': commentEnc,
       'pauses': activityData['pauses'] ?? row['pauses'] ?? [],
       'tags': activityData['tags'] ?? row['tags'] ?? [],
       'comment': activityData['comment'] ?? row['comment'] ?? '',

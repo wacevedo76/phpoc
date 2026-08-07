@@ -9,8 +9,8 @@
 > **Full issue queue:** `docs/planning/BACKLOG.md`
 
 ## Current State
-- **Branch:** `main`
-- **Flutter test suite:** 1472/1493 passing (22 failing: all pre-existing flaky/date-gated)
+- **Branch:** `Flutter-features_and_ux`
+- **Flutter test suite:** 1507/1545 passing (38 failing: all pre-existing)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 
 ### Recent commits (Mon Jul 28)
@@ -38,6 +38,14 @@
 
 ### ✅ B-02 UI Layer: ImportScreen, sheets, provider, route, settings — 4-Phase TDD Complete (2026-08-03)
 - 40 assertions → 40 GREEN → 7 Phase 4 improvements.
+
+### ✅ Encrypted Entry Display — 4-Phase TDD Complete (2026-08-06)
+- 38 assertions → 38 GREEN → 2 Phase 4 improvements
+- **Phase 4 improvements:**
+  - `passphrase_auth_dialog.dart`: Added `debugPrint` in catch-all block for unexpected error visibility
+  - `passphrase_auth_dialog.dart`: Clarified comment on post-auth MK retrieval from cached CryptoService
+- **Files:** `passphrase_auth_dialog.dart`, `sync_service.dart` (_stagingRowToDto), `ledger_pull_service.dart` (_seedStagingFromBlocks)
+- **Test files:** `test/data/sync/encrypted_entry_display_test.dart`, `test/features/encrypted_entry_display_test.dart`
 
 ### ✅ I-04: Rename HMAC "signature" → "seal"/"tag" — 4-Phase TDD Complete (2026-08-04)
 - 50 assertions → 50 GREEN → 8 Phase 4 improvements (clarity: docstrings + var rename)
@@ -69,7 +77,7 @@
 ## Immediate Next Steps 🎯
 
 ### 🔜 Next Task
-- _(None actively queued — check BACKLOG.md or ask user)
+- **Check BACKLOG.md** for next highest-priority task
 
 ---
 

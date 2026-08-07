@@ -335,17 +335,22 @@ class LedgerPullService {
         final pauses = _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
         final deviceUuid = entryData['device_uuid'] as String? ?? '';
 
-        // Decrypt per-field encrypted values (title_enc, tags_enc, comment_enc, etc.)
-        // Block entries store these as hex ciphertext; staging needs plaintext.
-        final title = _decryptString(entryData['title_enc'] as String?, mkHex)
-            ?? entryData['title'] as String?
-            ?? '';
-        final tags = _decryptJson(entryData['tags_enc'] as String?, mkHex)
-            ?? entryData['tags']
-            ?? <dynamic>[];
-        final comment = _decryptString(entryData['comment_enc'] as String?, mkHex)
-            ?? entryData['comment'] as String?
-            ?? '';
+        // Preserve encrypted sensitive-field ciphertexts as hex for on-demand
+        // decryption (B1–B3). Plaintext fallbacks are used when no encrypted
+        // field is present.
+        final titleEnc = entryData['title_enc'] as String?;
+        final tagsEnc = entryData['tags_enc'] as String?;
+        final commentEnc = entryData['comment_enc'] as String?;
+
+        final title = (titleEnc != null && titleEnc.isNotEmpty)
+            ? ''  // Encrypted: leave plaintext empty (DTO shows [Encrypted])
+            : (entryData['title'] as String? ?? '');
+        final tags = (tagsEnc != null && tagsEnc.isNotEmpty)
+            ? <dynamic>[]
+            : (entryData['tags'] ?? <dynamic>[]);
+        final comment = (commentEnc != null && commentEnc.isNotEmpty)
+            ? ''
+            : (entryData['comment'] as String? ?? '');
         final duration = entryData['duration'] is int
             ? entryData['duration'] as int
             : int.tryParse(
@@ -356,6 +361,9 @@ class LedgerPullService {
           'entry_id': eid ?? '',
           'hash': raw['hash'] ?? '',
           'title': title,
+          'title_enc': titleEnc,
+          'tags_enc': tagsEnc,
+          'comment_enc': commentEnc,
           'start_epoch': startEpoch,
           'end_epoch': endEpoch,
           'duration': duration,
