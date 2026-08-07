@@ -314,7 +314,7 @@ class LedgerEngine {
 
       // Only fill in fields that are missing at the row level
       final result = Map<String, dynamic>.from(entry);
-      for (final field in ['title', 'duration', 'tags', 'pauses', 'comment']) {
+      for (final field in ['title', 'duration', 'tags', 'pauses', 'comment', 'has_encrypted_fields']) {
         if (!result.containsKey(field) && activity.containsKey(field)) {
           result[field] = activity[field];
         }

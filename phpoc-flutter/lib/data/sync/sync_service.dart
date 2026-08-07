@@ -101,6 +101,7 @@ class SyncService {
         isActive: !isOneOff,
         endEpoch: isOneOff ? resolvedEpoch + 1000 : null,
         duration: isOneOff ? 1000 : 0,
+        encryptFields: encryptFields,
       );
 
       await stagingStore!.putRow({
@@ -116,6 +117,7 @@ class SyncService {
         'tags': tags ?? [],
         'pauses': [],
         'one_off': isOneOff,
+        'has_encrypted_fields': encryptFields.isNotEmpty,
       });
 
       await _touchLocalCookie();
@@ -250,6 +252,12 @@ class SyncService {
       // Merge fields into activity data
       for (final key in fields.keys) {
         activityData[key] = fields[key];
+      }
+
+      // Update has_encrypted_fields based on encryptFields (non-empty = true)
+      if (encryptFields.isNotEmpty) {
+        activityData['has_encrypted_fields'] = true;
+        row['has_encrypted_fields'] = true;
       }
 
       row['activity'] = json.encode(activityData);
@@ -832,6 +840,7 @@ class SyncService {
     bool isActive = true,
     int? endEpoch,
     int duration = 0,
+    Set<String> encryptFields = const {},
   }) {
     final data = <String, dynamic>{
       'title': title,
@@ -846,6 +855,9 @@ class SyncService {
       'end_device_uuid': '',
     };
     if (comment != null) data['comment'] = comment;
+    if (encryptFields.isNotEmpty) {
+      data['has_encrypted_fields'] = true;
+    }
     return data;
   }
 
