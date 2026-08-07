@@ -71,6 +71,19 @@ class SyncService {
   bool get isSyncing => _isSyncing;
   Stream<SyncingStatus> get syncStatus => _syncStatusController.stream;
 
+  /// Check whether there are uncommitted staging rows that need to be
+  /// pushed to remote. Returns false when staging is empty or all rows
+  /// are committed — used by F1 read-only fast path to skip network.
+  Future<bool> hasPendingWrites() async {
+    if (stagingStore != null) {
+      final rows = await stagingStore!.getAllRows();
+      return rows.any((r) => !_rowIsCommitted(r));
+    }
+    // Legacy: check LocalCache entries for uncommitted
+    final entries = await _local.readEntries();
+    return entries.any((e) => e['committed'] != true);
+  }
+
   // ═════════════════════════════════════════════════════════════
   // Row-level mutation wrappers (new stagingStore path)
   // ═════════════════════════════════════════════════════════════
@@ -120,8 +133,7 @@ class SyncService {
         'has_encrypted_fields': encryptFields.isNotEmpty,
       });
 
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return activityId;
     }
 
@@ -162,8 +174,7 @@ class SyncService {
       row['duration'] = duration;
 
       await stagingStore!.putRow(row);
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return;
     }
 
@@ -191,8 +202,7 @@ class SyncService {
       row['pauses'] = pauses;
 
       await stagingStore!.putRow(row);
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return;
     }
 
@@ -226,8 +236,7 @@ class SyncService {
       row['pauses'] = pauses;
 
       await stagingStore!.putRow(row);
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return;
     }
 
@@ -267,8 +276,7 @@ class SyncService {
       }
 
       await stagingStore!.putRow(row);
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return;
     }
 
@@ -294,8 +302,7 @@ class SyncService {
   Future<void> remove(dynamic activityIdOrIndex) async {
     if (stagingStore != null && activityIdOrIndex is String) {
       await stagingStore!.deleteRow(activityIdOrIndex);
-      await _touchLocalCookie();
-      _schedulePush();
+      await _afterMutation();
       return;
     }
 
@@ -472,6 +479,12 @@ class SyncService {
         await _cookie.isValidLocally(storage, ttlMinutes: cookieTtlMinutes);
 
     if (localCookie != null) {
+      // F1: Read-only fast path — skip network when no pending writes
+      final pending = await hasPendingWrites();
+      if (!pending) {
+        return SyncCheckResult.ready;
+      }
+
       try {
         final remoteCookieBytes =
             await transport!.pull(StagingPaths.remoteDeviceCookie);
@@ -494,6 +507,16 @@ class SyncService {
         }
       } catch (_) {
         return SyncCheckResult.offline;
+      }
+    }
+
+    // A2: distinguish expired cookie (→ reauth) from missing cookie (→ reconcile)
+    if (localCookie == null) {
+      final rawCookie = await storage.get('cookie');
+      if (rawCookie != null) {
+        // Cookie exists but TTL expired → clear and request reauth
+        await _cookie.destroyLocally(storage);
+        return SyncCheckResult.reauthNeeded;
       }
     }
 
@@ -537,7 +560,24 @@ class SyncService {
 
 
   Future<void> _pushCookie(String deviceId) async {
-    final cookie = await _cookie.create(deviceId, storage);
+    // Preserve existing specifier when one exists (R8: only extend TTL).
+    // Generate new specifier only when no cookie exists yet.
+    final localCookie = await storage.get('cookie');
+    Map<String, dynamic>? cookie;
+    if (localCookie is Map && localCookie['device_specifier'] != null) {
+      // Cookie exists — preserve specifier, refresh creation_time only
+      await storage.set('cookie', {
+        'device_specifier': localCookie['device_specifier'],
+        'creation_time': DateTime.now().millisecondsSinceEpoch,
+      });
+      cookie = {
+        'device_uuid': deviceId,
+        'device_specifier': localCookie['device_specifier'],
+      };
+    } else {
+      // No cookie yet — create fresh
+      cookie = await _cookie.create(deviceId, storage);
+    }
     if (cookie != null) {
       final cookieJson = json.encode(cookie);
       await transport!.push(
@@ -575,14 +615,32 @@ class SyncService {
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
 
+  /// Filter remote rows for merge: keep uncommitted rows always;
+  /// keep committed rows only when they also exist locally (so the
+  /// committed flag propagates from remote to local).
+  List<Map<String, dynamic>> _filterRemoteRowsForMerge(
+    List<Map<String, dynamic>> remoteRows,
+    List<Map<String, dynamic>> localRows,
+  ) {
+    return remoteRows.where((r) {
+      if (!_rowIsCommitted(r)) return true;
+      final id = r['activity_id'] as String?;
+      if (id == null) return false;
+      return localRows.any((lr) => lr['activity_id'] == id);
+    }).toList();
+  }
+
   /// Row-level reconcile: pull staging/blob, merge with mergeEntries(),
   /// write to StagingStore, push via _pushStagingRowsToRemote().
   Future<void> _reconcileAndClaimRowLevel() async {
     final remoteRows = await _pullRemoteBlob();
     final localRows = await stagingStore!.getAllRows();
 
+    // R4: filter remote committed rows that don't exist locally
+    final activeRemoteRows = _filterRemoteRowsForMerge(remoteRows, localRows);
+
     // Merge: uses activity_id LWW
-    final merged = MergeEngine.mergeEntries(localRows, remoteRows);
+    final merged = MergeEngine.mergeEntries(localRows, activeRemoteRows);
 
     // Build set of merged activity_ids for cleanup
     final mergedIds = merged
@@ -717,6 +775,15 @@ class SyncService {
 
   Future<void> pushToRemote() async {
     if (transport == null) return;
+
+    // Row-level staging: use StagingStore hash index (R7, A8)
+    if (stagingStore != null) {
+      await _pushStagingRowsToRemote();
+      await _pushCookie(_getDeviceUuid());
+      return;
+    }
+
+    // Legacy: LocalCache path
     await _pushBlobOnly();
     await _pushCookie(_getDeviceUuid());
     try {
@@ -790,8 +857,11 @@ class SyncService {
         ? await stagingStore!.getAllRows()
         : <Map<String, dynamic>>[];
 
+    // R4: filter committed rows before push
+    final activeRows = rows.where((r) => !_rowIsCommitted(r)).toList();
+
     final blobData = {
-      'entries': rows,
+      'entries': activeRows,
       'device_id': _getDeviceUuid(),
       'device_proof': _makeDeviceProof(_getDeviceUuid()),
     };
@@ -800,6 +870,19 @@ class SyncService {
     final blob = crypto.obfuscateBlob(jsonStr, crypto.getMasterKey()!);
 
     await transport!.push(StagingPaths.remoteRowLevelBlob, blob);
+
+    // R7: push hash index after blob
+    if (stagingStore != null) {
+      try {
+        final hashIndex = await StagingHashIndex.build(stagingStore!);
+        final indexJson = json.encode(hashIndex);
+        await transport!.push(
+          StagingPaths.remoteStagingHashIndex,
+          Uint8List.fromList(indexJson.codeUnits),
+        );
+      } catch (_) {}
+    }
+
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -821,6 +904,12 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
   // Helpers
   // ═════════════════════════════════════════════════════════════
+
+  /// Touch local cookie and schedule debounced push after a mutation.
+  Future<void> _afterMutation() async {
+    await _touchLocalCookie();
+    _schedulePush();
+  }
 
   /// Check whether a staging row is committed, checking both the row-level
   /// flag and the committed field inside the activity JSON blob.

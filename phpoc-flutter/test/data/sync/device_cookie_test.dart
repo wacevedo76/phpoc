@@ -96,7 +96,8 @@ void main() {
     });
 
     // D6
-    test('D6: isValidLocally() cleans up expired cookie', () async {
+    test('D6: isValidLocally() returns null for expired cookie '
+        'without destroying it (caller distinguishes expired vs missing)', () async {
       final cookie = DeviceCookie();
       final storage = _FakeStorage();
 
@@ -105,12 +106,16 @@ void main() {
         'creation_time': 1000,
       });
 
-      await cookie.isValidLocally(storage, ttlMinutes: 30);
+      final result = await cookie.isValidLocally(storage, ttlMinutes: 30);
+      expect(result, isNull,
+          reason: 'Expired cookie → isValidLocally returns null');
 
-      // Expired cookie should be removed from storage
+      // Cookie remains in storage so caller can distinguish
+      // "expired" (exists → reauth) from "missing" (absent → reconcile).
       final stored = await storage.get('cookie');
-      expect(stored, isNull,
-          reason: 'Expired cookie must be cleaned up (garbage collection)');
+      expect(stored, isNotNull,
+          reason: 'Cookie NOT destroyed — caller is responsible for cleanup '
+              'after returning REAUTH_NEEDED (A2, C7 contract)');
     });
   });
 

@@ -78,9 +78,8 @@ class DeviceCookie {
       final ttlMs = ttlMinutes * 60 * 1000;
 
       if (elapsedMs > ttlMs) {
-        try {
-          await storage.remove(_cookieKey);
-        } catch (_) {}
+        // Don't destroy cookie here — let caller distinguish
+        // "expired" (cookie exists → reauth) from "missing" (no cookie → reconcile).
         return null;
       }
 

@@ -23,6 +23,7 @@ Wiring layer between CLI and domain — factory initialization, sync orchestrati
 - All transports implement the same abstract interface
 
 ## Work Guidance
+- **Cross-client sync plan**: `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — implementation plan and scorecard. Primary reference: `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (abstract protocol workflow).
 - Core coordinates but does not implement domain logic — delegate to domain/
 - New transports must implement `AbstractStagingTransport`
 - Sync lifecycle order: check_and_sync → commit → verify → push → ledger sync

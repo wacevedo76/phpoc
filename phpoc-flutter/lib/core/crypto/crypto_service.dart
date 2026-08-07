@@ -344,13 +344,16 @@ class CryptoService {
   // These methods operate on raw bytes — transport layers handle
   // base64 encoding/decoding for JSON-safe contexts independently.
 
-  /// Obfuscate blob data with tier-based padding.
+  /// Obfuscate blob data with tier-based padding (random salt/nonce/padding).
   ///
   /// Implements PHPSPEC §3.6 / §8.5, matching Rust [blob::obfuscate_blob]
   /// and Python [RemoteStagingSync._obfuscate] byte-for-byte.
   ///
   /// Returns raw obfuscated bytes suitable for direct transport push.
   /// Maximum input size is 512 KB.
+  ///
+  /// For deterministic output (cross-client test vectors), use
+  /// [obfuscateBlobDeterministic] instead.
   Uint8List obfuscateBlob(String data, String mkHex) {
     _requireInitialized();
     _validateHex(mkHex, 64);
@@ -360,46 +363,58 @@ class CryptoService {
 
     final plaintext = utf8.encode(data);
     final mk = Uint8List.fromList(_hexToBytes(mkHex));
-
-    // 1. Derive blob sub-key: HMAC-SHA256(MK, "blob-obfuscation")[:16]
-    final blobKey = _deriveBlobKeyBytes(mk);
-
-    // 2. Select tier based on plaintext size
     final tier = _selectTier(plaintext.length);
-    final paddedSize = tier - 4; // Reserve 4 bytes for original length
+    final paddingNeeded = (tier - 4) - plaintext.length;
 
-    // 3. Generate random salt, nonce, and padding
-    final salt = _randomBytes(16);
-    final nonce = _randomBytes(8);
-    final paddingNeeded = paddedSize - plaintext.length;
-    final padding = paddingNeeded > 0
-        ? _randomBytes(paddingNeeded)
-        : Uint8List(0);
-
-    // 4. Build payload: original_len(4 BE) + plaintext + padding
-    final payload = Uint8List(4 + plaintext.length + padding.length);
-    _writeUint32BE(payload, 0, plaintext.length);
-    payload.setAll(4, plaintext);
-    payload.setAll(4 + plaintext.length, padding);
-
-    // 5. Derive encryption and integrity keys from blob key + salt
-    final (encKey, integrityKey) = _deriveBlobEncryptionKeys(blobKey, salt);
-
-    // 6. AES-128-CTR encrypt + HMAC-SHA256 tag
-    final ciphertextAndTag = _blobEncryptAndTag(
-      payload,
-      encKey,
-      integrityKey,
-      nonce,
+    return _obfuscateBlobCore(
+      plaintext,
+      mk,
+      _randomBytes(16), // random salt
+      _randomBytes(8),  // random nonce
+      paddingNeeded > 0 ? _randomBytes(paddingNeeded) : Uint8List(0),
     );
+  }
 
-    // 7. Assemble: salt(16) + nonce(8) + ciphertext + tag(32)
-    final result = Uint8List(16 + 8 + ciphertextAndTag.length);
-    result.setAll(0, salt);
-    result.setAll(16, nonce);
-    result.setAll(24, ciphertextAndTag);
+  /// Obfuscate blob data deterministically with caller-supplied salt and nonce.
+  ///
+  /// Produces byte-identical output across implementations (Rust, Python, Flutter)
+  /// when called with the same (data, mkHex, salt, nonce). Uses zero-fill padding
+  /// instead of random bytes for reproducibility per I2 (same plaintext + MK →
+  /// identical ciphertext).
+  ///
+  /// Matches Rust [blob::obfuscate_blob_deterministic] and Python
+  /// [_obfuscate_deterministic] byte-for-byte.
+  ///
+  /// [salt] must be exactly 16 bytes. [nonce] must be exactly 8 bytes.
+  /// Maximum input size is 512 KB.
+  ///
+  /// Wire format: salt(16) ‖ nonce(8) ‖ ciphertext ‖ tag(32)
+  Uint8List obfuscateBlobDeterministic(
+      String data, String mkHex, Uint8List salt, Uint8List nonce) {
+    _requireInitialized();
+    _validateHex(mkHex, 64);
+    if (salt.length != 16) {
+      throw CryptoException('Salt must be exactly 16 bytes, got ${salt.length}');
+    }
+    if (nonce.length != 8) {
+      throw CryptoException('Nonce must be exactly 8 bytes, got ${nonce.length}');
+    }
+    if (data.length > 512 * 1024) {
+      throw CryptoException('Blob data exceeds maximum size of 512 KB');
+    }
 
-    return result;
+    final plaintext = utf8.encode(data);
+    final mk = Uint8List.fromList(_hexToBytes(mkHex));
+    final tier = _selectTier(plaintext.length);
+    final paddingNeeded = (tier - 4) - plaintext.length;
+
+    return _obfuscateBlobCore(
+      plaintext,
+      mk,
+      salt,
+      nonce,
+      paddingNeeded > 0 ? Uint8List(paddingNeeded) : Uint8List(0), // zero-fill
+    );
   }
 
   /// Deobfuscate blob data.
@@ -408,7 +423,7 @@ class CryptoService {
   /// and Python [RemoteStagingSync._deobfuscate] byte-for-byte.
   ///
   /// [obfuscated] must be raw bytes in the canonical wire format
-  /// (as produced by [obfuscateBlob]).
+  /// (as produced by [obfuscateBlob] or [obfuscateBlobDeterministic]).
   String deobfuscateBlob(Uint8List obfuscated, String mkHex) {
     _requireInitialized();
     _validateHex(mkHex, 64);
@@ -868,6 +883,48 @@ class CryptoService {
     );
 
     return (encKey, integrityKey);
+  }
+
+  /// Core blob obfuscation: payload assembly, encryption, and wire-format packing.
+  ///
+  /// Shared by [obfuscateBlob] (random salt/nonce/padding) and
+  /// [obfuscateBlobDeterministic] (caller-supplied salt/nonce, zero-fill padding).
+  /// Kept as a single implementation to guarantee byte-identical wire format
+  /// regardless of which public entry point is used.
+  Uint8List _obfuscateBlobCore(
+    Uint8List plaintext,
+    Uint8List mk,
+    Uint8List salt,
+    Uint8List nonce,
+    Uint8List padding,
+  ) {
+    // 1. Derive blob sub-key: HMAC-SHA256(MK, "blob-obfuscation")[:16]
+    final blobKey = _deriveBlobKeyBytes(mk);
+
+    // 2. Derive encryption and integrity keys from blob key + salt
+    final (encKey, integrityKey) = _deriveBlobEncryptionKeys(blobKey, salt);
+
+    // 3. Build payload: original_len(4 BE) + plaintext + padding
+    final payload = Uint8List(4 + plaintext.length + padding.length);
+    _writeUint32BE(payload, 0, plaintext.length);
+    payload.setAll(4, plaintext);
+    payload.setAll(4 + plaintext.length, padding);
+
+    // 4. AES-128-CTR encrypt + HMAC-SHA256 tag
+    final ciphertextAndTag = _blobEncryptAndTag(
+      payload,
+      encKey,
+      integrityKey,
+      nonce,
+    );
+
+    // 5. Assemble: salt(16) + nonce(8) + ciphertext + tag(32)
+    final result = Uint8List(16 + 8 + ciphertextAndTag.length);
+    result.setAll(0, salt);
+    result.setAll(16, nonce);
+    result.setAll(24, ciphertextAndTag);
+
+    return result;
   }
 
   /// AES-128-CTR encrypt payload and append HMAC-SHA256 auth tag.

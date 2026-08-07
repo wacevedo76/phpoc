@@ -4,13 +4,26 @@
 Each file annotated **[HOT]** (active dev area — re-read if in scope)
 or **[COLD]** (stable — skip unless handoff says otherwise).
 
+### Reference Docs
+
+| File | Temp | Key contents |
+|---|---|---|
+| `CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` | HOT | **Primary living reference** for staging sync & reconciliation across all clients: architecture, sync gate flow, merge engine, blob obfuscation, device cookie, hash index, row-level sync (ADR-025), source code index, test coverage map, protocol contracts, abstract workflow (§12) |
+| `DEVICE_COOKIE_AND_STAGING_DATABASE_SCHEMA.md` | COLD | Cross-client reference: Device Cookie purpose/format/flow, Staging Database Schema (legacy + row-level), encryption layers, remote paths, LWW merge (detailed schema; see CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md for protocol-level overview) |
+
+### Planning Docs
+
+| File | Temp | Key contents |
+|---|---|---|
+| `CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` | HOT | **Implementation plan**: CCS-1 through CCS-4 phases, scorecard matrix, dependency graph, per-client source file index. References abstract workflow in reference doc §12. |
+
 ### Source (core Python packages)
 
 | File | Temp | Key contents |
 |---|---|---|
 | `lib/core/crypto/frb_generated.dart` | HOT | **NEW (Phase 3)** — 23-function Dart FFI API surface matching Rust `frb.rs` crypto core (AES-128-CTR, PBKDF2, HMAC-SHA256, blob obfuscation, device identity) |
 | `lib/core/crypto/crypto_service_native.dart` | HOT | **NEW (Phase 3)** — Thin wrapper delegating to `frb_generated.dart`, 29-method public API matching `CryptoService` contract |
-| `lib/core/crypto/crypto_service.dart` | HOT | Pure-Dart crypto shim (74 tests), to be replaced by native FFI backend |
+| `lib/core/crypto/crypto_service.dart` | HOT | Pure-Dart crypto shim (85 tests incl. deterministic blob obfuscation), to be replaced by native FFI backend |
 | `../phpoc-crypto-core/src/frb.rs` | HOT | **NEW (Phase 3)** — flutter_rust_bridge Rust API surface (23 functions, mirrors wasm.rs), compiles with flutter_rust_bridge v2.12.0 |
 | `main.py` | HOT | CLI entry — argparse, auth tiers, staging + orchestrator wiring |
 | `phpoc_cli/interface.py` | HOT | Display: `view_active`, `show_rep`, `list_habits` |

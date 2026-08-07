@@ -1,3 +1,5 @@
+import 'dart:convert' show json;
+import 'dart:io' show File;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -778,6 +780,271 @@ void main() {
       );
       expect(
         () => service.decrypt('', mkHex),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group L: Deterministic Obfuscation — CCS-1b (11 tests)
+  //
+  // Implements Phase 1 blueprint: docs/planning/CCS1b_PHASE1.md
+  // 16 assertions across Groups A–E; ~11 new tests here.
+  //
+  // Test vectors from: phpoc-crypto-core/tests/crypto_test_vectors.json
+  //   § blob_key_derivation       — 1 entry  (canonical blob key)
+  //   § blob_obfuscation_deterministic — 2 entries (small payload + empty)
+  //   § blob_tier_selection       — 6 entries (tier boundaries)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('L: Deterministic Obfuscation (CCS-1b)', () {
+    late CryptoService service;
+
+    // Canonical deterministic salt + nonce from test vectors.
+    // salt: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+    // nonce: 00 01 02 03 04 05 06 07
+    const _testSaltHex = '000102030405060708090a0b0c0d0e0f';
+    const _testNonceHex = '0001020304050607';
+
+    late Uint8List testSalt;
+    late Uint8List testNonce;
+
+    /// Loaded test vectors from crypto_test_vectors.json (lazy, once per group).
+    Map<String, dynamic>? _testVectors;
+
+    Map<String, dynamic> _loadTestVectors() {
+      if (_testVectors != null) return _testVectors!;
+      // Path relative to package root (phpoc-flutter/)
+      final f = File('../phpoc-crypto-core/tests/crypto_test_vectors.json');
+      _testVectors = json.decode(f.readAsStringSync()) as Map<String, dynamic>;
+      return _testVectors!;
+    }
+
+    /// Convert hex string to Uint8List.
+    Uint8List _h2b(String hex) {
+      if (hex.length % 2 != 0) throw ArgumentError('Hex length must be even');
+      final r = Uint8List(hex.length ~/ 2);
+      for (var i = 0; i < hex.length; i += 2) {
+        r[i ~/ 2] = int.parse(hex.substring(i, i + 2), radix: 16);
+      }
+      return r;
+    }
+
+    /// Convert Uint8List to lowercase hex string.
+    String _b2h(Uint8List b) {
+      return b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+    }
+
+    setUp(() async {
+      service = CryptoService();
+      await service.initialize();
+      testSalt = _h2b(_testSaltHex);
+      testNonce = _h2b(_testNonceHex);
+    });
+
+    // ────────────────────────────────────────────────────────────
+    // Group A: Blob Key Derivation Parity
+    // ────────────────────────────────────────────────────────────
+
+    // L1 (A1) — deriveBlobKey produces canonical 16-byte key matching test vector
+    test('L1 (A1): deriveBlobKey produces canonical 16-byte key matching test vector', () {
+      final tv = _loadTestVectors()['blob_key_derivation'] as List;
+      final entry = tv[0] as Map<String, dynamic>;
+      final mk = entry['master_key_hex'] as String;
+      final expected = entry['expected_hex'] as String;
+
+      final key = service.deriveBlobKey(mk);
+      expect(key, expected);
+      expect(key.length, 32); // 16 bytes = 32 hex chars
+    });
+
+    // L2 (A3) — _selectTier: tier boundaries produce correct output sizes
+    test('L2 (A3): tier selection — correct output sizes for all boundary values', () {
+      final tv = _loadTestVectors()['blob_tier_selection'] as List;
+
+      for (final entry in tv) {
+        final e = entry as Map<String, dynamic>;
+        final size = e['plaintext_size'] as int;
+        final expectError = e['expected_error'] as bool? ?? false;
+
+        if (expectError) {
+          // >512K → should throw
+          final huge = 'x' * size;
+          expect(
+            () => service.obfuscateBlobDeterministic(huge, mkHex, testSalt, testNonce),
+            throwsA(isA<Exception>()),
+            reason: 'size=$size should exceed max tier',
+          );
+        } else {
+          final tier = e['expected_tier'] as int;
+          // Output size = salt(16) + nonce(8) + ciphertext + tag(32)
+          // Ciphertext includes: len_prefix(4) + plaintext + padding
+          // Payload always = max(tier, 4 + plaintext_size)
+          final payload = tier > 4 + size ? tier : 4 + size;
+          final expectedLen = 16 + 8 + payload + 32;
+          final data = size == 0 ? '' : 'x' * size;
+
+          final obf = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+          expect(obf.length, expectedLen,
+              reason: 'size=$size → tier=$tier → expected output $expectedLen bytes');
+        }
+      }
+    });
+
+    // ────────────────────────────────────────────────────────────
+    // Group B: Deterministic Obfuscation API
+    // ────────────────────────────────────────────────────────────
+
+    // L3 (B1) — obfuscateBlobDeterministic exists as public method with correct signature
+    test('L3 (B1): obfuscateBlobDeterministic exists with correct public API signature', () {
+      const data = '{"test":true}';
+      final result = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+      expect(result, isA<Uint8List>());
+      expect(result, isNotEmpty);
+    });
+
+    // L4 (B2) — Deterministic output roundtrips via deobfuscateBlob
+    test('L4 (B2): deterministic output roundtrips via deobfuscateBlob', () {
+      const data = '{"device_id":"roundtrip-test","entries":[]}';
+      final obf = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+      final plaintext = service.deobfuscateBlob(obf, mkHex);
+      expect(plaintext, data);
+    });
+
+    // L5 (B3) — Same (data, mkHex, salt, nonce) → byte-identical output (determinism)
+    test('L5 (B3): same inputs produce byte-identical output (determinism guarantee)', () {
+      const data = 'determinism-test-payload';
+      final out1 = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+      final out2 = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+      final out3 = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+
+      expect(_b2h(out1), _b2h(out2));
+      expect(_b2h(out2), _b2h(out3));
+    });
+
+    // L6 (B4) — Different salt → different output (same data + mkHex)
+    test('L6 (B4): different salt produces different output (salt sensitivity)', () {
+      const data = 'salt-sensitivity-test';
+      final out1 = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+
+      // Different salt (last byte flipped)
+      final altSalt = Uint8List.fromList(testSalt);
+      altSalt[15] ^= 0x01;
+      final out2 = service.obfuscateBlobDeterministic(data, mkHex, altSalt, testNonce);
+
+      expect(_b2h(out1), isNot(_b2h(out2)));
+    });
+
+    // ────────────────────────────────────────────────────────────
+    // Group C: Cross-Client Read Compatibility
+    // ────────────────────────────────────────────────────────────
+
+    // L7 (C1+C2+C3) — deobfuscateBlob decrypts deterministic test vectors → expected plaintext
+    test('L7 (C1/C2/C3): deobfuscateBlob decrypts deterministic test vectors from Rust/Python', () {
+      final tv = _loadTestVectors()['blob_obfuscation_deterministic'] as List;
+
+      for (var i = 0; i < tv.length; i++) {
+        final entry = tv[i] as Map<String, dynamic>;
+        final mk = entry['master_key_hex'] as String;
+        final plaintext = entry['plaintext'] as String;
+        final expectedHex = entry['expected_hex'] as String;
+
+        final obfuscated = _h2b(expectedHex);
+        final result = service.deobfuscateBlob(obfuscated, mk);
+        expect(result, plaintext,
+            reason: 'vector $i: deobfuscateBlob must recover plaintext');
+      }
+    });
+
+    // ────────────────────────────────────────────────────────────
+    // Group D: Cross-Client Write Compatibility
+    // ────────────────────────────────────────────────────────────
+
+    // L8 (D1) — obfuscateBlobDeterministic → byte-identical to Rust/Python (small payload)
+    test('L8 (D1): obfuscateBlobDeterministic → byte-identical to Rust/Python (small payload)', () {
+      final tv = _loadTestVectors()['blob_obfuscation_deterministic'] as List;
+      final entry = tv[0] as Map<String, dynamic>;
+      final mk = entry['master_key_hex'] as String;
+      final plaintext = entry['plaintext'] as String;
+      final expectedHex = entry['expected_hex'] as String;
+
+      final salt = _h2b(entry['salt_hex'] as String);
+      final nonce = _h2b(entry['nonce_hex'] as String);
+
+      final result = service.obfuscateBlobDeterministic(plaintext, mk, salt, nonce);
+      expect(_b2h(result), expectedHex);
+    });
+
+    // L9 (D2) — obfuscateBlobDeterministic → byte-identical for empty blob (64K tier edge case)
+    test('L9 (D2): obfuscateBlobDeterministic → byte-identical for empty blob', () {
+      final tv = _loadTestVectors()['blob_obfuscation_deterministic'] as List;
+      final entry = tv[1] as Map<String, dynamic>;
+      final mk = entry['master_key_hex'] as String;
+      final plaintext = entry['plaintext'] as String;
+      final expectedHex = entry['expected_hex'] as String;
+
+      final salt = _h2b(entry['salt_hex'] as String);
+      final nonce = _h2b(entry['nonce_hex'] as String);
+
+      final result = service.obfuscateBlobDeterministic(plaintext, mk, salt, nonce);
+      expect(_b2h(result), expectedHex);
+    });
+
+    // L10 (D3) — Deterministic output has correct wire format structure
+    test('L10 (D3): deterministic output has correct wire format: salt(16) ‖ nonce(8) ‖ ct ‖ tag(32)', () {
+      const data = 'wire-format-test';
+      final obf = service.obfuscateBlobDeterministic(data, mkHex, testSalt, testNonce);
+
+      // Verify minimum size: salt(16) + nonce(8) + tag(32) = 56 bytes
+      expect(obf.length, greaterThanOrEqualTo(56));
+
+      // Salt at [0:16] matches input salt
+      final salt = Uint8List.sublistView(obf, 0, 16);
+      expect(_b2h(salt), _testSaltHex);
+
+      // Nonce at [16:24] matches input nonce
+      final nonce = Uint8List.sublistView(obf, 16, 24);
+      expect(_b2h(nonce), _testNonceHex);
+
+      // Ciphertext + tag after header — tag at last 32 bytes
+      final tag = Uint8List.sublistView(obf, obf.length - 32);
+      // Tag must not be all zeros (proves HMAC was computed)
+      expect(tag.any((b) => b != 0), isTrue);
+    });
+
+    // ────────────────────────────────────────────────────────────
+    // Group E: Integrity & Error Handling (deterministic mode)
+    // ────────────────────────────────────────────────────────────
+
+    // L11 (E3) — obfuscateBlobDeterministic validates salt=16 bytes, nonce=8 bytes
+    test('L11 (E3): obfuscateBlobDeterministic validates salt (16B) and nonce (8B) sizes', () {
+      const data = 'validation-test';
+
+      // Salt too short (15 bytes)
+      final shortSalt = Uint8List(15);
+      expect(
+        () => service.obfuscateBlobDeterministic(data, mkHex, shortSalt, testNonce),
+        throwsA(isA<Exception>()),
+      );
+
+      // Salt too long (17 bytes)
+      final longSalt = Uint8List(17);
+      expect(
+        () => service.obfuscateBlobDeterministic(data, mkHex, longSalt, testNonce),
+        throwsA(isA<Exception>()),
+      );
+
+      // Nonce too short (7 bytes)
+      final shortNonce = Uint8List(7);
+      expect(
+        () => service.obfuscateBlobDeterministic(data, mkHex, testSalt, shortNonce),
+        throwsA(isA<Exception>()),
+      );
+
+      // Nonce too long (9 bytes)
+      final longNonce = Uint8List(9);
+      expect(
+        () => service.obfuscateBlobDeterministic(data, mkHex, testSalt, longNonce),
         throwsA(isA<Exception>()),
       );
     });

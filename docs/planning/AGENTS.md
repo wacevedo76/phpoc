@@ -19,6 +19,8 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `STAGING_ACTIVITY_ID_TESTS.md` — Phase 1 output: exhaustive test catalog (116 tests across 10 categories A–J) covering activity_id generation, lifecycle, staging hash index data structure, comparison, Tier 1/2 fast paths, Worker endpoint, cross-client sync, backward compat, and edge cases. (2026-07-07)
 - `STAGING_HASH_INDEX_WORKFLOW.md` — Workflow specification: full data flow contract for staging activity_id + hash index across push, pull, merge, and transport. Defines checkAndSync() integration, Tier 1/2/3 cascade, worker endpoint contract, backward compat, and LocalCache API surface needed. Single source of truth for mock transport + remaining test categories E–J. (2026-07-07)
 - `ROW_LEVEL_STAGING_SYNC_PLAN.md` — Implementation plan for row-level staging sync: 8-scenario LWW resolution table, sync cycle contract, Worker endpoint spec, per-row obfuscation format, migration strategy, and phased test catalog. Companion to ADR-025. (2026-07-08)
+- `CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — **Implementation plan** for cross-client staging sync and reconciliation (CCS). Consolidates B-04, B-05, ADR-025, P3. Defines CCS-1 through CCS-4 phases, implementation scorecard, dependency graph, and per-client source file index. References abstract protocol workflow in `../reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12. (2026-08-07)
+- `CCS1b_PHASE1.md` — Phase 1 test exploration for CCS-1b (Flutter obfuscation compatibility). 16 assertions across 5 groups (A–E): key derivation parity, deterministic API, cross-client read/write, integrity. (2026-08-07)
 - `CLI_COMMAND_TIMING_FIXES.md` — Investigation report + 4-fix plan for `ph view` latency (16 HTTP round-trips, ~5–26s). F1: duplicate check_and_sync, F2: ledger block cache, F3: skip unchanged push, F4: HTTP pooling. Execution order F1→F4 with 4-phase TDD per fix. (2026-07-14)
 - `I02_PHASE1.md` — Phase 1 test exploration for I-02 (blind index encryption + staging field key encryption). 74 assertions across 9 groups (A–I). (2026-07-16)
 - `RELEASE_CHECKLIST.md` — Google Play Store release checklist: device testing tiers, build requirements, app signing setup, Rust crypto cross-compilation targets, encryption export compliance, data safety declarations, permissions, store listing assets, testing tracks, and phase-gated rollout sequence. (2026-07-17)
@@ -32,6 +34,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - Session-level state is captured in `../../SESSION_HANDOFF.md`, not here
 
 ## Work Guidance
+- **Cross-client staging sync changes**: Consult `CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — the authoritative implementation plan for all CCS work. References abstract protocol workflow in `../reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12.
 - Update roadmap status as milestones are reached
 - Move paused items to `BACKLOG.md` with unblock criteria
 - Cross-reference between planning docs where features interact

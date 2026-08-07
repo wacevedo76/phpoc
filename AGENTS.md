@@ -128,7 +128,7 @@ When the user requests a durable behavior change, record it here or in the relev
   - `docs/spec/AGENTS.md` — Format specification (PHPSPEC.md)
   - `docs/planning/AGENTS.md` — Roadmaps, backlogs, and design decisions
   - `docs/design/AGENTS.md` — Architectural decisions, design goals, workflows
-  - `docs/reference/AGENTS.md` — Changelog, project map, and quick-reference material
+  - `docs/reference/AGENTS.md` — Changelog, project map, cross-client staging sync reference, and quick-reference material
 - `tests/AGENTS.md` — Python test suite (30 files, 1341 tests)
 
 ### Not Indexed (no AGENTS.md needed)

@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-07-28
+> **Last updated:** 2026-08-07
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -26,57 +26,149 @@
 
 ---
 
-## 🟠 B-04: Flutter — Wire cross-device sync for row-level staging
+## 🟠 CCS: Cross-Client Staging Sync & Reconciliation
 
-**Depends on:** B-03 ✅
-**Phase 1:** ✅ 56 assertions → `docs/planning/flutter/B04_ROW_LEVEL_SYNC_PHASE1.md`
-**Phase 2:** ✅ RED — 56 tests across 9 groups (A–I), 27 RED / 29 GREEN
-**Phase 3:** ✅ GREEN — 54/54 B-04 tests pass. Full suite 1412/1414.
+**Goal:** Full staging sync interoperability across Flutter, Web, and CLI.
+**Primary reference:** `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (abstract workflow)
+**Implementation plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` (scorecard, phases, dependency graph)
+**Consolidates:** B-04, B-05, ADR-025, P3
 
-**Implementation:**
-- `checkAndSync()` branches on `stagingStore`: cookie fast path → `_fastPathRowLevel()` (hash index compare); reconcile → `_reconcileAndClaimRowLevel()` (mergeEntries + row-level push)
-- `_pullRemoteBlob()` → `_pullRemoteRows()` when stagingStore is wired (pulls from `staging/blob`)
-- `_reconcileAndClaim()` → `_reconcileAndClaimRowLevel()`: reads/writes StagingStore, merges via `MergeEngine.mergeEntries()`, pushes via `_pushStagingRowsToRemote()`, cleans up committed rows
-- `StagingStore.putRow(preserveUpdatedAt:)` flag for merge writeback (LWW timestamps preserved)
-- `MergeEngine.mergeEntries()` LWW tie-break: `>` (local wins) replaced `>=`
-- Test infrastructure: `_RowTestHarness.addRow()` uses `preserveUpdatedAt: true`
+### Canonical Format (All Decisions Resolved ✅)
 
-**Phase 4:** ✅ REFACTOR — 5 improvements across 3 files. Conciseness: merged duplicate `import 'dart:convert'`, consolidated `_pullRemoteRows` → `_pullRemoteBlob` (~25 lines deduped), extracted shared `safeJsonDecode` to `StagingStore`. Clarity: hardcoded `'staging/blob'` → `StagingPaths.remoteRowLevelBlob`, replaced J-numbered test assertion refs with descriptive comments in `mergeEntries`. Full suite: 1412/1414.
+| Decision | Resolution |
+|----------|-----------|
+| Transport model | Single blob + hash index (Model C) — retire per-row CRUD (`row_sync.js`) |
+| Blob path | `staging/blob` (canonical) |
+| Hash index path | `staging/hash_index.json` |
+| Entry identity | `activity_id` as single primary key; `entry_id` legacy only |
+| Merge tie-break | Local-wins on equal `updated_at` |
+| Envelope `updated_at` | Omitted (hash index supersedes) |
+| JSON serialization | Compact (no whitespace) |
+| Obfuscation | Flutter/Web scheme (simpler than CLI 4-tier) |
+| `committed` flag | Canonical row field (cross-device cleanup signal) |
+| Backward compat | Immediate cutover (single user — no migration window) |
 
-**Problem:** The staging overhaul (B-03) auto-pushes to `staging/blob` but the sync gate (`checkAndSync` / `_reconcileAndClaim`) still operates on `staging/blobs/current.json`. Push and pull are on different paths — cross-device sync is disconnected.
+### Status Matrix
 
-**Worker note:** The Worker's generic blob handlers already serve any R2 path (GET/PUT/DELETE pass-through). No new routes needed — `staging/blob` and `staging/hash_index.json` work today.
+| Client | `staging/blob` | Hash Index Wired | `activity_id` | Local Row Store | Sync Gate Wired |
+|--------|----------------|-----------------|---------------|-----------------|-----------------|
+| **Flutter** | ✅ | ✅ | ✅ | ✅ SQLite | ✅ |
+| **Web** | ❌ old path | ❌ code exists, not wired | ✅ | ✅ IndexedDB | ❌ |
+| **CLI** | ✅ | ✅ | ✅ | ❌ `staging.json` | ❌ |
 
-**Reference:** phpoc-web's `row_sync.js` — `buildDiff()` (8-scenario LWW resolution) + `RowSyncWorker`. Web has same disconnect.
+### Already Completed (Foundation)
 
-**Phase 1 groups:** A (Pull 8), B (Merge 10), C (Push 5), D (Fast path 7), E (Store 6), F (Bootstrap 4), G (Gates 6), H (Integration 8), I (Paths 2) = 56 total.
-
-**Next action:** Phase 4 (REFACTOR) — code review for modularity, clarity, security, conciseness.
+- ✅ **B-03:** Flutter Staging Schema Overhaul — SQLite row store, activity IDs, hash index, debounced auto-push (`staging/blob`) — `STAGING_OVERHAUL_PHASE1.md` (110 assertions)
+- ✅ **B-04:** Flutter Row-Level Sync Wiring — `_fastPathRowLevel()`, `_reconcileAndClaimRowLevel()`, `StagingPaths.remoteRowLevelBlob`, merge via `mergeEntries()` — `B04_ROW_LEVEL_SYNC_PHASE1.md` (56 assertions, 54/54 GREEN, Phase 4 done)
+- ✅ **B-05c:** CLI transport alignment — `staging/blob` path, `StagingHashIndex`, `ActivityIdGenerator`, compact JSON — 52/52 GREEN
+- ✅ **B-05b old status was inaccurate:** Web `RowStagingStore` exists (GREEN) but sync gate (`sync.js`) still uses `staging/blobs/current.json` — no references to `RowStagingStore` or `staging/blob` in `sync.js` (verified 2026-08-07)
+- ✅ Canonical format decisions resolved (see table above)
+- ✅ Worker generic blob handlers serve any R2 path — no Worker changes needed for single-blob model
 
 ---
 
-## 🟠 B-05: Cross-Platform Staging Format Alignment
+### ✅ CCS-1: Flutter — Close Remaining Gaps ✅
 
-**Doc:** `docs/planning/CROSS_PLATFORM_STAGING_FORMAT_ALIGNMENT.md`
-**Depends on:** B-03 ✅, B-04 ✅
+**Status:** ✅ 4-Phase TDD Complete (2026-08-07).
 
-**Problem:** Three clients use three incompatible staging architectures — different blob paths, entry identity schemes, obfuscation, and merge strategies. No cross-client staging sync is possible.
+**Phase 1:** 30 assertions → `docs/planning/CCS1_PHASE1.md`
+**Phase 2:** 30 RED (9 pass/21 fail) → `phpoc-flutter/test/data/sync/ccs1_gap_closure_test.dart`
+**Phase 3:** 30 GREEN → `sync_service.dart` + `device_cookie.dart`
+**Phase 4:** 2 improvements — extracted `_filterRemoteRowsForMerge()` (modularity/clarity: names the 8-line remote-row filtering lambda), extracted `_afterMutation()` (conciseness: deduplicates `_touchLocalCookie()`+`_schedulePush()` pattern repeated 6× across mutation wrappers)
 
-**Phases:**
-- ✅ **Phase 1:** Extract canonical format into PHPSPEC.md §8 (complete)
-- ✅ **Phase 3 (B-05b):** Web alignment — switch to `staging/blob`, wire `buildDiff` + `RowStagingStore` into sync gate, hash index fast path, local-wins tie-break, drop envelope `updated_at`, retire `row_sync.js` ✅ Complete (2026-07-30)
-- ✅ **Phase 2 (B-05c):** CLI alignment — `ActivityIdGenerator`, `StagingHashIndex`, `staging/blob` path, hash index pull/push, compact JSON, drop envelope `updated_at`, remove public tier constants. **4-Phase TDD complete (2026-07-30) — 52/52 GREEN; Phase 4: 3 improvements (extracted `_xport_pull/_push`, `_build_lookup_map`; moved `import time`).**
+**Gates closed:**
 
-**Resolved (2026-07-28):**
-- ✅ Merge tie-break → local-wins
-- ✅ CLI migration path → full StagingStore (SQLite)
-- ✅ Transport model → retire `row_sync.js`; single blob + hash index canonical
-- ✅ Entry identity → `activity_id` as single key; `entry_id` legacy only
-- ✅ Envelope `updated_at` → omit; hash index supersedes
-- ✅ Backward compat → immediate cutover (single user)
-- ✅ `committed` flag → canonical row field (cross-device cleanup signal)
+| # | Gate | Fix | Lines |
+|---|------|-----|-------|
+| 1 | R7 | Push hash index after blob in `_pushStagingRowsToRemote`, `pushToRemote` | `sync_service.dart` |
+| 2 | R4 | Filter committed rows in `_pushStagingRowsToRemote` + `_reconcileAndClaimRowLevel` (remote-committed-only) | `sync_service.dart` |
+| 3 | A2 | Check cookie existence before TTL; return `reauthNeeded` on expiry; `isValidLocally` no longer destroys cookie | `sync_service.dart` + `device_cookie.dart` |
+| 4 | F1 | Implement `hasPendingWrites()`; skip network in `checkAndSync` on zero writes | `sync_service.dart` |
 
-**All questions resolved. Next action:** Phase 1 — extract canonical format into PHPSPEC.md §8.
+**Remaining known issue:** `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie (line 738, `staging/blobs/current.json`). Only hit when `stagingStore == null` (legacy LocalCache fallback, never reached in normal operation). Remove after CCS-2 lands.
+
+---
+
+### 🔴 CCS-2: Web — Wire Row-Level Sync Gate
+
+**Status:** RowStagingStore + staging_hash_index.js + merge_engine.js all exist and pass tests independently. But `sync.js` still uses the old `staging/blobs/current.json` path and old merge logic.
+
+**Plan:** `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` (120 assertions) — tests exist but are RED (Phase 2).
+
+**What needs to happen:**
+
+| # | Task | Source file |
+|---|------|------------|
+| 1 | Switch blob path to `staging/blob` in `checkAndSync()` | `sync.js` |
+| 2 | Wire `StagingHashIndex.compare()` into cookie fast-path (Tier-1) | `sync.js` |
+| 3 | Wire `RowStagingStore.getAllRows()` into read path (replace `LocalCache`) | `sync.js` |
+| 4 | Wire `MergeEngine.mergeEntries()` into reconcile (replace `mergeMaps()`) | `sync.js` |
+| 5 | Wire `RowStagingStore.putRow()` / `deleteRow()` into write path | `sync.js` |
+| 6 | Drop envelope `updated_at` from blob serialization | `remote_sync.js` |
+| 7 | Switch merge tie-break to local-wins (match Flutter) | `merge_engine.js` |
+| 8 | Add `staging/blob` to `keys.js` path constants | `keys.js` |
+| 9 | Bump RED tests (320 across 5 files) to GREEN | test files |
+
+**Test files to convert from RED → GREEN:**
+- `staging_hash_index_test.mjs` (43 tests)
+- `staging_backward_compat_test.mjs` (24 tests)
+- `row_staging_store_test.mjs` (49 tests)
+- `row_sync_test.mjs` (134 tests)
+- `row_integration_test.mjs` (70 tests)
+
+**Effort:** Medium (~1-2 days). **Blocks:** CCS-4 (Web cross-client testing).
+
+---
+
+### 🔜 CCS-3: CLI — Build Row-Level Store + Wire Sync Gate
+
+**Status:** Transport layer uses `staging/blob` and hash index (B-05c). But local storage is still `staging.json` via `LocalCache` — no row-level store, no SQLite.
+
+**Plan:** `docs/planning/CLI_SQLITE_STAGING_PHASE1.md`
+
+**What needs to happen:**
+
+| # | Task | Source file |
+|---|------|------------|
+| 1 | Implement `SqliteStagingStore` — schema: `(activity_id TEXT PK, activity_status TEXT, activity TEXT, updated_at INTEGER)` | new file |
+| 2 | Implement CRUD: `getAllRows()`, `putRow()`, `deleteRow()`, `getRow()` | new file |
+| 3 | Implement `migrate_from_staging_json()` — one-shot conversion, generate activity_ids if missing | new file |
+| 4 | Wire `StagingHashIndex.build(store)` — reads from SQLite, builds sorted index | `core/staging_hash_index.py` |
+| 5 | Wire `SqliteStagingStore` into `StagingService.check_and_sync()` — replace LocalCache reads/writes | `domain/staging/service.py` |
+| 6 | Switch merge to activity_id-based LWW (currently entry_id-based) | `domain/staging/merge_engine.py` |
+| 7 | Update `_reconcile_and_claim()` to use StagingStore + mergeEntries | `domain/staging/service.py` |
+| 8 | Tests: SqliteStagingStore CRUD (~30), migration (~10), sync gate wiring (~30), integration (~20) | test files |
+
+**Test plan:** ~66 tests from `ROW_LEVEL_STAGING_SYNC_PLAN.md` categories E–J.
+
+**Effort:** Medium (~1-2 days). **Blocks:** CCS-4 (CLI cross-client testing).
+
+---
+
+### 🔜 CCS-4: Cross-Client E2E Testing
+
+**Depends on:** CCS-2 ✅ (Web), CCS-3 ✅ (CLI)
+
+**Goal:** Verify full staging sync interoperability between all client pairs against a live Worker.
+
+**Test pairs:**
+
+| Pair | What to Verify | Test Environment |
+|------|---------------|-----------------|
+| Flutter ↔ Web | Same MK → create entries on Flutter, sync, pull on Web → entries match | Emulator + Vivaldi browser |
+| Flutter ↔ CLI | Same MK → create entries on Flutter, sync, pull via CLI → entries match | Emulator + Python CLI |
+| Web ↔ CLI | Same MK → create entries on Web, sync, pull via CLI → entries match | Vivaldi browser + Python CLI |
+
+**Key assertions per pair:**
+1. Hash index is byte-identical across clients (same SHA-256)
+2. Obfuscated blob is byte-identical (same plaintext + MK → same ciphertext)
+3. Merge produces identical result regardless of which client merges
+4. Cookie specifier matches across clients (same MK + device_id → same specifier)
+5. Committed entries cleaned up on both sides after one client commits
+
+**Existing E2E infra:** `tests/test_cross_platform_integration.py` (CLI ↔ Worker), `BROWSER_E2E_TEST_PLAN.md` (Web E2E).
+
+**Effort:** Medium (~1-2 days). **Blocks:** None (final validation gate).
 
 ---
 
@@ -363,7 +455,9 @@ cannot actually be rotated — it's all infrastructure and no action.
 
 **Status:** Deferred. Infrastructure exists (`GitStagingTransport` implemented, 37 tests pass, blob obfuscation done). Remaining: `init --git-create` (GitHub API PAT → create private repo).
 
-**Next action:** After browser client reaches parity with CLI sync features.
+**Note:** Consolidated into CCS goal (§CCS-1 through CCS-4 above) — single-blob + hash index model (Model C) is canonical. Git transport is an alternative backend, not a separate staging architecture.
+
+**Next action:** After cross-client staging sync is fully interoperable.
 
 ---
 
@@ -394,9 +488,10 @@ cannot actually be rotated — it's all infrastructure and no action.
 | **4** — Architectural | I-01, I-01a, I-09, I-12 (4) | ✅ Complete |
 | **5** — Cross-client | P1, indent=2 (2) | ✅ Complete |
 | **6** — CLI polish | P5, P4 (2) | ✅ Complete |
-| **7** — Remote sync | P3 (1) | 🔵 Deferred |
+| **7** — Remote sync | P3 (git-based, deferred) | 🔵 Deferred |
 | **8** — Per-activity encryption | P6 (Web, 61), P7 (CLI, 72) | ✅ Complete |
-| **Flutter** — Mobile app | Models (94), Crypto FFI (74), Services (65), Storage (100), Sync Core (106), Screens (109), Ledger Engine (196) — 7 modules, 744 assertions | ✅ Phases 1-4 complete (747/747 GREEN) |
+| **CCS** — Cross-Client Staging Sync | CCS-1 (Flutter verify), CCS-2 (Web wire), CCS-3 (CLI row store), CCS-4 (E2E testing) | 🔴 🟠 Active |
+| **Flutter** — Mobile app | Models (94), Crypto FFI (74), Services (65), Storage (100), Sync Core (106), Screens (109), Ledger Engine (196) — 7 modules, 744 assertions + B-03 (110) + B-04 (56) | ✅ Phases 1-4 complete (~1500 tests) |
 
 **Resolved:** I-07 (format_version in seal) ✅, I-17 (day_hash → block_hash) ✅, I-12 (system architecture doc) ✅ — Canonical Ledger Format, 2026-07-17.
 

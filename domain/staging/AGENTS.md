@@ -17,6 +17,7 @@ Staging area management for pending activity entries before they are committed t
 - Depends on `domain/cookie/` for device cookie logic
 
 ## Work Guidance
+- **Cross-client sync plan**: `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — implementation plan and scorecard. Primary reference: `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (abstract protocol workflow).
 - Always gate write access through `StagingService`
 - Use `check_and_sync()` before any operation
 - Merge engine deduplicates by `entry_id` — never create duplicates
