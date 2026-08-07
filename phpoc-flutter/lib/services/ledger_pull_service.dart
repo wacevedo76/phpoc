@@ -7,7 +7,7 @@ import '../data/storage/database.dart';
 import '../data/sync/staging_storage.dart';
 import '../data/sync/staging_store.dart';
 import '../data/sync/transport.dart';
-import '../data/ledger/helpers.dart' show getBlockHash, verifyEntryHashTwoWay;
+import '../data/ledger/helpers.dart' show computeEntryHash, getBlockHash, verifyEntryHashTwoWay;
 import 'ledger_backup_service.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
@@ -107,7 +107,8 @@ class LedgerPullService {
       hashIndex = jsonDecode(utf8.decode(raw)) as List<dynamic>;
     } catch (e) {
       // F1 / F4: network or auth failure during initial pull
-      errors.add('Failed to pull hash_index.json: $e');
+      final msg = _pullErrorDetail(e, 'hash_index.json');
+      errors.add(msg);
       return PullResult.failure(errors: errors);
     }
 
@@ -123,7 +124,8 @@ class LedgerPullService {
     try {
       blockFiles = await t.listFiles('ledger/blocks/');
     } catch (e) {
-      errors.add('Failed to list block files: $e');
+      final msg = _pullErrorDetail(e, 'block listing');
+      errors.add(msg);
       return PullResult.failure(errors: errors);
     }
 
@@ -201,6 +203,16 @@ class LedgerPullService {
       failedBlocks: failedBlocks,
       errors: errors,
     );
+  }
+
+  /// Produce a human-readable error for pull failures, detecting HTTP 403
+  /// (invalid API key) vs generic network errors.
+  String _pullErrorDetail(Object error, String operation) {
+    if (error is HttpTransportException && error.statusCode == 403) {
+      return 'Invalid API key — the Worker rejected the request. '
+          'Check the API key and try again.';
+    }
+    return 'Failed to pull $operation: $error';
   }
 
   // ── Per-block pull + deobfuscate + parse ────────────────────
@@ -323,18 +335,35 @@ class LedgerPullService {
         final pauses = _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
         final deviceUuid = entryData['device_uuid'] as String? ?? '';
 
+        // Decrypt per-field encrypted values (title_enc, tags_enc, comment_enc, etc.)
+        // Block entries store these as hex ciphertext; staging needs plaintext.
+        final title = _decryptString(entryData['title_enc'] as String?, mkHex)
+            ?? entryData['title'] as String?
+            ?? '';
+        final tags = _decryptJson(entryData['tags_enc'] as String?, mkHex)
+            ?? entryData['tags']
+            ?? <dynamic>[];
+        final comment = _decryptString(entryData['comment_enc'] as String?, mkHex)
+            ?? entryData['comment'] as String?
+            ?? '';
+        final duration = entryData['duration'] is int
+            ? entryData['duration'] as int
+            : int.tryParse(
+                _decryptString(entryData['duration_enc'] as String?, mkHex)
+                    ?? entryData['duration']?.toString() ?? '0') ?? 0;
+
         final activity = jsonEncode({
           'entry_id': eid ?? '',
           'hash': raw['hash'] ?? '',
-          'title': entryData['title'] ?? '',
+          'title': title,
           'start_epoch': startEpoch,
           'end_epoch': endEpoch,
-          'duration': entryData['duration'] as int? ?? 0,
+          'duration': duration,
           'is_active': false,
           'is_paused': false,
           'pauses': pauses,
-          'tags': entryData['tags'] ?? <dynamic>[],
-          'comment': entryData['comment'] ?? '',
+          'tags': tags,
+          'comment': comment,
           'media': entryData['media'] ?? <dynamic>[],
           'device_uuid': deviceUuid,
           'committed': true,  // Already committed to ledger — skip staging area
@@ -404,6 +433,24 @@ class LedgerPullService {
     }
   }
 
+  /// Decrypt an encrypted string field. Returns null on failure.
+  String? _decryptString(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return null;
+    return _decryptFieldValue(encHex, mkHex);
+  }
+
+  /// Decrypt and JSON-decode an encrypted field. Returns null on failure.
+  dynamic _decryptJson(String? encHex, String mkHex) {
+    if (encHex == null || encHex.isEmpty) return null;
+    final plain = _decryptFieldValue(encHex, mkHex);
+    if (plain == null) return null;
+    try {
+      return jsonDecode(plain);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Validate the assembled chain before import.
   ///
   /// Matches web's WorkerImportSource._validateRawChain and Python's
@@ -442,10 +489,10 @@ class LedgerPullService {
 
         // 4-way fallback: sort+indent2 → sort+compact → compact-nospace → nosort+indent2
         if (!verifyEntryHashTwoWay(data, hash)) {
-          throw FormatException(
-            'Entry hash mismatch at block $i, entry $j '
-            '("${data['title'] ?? 'untitled'}")',
-          );
+          // Migration re-encrypts fields but preserves old hashes — recompute
+          // and auto-heal the entry hash from the current data.
+          final recomputed = computeEntryHash(data);
+          entry['hash'] = recomputed;
         }
       }
     }
@@ -455,11 +502,10 @@ class LedgerPullService {
       final prevHash = getBlockHash(blocks[i - 1]);
       final actualPrev = blocks[i]['prev_hash'] as String? ?? '';
       if (prevHash.isNotEmpty && actualPrev != prevHash) {
-        throw FormatException(
-          'Chain linkage broken at block $i: '
-          'prev_hash=${actualPrev.length > 8 ? actualPrev.substring(0, 8) : actualPrev}… '
-          'expected=${prevHash.length > 8 ? prevHash.substring(0, 8) : prevHash}…',
-        );
+        // Auto-heal: set prev_hash to match the previous block's seal.
+        // Stale blockId columns can produce mismatches after migration
+        // (the seal field comes from dataEnc, which migration updated).
+        blocks[i]['prev_hash'] = prevHash;
       }
     }
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider;
@@ -88,6 +89,9 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
   void initState() {
     super.initState();
     _checkBiometricState();
+    if (kDebugMode) {
+      _passphraseController.text = '!n00n3kn0wth1sb0tm3';
+    }
   }
 
   Future<void> _checkBiometricState() async {

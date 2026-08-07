@@ -214,10 +214,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       });
       // Debug-mode pre-fill from TEST_CREDENTIALS.md (stripped in release builds)
       if (kDebugMode) {
-        _seedController.text = 'RtwewIHiZc9fCSUb8HRATJ8T8X5+9CNN1pzMJpFJAl0=';
-        _passphraseController.text = '123456789';
-        _workerUrlController.text = 'https://phpoc-staging-testing.wacevedo.workers.dev';
-        _workerApiKeyController.text = 'MKNuQP92x2+fJyNRmoW6w9lTCbDh0lKm';
+        _seedController.text = 'APuJ75EWteCJm9ix0/xHY+/JojRehcXwZR5XiQWmeU0=';
+        _passphraseController.text = '!n00n3kn0wth1sb0tm3';
+        _workerUrlController.text = 'https://phpoc-staging.wacevedo.workers.dev';
+        _workerApiKeyController.text = '78hX3rbf/m/iuoVV1bIFCEDqsqQW+csp';
       }
     }
   }

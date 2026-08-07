@@ -77,6 +77,12 @@ class PhpSpecFormat {
     final sealField = sealFieldNames[typeStr] ?? '${typeStr}_hash';
     final entries = extractEntries(block.dataEnc);
 
+    // Use the hash from dataEnc as the seal field value, falling back
+    // to block.blockId (DB column) when dataEnc can't be decoded.
+    // Migration recomputes hashes inside dataEnc; blockId may be stale.
+    final dataHash = extractHash(block.dataEnc, typeStr);
+    final sealValue = dataHash ?? block.blockId;
+
     // All blocks include date (Python genesis seal includes date per
     // core/factory.py — genesis is NOT sealed without it).
     // Must be placed before prev_hash so that key order matches
@@ -87,11 +93,11 @@ class PhpSpecFormat {
       kDate: FormatUtils.epochToIsoDate(block.createdAt),
       kPrevHash: block.prevHash,
       kEntries: entries,
-      sealField: block.blockId,
+      sealField: sealValue,
     };
 
     // Include block_hash as a convenience for consumers (same as seal field).
-    result[kBlockHash] = block.blockId;
+    result[kBlockHash] = sealValue;
 
     // Preserve identity_seal as a separate field when present.
     if (block.identitySeal != null) {
@@ -123,5 +129,23 @@ class PhpSpecFormat {
       // data_enc is opaque or malformed
     }
     return [];
+  }
+
+  /// Extract the seal hash from a block's [dataEnc] field.
+  ///
+  /// Returns the type-appropriate hash (block_hash, day_hash, etc.)
+  /// or null if dataEnc cannot be decoded.
+  static String? extractHash(String dataEnc, String typeStr) {
+    try {
+      final decoded = utf8.decode(base64.decode(dataEnc));
+      final parsed = jsonDecode(decoded);
+      if (parsed is Map<String, dynamic>) {
+        final sealField = sealFieldNames[typeStr] ?? '${typeStr}_hash';
+        return parsed[sealField] as String?;
+      }
+    } catch (_) {
+      // data_enc is opaque or malformed
+    }
+    return null;
   }
 }

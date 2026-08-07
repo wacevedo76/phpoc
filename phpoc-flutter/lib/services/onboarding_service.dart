@@ -124,10 +124,19 @@ class OnboardingService {
     final mk = crypto.deriveMasterKey(seedB64);
     crypto.setMasterKey(mk);
 
-    // Persist genesis + device identity before any network operations.
-    await _postImportSetup(passphrase, seedB64);
+    // 6. Pull from cloud FIRST — only persist genesis + device identity
+    //    AFTER a successful pull so failed restores don't leave the app
+    //    half-initialized (genesis exists but chain is empty).
+    final result = await _pullFromCloud(workerUrl, apiKey, passphrase, seedB64);
 
-    return await _pullFromCloud(workerUrl, apiKey, passphrase, seedB64);
+    if (result.success) {
+      await _postImportSetup(passphrase, seedB64);
+    } else {
+      // Clean up: clear MK cache so next attempt starts fresh
+      crypto.clearMasterKey();
+    }
+
+    return result;
   }
 
   /// Connect to a Cloudflare Worker for remote sync.
@@ -320,7 +329,12 @@ class OnboardingService {
           .timeout(const Duration(seconds: 20));
       connected = true;
     } catch (e) {
-      connectError = 'Cannot reach Worker at $workerUrl: $e';
+      if (e is HttpTransportException && e.statusCode == 403) {
+        connectError = 'Invalid API key — the Worker at $workerUrl '
+            'rejected the connection. Check the API key and try again.';
+      } else {
+        connectError = 'Cannot reach Worker at $workerUrl: $e';
+      }
     }
 
     PullResult? pullResult;
@@ -330,13 +344,6 @@ class OnboardingService {
       try {
         pullResult = await ledgerPullService!.pullAll()
             .timeout(const Duration(seconds: 120));
-
-        // Re-create genesis after pull: importFromJson wipes all blocks
-        // including the Flutter-format genesis. R2 genesis uses a different
-        // format that AuthService can't read.
-        if (pullResult!.blocksPulled > 0) {
-          await _buildAndPersistGenesis(passphrase, seedB64);
-        }
       } catch (e) {
         if (e is TimeoutException) {
           pullError = 'Connection timed out while pulling blocks. '
@@ -348,7 +355,11 @@ class OnboardingService {
     }
 
     // Pull staging entries from remote (best-effort).
-    if (connected && pullError == null) {
+    // Only needed when no blocks were pulled — block pull already
+    // seeds staging via _seedStagingFromBlocks. Running both would
+    // create duplicate entries because the phone's staging/blob uses
+    // different activity_id values than the block-seeded entries.
+    if (connected && pullError == null && pullResult == null) {
       try {
         await syncService.initialPull();
       } catch (_) {

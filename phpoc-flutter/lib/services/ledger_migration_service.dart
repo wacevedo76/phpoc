@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../core/crypto/crypto_service.dart';
 import '../core/models/block.dart';
 import '../data/ledger/chain.dart';
+import '../data/ledger/helpers.dart' show computeEntryHash;
 import '../data/storage/database.dart';
 
 /// One-time chain migration: re-encrypt all entry field values with the
@@ -109,7 +110,7 @@ class LedgerMigrationService {
       final newDataEnc = base64.encode(utf8.encode(json.encode(migratedData)));
 
       migrated.add(Block(
-        blockId: block.blockId,
+        blockId: newHash,
         blockType: block.blockType,
         blockIndex: block.blockIndex,
         keyVersion: block.keyVersion,
@@ -216,8 +217,12 @@ class LedgerMigrationService {
       final migratedEntryData =
           _migrateEntryData(Map<String, dynamic>.from(entryData));
 
+      // Recompute entry hash from migrated data so hashes stay consistent
+      // with the re-encrypted fields.
+      final newHash = computeEntryHash(migratedEntryData);
+
       return {
-        'hash': entry['hash'],
+        'hash': newHash,
         'data': migratedEntryData,
       };
     }).toList();
