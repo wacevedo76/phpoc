@@ -17,6 +17,7 @@ from core.factory import LedgerFactory
 from phpoc_cli.interface import CLIInterface
 from phpoc_cli.cli_view import CLIView
 from phpoc_cli.trace import trace
+from phpoc_cli.migrate_format import MigrateFormatCommand
 from domain.staging.service import StagingService, SyncCheckResult
 from domain.ledger.engine import LedgerEngine
 from core.sync import SyncOrchestrator
@@ -145,6 +146,19 @@ def main():
 
     # Tags command
     subparsers.add_parser("tags", help="List all unique tags ever used")
+
+    # Migrate-format command
+    migrate_fmt_p = subparsers.add_parser(
+        "migrate-format",
+        help="Migrate ledger to format_version 0.4.0 (recompute content hashes)"
+    )
+    migrate_fmt_p.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+    migrate_fmt_p.add_argument("--file", type=str, dest="migrate_file",
+                                help="Path to ledger.json (default: data dir ledger.json)")
+    migrate_fmt_p.add_argument("--output", type=str, dest="migrate_output",
+                                help="Write migrated ledger to this path (default: overwrite input)")
+    migrate_fmt_p.add_argument("--force", action="store_true",
+                                help="Force full re-hash even if ledger is already at format_version 0.4.0")
 
     # Sync command
     sync_parser = subparsers.add_parser("sync", help="Sync staged habits to the ledger, push/pull ledger blocks to remote")
@@ -604,7 +618,7 @@ def main():
     
     # Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
     # These modify the ledger or perform irreversible operations.
-    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert"]
+    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert", "migrate-format"]
     
     # Read-only commands that SHOULD use a cached session if available
     # but can proceed without one (cookie-based auth handles remote access).
@@ -762,6 +776,28 @@ def main():
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
+    elif args.command == "migrate-format":
+        print("[migrate-format] Starting format migration to 0.4.0…")
+        print()
+        migrate_file = getattr(args, 'migrate_file', None)
+        migrate_output = getattr(args, 'migrate_output', None)
+        migrator = MigrateFormatCommand(
+            data_dir=CONFIG_DIR,
+            seed=auth.get_key() if auth else None,
+            identity_secret=None,
+            ledger_path=Path(migrate_file) if migrate_file else None,
+            output_path=Path(migrate_output) if migrate_output else None,
+        )
+        skip_prompt = getattr(args, 'yes', False)
+        force = getattr(args, 'force', False)
+        success = migrator.execute(skip_prompt=skip_prompt, force=force)
+        if success:
+            if migrate_output:
+                print(f"\nMigrated ledger written to: {migrate_output}")
+            else:
+                print("\nMigration successful.")
+        else:
+            print("\nMigration failed — your original ledger has been preserved.")
     elif args.command == "dev":
         dev_action = getattr(args, 'dev_action', None)
         if dev_action == "cookie":

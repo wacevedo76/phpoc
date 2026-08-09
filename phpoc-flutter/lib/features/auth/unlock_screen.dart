@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider;
@@ -25,6 +24,8 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
   bool _isBioLoading = false;
   bool _biometricsAvailable = false;
   bool _biometricEnabled = false;
+  bool _isWiping = false;
+  String? _wipeErrorMessage;
 
   @override
   void dispose() {
@@ -89,9 +90,6 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
   void initState() {
     super.initState();
     _checkBiometricState();
-    if (kDebugMode) {
-      _passphraseController.text = '!n00n3kn0wth1sb0tm3';
-    }
   }
 
   Future<void> _checkBiometricState() async {
@@ -146,6 +144,61 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       _errorMessage = null;
       _bioErrorMessage = null;
     });
+  }
+
+  Future<void> _showWipeConfirmation() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Wipe Ledger'),
+        content: const Text(
+          'This will permanently delete all local data:\n'
+          '• All ledger entries and blocks\n'
+          '• All staging data\n'
+          '• Your master key and credentials\n\n'
+          'Cloud data (R2) will NOT be affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Wipe Ledger'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _executeWipe();
+    }
+  }
+
+  Future<void> _executeWipe() async {
+    setState(() {
+      _isWiping = true;
+      _wipeErrorMessage = null;
+    });
+
+    try {
+      final authService = ref.read(authServiceProvider);
+      await authService.wipeLedger();
+
+      if (!mounted) return;
+      final lifecycle = ref.read(appLifecycleProvider.notifier);
+      lifecycle.goToLanding();
+    } on Exception catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isWiping = false;
+        _wipeErrorMessage = e.toString();
+      });
+    }
   }
 
   @override
@@ -242,8 +295,39 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                         : const Text('Unlock'),
                   ),
                 ),
+                const SizedBox(height: 16),
+                // Wipe Ledger button
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: (_isLoading || _isWiping) ? null : _showWipeConfirmation,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                    child: _isWiping
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text('Wipe Ledger'),
+                  ),
+                ),
+                if (_wipeErrorMessage != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _wipeErrorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
 
-              ],
+              ]
             ),
           ),
         ),

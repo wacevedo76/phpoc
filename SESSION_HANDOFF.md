@@ -10,28 +10,40 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux`
-- **Flutter test suite:** 1544/1586 passing (42 failing: all pre-existing)
+- **Flutter test suite:** 1600/1663 passing (63 failing: all pre-existing)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
+- **Active TDD:** None — Verify/Restore Fix Plan B ✅ complete → archived to `docs/planning/archive/SESSION_HISTORY_2026-07-26.md`
 
 ## Cross-Client Staging Sync — Reference Chain
-- **Plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — phases, scorecard, dependencies
-- **Protocol:** `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 — abstract state machine (18 gates, merge algorithm, invariants)
-- **Backlog:** `docs/planning/BACKLOG.md` §CCS — consolidated task tracking
+- **Plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md`
+- **Protocol:** `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12
+- **Backlog:** `docs/planning/BACKLOG.md` §CCS
 
 ## Immediate Next Steps 🎯
 
-### ✅ CCS-1b: 4-Phase TDD Complete ✅
-
-**Blueprint:** `docs/planning/CCS1b_PHASE1.md` — 16 assertions across 5 groups (A–E)
-**Phase 2:** 11 RED tests → `phpoc-flutter/test/core/crypto/crypto_service_test.dart` Group L
-**Phase 3:** 11 GREEN → `phpoc-flutter/lib/core/crypto/crypto_service.dart` `obfuscateBlobDeterministic()`
-**Phase 4:** 1 improvement — extracted `_obfuscateBlobCore()` (modularity: eliminated ~30 lines of duplication between `obfuscateBlob()` and `obfuscateBlobDeterministic()`; clarity: now clear both methods share the same wire format via a single implementation)
-**Full suite:** 85/85 crypto tests GREEN, 1544/1586 total
-
-### Next Up
+### 🔜 Queued
 - **CCS-2:** Web — wire `RowStagingStore` + `StagingHashIndex` + `mergeEntries` into `sync.js`
 - **CCS-3:** CLI — build `SqliteStagingStore`, switch to activity_id LWW, wire into `StagingService`
 - **CCS-4:** Cross-client E2E testing (Flutter↔Web, Flutter↔CLI, Web↔CLI)
+- **Staging Auto-Sync:** bidirectional `checkAndSync()` — `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
+
+### 🔜 In Progress: `ph migrate-format` — Canonical 0.4.0 Rehash
+- Built `phpoc_cli/migrate_format.py` + standalone `migrate-format.py` (project root)
+- ```--force``` flag bypasses the >=0.4.0 guard; full rehash + re-seal of ALL block types
+- Fixed: ```key_version``` default 0, stray ```block_hash``` stripping, non-day block re-sealing
+- Verified on real 129-block ledger: content hashes 270/270 canonical, `chain.verify()` True
+- Tests: `tests/test_migrate_format.py` (17 green)
+
+### ✅ Completed: Verify/Restore Fix Plan B (4-Phase TDD) → ARCHIVED
+- 65 assertions, 57 tests, 7 modified + 2 new files
+- Phase 4: 6 improvements (DecryptHelpers mixin, generateActivityId(), _sealFields, _prevHashValid(), _updateGenesisSeedEncIfNeeded())
+- Full archive: `docs/planning/archive/SESSION_HISTORY_2026-07-26.md`
+
+### ✅ Completed: Verify Ledger — Settings Card
+- Verify Ledger tile in Security card. 23/23 settings tests GREEN.
+
+### ✅ Completed: CCS-1b
+- `obfuscateBlobDeterministic()` with `_obfuscateBlobCore()`. 85/85 crypto tests GREEN.
 
 ---
 
@@ -41,6 +53,6 @@
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 
 ## Known Issues
-- 2 pre-existing `restore_integration` flaky tests (G3, G8) — pass in isolation, fail in full suite due to test isolation
-- `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie (line 738, `staging/blobs/current.json`). Only hit when `stagingStore == null` (legacy LocalCache fallback, never reached in normal operation). Remove after legacy path cleanup.
-
+- 2 pre-existing `restore_integration` flaky tests (G3, G8) — pass in isolation, fail in full suite
+- `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie. Remove after legacy path cleanup.
+- **🟢 `verify()` after cloud restore** — FIXED (Plan B: RC1–RC3 resolved). See `docs/planning/VERIFY_RESTORE_FIX_PLAN_B.md`.

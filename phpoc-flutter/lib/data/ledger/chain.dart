@@ -55,7 +55,7 @@ class LedgerChain {
     };
 
     // Compute block_hash: seal over the genesis content
-    final blockHash = _sealBlock(gen, 'block_hash');
+    final blockHash = _sealBlock(gen);
     gen['block_hash'] = blockHash;
 
     // Identity seal over block_hash
@@ -113,7 +113,7 @@ class LedgerChain {
     };
 
     // Compute day_hash
-    final dayHash = _sealBlock(block, 'day_hash');
+    final dayHash = _sealBlock(block);
     block['day_hash'] = dayHash;
 
     // Identity seal
@@ -217,12 +217,8 @@ class LedgerChain {
       final block = blocks[i];
 
       // Check prev_hash linkage (except first block)
-      if (i > 0) {
-        final expected = getBlockHash(blocks[i - 1]);
-        final actual = block['prev_hash'] as String? ?? '';
-        if (expected.isNotEmpty && actual != expected) {
-          return false;
-        }
+      if (!_prevHashValid(i > 0 ? blocks[i - 1] : null, block)) {
+        return false;
       }
 
       // Check block seal
@@ -252,28 +248,18 @@ class LedgerChain {
           if (!verifyEntryHashTwoWay(data, hash)) return false;
 
           // Verify content_hash
-          if (requireContentHash) {
-            final contentHash = data['content_hash'] as String?;
-            if (contentHash == null || contentHash.isEmpty) return false;
+          final contentHash = data['content_hash'] as String?;
+          final hasContentHash = contentHash != null && contentHash.isNotEmpty;
 
+          if (requireContentHash && !hasContentHash) return false;
+
+          if (hasContentHash) {
             if (!verifyContentHash(
               data,
               contentHash,
               decryptFn: (c) => crypto.decryptWithCachedKey(c),
             )) {
               return false;
-            }
-          } else {
-            // Content hash optional but verify if present
-            final contentHash = data['content_hash'] as String?;
-            if (contentHash != null && contentHash.isNotEmpty) {
-              if (!verifyContentHash(
-                data,
-                contentHash,
-                decryptFn: (c) => crypto.decryptWithCachedKey(c),
-              )) {
-                return false;
-              }
             }
           }
         }
@@ -297,10 +283,8 @@ class LedgerChain {
     final block = blocks[index];
 
     // Check prev_hash for non-zero blocks
-    if (index > 0) {
-      final expected = getBlockHash(blocks[index - 1]);
-      final actual = block['prev_hash'] as String? ?? '';
-      if (expected.isNotEmpty && actual != expected) return false;
+    if (!_prevHashValid(index > 0 ? blocks[index - 1] : null, block)) {
+      return false;
     }
 
     // Check seal
@@ -386,23 +370,46 @@ class LedgerChain {
   // Internal helpers
   // ═══════════════════════════════════════════════════════════════
 
+  /// Canonical PHPSPEC seal fields shared across all block types.
+  /// Only {type, day_index, date, prev_hash, entries} are sealed — extra
+  /// metadata like format_version, key_version, username are not part of the
+  /// seal and therefore not needed for cross-client verification.
+  static const _sealFields = ['type', 'day_index', 'date', 'prev_hash', 'entries'];
+
+  /// Verify prev_hash linkage between [prev] and [current] blocks.
+  bool _prevHashValid(Map<String, dynamic>? prev, Map<String, dynamic> current) {
+    if (prev == null) return true; // First block has no predecessor
+    final expected = getBlockHash(prev);
+    final actual = current['prev_hash'] as String? ?? '';
+    if (expected.isEmpty) return true; // No hash to compare
+    return actual == expected;
+  }
+
   /// Count existing day blocks (for day_index computation).
   int _countDayBlocks() {
     return getDayBlocks().length;
   }
 
-  /// Compute a seal over [block] content, excluding [hashKey] and identity_seal.
-  String _sealBlock(Map<String, dynamic> block, String hashKey) {
+  /// Compute a seal over the canonical PHPSPEC seal fields of [block].
+  ///
+  /// Only includes {type, day_index, date, prev_hash, entries} — the
+  /// standard seal fields shared across all clients. Extra metadata like
+  /// format_version, key_version, username, etc. are NOT part of the seal.
+  String _sealBlock(Map<String, dynamic> block) {
     final sealData = <String, dynamic>{};
-    for (final entry in block.entries) {
-      if (entry.key != hashKey && entry.key != 'identity_seal') {
-        sealData[entry.key] = entry.value;
+    for (final field in _sealFields) {
+      if (block.containsKey(field)) {
+        sealData[field] = block[field];
       }
     }
     return computeSeal(sealData);
   }
 
-  /// Verify a block's internal seal.
+  /// Verify a block's internal seal using the 3-way fallback in [verifySeal].
+  ///
+  /// Extracts only the canonical PHPSPEC seal fields ({type, day_index, date,
+  /// prev_hash, entries}) and verifies the stored hash against all three
+  /// cross-client serialization formats.
   bool _verifyBlockSeal(Map<String, dynamic> block) {
     final type = block['type'] as String?;
     if (type == null) return false;
@@ -428,8 +435,16 @@ class LedgerChain {
     final storedHash = block[hashKey] as String?;
     if (storedHash == null || storedHash.isEmpty) return false;
 
-    final expectedHash = _sealBlock(block, hashKey);
-    return storedHash == expectedHash;
+    // Extract canonical PHPSPEC seal fields for verification.
+    final sealData = <String, dynamic>{};
+    for (final field in _sealFields) {
+      if (block.containsKey(field)) {
+        sealData[field] = block[field];
+      }
+    }
+
+    // Use verifySeal's 3-way fallback (jsonSort / jsonSortIndent2 / no-space)
+    return verifySeal(sealData, storedHash);
   }
 
 }

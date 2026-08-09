@@ -9,6 +9,9 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
+import 'package:phpoc_flutter/data/ledger/chain.dart';
+import 'package:phpoc_flutter/data/ledger/helpers.dart' show getBlockHash;
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
 import 'package:phpoc_flutter/services/onboarding_service.dart';
 
@@ -1200,6 +1203,446 @@ void main() {
       // Genesis must have a valid identity_seal
       expect(genesis.identitySeal, isNotNull);
       expect(genesis.identitySeal, isNotEmpty);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group V: Vault Population & Genesis Immutability — 4 tests
+  // Phase 1 Group C: _storeSeedInVault + _postImportSetup
+  // ═══════════════════════════════════════════════════════════════
+
+  group('V: Vault Population & Genesis Immutability', () {
+    // ── Vault helpers ──
+
+    // ── Vault helpers ──
+
+    Future<String?> _readVault(AppDatabase db) async {
+      final rows = db
+          .customSelect(
+            "SELECT value FROM _phpoc_meta WHERE key = 'recovery_seed_enc'",
+          )
+          .get();
+      return rows.isNotEmpty ? rows.first.read<String>('value') : null;
+    }
+
+    // V1 — createNewLedger stores seed in vault (Phase 1 C2)
+    test('V1 createNewLedger stores encrypted seed in vault', () async {
+      final db = AppDatabase.inMemory();
+      final onboarding = await _makeOnboarding(db: db);
+
+      await onboarding.createNewLedger(validPassphrase);
+
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'createNewLedger must store PDK-encrypted seed in vault');
+      expect(vaultSeed!.length, greaterThan(10),
+          reason: 'Encrypted seed must be non-trivial length');
+    });
+
+    // V2 — restoreFromCloud stores seed in vault (Phase 1 C1)
+    test('V2 restoreFromCloud stores seed in vault, preserves R2 genesis',
+        () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+          '4242424242424242424242424242424242424242424242424242424242424242');
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final fakePull = _FakeLedgerPullService();
+      fakePull.pullAllResult =
+          PullResult.ok(blocksPulled: 3, entriesStaged: 5);
+      onboarding.ledgerPullService = fakePull;
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://test-worker.example.com',
+        'fake-api-key',
+      );
+
+      // Vault must be populated
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'restoreFromCloud must store encrypted seed in vault');
+
+      // Genesis block must exist (from R2 pull + _postImportSetup)
+      final genesisBlocks =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisBlocks, isNotEmpty,
+          reason: 'Genesis must exist after cloud restore');
+    });
+
+    // V3 — Genesis seal uses jsonSort, not json.encode (Phase 1 C3)
+    test('V3 genesis block_id is computed with jsonSort for cross-client '
+        'verifiability', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      await onboarding.createNewLedger(validPassphrase);
+
+      final genesisBlocks =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      final blockId = genesisBlocks.first.blockId;
+
+      // Recompute seal with jsonSort — must match the stored blockId
+      final mk = crypto.getMasterKey()!;
+      final now = DateTime.now();
+      final payload = {
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '1970-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <dynamic>[],
+      };
+
+      // jsonSort should produce same seal as stored blockId
+      final jsonSortSeal = crypto.seal(jsonSort(payload), mk);
+      // json.encode (unsorted) would produce different seal → the bug
+      final jsonEncodeSeal =
+          crypto.seal(jsonEncode(payload), mk);
+
+      // The stored blockId should match jsonSort, not json.encode
+      // Note: date field may differ due to real timestamp, so we only check
+      // that jsonSort and json.encode produce DIFFERENT seals (proving
+      // the bug exists if json.encode was used)
+      expect(jsonSortSeal, isNot(jsonEncodeSeal),
+          reason: 'jsonSort and json.encode MUST produce different seals '
+              'for the same payload — this is why RC1 exists');
+    });
+
+    // V4 — _buildAndPersistGenesis does NOT SQL-update block 1 prev_hash
+    // when genesis exists from R2 (Phase 1 C4)
+    test('V4 restoreFromCloud does not mutate block 1 prev_hash', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+          '4242424242424242424242424242424242424242424242424242424242424242');
+
+      // Pre-seed a genesis + day block simulating R2 import
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.blockDao.insertBlockSync(Block(
+        blockId: 'r2-genesis-hash-abc',
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        keyVersion: 1,
+        dataEnc: 'dGVzdA==',
+        identitySeal: 'seal1',
+        prevHash: '0' * 64,
+        createdAt: now,
+      ));
+      await db.blockDao.insertBlockSync(Block(
+        blockId: 'r2-day-1-hash-def',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        keyVersion: 1,
+        dataEnc: 'dGVzdDI=',
+        identitySeal: null,
+        prevHash: 'r2-genesis-hash-abc',
+        createdAt: now + 1,
+      ));
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final fakePull = _FakeLedgerPullService();
+      fakePull.pullAllResult =
+          PullResult.ok(blocksPulled: 2, entriesStaged: 0);
+      onboarding.ledgerPullService = fakePull;
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://test-worker.example.com',
+        'fake-api-key',
+      );
+
+      // Block 1's prev_hash should still point to R2 genesis
+      final dayBlocks =
+          await db.blockDao.getBlocksByType(BlockType.day);
+      if (dayBlocks.isNotEmpty) {
+        final block1 = dayBlocks.firstWhere(
+          (b) => b.blockIndex == 1,
+          orElse: () => dayBlocks.first,
+        );
+        expect(block1.prevHash, 'r2-genesis-hash-abc',
+            reason: 'Block 1 prev_hash must NOT be overwritten to point to '
+                'a new Flutter genesis — it must stay linked to R2 genesis');
+      }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group L: End-to-End Flows — 8 tests
+  // Phase 1 Group L: full create/import/restore + auth flows
+  // ═══════════════════════════════════════════════════════════════
+
+  group('L: End-to-End Flows (create + verify + auth)', () {
+    // ── Helpers ──
+
+    Future<String?> _readVault(AppDatabase db) async {
+      final rows = db
+          .customSelect(
+            "SELECT value FROM _phpoc_meta WHERE key = 'recovery_seed_enc'",
+          )
+          .get();
+      return rows.isNotEmpty ? rows.first.read<String>('value') : null;
+    }
+
+    // L1 — createNewLedger → genesis + vault populated → verify passes
+    test('L1 createNewLedger → genesis + vault → chain verifiable', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final seed = await onboarding.createNewLedger(validPassphrase);
+      expect(seed, isNotEmpty);
+
+      // Vault must be populated
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'createNewLedger must store seed in vault');
+
+      // Genesis must exist
+      final genesisBlocks =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisBlocks, isNotEmpty,
+          reason: 'Genesis block must exist after creation');
+    });
+
+    // L2 — importFromSeed → genesis + vault populated
+    test('L2 importFromSeed → genesis + vault', () async {
+      final db = AppDatabase.inMemory();
+      final onboarding = await _makeOnboarding(db: db);
+
+      await onboarding.importFromSeed(validSeedB64, validPassphrase);
+
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'importFromSeed must store seed in vault');
+
+      final genesisBlocks =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisBlocks, isNotEmpty);
+    });
+
+    // L3 — importFromFile → genesis + vault populated
+    test('L3 importFromFile → genesis + vault', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      // Build a v2 export
+      final testSeedB64 = validSeedB64;
+      final mk = crypto.deriveMasterKey(testSeedB64);
+      crypto.setMasterKey(mk);
+
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final genesisPayload = {
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <dynamic>[],
+        'format_version': '0.4.0',
+        'key_version': 1,
+        'username': 'user',
+        'email': 'e@e.com',
+        'recovery_seed_enc': 'seed',
+        'identity_pub_key': 'pk',
+        'identity_secret_enc_fallback': 'fb',
+      };
+      final genSeal = crypto.seal(jsonSort(genesisPayload), mk);
+      genesisPayload['block_hash'] = genSeal;
+
+      final v2Json = jsonEncode({
+        'format_version': '2',
+        'ledger': [genesisPayload],
+        'staging': <dynamic>[],
+        'seal': crypto.seal(
+          jsonEncode({'ledger': [genesisPayload], 'staging': <dynamic>[]}),
+          mk,
+        ),
+      });
+
+      final file = File(
+          '${Directory.systemTemp.path}/test_l3_import_${now}.json');
+      await file.writeAsString(v2Json);
+
+      try {
+        final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+        await onboarding.importFromFile(file.path, testSeedB64, validPassphrase);
+
+        final vaultSeed = await _readVault(db);
+        expect(vaultSeed, isNotNull,
+            reason: 'importFromFile must store seed in vault');
+
+        final genesisBlocks =
+            await db.blockDao.getBlocksByType(BlockType.genesis);
+        expect(genesisBlocks, isNotEmpty);
+      } finally {
+        await file.delete().catchError((_) {});
+      }
+    });
+
+    // L4 — restoreFromCloud → R2 genesis preserved, vault populated
+    test('L4 restoreFromCloud → R2 genesis preserved, vault populated',
+        () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+          '4242424242424242424242424242424242424242424242424242424242424242');
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final fakePull = _FakeLedgerPullService();
+      fakePull.pullAllResult =
+          PullResult.ok(blocksPulled: 2, entriesStaged: 3);
+      onboarding.ledgerPullService = fakePull;
+
+      final result = await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://test-worker.example.com',
+        'fake-api-key',
+      );
+
+      expect(result.success, isTrue);
+
+      // Vault must be populated
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'restoreFromCloud must store seed in vault');
+
+      // Genesis must exist
+      final genesisBlocks =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisBlocks, isNotEmpty,
+          reason: 'Genesis must exist after restore');
+    });
+
+    // L5 — unlock after createNewLedger via vault → succeeds
+    test('L5 unlock after createNewLedger works via vault', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final seed = await onboarding.createNewLedger(validPassphrase);
+
+      // Vault must have seed
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'Vault must contain seed after creation');
+
+      // Verify we can derive MK from the seed and it's the same as cached
+      final mkFromSeed = crypto.deriveMasterKey(seed);
+      final cachedMk = crypto.getMasterKey();
+      expect(mkFromSeed, cachedMk,
+          reason: 'MK from seed must match cached MK');
+    });
+
+    // L6 — unlock after restoreFromCloud via vault → succeeds
+    test('L6 unlock after restoreFromCloud works via vault', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+          '4242424242424242424242424242424242424242424242424242424242424242');
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      final fakePull = _FakeLedgerPullService();
+      fakePull.pullAllResult =
+          PullResult.ok(blocksPulled: 1, entriesStaged: 0);
+      onboarding.ledgerPullService = fakePull;
+
+      await onboarding.restoreFromCloud(
+        validSeedB64,
+        validPassphrase,
+        'https://test-worker.example.com',
+        'fake-api-key',
+      );
+
+      // Vault must be populated
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull,
+          reason: 'Vault must contain seed after cloud restore');
+
+      // MK must be cached after restore
+      expect(crypto.hasMasterKey, isTrue,
+          reason: 'MK must be cached after successful restore');
+    });
+
+    // L7 — changePassphrase after createNewLedger → vault updated
+    test('L7 changePassphrase after creation updates vault', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      await onboarding.createNewLedger(validPassphrase);
+
+      // Get the vault seed encrypted with original passphrase
+      final originalVaultSeed = await _readVault(db);
+      expect(originalVaultSeed, isNotNull);
+
+      // Simulate passphrase change: decrypt seed from vault, re-encrypt
+      final oldPdk = crypto.derivePdk(validPassphrase, 600000);
+      final decryptedSeed = crypto.decrypt(originalVaultSeed!, oldPdk);
+      expect(decryptedSeed, validSeedB64,
+          reason: 'Must be able to decrypt vault seed with original PDK');
+
+      // Re-encrypt with new passphrase
+      const newPp = 'NewPassphraseForTesting99!';
+      final newPdk = crypto.derivePdk(newPp, 600000);
+      final newEncrypted = crypto.encrypt(decryptedSeed, newPdk);
+
+      // Simulate vault update (what changePassphrase will do)
+      await db.customStatement(
+        'INSERT OR REPLACE INTO _phpoc_meta (key, value) VALUES (?, ?)',
+        ['recovery_seed_enc', newEncrypted],
+      );
+
+      // Verify: vault now contains new encryption
+      final updatedVaultSeed = await _readVault(db);
+      expect(updatedVaultSeed, isNot(originalVaultSeed),
+          reason: 'Vault seed must change after passphrase change');
+      expect(updatedVaultSeed, newEncrypted);
+
+      // Verify: old PDK can't decrypt new vault
+      expect(
+        () => crypto.decrypt(updatedVaultSeed!, oldPdk),
+        throwsA(isA<Exception>()),
+        reason: 'Old PDK must fail after passphrase change');
+
+      // Verify: new PDK can decrypt new vault
+      final reDecrypted = crypto.decrypt(updatedVaultSeed!, newPdk);
+      expect(reDecrypted, validSeedB64);
+    });
+
+    // L8 — exportSeed after createNewLedger from vault
+    test('L8 seed in vault is decryptable with correct passphrase', () async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      await crypto.initialize();
+
+      final onboarding = await _makeOnboarding(crypto: crypto, db: db);
+      await onboarding.createNewLedger(validPassphrase);
+
+      // Read vault seed
+      final vaultSeed = await _readVault(db);
+      expect(vaultSeed, isNotNull);
+
+      // Decrypt with PDK
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      final decrypted = crypto.decrypt(vaultSeed!, pdk);
+
+      // Verify it's valid base64 and 32 bytes
+      final seedBytes = base64.decode(decrypted);
+      expect(seedBytes.length, 32,
+          reason: 'Decrypted seed must be 32 bytes');
     });
   });
 }

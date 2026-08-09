@@ -34,6 +34,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc_cli/onboarding.py` | HOT | `run_onboarding()` (unified pipeline), `run_onboarding_picker()` (interactive provider picker) — transport-agnostic import, uses canonical `staging/blob` path |
 | `phpoc_cli/onboarding_file.py` | HOT | `run_onboarding_file()` — local JSON file import (v1/v2/chain) |
 | `phpoc_cli/migrate.py` | NEW | `migrate_chain()` — canonical format migration (I-07/I-17) |
+| `phpoc_cli/migrate_format.py` | NEW | `MigrateFormatCommand` — format_version → 0.4.0 canonical rehash: content_hash (jsonSort, strip `_enc`), entry/block re-seal all types, prev_hash chain rebuild, provenance (`original_hash`/`original_entry_hash`), `--force`, key_version-0 default |
+| `migrate-format.py` | NEW | Standalone CLI entry — `python migrate-format.py --file/--output/--dir/--key/--force` (no full CLI dependency) |
 | `phpoc_cli/transport_cmd.py` | COLD | `ph transport` subcommand |
 | `core/sync/orchestrator.py` | HOT | `SyncOrchestrator` — sync lifecycle coordinator + same-genesis merge via `LedgerMerge.merge()` |
 | `core/sync/http_transport.py` | COLD | `HttpStagingTransport` — HTTP GET/PUT/LIST + ETag |
@@ -60,6 +62,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | File | Temp | Key contents |
 |---|---|---|
 | `lib/core/utils/format_utils.dart` | HOT | Shared date/time/duration formatters: dateTime, date, dateShort, time, duration, epochToIsoDate, epochToDateStr, monthAbbr, parseIsoDateStr |
+| `lib/core/utils/decrypt_helpers.dart` | HOT | **NEW (Phase 4 REFACTOR)** — DecryptHelpers mixin: decryptFieldValue, decryptEpoch, decryptPauses — dual-scheme decryption (Flutter raw-MK + Python HMAC sub-key) shared by LedgerPullService and OnboardingService |
+| `lib/core/utils/id_utils.dart` | HOT | **NEW (Phase 4 REFACTOR)** — generateActivityId() — 10-char alphanumeric ID generator shared by LedgerPullService and OnboardingService |
 | `lib/core/models/import_result.dart` | HOT | **NEW (B-02 Phase 3)** — ImportPreview, ImportResult, DateRange, ImportException |
 | `lib/data/ledger/helpers.dart` | HOT | **NEW** — getBlockHash, computeEntryHash, verifyEntryHashTwoWay, computeContentHash, verifyContentHash |
 | `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain: buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, computeSeal, verifySeal, identity MAC |
@@ -167,6 +171,7 @@ Key test files:
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
 - `tests/test_migration.py` — 🔴 27 tests for canonical ledger format migration (Groups A–F), Phase 2 RED (12P/6F/9S, 2026-07-03)
+- `tests/test_migrate_format.py` — 🟢 17 tests for `MigrateFormatCommand` (happy path, provenance, file paths, edge cases, mixe-block re-seal, decrypt pre-validation) — all GREEN
 - `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
 - `testdata/canonical_test_vectors.json` — 🔴 Shared seal test vectors for cross-platform (PY + JS) canonical format tests (2026-07-03)
 - `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
@@ -205,6 +210,8 @@ Key test files:
 | `../planning/CLI_SQLITE_STAGING_PHASE1.md` | 🔜 **NEW** — Phase 1 test blueprint for CLI SQLite staging store: 104 assertions across 10 groups (A–J). |
 | `../planning/CLI_COMMAND_TIMING_FIXES.md` | 🔜 **NEW** — `ph view` latency investigation: 4 fixes (F1–F4) with 4-phase TDD per fix. Target: 16→2–4 HTTP requests, 5–26s→1–4s. (2026-07-14) |
 | `../planning/CLI_COMMAND_TIMING_F2_PHASE1.md` | 🔜 **NEW** — F2 Phase 1 blueprint: persistent cache for remote ledger blocks. 23 assertions across 6 groups (A–F). (2026-07-14) |
+| `../planning/VERIFY_RESTORE_FIX_PLAN_B.md` | 🔜 **ACTIVE** — Approach B: fix `verify()` after cloud restore by making verification tolerant of 3 JSON serialization formats, separating seed storage from genesis block. 6 files, ~120 lines. (2026-08-08) |
+| `../planning/VERIFY_RESTORE_FIX_PLAN_B_PHASE1.md` | 🔜 **ACTIVE** — Phase 1 test exploration for Plan B: 65 assertions across 12 groups (A–L). Phase 2 RED pending. (2026-08-08) |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/SYSTEM_ARCHITECTURE.md` | 🟢 **NEW** — Comprehensive system architecture document: key hierarchy, chain, staging, transport, multi-device sync, cross-platform, crypto core, web, CLI, invariants |

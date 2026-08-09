@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/core/models/pull_result.dart';
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
+import 'package:phpoc_flutter/data/ledger/helpers.dart' show computeEntryHash;
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
 import 'package:phpoc_flutter/data/sync/staging_store.dart';
@@ -1117,6 +1119,406 @@ void main() {
         isTrue,
         reason: 'At least one concurrent call must succeed',
       );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group J: validate-only import (no auto-heal) — 9 tests
+  // Phase 1 Group J: _validateImportedChain rejects bad data
+  // Covers: J1–J9
+  // ═══════════════════════════════════════════════════════════════
+
+  group('J: validate-only import (no auto-heal)', () {
+    // ── Block builder helpers ──
+
+    /// Compute obfuscated block bytes for a single block JSON.
+    Uint8List _obfuscateBlock(
+        CryptoService crypto, Map<String, dynamic> block, String mkHex) {
+      final json = jsonEncode(block);
+      return crypto.obfuscateBlob(json, mkHex);
+    }
+
+    /// Build a valid genesis block with jsonSort seal.
+    Map<String, dynamic> _buildGenesis(CryptoService crypto, String mkHex) {
+      final payload = {
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+      };
+      final seal = crypto.seal(jsonSort(payload), mkHex);
+      return {
+        ...payload,
+        'block_hash': seal,
+        'format_version': '0.4.0',
+        'key_version': 1,
+        'username': 'u',
+        'email': 'e@e.com',
+        'recovery_seed_enc': 'seed',
+        'identity_pub_key': 'pk',
+        'identity_secret_enc_fallback': 'fb',
+      };
+    }
+
+    /// Build a valid day block with correct entry hashes.
+    Map<String, dynamic> _buildDayBlock(
+        CryptoService crypto,
+        String mkHex,
+        String prevHash,
+        List<Map<String, dynamic>> entries,
+        {int dayIndex = 1}) {
+      final normalizedEntries = entries.map((entry) {
+        final data = Map<String, dynamic>.from(entry);
+        data.remove('hash');
+        final hash = computeEntryHash(data);
+        return {'hash': hash, 'data': data};
+      }).toList();
+
+      final payload = {
+        'type': 'day',
+        'day_index': dayIndex,
+        'date': '2025-01-02',
+        'prev_hash': prevHash,
+        'entries': normalizedEntries,
+      };
+      final seal = crypto.seal(jsonSort(payload), mkHex);
+      return {...payload, 'day_hash': seal, 'key_version': 1};
+    }
+
+    /// Create a FakePullTransport with a complete valid chain.
+    FakePullTransport _makeValidTransport(
+        CryptoService crypto, String mkHex, List<Map<String, dynamic>> blocks) {
+      final store = <String, Uint8List>{};
+      for (var i = 0; i < blocks.length; i++) {
+        final path = 'ledger/blocks/${i.toString().padLeft(6, '0')}.json';
+        store[path] = _obfuscateBlock(crypto, blocks[i], mkHex);
+      }
+      // Also include block paths for listFiles to find
+      store['ledger/blocks/'] = Uint8List(0); // marker
+      return FakePullTransport(
+        blockStore: store,
+        hashIndexJson: jsonEncode(List.filled(blocks.length, 'hash')),
+      );
+    }
+
+    /// Create a LedgerPullService with the given transport.
+    LedgerPullService _makePullService({
+      required CryptoService crypto,
+      required AppDatabase db,
+      required FakePullTransport transport,
+    }) {
+      final backupService = LedgerBackupService(db: db);
+      return LedgerPullService(
+        db: db,
+        crypto: crypto,
+        transport: transport,
+        backupService: backupService,
+        stagingStorage: StagingStorage(db),
+        stagingStore: StagingStore(db),
+      );
+    }
+
+    // J1 — Valid chain with correct entry hashes passes validation
+    test('J1 valid chain passes validation (no throw)', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+      final genHash = genesis['block_hash'] as String;
+      final day = _buildDayBlock(crypto, testMkHex, genHash, [
+        {'title': 'Task 1', 'duration': 60},
+        {'title': 'Task 2', 'duration': 120},
+      ]);
+
+      final transport = _makeValidTransport(crypto, testMkHex, [genesis, day]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      final result = await service.pullAll();
+      expect(result.success, isTrue,
+          reason: 'Valid chain with correct entry hashes must import cleanly');
+    });
+
+    // J2 — Entry hash mismatch throws FormatException (no auto-heal)
+    test('J2 entry hash mismatch → pullAll fails (no auto-heal)', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+      final genHash = genesis['block_hash'] as String;
+
+      // Build a day block with intentionally wrong entry hash
+      final badEntry = {
+        'hash': 'ff' * 32, // wrong hash!
+        'data': {'title': 'Bad entry', 'duration': 60},
+      };
+      final payload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genHash,
+        'entries': [badEntry],
+      };
+      final seal = crypto.seal(jsonSort(payload), testMkHex);
+      final badBlock = {...payload, 'day_hash': seal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, badBlock]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<Exception>()),
+        reason: 'Bad entry hashes must cause import failure — no auto-heal',
+      );
+    });
+
+    // J3 — Prev_hash linkage break throws FormatException (no auto-heal)
+    test('J3 prev_hash linkage break → pullAll fails (no auto-heal)', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+
+      // Day block with prev_hash that doesn't link to genesis
+      final payload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': 'ff' * 32, // wrong — should be genesis hash
+        'entries': <Map<String, dynamic>>[],
+      };
+      final seal = crypto.seal(jsonSort(payload), testMkHex);
+      final badBlock = {...payload, 'day_hash': seal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, badBlock]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<Exception>()),
+        reason: 'Prev_hash linkage breaks must cause import failure',
+      );
+    });
+
+    // J4 — Genesis block missing type → throws
+    test('J4 genesis missing type → import fails', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      // Genesis-like block without 'type' field
+      final badGenesis = {
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+        'block_hash': 'aa' * 32,
+        'format_version': '0.4.0',
+        'key_version': 1,
+      };
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [badGenesis]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<Exception>()),
+        reason: 'Missing type field on first block must be detected',
+      );
+    });
+
+    // J5 — Entry that is not a Map → throws
+    test('J5 non-Map entry → import fails', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+      final genHash = genesis['block_hash'] as String;
+
+      // Day block with a string entry instead of Map
+      final payload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genHash,
+        'entries': ['not-a-map'], // invalid entry type
+      };
+      final seal = crypto.seal(jsonSort(payload), testMkHex);
+      final badBlock = {...payload, 'day_hash': seal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, badBlock]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<Exception>()),
+        reason: 'Non-Map entries must be rejected at import',
+      );
+    });
+
+    // J6 — Entry missing hash field → throws
+    test('J6 entry missing hash → import fails', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+      final genHash = genesis['block_hash'] as String;
+
+      // Day block with entry missing hash
+      final payload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genHash,
+        'entries': [
+          {'data': {'title': 'No hash', 'duration': 60}}
+          // missing 'hash' field
+        ],
+      };
+      final seal = crypto.seal(jsonSort(payload), testMkHex);
+      final badBlock = {...payload, 'day_hash': seal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, badBlock]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      expect(
+        () => service.pullAll(),
+        throwsA(isA<Exception>()),
+        reason: 'Entries missing hash field must be rejected',
+      );
+    });
+
+    // J7 — Valid chain with jsonSort entries passes
+    test('J7 jsonSort-format entries → import succeeds', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      final genesis = _buildGenesis(crypto, testMkHex);
+      final genHash = genesis['block_hash'] as String;
+      // _buildDayBlock already uses computeEntryHash + jsonSort seals
+      final day = _buildDayBlock(crypto, testMkHex, genHash, [
+        {'title': 'Flutter entry', 'duration': 100},
+      ]);
+
+      final transport = _makeValidTransport(crypto, testMkHex, [genesis, day]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      final result = await service.pullAll();
+      expect(result.success, isTrue);
+    });
+
+    // J8 — Valid chain with Python-format entries passes
+    test('J8 Python-format entries → import succeeds', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      // Build genesis with Python indent2 seal
+      final genPayload = {
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+        'format_version': '0.4.0',
+        'key_version': 1,
+      };
+      final genSeal = crypto.seal(jsonSortIndent2(genPayload), testMkHex);
+      final genesis = {...genPayload, 'block_hash': genSeal};
+      final genHash = genSeal;
+
+      // Day block with correct entry hash (computed normally) but Python seal
+      final entryData = {'title': 'CLI entry', 'duration': 200};
+      final entryHash = computeEntryHash(entryData);
+      final dayPayload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genHash,
+        'entries': [
+          {'hash': entryHash, 'data': entryData}
+        ],
+      };
+      final daySeal = crypto.seal(jsonSortIndent2(dayPayload), testMkHex);
+      final day = {...dayPayload, 'day_hash': daySeal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, day]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      final result = await service.pullAll();
+      expect(result.success, isTrue,
+          reason: 'Python indent2 formated chain must import and verify');
+    });
+
+    // J9 — Valid chain with JS no-space entries passes
+    test('J9 JS no-space entries → import succeeds', () async {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(testMkHex);
+      final db = AppDatabase.inMemory();
+
+      // Build genesis with JS no-space seal
+      final genPayload = {
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+        'format_version': '0.4.0',
+        'key_version': 1,
+      };
+      final noSpaceGen = jsonSort(genPayload)
+          .replaceAll(' ', '')
+          .replaceAll('\n', '');
+      final genSeal = crypto.seal(noSpaceGen, testMkHex);
+      final genesis = {...genPayload, 'block_hash': genSeal};
+      final genHash = genSeal;
+
+      // Day block with correct entry hash but JS no-space seal
+      final entryData = {'title': 'Web entry', 'duration': 150};
+      final entryHash = computeEntryHash(entryData);
+      final dayPayload = {
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genHash,
+        'entries': [
+          {'hash': entryHash, 'data': entryData}
+        ],
+      };
+      final noSpaceDay = jsonSort(dayPayload)
+          .replaceAll(' ', '')
+          .replaceAll('\n', '');
+      final daySeal = crypto.seal(noSpaceDay, testMkHex);
+      final day = {...dayPayload, 'day_hash': daySeal, 'key_version': 1};
+
+      final transport =
+          _makeValidTransport(crypto, testMkHex, [genesis, day]);
+      final service = _makePullService(
+          crypto: crypto, db: db, transport: transport);
+
+      final result = await service.pullAll();
+      expect(result.success, isTrue,
+          reason: 'JS no-space formated chain must import and verify');
     });
   });
 }

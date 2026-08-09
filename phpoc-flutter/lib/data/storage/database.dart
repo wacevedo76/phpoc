@@ -115,6 +115,29 @@ class AppDatabase {
     _db.execute(statement, args ?? const []);
   }
 
+  // ── Seed vault helpers ──────────────────────────────────
+
+  /// Store a PDK-encrypted recovery seed in the _phpoc_meta table.
+  ///
+  /// Uses INSERT OR REPLACE — repeated calls overwrite the previous value
+  /// (required for changePassphrase which re-encrypts with a new PDK).
+  Future<void> setSeedVault(String encryptedSeed) async {
+    await customStatement(
+      'INSERT OR REPLACE INTO _phpoc_meta (key, value) VALUES (?, ?)',
+      ['recovery_seed_enc', encryptedSeed],
+    );
+  }
+
+  /// Read the PDK-encrypted recovery seed from the _phpoc_meta table,
+  /// or null if no seed has been stored.
+  Future<String?> getSeedVault() async {
+    final rows = customSelect(
+      'SELECT value FROM _phpoc_meta WHERE key = ?',
+      variables: ['recovery_seed_enc'],
+    ).get();
+    return rows.isNotEmpty ? rows.first.read<String>('value') : null;
+  }
+
   int _executeAndGetChanges(String sql, [List<Object?>? args]) {
     _db.execute(sql, args ?? const []);
     return _db.select('SELECT changes() AS cnt', []).first[0] as int;

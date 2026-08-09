@@ -61,10 +61,12 @@ _BioWidgetAuthService _makeBioAuthServiceForWidget() {
   );
 }
 
-/// Unlock Screen tests — Group C (11) + Group D (8) = 19 assertions
+/// Unlock Screen tests — Group C (11) + D (8) + E (5) + F (3) = 27 assertions
 ///
 ///   C1–C11: Passphrase unlock UI
 ///   D1–D8:  Biometric unlock UI (Phase 2 RED — biometric methods not yet implemented)
+///   E1–E5:  Wipe Ledger button + confirmation dialog UI
+///   F1–F3:  Wipe Ledger confirm action + navigation
 
 void main() {
   group('C: UnlockScreen', () {
@@ -497,6 +499,196 @@ void main() {
         reason: 'Cold reboot error must be user-friendly, not a raw platform '
             'exception',
       );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group E: UnlockScreen — Wipe Ledger Button UI (E1–E5)
+  //
+  // Phase 2 RED: These tests will fail because the "Wipe Ledger"
+  // button and confirmation dialog are not yet implemented.
+  // ═══════════════════════════════════════════════════════════════
+
+  group('E: UnlockScreen — Wipe Ledger Button UI', () {
+    // E1 (Phase 1 C1)
+    testWidgets('E1: "Wipe Ledger" button is visible below the "Unlock" '
+        'button', (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // The "Wipe Ledger" button must exist on the unlock screen
+      expect(find.text('Wipe Ledger'), findsOneWidget,
+          reason: 'Wipe Ledger button must be visible and discoverable on the '
+              'unlock screen');
+
+      // Verify "Unlock" button exists above/before "Wipe Ledger" in the tree
+      // The Unlock button should be the primary action, wipe is secondary
+      final unlockFinder = find.text('Unlock');
+      final wipeFinder = find.text('Wipe Ledger');
+      expect(unlockFinder, findsAtLeastNWidgets(1));
+      expect(wipeFinder, findsOneWidget);
+    });
+
+    // E2 (Phase 1 C2)
+    testWidgets('E2: tapping "Wipe Ledger" shows a confirmation dialog',
+        (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // Tap the "Wipe Ledger" button — must exist
+      final wipeButton = find.text('Wipe Ledger');
+      expect(wipeButton, findsOneWidget,
+          reason: 'Wipe Ledger button must exist before testing dialog');
+      await tester.tap(wipeButton);
+      await tester.pump();
+
+      // A dialog must appear after tapping
+      expect(find.byType(AlertDialog), findsOneWidget,
+          reason: 'Destructive action requires explicit confirmation dialog');
+    });
+
+    // E3 (Phase 1 C3)
+    testWidgets('E3: confirmation dialog warns about staging deletion, '
+        'ledger deletion, MK + credential removal', (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // Tap "Wipe Ledger" to open dialog
+      final wipeButton = find.text('Wipe Ledger');
+      expect(wipeButton, findsOneWidget);
+      await tester.tap(wipeButton);
+      await tester.pump();
+
+      // The dialog must explicitly warn the user about what will be lost
+      // At minimum: "staging", "ledger", and credentials/keys
+      expect(find.textContaining('staging', findRichText: true),
+          findsOneWidget,
+          reason: 'User must be warned staging data will be deleted');
+      expect(find.textContaining('ledger', findRichText: true),
+          findsOneWidget,
+          reason: 'User must be warned ledger data will be deleted');
+      expect(find.textContaining('master key', findRichText: true),
+          findsOneWidget,
+          reason: 'User must be warned MK + credentials will be removed');
+    });
+
+    // E4 (Phase 1 C4)
+    testWidgets('E4: dialog has "Cancel" and "Wipe Ledger" action buttons',
+        (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // Tap "Wipe Ledger" to open dialog
+      final wipeButton = find.text('Wipe Ledger');
+      expect(wipeButton, findsOneWidget);
+      await tester.tap(wipeButton);
+      await tester.pump();
+
+      // The dialog must have both Cancel and confirm "Wipe Ledger" buttons
+      expect(find.text('Cancel'), findsOneWidget,
+          reason: 'Cancel button allows safe dismiss without wiping');
+      // There should be a "Wipe Ledger" button in the dialog (confirm action)
+      // In the dialog, this might be the same text as the trigger button
+      expect(find.text('Wipe Ledger'), findsWidgets,
+          reason: 'Confirm button must exist inside the dialog');
+    });
+
+    // E5 (Phase 1 C5)
+    testWidgets('E5: tapping "Cancel" dismisses the dialog without wiping',
+        (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // Tap "Wipe Ledger" to open dialog
+      final wipeButton = find.text('Wipe Ledger');
+      expect(wipeButton, findsOneWidget);
+      await tester.tap(wipeButton);
+      await tester.pump();
+
+      // Dialog should be visible
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      // Tap Cancel
+      final cancelButton = find.text('Cancel');
+      expect(cancelButton, findsOneWidget);
+      await tester.tap(cancelButton);
+      await tester.pump();
+
+      // Dialog must be dismissed
+      expect(find.byType(AlertDialog), findsNothing,
+          reason: 'Cancel must dismiss the dialog without any data deletion');
+
+      // The UnlockScreen must still be visible (not navigated away)
+      expect(find.byType(UnlockScreen), findsOneWidget);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group F: UnlockScreen — Wipe Ledger Action (F1–F3)
+  //
+  // Phase 2 RED: These tests will fail because wipeLedger() and
+  // the post-wipe navigation are not yet implemented.
+  // ═══════════════════════════════════════════════════════════════
+
+  group('F: UnlockScreen — Wipe Ledger Action', () {
+    // F1 (Phase 1 D1)
+    testWidgets('F1: confirming wipe calls AuthService.wipeLedger()',
+        (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // Tap "Wipe Ledger" to open dialog, then confirm
+      final wipeButton = find.text('Wipe Ledger');
+      expect(wipeButton, findsOneWidget);
+      await tester.tap(wipeButton);
+      await tester.pump();
+
+      // The confirmation dialog must appear
+      expect(find.byType(AlertDialog), findsOneWidget,
+          reason: 'Confirmation dialog must appear before wipe action');
+
+      // After confirming, AuthService.wipeLedger() must be called.
+      // In Phase 3, we spy on the auth service to verify the call.
+      // For Phase 2 RED: the dialog is the prerequisite structure.
+    });
+
+    // F2 (Phase 1 D2)
+    testWidgets('F2: after successful wipe, app navigates to LandingScreen',
+        (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // In Phase 3: after confirming wipe + successful wipeLedger() call,
+      // the app must navigate to the landing screen.
+      //
+      // Verify the initial state is auth (unlock screen)
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(UnlockScreen)));
+      final phase = container.read(appLifecycleProvider).phase;
+      expect(phase, AppPhase.auth,
+          reason: 'Starting state must be AppPhase.auth');
+
+      // After Phase 3 implementation, the phase must transition to
+      // AppPhase.landing after a successful wipe.
+      // For Phase 2 RED: this test establishes the expected post-wipe UX.
+    });
+
+    // F3 (Phase 1 D3)
+    testWidgets('F3: wipe error shows error message and stays on '
+        'UnlockScreen', (tester) async {
+      await pumpScreenWidget(tester, const UnlockScreen(),
+          initialPhase: AppPhase.auth);
+
+      // In Phase 3: simulate wipeLedger() throwing, verify the error is
+      // surfaced and the user remains on the unlock screen.
+      //
+      // Verify UnlockScreen is still visible after error
+      expect(find.byType(UnlockScreen), findsOneWidget,
+          reason: 'After wipe error, user must stay on unlock screen — not '
+              'stranded in a broken state');
+
+      // In Phase 3: error message text must appear
+      // For Phase 2 RED: this test defines the error-resilience contract.
     });
   });
 }

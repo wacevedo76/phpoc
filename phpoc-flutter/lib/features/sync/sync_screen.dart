@@ -386,6 +386,17 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         ],
         _buildPendingCount(),
         const SizedBox(height: 16),
+        // Sync Staging: bidirectional LWW merge with remote staging
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _isSyncing ? null : _syncNow,
+            icon: _isSyncing ? _loadingSpinner() : const Icon(Icons.sync),
+            label: Text(_isSyncing ? 'Syncing…' : 'Sync Staging'),
+          ),
+        ),
+        const SizedBox(height: 16),
         // Unified Sync button (overhaul I1)
         SizedBox(
           width: double.infinity,
@@ -410,17 +421,6 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         const SizedBox(height: 16),
         // Push Ledger to Cloud button (only when transport configured)
         _buildPushToCloudButton(),
-        const SizedBox(height: 16),
-        // Legacy sync-to-remote button (kept for backward compat)
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: FilledButton.icon(
-            onPressed: _isSyncing ? null : _syncNow,
-            icon: _isSyncing ? _loadingSpinner() : const Icon(Icons.sync),
-            label: Text(_isSyncing ? 'Syncing…' : 'Sync to Remote'),
-          ),
-        ),
         if (_errorMessage != null) ...[
           const SizedBox(height: 8),
           _buildErrorRow(),

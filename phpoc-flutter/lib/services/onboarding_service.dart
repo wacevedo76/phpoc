@@ -7,7 +7,10 @@ import 'package:flutter/foundation.dart';
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
 import '../../core/models/pull_result.dart';
+import '../../core/utils/decrypt_helpers.dart';
+import '../../core/utils/id_utils.dart';
 import '../../core/utils/format_utils.dart';
+import '../../core/utils/json_utils.dart';
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
@@ -20,7 +23,8 @@ import 'ledger_pull_service.dart';
 ///
 /// Stateless: each method performs its work and returns. State is persisted
 /// via AppPreferences, SecurePreferences, and AppDatabase.
-class OnboardingService {
+class OnboardingService with DecryptHelpers {
+  @override
   final CryptoService crypto;
   final AppDatabase db;
   final AppPreferences preferences;
@@ -130,7 +134,7 @@ class OnboardingService {
     final result = await _pullFromCloud(workerUrl, apiKey, passphrase, seedB64);
 
     if (result.success) {
-      await _postImportSetup(passphrase, seedB64);
+      await _postImportSetup(passphrase, seedB64, keepExistingGenesis: true);
     } else {
       // Clean up: clear MK cache so next attempt starts fresh
       crypto.clearMasterKey();
@@ -361,7 +365,8 @@ class OnboardingService {
     // different activity_id values than the block-seeded entries.
     if (connected && pullError == null && pullResult == null) {
       try {
-        await syncService.initialPull();
+        await syncService.initialPull()
+            .timeout(const Duration(seconds: 60));
       } catch (_) {
         // Degraded mode: staging pull failure does not block restore.
       }
@@ -492,7 +497,7 @@ class OnboardingService {
 
       final activityId = (entry['entry_id'] as String?)?.isNotEmpty == true
           ? entry['entry_id'] as String
-          : _generateActivityId();
+          : generateActivityId();
       final isActive = entry['is_active'] as bool? ?? false;
       final pauses = (entry['pauses'] as List<dynamic>?) ?? <dynamic>[];
 
@@ -604,15 +609,15 @@ class OnboardingService {
 
         final activityId = (eid != null && eid.length == 10)
             ? eid
-            : _generateActivityId();
+            : generateActivityId();
 
         // Decrypt time fields (encrypted in block storage).
         final startEpoch =
-            _decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
+            decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
         final endEpoch =
-            _decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
+            decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
         final pauses =
-            _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
+            decryptPauses(entryData['pauses_enc'] as String?, mkHex);
 
         final activity = jsonEncode({
           'entry_id': eid ?? '',
@@ -646,59 +651,9 @@ class OnboardingService {
     }
   }
 
-  /// Generate a 10-character alphanumeric activity_id.
-  String _generateActivityId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final buf = StringBuffer();
-    for (var i = 0; i < 10; i++) {
-      buf.write(
-          chars[(DateTime.now().microsecondsSinceEpoch + i * 7919) %
-              chars.length]);
-    }
-    return buf.toString();
-  }
 
-  /// Decrypt a field value trying both encryption schemes.
-  ///
-  /// Flutter engine (engine.dart) encrypts with [encrypt] (raw-mk scheme),
-  /// while Python CLI blocks use [decryptFieldValue] (HMAC-derived sub-keys).
-  /// Both produce distinct auth tags, so we try each until one authenticates.
-  String? _decryptFieldValue(String encHex, String mkHex) {
-    if (encHex.isEmpty) return null;
-    // Try Flutter/symmetric scheme first (dominant for locally-committed blocks)
-    try {
-      return crypto.decrypt(encHex, mkHex);
-    } catch (_) {
-      // Fall through to Python scheme
-    }
-    // Try Python/CryptoManager scheme (imported CLI / testdata blocks)
-    try {
-      return crypto.decryptFieldValue(encHex, mkHex);
-    } catch (_) {
-      return null;
-    }
-  }
 
-  /// Decrypt an encrypted epoch string to an int. Returns 0 on null or
-  /// failure.
-  int _decryptEpoch(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return 0;
-    final plain = _decryptFieldValue(encHex, mkHex);
-    return (plain != null) ? (int.tryParse(plain) ?? 0) : 0;
-  }
 
-  /// Decrypt an encrypted pauses JSON array string.
-  List<dynamic> _decryptPauses(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return <dynamic>[];
-    final plain = _decryptFieldValue(encHex, mkHex);
-    if (plain == null) return <dynamic>[];
-    try {
-      final decoded = jsonDecode(plain);
-      return (decoded is List) ? decoded : <dynamic>[];
-    } catch (_) {
-      return <dynamic>[];
-    }
-  }
 
   /// One-time repair: seed staging from ledger blocks and backfill
   /// comment/media fields into existing staging entries.
@@ -822,11 +777,27 @@ class OnboardingService {
         'with comment/media from block data');
   }
 
-  /// Common post-import setup: Flutter-format genesis, device identity,
-  /// and hasExistingData flag.
-  Future<void> _postImportSetup(String passphrase, String seedB64) async {
-    // Build Flutter-format genesis block with PDK-encrypted seed
-    await _buildAndPersistGenesis(passphrase, seedB64);
+  /// Common post-import setup: seed vault, Flutter-format genesis (optional),
+  /// device identity, and hasExistingData flag.
+  ///
+  /// When [keepExistingGenesis] is true (cloud restore), the R2 genesis
+  /// block is preserved and only the seed is stored in the vault. When
+  /// false (local creation, seed/file import), a new Flutter-format genesis
+  /// block is built and persisted alongside vault storage.
+  Future<void> _postImportSetup(String passphrase, String seedB64,
+      {bool keepExistingGenesis = false}) async {
+    // Store seed in vault (always — primary seed storage)
+    await _storeSeedInVault(passphrase, seedB64);
+
+    if (keepExistingGenesis) {
+      // Cloud restore: R2 genesis exists and must be preserved.
+      // Only cache MK and set device identity — no genesis replacement.
+      final mk = crypto.deriveMasterKey(seedB64);
+      crypto.setMasterKey(mk);
+    } else {
+      // Local creation / import: build Flutter-format genesis block.
+      await _buildAndPersistGenesis(passphrase, seedB64);
+    }
 
     // Create device identity (UUIDv4)
     final uuid = crypto.generateUuid();
@@ -836,15 +807,26 @@ class OnboardingService {
     await preferences.setHasExistingData(true);
   }
 
+  /// Store the PDK-encrypted recovery seed in the _phpoc_meta vault.
+  ///
+  /// Encrypts [seedB64] with a PDK derived from [passphrase] and stores
+  /// the ciphertext via [AppDatabase.setSeedVault]. This separates seed
+  /// storage from the genesis block so the chain remains immutable.
+  Future<void> _storeSeedInVault(String passphrase, String seedB64) async {
+    final pdk = crypto.derivePdk(passphrase, CryptoService.pdkIterations);
+    final encryptedSeed = crypto.encrypt(seedB64, pdk);
+    await db.setSeedVault(encryptedSeed);
+  }
+
   /// Build a genesis block and persist it to the database.
   ///
   /// The genesis stores the seed encrypted with PDK:
   ///   data_enc = base64(json({"seed": encrypt(seedB64, pdk)}))
   ///   identity_seal = HMAC-SHA256(MK, data_enc)
   ///
-  /// If a genesis block already exists (e.g., imported from R2 in a
-  /// cross-client format), it is replaced so the Flutter-format genesis
-  /// is authoritative for AuthService.reauthenticate().
+  /// The block seal is computed with [jsonSort] (sorted keys) for
+  /// cross-client verifiability. Previously [json.encode] was used which
+  /// produces non-deterministic key ordering (RC1 fix).
   Future<void> _buildAndPersistGenesis(
       String passphrase, String seedB64) async {
     // Derive PDK and MK
@@ -865,17 +847,18 @@ class OnboardingService {
     // Identity seal (HMAC of data_enc — bound to the encrypted seed data)
     final identitySeal = crypto.seal(dataEncB64, mk);
 
-    // Block hash: HMAC seal over genesis fields matching Python's
-    // core/factory.py seal computation ({type, day_index, date, prev_hash, entries}).
+    // Block hash: use jsonSort (sorted keys) for cross-client verifiability.
+    // json.encode() produces unsorted output (RC1) — jsonSort is canonical.
     final now = DateTime.now();
     final nowSeconds = now.millisecondsSinceEpoch ~/ 1000;
-    final genesisPayload = json.encode({
+    final genesisPayloadObj = {
       'type': 'genesis',
       'day_index': 0,
       'date': FormatUtils.epochToIsoDate(nowSeconds),
       'prev_hash': Block.genesisPrevHash,
       'entries': <dynamic>[],
-    });
+    };
+    final genesisPayload = jsonSort(genesisPayloadObj);
     final blockId = crypto.seal(genesisPayload, mk);
 
     // Replace any existing genesis block(s) from R2 import with Flutter format.

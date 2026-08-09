@@ -3,11 +3,13 @@ import 'dart:typed_data';
 
 import '../core/crypto/crypto_service.dart';
 import '../core/models/pull_result.dart';
+import '../core/utils/decrypt_helpers.dart';
+import '../core/utils/id_utils.dart';
 import '../data/storage/database.dart';
 import '../data/sync/staging_storage.dart';
 import '../data/sync/staging_store.dart';
 import '../data/sync/transport.dart';
-import '../data/ledger/helpers.dart' show computeEntryHash, getBlockHash, verifyEntryHashTwoWay;
+import '../data/ledger/helpers.dart' show getBlockHash, verifyEntryHashTwoWay;
 import 'ledger_backup_service.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
@@ -19,8 +21,9 @@ import 'ledger_backup_service.dart';
 ///
 /// Seeds staging entries from imported blocks so [HistoryScreen] can
 /// display them without a separate sync step.
-class LedgerPullService {
+class LedgerPullService with DecryptHelpers {
   final AppDatabase db;
+  @override
   final CryptoService crypto;
   final HttpTransport? transport;
   final LedgerBackupService backupService;
@@ -323,16 +326,16 @@ class LedgerPullService {
         // Generate an activity_id (10-char alphanumeric) if entry_id is missing
         final activityId = (eid != null && eid.length == 10)
             ? eid
-            : _generateActivityId();
+            : generateActivityId();
 
         // Build the activity JSON blob with plaintext field names that
         // match what _stagingRowToDto expects. Block entries use encrypted
         // hex fields (startTime_enc, endTime_enc, pauses_enc, metadata_enc)
         // which must be decrypted with the MK first.
         final mkHex = crypto.getMasterKey()!;
-        final startEpoch = _decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
-        final endEpoch = _decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
-        final pauses = _decryptPauses(entryData['pauses_enc'] as String?, mkHex);
+        final startEpoch = decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
+        final endEpoch = decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
+        final pauses = decryptPauses(entryData['pauses_enc'] as String?, mkHex);
         final deviceUuid = entryData['device_uuid'] as String? ?? '';
 
         // Preserve encrypted sensitive-field ciphertexts as hex for on-demand
@@ -351,11 +354,13 @@ class LedgerPullService {
         final comment = (commentEnc != null && commentEnc.isNotEmpty)
             ? ''
             : (entryData['comment'] as String? ?? '');
+        final durationEnc = entryData['duration_enc'] as String?;
+        final durStr = (durationEnc != null)
+            ? decryptFieldValue(durationEnc, mkHex)
+            : null;
         final duration = entryData['duration'] is int
             ? entryData['duration'] as int
-            : int.tryParse(
-                _decryptString(entryData['duration_enc'] as String?, mkHex)
-                    ?? entryData['duration']?.toString() ?? '0') ?? 0;
+            : int.tryParse(durStr ?? entryData['duration']?.toString() ?? '0') ?? 0;
 
         final activity = jsonEncode({
           'entry_id': eid ?? '',
@@ -392,72 +397,9 @@ class LedgerPullService {
     }
   }
 
-  /// Generate a 10-character alphanumeric activity_id.
-  String _generateActivityId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final buf = StringBuffer();
-    for (var i = 0; i < 10; i++) {
-      buf.write(chars[(DateTime.now().microsecondsSinceEpoch + i * 7919) % chars.length]);
-    }
-    return buf.toString();
-  }
 
-  /// Decrypt a field value trying both encryption schemes.
-  ///
-  /// Flutter engine encrypts with [CryptoService.encrypt] (raw-mk scheme),
-  /// while Python CLI blocks use HMAC-derived sub-keys. Both produce distinct
-  /// auth tags, so we try each until one authenticates.
-  String? _decryptFieldValue(String encHex, String mkHex) {
-    if (encHex.isEmpty) return null;
-    // Flutter/symmetric scheme (dominant for locally-committed blocks)
-    try {
-      return crypto.decrypt(encHex, mkHex);
-    } catch (_) {}
-    // Python/CryptoManager scheme (imported CLI / testdata blocks)
-    try {
-      return crypto.decryptFieldValue(encHex, mkHex);
-    } catch (_) {
-      return null;
-    }
-  }
 
-  /// Decrypt an encrypted epoch string to an int. Returns 0 on null or failure.
-  int _decryptEpoch(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return 0;
-    final plain = _decryptFieldValue(encHex, mkHex);
-    return (plain != null) ? (int.tryParse(plain) ?? 0) : 0;
-  }
 
-  /// Decrypt an encrypted pauses JSON array string.
-  List<dynamic> _decryptPauses(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return <dynamic>[];
-    final plain = _decryptFieldValue(encHex, mkHex);
-    if (plain == null) return <dynamic>[];
-    try {
-      final decoded = jsonDecode(plain);
-      return (decoded is List) ? decoded : <dynamic>[];
-    } catch (_) {
-      return <dynamic>[];
-    }
-  }
-
-  /// Decrypt an encrypted string field. Returns null on failure.
-  String? _decryptString(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return null;
-    return _decryptFieldValue(encHex, mkHex);
-  }
-
-  /// Decrypt and JSON-decode an encrypted field. Returns null on failure.
-  dynamic _decryptJson(String? encHex, String mkHex) {
-    if (encHex == null || encHex.isEmpty) return null;
-    final plain = _decryptFieldValue(encHex, mkHex);
-    if (plain == null) return null;
-    try {
-      return jsonDecode(plain);
-    } catch (_) {
-      return null;
-    }
-  }
 
   /// Validate the assembled chain before import.
   ///
@@ -497,10 +439,10 @@ class LedgerPullService {
 
         // 4-way fallback: sort+indent2 → sort+compact → compact-nospace → nosort+indent2
         if (!verifyEntryHashTwoWay(data, hash)) {
-          // Migration re-encrypts fields but preserves old hashes — recompute
-          // and auto-heal the entry hash from the current data.
-          final recomputed = computeEntryHash(data);
-          entry['hash'] = recomputed;
+          throw FormatException(
+            'Entry hash mismatch at block $i, entry $j. '
+            'Hash: $hash does not match any serialization format for data: $data'
+          );
         }
       }
     }
@@ -510,10 +452,10 @@ class LedgerPullService {
       final prevHash = getBlockHash(blocks[i - 1]);
       final actualPrev = blocks[i]['prev_hash'] as String? ?? '';
       if (prevHash.isNotEmpty && actualPrev != prevHash) {
-        // Auto-heal: set prev_hash to match the previous block's seal.
-        // Stale blockId columns can produce mismatches after migration
-        // (the seal field comes from dataEnc, which migration updated).
-        blocks[i]['prev_hash'] = prevHash;
+        throw FormatException(
+          'Prev_hash linkage break at block $i: '
+          'expected $prevHash, got $actualPrev'
+        );
       }
     }
   }

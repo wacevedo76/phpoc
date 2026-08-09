@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -202,23 +201,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Future<void> _startRestoreCloudFlow() async {
     final confirmed = await _confirmWipeExistingData();
     if (!mounted) return;
-    _passphraseController.clear();
-    _seedController.clear();
-    _workerUrlController.clear();
-    _workerApiKeyController.clear();
+    // Pre-fill personal ledger credentials for dev testing
+    _seedController.text = 'APuJ75EWteCJm9ix0/xHY+/JojRehcXwZR5XiQWmeU0=';
+    _passphraseController.text = '!n00n3kn0wsth1sb0tm3';
+    _workerUrlController.text = 'https://phpoc-staging.wacevedo.workers.dev';
+    _workerApiKeyController.text = '78hX3rbf/m/iuoVV1bIFCEDqsqQW+csp';
     if (confirmed) {
       setState(() {
         _step = _OnboardingStep.restoreCloud;
         _errorMessage = null;
         _isLoading = false;
       });
-      // Debug-mode pre-fill from TEST_CREDENTIALS.md (stripped in release builds)
-      if (kDebugMode) {
-        _seedController.text = 'APuJ75EWteCJm9ix0/xHY+/JojRehcXwZR5XiQWmeU0=';
-        _passphraseController.text = '!n00n3kn0wth1sb0tm3';
-        _workerUrlController.text = 'https://phpoc-staging.wacevedo.workers.dev';
-        _workerApiKeyController.text = '78hX3rbf/m/iuoVV1bIFCEDqsqQW+csp';
-      }
+
     }
   }
 

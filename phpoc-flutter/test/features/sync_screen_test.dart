@@ -564,11 +564,11 @@ void main() {
         reason: 'Push button must render when transport is configured',
       );
 
-      // Tap "Sync to Remote" — this triggers checkAndSync() which mutates
+      // Tap "Sync Staging" — this triggers checkAndSync() which mutates
       // syncService state (reconcile, blob push, cookie). The subsequent
       // setState() in _refreshStatus() triggers a rebuild that exercises
       // _buildPushToCloudButton().
-      final syncButton = find.text('Sync to Remote');
+      final syncButton = find.text('Sync Staging');
       expect(syncButton, findsOneWidget);
       await tester.tap(syncButton);
       await tester.pumpAndSettle();

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
 import 'package:phpoc_flutter/data/ledger/chain.dart';
 import 'package:phpoc_flutter/data/ledger/helpers.dart';
 
@@ -1123,6 +1124,511 @@ void main() {
       final data = 'identity test data';
       expect(
           chain.verifyIdentityMac(data, 'ff' * 32, identitySecret), isFalse);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group S: Seal Format Verification — 9 tests
+  // Phase 1 Groups A: _verifyBlockSeal → verifySeal() 3-way fallback
+  // Covers: S1–S9 (Phase 1 A1–A9)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('S: Seal Format Verification (3-way fallback)', () {
+    // ── Helpers for constructing blocks with specific seal formats ──
+
+    /// Compute a seal using a specific JSON serializer.
+    String _sealWith(CryptoService crypto, Map<String, dynamic> data,
+        String Function(Map<String, dynamic>) serializer) {
+      return crypto.seal(serializer(data), mkHex);
+    }
+
+    /// Build genesis block payload (same fields _sealBlock extracts).
+    Map<String, dynamic> _genesisPayload() => {
+          'type': 'genesis',
+          'day_index': 0,
+          'date': '2025-01-01',
+          'prev_hash': '0' * 64,
+          'entries': <Map<String, dynamic>>[],
+        };
+
+    /// Build day block payload.
+    Map<String, dynamic> _dayPayload(String prevHash) => {
+          'type': 'day',
+          'day_index': 1,
+          'date': '2025-01-02',
+          'prev_hash': prevHash,
+          'entries': <Map<String, dynamic>>[],
+        };
+
+    // S1 — Genesis sealed with jsonSort (Flutter canonical) verifies
+    test('S1 genesis sealed with jsonSort (Flutter) → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      final payload = _genesisPayload();
+      final seal = _sealWith(crypto, payload, jsonSort);
+      store.appendBlocks([
+        {
+          ...payload,
+          'block_hash': seal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'jsonSort-sealed genesis must verify');
+    });
+
+    // S2 — Genesis sealed with Python indent2 format verifies
+    test('S2 genesis sealed with Python indent2 → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      final payload = _genesisPayload();
+      final seal = _sealWith(crypto, payload, jsonSortIndent2);
+      store.appendBlocks([
+        {
+          ...payload,
+          'block_hash': seal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'Python indent2-sealed genesis must verify after RC1 fix');
+    });
+
+    // S3 — Genesis sealed with JS no-space compact format verifies
+    test('S3 genesis sealed with JS no-space format → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      final payload = _genesisPayload();
+      final noSpaceJson = jsonEncodeSortedNoSpaces(payload);
+      final seal = crypto.seal(noSpaceJson, mkHex);
+      store.appendBlocks([
+        {
+          ...payload,
+          'block_hash': seal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'JS no-space-sealed genesis must verify after RC1 fix');
+    });
+
+    // S4 — Day block sealed with jsonSort verifies
+    test('S4 day block sealed with jsonSort → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      // Genesis first
+      final genPayload = _genesisPayload();
+      final genSeal = _sealWith(crypto, genPayload, jsonSort);
+      store.appendBlocks([
+        {
+          ...genPayload,
+          'block_hash': genSeal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      // Day block
+      final dayPayload = _dayPayload(genSeal);
+      final daySeal = _sealWith(crypto, dayPayload, jsonSort);
+      store.appendBlocks([
+        {...dayPayload, 'day_hash': daySeal, 'key_version': 1}
+      ]);
+
+      expect(chain.verify(), isTrue);
+    });
+
+    // S5 — Day block sealed with Python indent2 verifies
+    test('S5 day block sealed with Python indent2 → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      // Genesis (jsonSort for simplicity)
+      final genPayload = _genesisPayload();
+      final genSeal = _sealWith(crypto, genPayload, jsonSort);
+      store.appendBlocks([
+        {
+          ...genPayload,
+          'block_hash': genSeal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      // Day block sealed with Python indent2 format
+      final dayPayload = _dayPayload(genSeal);
+      final daySeal = _sealWith(crypto, dayPayload, jsonSortIndent2);
+      store.appendBlocks([
+        {...dayPayload, 'day_hash': daySeal, 'key_version': 1}
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'Python indent2-sealed day block must verify');
+    });
+
+    // S6 — Day block sealed with JS no-space format verifies
+    test('S6 day block sealed with JS no-space → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      // Genesis (jsonSort for simplicity)
+      final genPayload = _genesisPayload();
+      final genSeal = _sealWith(crypto, genPayload, jsonSort);
+      store.appendBlocks([
+        {
+          ...genPayload,
+          'block_hash': genSeal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      // Day block sealed with JS no-space format
+      final dayPayload = _dayPayload(genSeal);
+      final noSpaceJson = jsonEncodeSortedNoSpaces(dayPayload);
+      final daySeal = crypto.seal(noSpaceJson, mkHex);
+      store.appendBlocks([
+        {...dayPayload, 'day_hash': daySeal, 'key_version': 1}
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'JS no-space-sealed day block must verify');
+    });
+
+    // S7 — Block with intentionally wrong seal → verify fails
+    test('S7 block with wrong seal → verify returns false', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      final payload = _genesisPayload();
+      store.appendBlocks([
+        {
+          ...payload,
+          'block_hash': 'ff' * 32, // wrong seal
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'u',
+          'email': 'e@e.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      expect(chain.verify(), isFalse,
+          reason: 'Wrong seal must be detected — fallback must not false-match');
+    });
+
+    // S8 — Block with empty seal → verify fails
+    test('S8 block with empty block_hash → verify returns false', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      store.appendBlocks([
+        {
+          'type': 'genesis',
+          'day_index': 0,
+          'date': '2025-01-01',
+          'prev_hash': '0' * 64,
+          'entries': <Map<String, dynamic>>[],
+          'block_hash': '', // empty seal
+          'format_version': '0.4.0',
+          'key_version': 1,
+        }
+      ]);
+
+      expect(chain.verify(), isFalse,
+          reason: 'Empty block_hash is always invalid');
+    });
+
+    // S9 — Block with missing type → verify fails
+    test('S9 block with missing type → verify returns false', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      store.appendBlocks([
+        {
+          'day_index': 0,
+          'date': '2025-01-01',
+          'prev_hash': '0' * 64,
+          'entries': <Map<String, dynamic>>[],
+          'block_hash': 'aa' * 32,
+          'format_version': '0.4.0',
+          'key_version': 1,
+        }
+      ]);
+
+      expect(chain.verify(), isFalse,
+          reason: 'Missing type field must fail — cannot determine hash key');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group K: verify() end-to-end — 6 tests
+  // Phase 1 Group K: cross-client chain integrity
+  // ═══════════════════════════════════════════════════════════════
+
+  group('K: verify() end-to-end (cross-client chain integrity)', () {
+    // K1 — Locally-created chain (genesis only) → verify returns true
+    test('K1 genesis-only chain → verify returns true', () {
+      final chain = _makeChain();
+      final gen = chain.buildGenesisBlock(
+        username: 'u',
+        email: 'e@e.com',
+        recoverySeedEnc: 'seed',
+        identityPubKey: 'pk',
+        identitySecretEncFallback: 'fb',
+      );
+      chain.append(gen);
+      expect(chain.verify(), isTrue);
+    });
+
+    // K2 — Locally-created chain with day blocks → verify returns true
+    test('K2 genesis + day blocks → verify returns true', () {
+      final chain = _makeChain();
+      final gen = chain.buildGenesisBlock(
+        username: 'u',
+        email: 'e@e.com',
+        recoverySeedEnc: 'seed',
+        identityPubKey: 'pk',
+        identitySecretEncFallback: 'fb',
+      );
+      chain.append(gen);
+
+      final day = chain.buildDayBlock(
+        entries: [
+          {'title': 'Task', 'duration': 60}
+        ],
+        prevHash: getBlockHash(gen),
+        dateStr: '2025-01-02',
+      );
+      chain.append(day);
+      expect(chain.verify(), isTrue);
+    });
+
+    // K3 — After cloud restore (CLI-created blocks) → verify passes
+    test('K3 CLI-created blocks (Python indent2 seals) → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      // Simulate CLI-created genesis (Python indent2 seal)
+      final genPayload = <String, dynamic>{
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+      };
+      final genSeal =
+          crypto.seal(jsonSortIndent2(genPayload), mkHex);
+      store.appendBlocks([
+        {
+          ...genPayload,
+          'block_hash': genSeal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'cli-user',
+          'email': 'cli@test.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      // Simulate CLI-created day block (Python indent2 seal)
+      final dayPayload = <String, dynamic>{
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genSeal,
+        'entries': [
+          {
+            'hash': 'a' * 64,
+            'data': {'title': 'CLI entry', 'duration': 120}
+          }
+        ],
+      };
+      final daySeal =
+          crypto.seal(jsonSortIndent2(dayPayload), mkHex);
+      store.appendBlocks([
+        {...dayPayload, 'day_hash': daySeal, 'key_version': 1}
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'CLI-created blocks (Python indent2) must verify on Flutter');
+    });
+
+    // K4 — After cloud restore (Web-created blocks) → verify passes
+    test('K4 Web-created blocks (JS no-space seals) → verify passes', () {
+      final crypto = CryptoService()..initialize();
+      crypto.setMasterKey(mkHex);
+      final store = _FakeLedgerStore();
+    final chain = LedgerChain(crypto: crypto, store: store);
+
+      // Simulate Web-created genesis (JS no-space seal)
+      final genPayload = <String, dynamic>{
+        'type': 'genesis',
+        'day_index': 0,
+        'date': '2025-01-01',
+        'prev_hash': '0' * 64,
+        'entries': <Map<String, dynamic>>[],
+      };
+      final noSpaceGen =
+          jsonEncodeSortedNoSpaces(genPayload);
+      final genSeal = crypto.seal(noSpaceGen, mkHex);
+      store.appendBlocks([
+        {
+          ...genPayload,
+          'block_hash': genSeal,
+          'format_version': '0.4.0',
+          'key_version': 1,
+          'username': 'web-user',
+          'email': 'web@test.com',
+          'recovery_seed_enc': 'seed',
+          'identity_pub_key': 'pk',
+          'identity_secret_enc_fallback': 'fb',
+        }
+      ]);
+
+      // Simulate Web-created day block (JS no-space seal)
+      final dayPayload = <String, dynamic>{
+        'type': 'day',
+        'day_index': 1,
+        'date': '2025-01-02',
+        'prev_hash': genSeal,
+        'entries': [
+          {
+            'hash': 'b' * 64,
+            'data': {'title': 'Web entry', 'duration': 90}
+          }
+        ],
+      };
+      final noSpaceDay =
+          jsonEncodeSortedNoSpaces(dayPayload);
+      final daySeal = crypto.seal(noSpaceDay, mkHex);
+      store.appendBlocks([
+        {...dayPayload, 'day_hash': daySeal, 'key_version': 1}
+      ]);
+
+      expect(chain.verify(), isTrue,
+          reason: 'Web-created blocks (JS no-space) must verify on Flutter');
+    });
+
+    // K5 — Chain with tampered seal → verify returns false
+    test('K5 tampered seal in day block → verify returns false', () {
+      final chain = _makeChain();
+      final gen = chain.buildGenesisBlock(
+        username: 'u',
+        email: 'e@e.com',
+        recoverySeedEnc: 'seed',
+        identityPubKey: 'pk',
+        identitySecretEncFallback: 'fb',
+      );
+      chain.append(gen);
+
+      final day = chain.buildDayBlock(
+        entries: [
+          {'title': 'Task', 'duration': 60}
+        ],
+        prevHash: getBlockHash(gen),
+        dateStr: '2025-01-02',
+      );
+      // Tamper with the day_hash
+      day['day_hash'] = 'ff' * 32;
+      chain.append(day);
+
+      expect(chain.verify(), isFalse,
+          reason: 'Tampered block seal must be detected');
+    });
+
+    // K6 — Chain with broken prev_hash linkage → verify returns false
+    test('K6 broken prev_hash linkage → verify returns false', () {
+      final chain = _makeChain();
+      final gen = chain.buildGenesisBlock(
+        username: 'u',
+        email: 'e@e.com',
+        recoverySeedEnc: 'seed',
+        identityPubKey: 'pk',
+        identitySecretEncFallback: 'fb',
+      );
+      chain.append(gen);
+
+      // Manually insert a block with wrong prev_hash (bypass normal append)
+      final store = chain.store as _FakeLedgerStore;
+      store.appendBlocks([
+        {
+          'type': 'day',
+          'day_index': 1,
+          'date': '2025-01-02',
+          'prev_hash': 'ff' * 32, // wrong — should link to genesis
+          'entries': <Map<String, dynamic>>[],
+          'day_hash': 'aa' * 32,
+          'key_version': 1,
+        }
+      ]);
+
+      expect(chain.verify(), isFalse,
+          reason: 'Broken prev_hash linkage must be detected');
     });
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -59,6 +60,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   ThemeVariant _selectedTheme = ThemeVariant.greenLight;
   String get _themeLabel => AppTheme.variants[_selectedTheme] ?? 'Green – Light';
 
+  // Verify ledger state
+  bool _isVerifying = false;
+  String? _verifyResult; // null, 'valid', 'invalid', 'empty', 'no-ledger'
+  int? _verifyBlockCount;
+  int _verifyTimestamp = 0;
+  Timer? _verifyTimer;
+
   @override
   void dispose() {
     _workerUrlController.dispose();
@@ -66,6 +74,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _oldPassphraseController.dispose();
     _newPassphraseController.dispose();
     _exportPassphraseController.dispose();
+    _verifyTimer?.cancel();
     super.dispose();
   }
 
@@ -710,6 +719,146 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  // ── Verify Ledger ───────────────────────────────────────────
+
+  static const Duration _verifyTintDuration = Duration(minutes: 3);
+
+  Future<void> _verifyLedger() async {
+    if (_isVerifying) return;
+
+    setState(() {
+      _isVerifying = true;
+      _verifyResult = null;
+      _verifyBlockCount = null;
+      _verifyTimestamp = 0;
+    });
+    _verifyTimer?.cancel();
+
+    try {
+      final sync = ref.read(syncServiceProvider);
+      final engine = sync.ledgerEngine;
+
+      if (engine == null) {
+        if (!mounted) return;
+        setState(() {
+          _isVerifying = false;
+          _verifyResult = 'no-ledger';
+          _verifyTimestamp = DateTime.now().millisecondsSinceEpoch;
+        });
+        _startVerifyTint();
+        await _showVerifyDialog('no-ledger', 0);
+        return;
+      }
+
+      // Run verify in an isolate-friendly way — it's all synchronous
+      // in-memory work after blocks are loaded, but we offload to avoid
+      // jank on very large chains.
+      final result = await Future(() => engine.verify());
+      final blockCount = engine.chain.getBlockCount();
+
+      if (!mounted) return;
+
+      if (blockCount == 0) {
+        setState(() {
+          _isVerifying = false;
+          _verifyResult = 'empty';
+          _verifyBlockCount = 0;
+          _verifyTimestamp = DateTime.now().millisecondsSinceEpoch;
+        });
+        _startVerifyTint();
+        await _showVerifyDialog('empty', 0);
+      } else if (result) {
+        setState(() {
+          _isVerifying = false;
+          _verifyResult = 'valid';
+          _verifyBlockCount = blockCount;
+          _verifyTimestamp = DateTime.now().millisecondsSinceEpoch;
+        });
+        _startVerifyTint();
+        await _showVerifyDialog('valid', blockCount);
+      } else {
+        setState(() {
+          _isVerifying = false;
+          _verifyResult = 'invalid';
+          _verifyBlockCount = blockCount;
+          _verifyTimestamp = DateTime.now().millisecondsSinceEpoch;
+        });
+        _startVerifyTint();
+        await _showVerifyDialog('invalid', blockCount);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isVerifying = false;
+        _verifyResult = 'invalid';
+        _verifyTimestamp = DateTime.now().millisecondsSinceEpoch;
+      });
+      _startVerifyTint();
+      await _showVerifyDialog('invalid', 0);
+    }
+  }
+
+  void _startVerifyTint() {
+    _verifyTimer?.cancel();
+    _verifyTimer = Timer(_verifyTintDuration, () {
+      if (!mounted) return;
+      setState(() {
+        _verifyResult = null;
+        _verifyBlockCount = null;
+        _verifyTimestamp = 0;
+      });
+    });
+  }
+
+  Future<void> _showVerifyDialog(String result, int blockCount) async {
+    final (icon, title, content) = switch (result) {
+      'valid' => (
+          Icons.check_circle,
+          'Ledger Valid',
+          'The full ledger chain is intact.\n\n'
+              '$blockCount blocks verified — all hash linkages, '
+              'HMAC seals, and entry hashes are correct.',
+        ),
+      'invalid' => (
+          Icons.error,
+          'Integrity Check Failed',
+          'The ledger chain did not verify. This may indicate '
+              'tampering or corruption.\n\n'
+              'Consider restoring from a backup.',
+        ),
+      'empty' => (
+          Icons.info_outline,
+          'Ledger Empty',
+          'There are no blocks in the ledger yet. '
+              'Start tracking activities to build your chain.',
+        ),
+      _ /* 'no-ledger' */ => (
+          Icons.info_outline,
+          'No Ledger',
+          'No ledger has been created yet. '
+              'Complete onboarding to initialize your ledger chain.',
+        ),
+    };
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(icon,
+            color: result == 'valid' ? Colors.green :
+                   result == 'invalid' ? Colors.red : null,
+            size: 48),
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Theme ───────────────────────────────────────────────────
 
   void _onThemeChanged(ThemeVariant? variant) {
@@ -802,11 +951,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          // ── Passphrase Change ─────────────────────────────────
+          // ── Security ──────────────────────────────────────────
           _buildSectionHeader('Security'),
           Card(
+            color: _verifyCardColor(),
             child: Column(
               children: [
+                ListTile(
+                  leading: _isVerifying
+                      ? const SizedBox(
+                          width: 24, height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _verifyResult == 'valid' ? Icons.verified_user :
+                          _verifyResult == 'invalid' ? Icons.gpp_bad :
+                          Icons.verified_outlined,
+                        ),
+                  title: const Text('Verify Ledger'),
+                  subtitle: Text(_verifySubtitle()),
+                  onTap: _verifyLedger,
+                ),
+                const Divider(height: 1),
                 if (_biometricsAvailable)
                   Column(
                     children: [
@@ -935,6 +1101,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  Color? _verifyCardColor() {
+    if (_verifyTimestamp == 0) return null;
+    final brightness = Theme.of(context).brightness;
+    return switch (_verifyResult) {
+      'valid' => brightness == Brightness.light
+          ? Colors.green.shade50
+          : Colors.green.shade900,
+      'invalid' => brightness == Brightness.light
+          ? Colors.red.shade50
+          : Colors.red.shade900,
+      _ => null, // empty, no-ledger: no tint
+    };
+  }
+
+  String _verifySubtitle() {
+    if (_isVerifying) return 'Verifying chain integrity…';
+    if (_verifyTimestamp == 0) return 'Check the integrity of your ledger chain';
+    return switch (_verifyResult) {
+      'valid' => 'Ledger valid — $_verifyBlockCount blocks',
+      'invalid' => 'Integrity check failed',
+      'empty' => 'Ledger is empty',
+      'no-ledger' => 'No ledger created',
+      _ => 'Check the integrity of your ledger chain',
+    };
   }
 
   Widget _buildSectionHeader(String title) {

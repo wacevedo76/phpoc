@@ -172,6 +172,18 @@
 
 ---
 
+### 🔜 Staging Auto-Sync: Flutter — Upgrade Auto-Push to Bidirectional Sync
+
+**Status:** Queued (after CCS-4). **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
+
+**What:** Replace `_doPush()` → `_attemptPush()` (push-only) with `checkAndSync()` (pull + merge + push). Every staging mutation automatically syncs bidirectionally instead of just pushing.
+
+**Tests needed:** 4 new tests (AS1–AS4) for bidirectional merge, reauth handling, no-transport safety, fast-path efficiency.
+
+**Effort:** Small (~1-2 hours). **Blocks:** Nothing.
+
+---
+
 ## ~~🔴 B-02: Flutter — Auto-push staging blob on every mutation~~ (subsumed by B-03)
 
 B-02's scope (debounced auto-push on mutation) is folded into B-03 deliverable #4. The broader architectural changes (activity IDs, row schema, commit-and-clean) make B-03 the correct tracking unit.

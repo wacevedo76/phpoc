@@ -8,7 +8,7 @@ import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 
-/// AuthService tests — Groups A (10) + B (6) + I (8) + Bio (20) = 44 assertions.
+/// AuthService tests — Groups A (10) + B (6) + I (8) + Bio (20) + W (12) = 56 assertions.
 ///
 /// Covers:
 ///   A1–A10:  Unlock/Lock lifecycle
@@ -17,6 +17,8 @@ import 'package:phpoc_flutter/services/auth_service.dart';
 ///   BioA1–A8: Biometric availability & enrollment
 ///   BioB1–B8: Biometric unlock
 ///   BioC1–C4: Biometric lifecycle
+///   WA1–WA7: wipeLedger() data wipe
+///   WB1–WB5: wipeLedger() state & edge cases
 
 // ── Test constants ──────────────────────────────────────────────
 
@@ -900,6 +902,671 @@ void main() {
       expect(seed, isNotEmpty,
           reason: 'exportSeed must work after biometric unlock — the session '
               'is in the same unlocked state');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group WA: AuthService — wipeLedger() Data Wipe (A1–A7)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('WA: AuthService — wipeLedger() Data Wipe', () {
+    // WA1 (Phase 1 A1)
+    test('WA1: wipeLedger() deletes all entries from SQLite', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Seed an entry via the DB directly
+      await db.customStatement(
+        'INSERT INTO entries (entry_id, title, start_epoch) VALUES (?, ?, ?)',
+        ['entry-1', 'Test Entry', 1700000000000],
+      );
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+
+      // Call wipeLedger() — will throw NoSuchMethodError in Phase 2 RED
+      await auth.wipeLedger();
+
+      // Verify entries table is empty
+      final rows = db.customSelect('SELECT COUNT(*) AS cnt FROM entries').get();
+      final count = rows.first.read<int>('cnt');
+      expect(count, 0,
+          reason: 'All entries must be deleted by wipeLedger()');
+    });
+
+    // WA2 (Phase 1 A2)
+    test('WA2: wipeLedger() deletes all blocks from SQLite', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Seed genesis block via DB directly
+      await db.customStatement(
+        'INSERT INTO blocks (block_id, block_type, block_index, key_version, '
+        'data_enc, identity_seal, prev_hash, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ['genesis-test', 'genesis', 0, 1, 'eyJzZWVkIjoiYWJjIn0=', 'seal',
+         '0000000000000000000000000000000000', 1700000000000],
+      );
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      final rows = db.customSelect('SELECT COUNT(*) AS cnt FROM blocks').get();
+      final count = rows.first.read<int>('cnt');
+      expect(count, 0,
+          reason: 'All blocks (including genesis) must be deleted');
+    });
+
+    // WA3 (Phase 1 A3)
+    test('WA3: wipeLedger() deletes all index_entries from SQLite', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      await db.customStatement(
+        'INSERT INTO index_entries (block_id, date, tag, entry_id) '
+        'VALUES (?, ?, ?, ?)',
+        ['genesis-test', '2025-06-20', 'work', 'entry-1'],
+      );
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      final rows = db.customSelect(
+          'SELECT COUNT(*) AS cnt FROM index_entries').get();
+      final count = rows.first.read<int>('cnt');
+      expect(count, 0,
+          reason: 'All index_entries must be deleted to prevent stale refs');
+    });
+
+    // WA4 (Phase 1 A4)
+    test('WA4: wipeLedger() deletes all staging rows from SQLite', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Ensure staging table exists and seed a row
+      db.customStatementSync('CREATE TABLE IF NOT EXISTS staging '
+          '(activity_id TEXT PRIMARY KEY, activity_status TEXT NOT NULL, '
+          'activity TEXT NOT NULL, updated_at INTEGER NOT NULL, '
+          'extra_json TEXT NOT NULL DEFAULT \'{}\')');
+      await db.customStatement(
+        'INSERT INTO staging (activity_id, activity_status, activity, updated_at) '
+        'VALUES (?, ?, ?, ?)',
+        ['act-1', 'active', '{}', 1700000000000],
+      );
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      final rows = db.customSelect('SELECT COUNT(*) AS cnt FROM staging').get();
+      final count = rows.first.read<int>('cnt');
+      expect(count, 0,
+          reason: 'All staging rows must be deleted (active + paused)');
+    });
+
+    // WA5 (Phase 1 A5)
+    test('WA5: wipeLedger() clears _staging_kv table', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Ensure _staging_kv exists and seed a row
+      db.customStatementSync('CREATE TABLE IF NOT EXISTS _staging_kv '
+          '(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+      await db.customStatement(
+        'INSERT INTO _staging_kv (key, value) VALUES (?, ?)',
+        ['cookie', '{"uuid":"test"}'],
+      );
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      final rows = db.customSelect(
+          'SELECT COUNT(*) AS cnt FROM _staging_kv').get();
+      final count = rows.first.read<int>('cnt');
+      expect(count, 0,
+          reason: 'Staging KV (cookie, timestamps) must be emptied');
+    });
+
+    // WA6 (Phase 1 A6)
+    test('WA6: wipeLedger() clears SharedPreferences', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Seed some preferences
+      await prefs.setWorkerUrl('https://worker.example.com');
+      await prefs.setDeviceUuid('device-uuid-123');
+      await prefs.setHasExistingData(true);
+      await prefs.setBiometricEnabled(true);
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      // All preferences should be cleared
+      expect(await prefs.getWorkerUrl(), isNull,
+          reason: 'Worker URL must be cleared');
+      expect(await prefs.getDeviceUuid(), isNull,
+          reason: 'Device UUID must be cleared');
+      expect(await prefs.hasExistingData(), isFalse,
+          reason: 'has_existing_data flag must be cleared');
+      expect(prefs.isBiometricEnabled(), isFalse,
+          reason: 'Biometric flag must be cleared');
+    });
+
+    // WA7 (Phase 1 A7)
+    test('WA7: wipeLedger() clears flutter_secure_storage', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Seed secure storage values
+      await securePrefs.setApiKey('test-api-key-123');
+      await securePrefs.setBiometricMk('abcdef1234567890');
+
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+      await auth.wipeLedger();
+
+      // Secure storage should be cleared
+      expect(await securePrefs.getApiKey(), isNull,
+          reason: 'Worker API key must be removed from secure storage');
+      expect(await securePrefs.getBiometricMk(), isNull,
+          reason: 'Biometric MK ciphertext must be removed from secure storage');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group WB: AuthService — wipeLedger() State & Edge Cases (B1–B5)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('WB: AuthService — wipeLedger() State & Edge Cases', () {
+    // WB1 (Phase 1 B1)
+    test('WB1: wipeLedger() locks the auth service (isUnlocked → false)',
+        () async {
+      final auth = await _makeAuthService();
+      await auth.unlock(validPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
+
+      await auth.wipeLedger();
+
+      expect(auth.isUnlocked, isFalse,
+          reason: 'After wipe there is nothing to unlock — session must '
+              'be torn down');
+    });
+
+    // WB2 (Phase 1 B2)
+    test('WB2: wipeLedger() clears MK from memory', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final auth = AuthService(crypto: crypto, db: AppDatabase.inMemory(),
+          preferences: AppPreferences.testInstance(),
+          securePreferences: SecurePreferences.testInstance());
+      await auth.unlock(validPassphrase, validSeedB64);
+
+      expect(crypto.hasMasterKey, isTrue,
+          reason: 'MK must be cached after unlock');
+
+      await auth.wipeLedger();
+
+      expect(crypto.hasMasterKey, isFalse,
+          reason: 'MK must be zeroed and cleared from memory on wipe');
+      expect(auth.getMasterKey(), isNull,
+          reason: 'getMasterKey must return null after wipe');
+    });
+
+    // WB3 (Phase 1 B3)
+    test('WB3: wipeLedger() is idempotent — safe to call on already-empty DB',
+        () async {
+      final auth = await _makeAuthService();
+
+      // First call — should succeed on empty DB
+      await auth.wipeLedger();
+
+      // Second call — must not throw, even with nothing to wipe
+      await auth.wipeLedger();
+
+      // State should still be locked with no MK
+      expect(auth.isUnlocked, isFalse);
+      expect(auth.getMasterKey(), isNull);
+    });
+
+    // WB4 (Phase 1 B4)
+    test('WB4: wipeLedger() works when SharedPreferences are already empty',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+
+      // Do NOT seed any preferences — they start empty
+      final auth = AuthService(
+          crypto: crypto, db: db,
+          preferences: prefs, securePreferences: securePrefs);
+
+      // Must not throw when clearing already-empty preferences
+      await auth.wipeLedger();
+
+      expect(await prefs.getWorkerUrl(), isNull);
+      expect(prefs.isBiometricEnabled(), isFalse);
+    });
+
+    // WB5 (Phase 1 B5)
+    test('WB5: wipeLedger() works regardless of locked/unlocked state',
+        () async {
+      // Test 1: wipe while locked (should work)
+      final authLocked = await _makeAuthService();
+      expect(authLocked.isUnlocked, isFalse);
+      await authLocked.wipeLedger(); // must not throw
+      expect(authLocked.isUnlocked, isFalse);
+
+      // Test 2: wipe while unlocked (should clear state and work)
+      final authUnlocked = await _makeAuthService();
+      await authUnlocked.unlock(validPassphrase, validSeedB64);
+      expect(authUnlocked.isUnlocked, isTrue);
+      await authUnlocked.wipeLedger();
+      expect(authUnlocked.isUnlocked, isFalse);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group V: Vault-based Seed Storage — 21 tests
+  // Phase 1 Groups B, D, E, F, G, H, I: seed vault + auth flows
+  // ═══════════════════════════════════════════════════════════════
+
+  group('V: Vault-based Seed Storage', () {
+    // ── Vault helpers (use existing DB API until setSeedVault/getSeedVault exist) ──
+
+    const _vaultKey = 'recovery_seed_enc';
+
+    Future<void> _seedVault(AppDatabase db, String encryptedSeed) async {
+      await db.customStatement(
+        'INSERT OR REPLACE INTO _phpoc_meta (key, value) VALUES (?, ?)',
+        [_vaultKey, encryptedSeed],
+      );
+    }
+
+    Future<String?> _readVault(AppDatabase db) async {
+      final rows = db
+          .customSelect(
+            'SELECT value FROM _phpoc_meta WHERE key = ?',
+            variables: [_vaultKey],
+          )
+          .get();
+      return rows.isNotEmpty ? rows.first.read<String>('value') : null;
+    }
+
+    // ── Group B: Seed vault DB helpers (V1–V4 = Phase 1 B1–B4) ──
+
+    // V1
+    test('V1 seed vault stores recovery_seed_enc in _phpoc_meta', () async {
+      final db = AppDatabase.inMemory();
+      await _seedVault(db, 'encrypted-seed-hex-1234');
+      final stored = await _readVault(db);
+      expect(stored, 'encrypted-seed-hex-1234');
+    });
+
+    // V2
+    test('V2 empty vault returns null', () async {
+      final db = AppDatabase.inMemory();
+      final stored = await _readVault(db);
+      expect(stored, isNull);
+    });
+
+    // V3
+    test('V3 seed vault round-trip: store → retrieve', () async {
+      final db = AppDatabase.inMemory();
+      await _seedVault(db, 'roundtrip-test-value');
+      final stored = await _readVault(db);
+      expect(stored, 'roundtrip-test-value');
+    });
+
+    // V4
+    test('V4 seed vault overwrite: second store replaces first', () async {
+      final db = AppDatabase.inMemory();
+      await _seedVault(db, 'first-value');
+      await _seedVault(db, 'second-value');
+      final stored = await _readVault(db);
+      expect(stored, 'second-value');
+    });
+
+    // ── Group D/F: unlock() reads from vault (V5–V9) ──
+
+    // V5
+    test('V5 unlock with seed in vault + correct passphrase → succeeds',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      final encryptedSeed = crypto.encrypt(validSeedB64, pdk);
+      await _seedVault(db, encryptedSeed);
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V6
+    test('V6 unlock with vault seed + wrong passphrase → AuthException',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      final encryptedSeed = crypto.encrypt(validSeedB64, pdk);
+      await _seedVault(db, encryptedSeed);
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      expect(
+        () => auth.unlock('WrongPassphrase123!', validSeedB64),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    // V7
+    test('V7 unlock falls back to genesis when vault empty', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V8
+    test('V8 unlock with no genesis and no vault → succeeds with direct seed',
+        () async {
+      final auth = await _makeAuthService();
+      await auth.unlock(validPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V9
+    test('V9 vault seed takes priority over genesis when both exist', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      // Genesis has altSeedB64
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: altSeedB64,
+      );
+      // Vault has validSeedB64
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, pdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue,
+          reason: 'Vault seed must take priority over genesis seed');
+    });
+
+    // ── Group G: reauthenticate() reads from vault (V10–V13) ──
+
+    // V10
+    test('V10 reauthenticate from vault → succeeds', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, pdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.reauthenticate(validPassphrase);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V11
+    test('V11 reauthenticate falls back to genesis when vault empty', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.reauthenticate(validPassphrase);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V12
+    test('V12 reauthenticate with no seed → AuthException', () async {
+      final auth = await _makeAuthService();
+      expect(
+        () => auth.reauthenticate(validPassphrase),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    // V13
+    test('V13 reauthenticate with wrong passphrase → AuthException', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, pdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      expect(
+        () => auth.reauthenticate('WrongPassphrase123!'),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    // ── Group H: exportSeed() reads from vault (V14–V16) ──
+
+    // V14
+    test('V14 exportSeed returns correct seed from vault', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      final pdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, pdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      final exported = await auth.exportSeed(validPassphrase);
+      expect(exported, validSeedB64);
+    });
+
+    // V15
+    test('V15 exportSeed falls back to genesis when vault empty', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      final exported = await auth.exportSeed(validPassphrase);
+      expect(exported, validSeedB64);
+    });
+
+    // V16
+    test('V16 exportSeed with no seed → AuthException', () async {
+      final auth = await _makeAuthService();
+      expect(
+        () => auth.exportSeed(validPassphrase),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    // ── Group I: changePassphrase() writes to vault (V17–V21) ──
+
+    // V17
+    test('V17 changePassphrase writes new seed to vault', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+      final oldPdk = crypto.derivePdk(validPassphrase, 600000);
+      final oldEncrypted = crypto.encrypt(validSeedB64, oldPdk);
+      await _seedVault(db, oldEncrypted);
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      await auth.changePassphrase(validPassphrase, newPassphrase);
+
+      final vaultAfter = await _readVault(db);
+      expect(vaultAfter, isNotNull);
+      expect(vaultAfter, isNot(oldEncrypted),
+          reason: 'Vault seed must be re-encrypted with new PDK');
+    });
+
+    // V18
+    test('V18 after changePassphrase, old passphrase cannot unlock', () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+      final oldPdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, oldPdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      await auth.changePassphrase(validPassphrase, newPassphrase);
+      auth.lock();
+
+      expect(
+        () => auth.unlock(validPassphrase, validSeedB64),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    // V19
+    test('V19 after changePassphrase, new passphrase unlocks successfully',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+      final oldPdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, oldPdk));
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      await auth.changePassphrase(validPassphrase, newPassphrase);
+      auth.lock();
+
+      await auth.unlock(newPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
+    });
+
+    // V20
+    test('V20 changePassphrase does not alter genesis (vault-backed chain)',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+      final oldPdk = crypto.derivePdk(validPassphrase, 600000);
+      await _seedVault(db, crypto.encrypt(validSeedB64, oldPdk));
+
+      final genesisBefore =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      final dataEncBefore = genesisBefore.first.dataEnc;
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      await auth.changePassphrase(validPassphrase, newPassphrase);
+
+      final genesisAfter =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisAfter.first.dataEnc, dataEncBefore,
+          reason: 'Post-fix: genesis must not be mutated on passphrase change');
+    });
+
+    // V21
+    test('V21 changePassphrase updates genesis when vault empty (pre-fix)',
+        () async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final db = AppDatabase.inMemory();
+
+      await _seedGenesisBlock(
+        crypto: crypto, db: db,
+        passphrase: validPassphrase, seedB64: validSeedB64,
+      );
+
+      final genesisBefore =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      final dataEncBefore = genesisBefore.first.dataEnc;
+
+      final auth = await _makeAuthService(crypto: crypto, db: db);
+      await auth.unlock(validPassphrase, validSeedB64);
+      await auth.changePassphrase(validPassphrase, newPassphrase);
+
+      final genesisAfter =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisAfter.first.dataEnc, isNot(dataEncBefore));
+
+      auth.lock();
+      await auth.unlock(newPassphrase, validSeedB64);
+      expect(auth.isUnlocked, isTrue);
     });
   });
 }

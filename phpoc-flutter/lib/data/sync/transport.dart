@@ -50,7 +50,9 @@ class HttpTransport {
       headers['If-None-Match'] = etag;
     }
 
-    final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers).timeout(
+      const Duration(seconds: 30),
+    );
 
     if (response.statusCode == 304) {
       return null; // Not modified
@@ -87,7 +89,9 @@ class HttpTransport {
       headers['If-Match'] = etag;
     }
 
-    final response = await http.put(uri, headers: headers, body: data);
+    final response = await http.put(uri, headers: headers, body: data).timeout(
+      const Duration(seconds: 30),
+    );
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final etagHeader = response.headers['etag'];
@@ -114,7 +118,9 @@ class HttpTransport {
       'X-Api-Key': apiKey,
     };
 
-    final response = await http.get(uri, headers: headers);
+    final response = await http.get(uri, headers: headers).timeout(
+      const Duration(seconds: 30),
+    );
 
     if (response.statusCode == 404) {
       return [];
