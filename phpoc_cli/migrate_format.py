@@ -103,36 +103,57 @@ class MigrateFormatCommand:
             json.dumps(content, sort_keys=True).encode()
         ).hexdigest()
 
-    def _seal_block(self, block: dict, crypto: CryptoManager, hash_key: str = None) -> str:
+    def _seal_block(self, block: dict, crypto: CryptoManager) -> str:
         """Compute a block seal: HMAC-SHA256 over the ADR-029a per-type fields.
 
-        Routes through `chain.select_seal_fields` so all sealers share the
-        canonical per-type whitelist (genesis/day = 6 fields, summaries =
-        {type, month|year, date, prev_hash, original_hash}). The hash_key is
-        derived from block type unless provided explicitly, so genesis
-        (block_hash), day (day_hash), month (month_hash) and year (year_hash)
-        blocks are all sealed consistently. `original_hash` is sealed when
-        present; format_version/key_version/identity/signature stay out.
+        Routes through `chain.compute_seal`/`select_seal_fields` so the
+        migration sealer shares the single canonical per-type whitelist
+        (genesis/day = 6 fields, summaries = {type, month|year, date,
+        prev_hash, original_hash}). `original_hash` is sealed when present;
+        format_version/key_version/identity/signature never enter the seal.
+        Unknown block types are rejected here and by the pre-validation loop.
         """
-        if hash_key is None:
-            hash_key = self._block_hash_key(block)
-        if hash_key is None:
+        if self._block_hash_key(block) is None:
             raise ValueError(f"Cannot seal block of unknown type: {block.get('type')}")
         return compute_seal(crypto, block)
 
     @staticmethod
     def _block_hash_key(block: dict) -> str:
-        """Return the canonical hash-key field name for a block type."""
-        t = block.get("type")
-        if t == "genesis":
-            return "block_hash"
-        if t == "day":
-            return "day_hash"
-        if t == "month_summary":
-            return "month_hash"
-        if t == "year_summary":
-            return "year_hash"
-        return None
+        """Return the canonical hash-key field name for a block type.
+
+        Strictly maps the four canonical block types
+        {genesis→block_hash, day→day_hash, month_summary→month_hash,
+        year_summary→year_hash} and returns None for ANY other type. This
+        doubles as the unknown-type gate for `_seal_block` and the migration
+        pre-validation loop. It intentionally does NOT mirror `chain.py`'s
+        `_hash_key_for_block`, which falls back to `day_hash` for unknown and
+        I-17 legacy genesis forms — this migrator must reject unknown types,
+        not guess a hash key for them.
+        """
+        return {
+            "genesis": "block_hash",
+            "day": "day_hash",
+            "month_summary": "month_hash",
+            "year_summary": "year_hash",
+        }.get(block.get("type"))
+
+    @staticmethod
+    def _preserve_and_strip(block: dict, hk: str) -> dict:
+        """Save the current hash under `original_hash`, then clear every stale
+        hash key and the identity_seal so Phase 2 re-seals onto one value.
+
+        `hk` is the canonical hash key for this block type. Multi-client
+        ledgers can carry a stray `block_hash` on day blocks (block_hash ==
+        day_hash); stripping every hash-field name guarantees
+        ``get_block_hash()`` sees a single canonical value after re-seal. A
+        previous seal is only preserved when it is truthy (non-empty).
+        """
+        if hk and block.get(hk):
+            block["original_hash"] = block[hk]
+        for key in ("block_hash", "day_hash", "month_hash", "year_hash"):
+            block.pop(key, None)
+        block.pop("identity_seal", None)
+        return block
 
     def authenticate(self) -> bool:
         """Authenticate by verifying seed can decrypt genesis identity."""
@@ -222,6 +243,19 @@ class MigrateFormatCommand:
 
         crypto = self._derive_crypto(genesis)
 
+        # ── Pre-validation: reject unknown/unsealable block types ──
+        # Only the four canonical block types (genesis/day/month_summary/
+        # year_summary) can be re-stamped onto the ADR-029a whitelist. An
+        # unknown type cannot be sealed, so reject it BEFORE the backup and any
+        # write — a failed migration must leave the input ledger untouched
+        # (atomicity, no partial write).
+        for i, block in enumerate(chain_blocks):
+            if self._block_hash_key(block) is None:
+                raise ValueError(
+                    f"Cannot migrate unknown block type at index {i}: "
+                    f"{block.get('type')!r}"
+                )
+
         # ── Pre-validation: every _enc field must be decryptable ──
         print("Pre-validating: decrypting all _enc fields...")
         for i, block in enumerate(chain_blocks):
@@ -273,15 +307,11 @@ class MigrateFormatCommand:
                 block["format_version"] = "0.4.0"
                 # Save original seal, clear it — recomputed in Phase 2 since
                 # format_version changed (affects the genesis seal fields).
-                if "block_hash" in block:
-                    block["original_hash"] = block["block_hash"]
-                block.pop("block_hash", None)
-                block.pop("identity_seal", None)
+                self._preserve_and_strip(block, self._block_hash_key(block))
                 new_blocks.append(block)
                 print(f"  Block {i}: genesis — format_version → 0.4.0")
 
             elif block.get("type") == "day":
-                old_day_hash = block.get("day_hash", "")
                 new_entries = []
 
                 for entry in block.get("entries", []):
@@ -308,17 +338,9 @@ class MigrateFormatCommand:
 
                 block["entries"] = new_entries
 
-                # Save original block seal
-                if old_day_hash:
-                    block["original_hash"] = old_day_hash
-
-                # Clear ALL stale hash keys + seal — recomputed in Phase 2.
-                # Some multi-client ledgers carry a stray block_hash on day
-                # blocks (block_hash == day_hash); strip every hash field so
-                # get_block_hash() sees exactly one canonical value.
-                for hk in ("day_hash", "block_hash", "month_hash", "year_hash"):
-                    block.pop(hk, None)
-                block.pop("identity_seal", None)
+                # Save original block seal, clear stale hash keys + seal —
+                # re-sealed in Phase 2 (see _preserve_and_strip).
+                self._preserve_and_strip(block, self._block_hash_key(block))
 
                 new_blocks.append(block)
                 print(f"  Block {i}: day — {len(new_entries)} entries migrated")
@@ -326,12 +348,7 @@ class MigrateFormatCommand:
             else:
                 # month_summary, year_summary — re-seal in Phase 2 (must be
                 # rebuilt since preceding day hashes change their prev_hash).
-                hk = self._block_hash_key(block)
-                if hk and hk in block:
-                    block["original_hash"] = block[hk]
-                for h in ("day_hash", "block_hash", "month_hash", "year_hash"):
-                    block.pop(h, None)
-                block.pop("identity_seal", None)
+                self._preserve_and_strip(block, self._block_hash_key(block))
                 new_blocks.append(block)
 
         # ── Phase 2: Rebuild prev_hash chain and re-seal ──
@@ -355,7 +372,7 @@ class MigrateFormatCommand:
             # Re-seal the block with the (possibly updated) prev_hash
             hk = self._block_hash_key(curr_block)
             if hk:
-                curr_block[hk] = self._seal_block(curr_block, crypto, hash_key=hk)
+                curr_block[hk] = self._seal_block(curr_block, crypto)
 
             # Identity seal (if present) — recompute with new hash
             if self.identity_secret and hk:

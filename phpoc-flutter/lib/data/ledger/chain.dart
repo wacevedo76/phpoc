@@ -370,11 +370,21 @@ class LedgerChain {
   // Internal helpers
   // ═══════════════════════════════════════════════════════════════
 
-  /// Canonical PHPSPEC seal fields shared across all block types.
-  /// Only {type, day_index, date, prev_hash, entries} are sealed — extra
-  /// metadata like format_version, key_version, username are not part of the
-  /// seal and therefore not needed for cross-client verification.
-  static const _sealFields = ['type', 'day_index', 'date', 'prev_hash', 'entries'];
+  /// Canonical block-seal fields shared across all block types (ADR-029).
+  /// Exactly {type, day_index, date, prev_hash, entries, original_hash} are
+  /// sealed — a closed set. `original_hash` is sealed only when present
+  /// (migrated / post-0.4.0 blocks); its absence must not break verification.
+  /// Extra metadata like format_version, key_version, username, identity_seal,
+  /// and the hash keys are NEVER part of the seal (matches Python
+  /// `domain/ledger/chain.py` SEAL_FIELDS and Web `seal_fields.js`).
+  static const _sealFields = [
+    'type',
+    'day_index',
+    'date',
+    'prev_hash',
+    'entries',
+    'original_hash',
+  ];
 
   /// Verify prev_hash linkage between [prev] and [current] blocks.
   bool _prevHashValid(Map<String, dynamic>? prev, Map<String, dynamic> current) {
@@ -390,11 +400,12 @@ class LedgerChain {
     return getDayBlocks().length;
   }
 
-  /// Compute a seal over the canonical PHPSPEC seal fields of [block].
+  /// Compute a seal over the canonical ADR-029 seal fields of [block].
   ///
-  /// Only includes {type, day_index, date, prev_hash, entries} — the
-  /// standard seal fields shared across all clients. Extra metadata like
-  /// format_version, key_version, username, etc. are NOT part of the seal.
+  /// Includes {type, day_index, date, prev_hash, entries, original_hash} —
+  /// the closed seal set shared across all clients. `original_hash` is sealed
+  /// only when present. Extra metadata like format_version, key_version,
+  /// username, identity_seal, and the hash keys are NOT part of the seal.
   String _sealBlock(Map<String, dynamic> block) {
     final sealData = <String, dynamic>{};
     for (final field in _sealFields) {
@@ -407,9 +418,10 @@ class LedgerChain {
 
   /// Verify a block's internal seal using the 3-way fallback in [verifySeal].
   ///
-  /// Extracts only the canonical PHPSPEC seal fields ({type, day_index, date,
-  /// prev_hash, entries}) and verifies the stored hash against all three
-  /// cross-client serialization formats.
+  /// Extracts only the canonical ADR-029 closed seal fields ({type, day_index,
+  /// date, prev_hash, entries, original_hash}) and verifies the stored hash
+  /// against all three cross-client serialization formats. `original_hash` is
+  /// included only when present.
   bool _verifyBlockSeal(Map<String, dynamic> block) {
     final type = block['type'] as String?;
     if (type == null) return false;

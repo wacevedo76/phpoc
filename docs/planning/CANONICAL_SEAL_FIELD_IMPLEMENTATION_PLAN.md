@@ -84,12 +84,17 @@ exclusion (which becomes irrelevant under the whitelist since those are already 
 **Goal:** Fix the Phase-4 regression: `_sealFields` becomes
 `{type, day_index, date, prev_hash, entries, original_hash}` (6 fields).
 
-- **[ ] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_FLUTTER_PHASE1.md`.
-- **[ ] TDD P2 — RED** — `phpoc-flutter/test/chain_seal_whitelist_test.dart` (widget/unit).
-- **[ ] TDD P3 — GREEN** — update `_sealFields` + `_sealBlock`/`_verifyBlockSeal` to the 6-field set.
-- **[ ] TDD P4 — REFACTOR** — keep 3-way JSON fallback; docstring correction (stop misstating
-  PHPSPEC as 5-field). Confirm `original_hash` now in seal.
-- **Status:** 🔜
+- **[x] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_FLUTTER_PHASE1.md` (9 tests: A:2, C:4, D:3; sealer path proven behaviorally via shared `_sealFields`).
+- **[x] TDD P2 — RED** — `phpoc-flutter/test/data/ledger/chain_seal_whitelist_test.dart`: 9 tests, **7 RED**
+  (the 6-field-requiring subset) + 2 guard tests (optionality / closed-set). Confirmed the regression.
+- **[x] TDD P3 — GREEN** — `chain.dart` `_sealFields` → `{type, day_index, date, prev_hash, entries,
+  original_hash}` (6 fields); `_sealBlock`/`_verifyBlockSeal` iterate the shared table. **9/9 GREEN.**
+- **[x] TDD P4 — REFACTOR** — 3-way JSON fallback (`verifySeal`) kept intact; docstrings corrected
+  (stopped misstating PHPSPEC 5-field; now document closed ADR-029 6-field set). No `format_version`/
+  `key_version`/`identity_seal`/hash-key sealing. Confirmed `original_hash` now in seal.
+- **Status:** ✅ Flutter `_sealFields` 6-field whitelist (Phases 1–4 TDD) complete. No new regressions:
+  `test/data` failure set unchanged (pre-existing `chain_test` K2/K3/K4, `engine_test` F15/AE2/AE4,
+  `sync_service_test`, flaky `restore_integration`).
 
 ### Key acceptance
 Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/129 → 129/129 fix.
@@ -100,11 +105,12 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 
 **Goal:** Migration re-seals to the 6-field whitelist (not the current open-set-minus-exclusions).
 
-- **[ ] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_MIGRATOR_PHASE1.md`.
-- **[ ] TDD P2 — RED** — extend `tests/test_migrate_format.py` with seal-whitelist assertions.
-- **[ ] TDD P3 — GREEN** — update `_seal_block` (and standalone mirror) to the 6-field set.
-- **[ ] TDD P4 — REFACTOR** — dedupe sealer shared with chain.py if applicable.
-- **Status:** 🔜
+- **[x] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_MIGRATOR_PHASE1.md` (26 assertions across A–F; Group F = unknown-block-type safety added after probing).
+- **[x] TDD P2 — RED** — extend `tests/test_migrate_format.py` with seal-whitelist assertions: new `TestMigrateFormatSealWhitelist` (24 lock assertions + 2 RED). **RED (2): F1/F2** — unknown block type currently corrupts the input ledger (write-before-raise, no restore). GREEN (24): seal-content/closed-set/enforcement locks (all already whitelist-correct via `compute_seal`). 41/43 total in file.
+- **[x] TDD P3 — GREEN** — `_seal_block` already routes through `compute_seal` (6-field set, verified by A1/B1/C1/E1). Fixed the unknown-block-type corrupting write in `execute()`: new pre-validation loop rejects any block whose `_block_hash_key` is None (i.e. not one of the 4 canonical types) with `ValueError` **before** the backup and any write — a failed migration is a byte-identical no-op on the input ledger. `TestMigrateFormatSealWhitelist` **26/26 GREEN** (F1/F2 now GREEN); file 43/43; full Python suite 2586 pass / 1 skip / 0 fail.
+- **[x] TDD P4 — REFACTOR** — `_seal_block` drops its unused `hash_key` param (it never reached `compute_seal`); the sealer was already deduped (→ `compute_seal` → `select_seal_fields`). Extracted `_preserve_and_strip` to unify the three per-branch "save `original_hash` + strip stale hash keys + `identity_seal`" loops in `execute()`; `_block_hash_key` reduced to a `dict.get` table. Kept it the strict unknown-type gate rather than reusing `chain._hash_key_for_block` (which defaults to `day_hash` and would break E3/E4/F1/F2). 43/43 GREEN; full suite 2586 pass / 1 skip / 0 fail.
+- **Status:** 🟢 (Ph-4 Migrator P1–P4 COMPLETE)
+- **Probe finding:** sealer already routes through `compute_seal` (routed during Ph-1 Python P4), so migrated seals already match the whitelist; `chain.verify()` True on migrated multi-type ledger; tampered seal fails verify; excluded-field change leaves `compute_seal` unchanged + verify() still True.
 
 ---
 
@@ -160,8 +166,8 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 |-------|-------|--------|--------|----------|-------------|--------|
 | 1 — Python `chain.py` | — | ✅ | ✅ | ✅ | ⬜ | 🟡 P3 GREEN done (P4 REFACTOR next) |
 | 2 — Web `chain.js` | — | ✅ | ✅ | ✅ | ✅ | 🟢 P4 REFACTOR done (Phases 1–4 complete) |
-| 3 — Flutter `chain.dart` | — | ⬜ | ⬜ | ⬜ | ⬜ | 🔜 |
-| 4 — Migration tool | — | ⬜ | ⬜ | ⬜ | ⬜ | 🔜 |
+| 3 — Flutter `chain.dart` | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-3 Flutter P1–P4 complete |
+| 4 — Migration tool | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-4 Migrator P1–P4 COMPLETE (26 seal-whitelist + 17 existing = 43 GREEN; unknown-type pre-validation; P4 REFACTOR deduped sealer/hash-strip) |
 | 5 — PHPSPEC | — | — | — | — | — | 🔜 |
 | 6 — Canonical vectors | — | — | — | — | — | 🔜 |
 | 7 — Re-migrate + phone | — | — | — | — | — | 🔜 |

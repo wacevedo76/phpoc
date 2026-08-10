@@ -174,7 +174,7 @@ Key test files:
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
 - `tests/test_migration.py` — 🔴 27 tests for canonical ledger format migration (Groups A–F), Phase 2 RED (12P/6F/9S, 2026-07-03)
-- `tests/test_migrate_format.py` — 🟢 17 tests for `MigrateFormatCommand` (happy path, provenance, file paths, edge cases, mixe-block re-seal, decrypt pre-validation) — all GREEN
+- `tests/test_migrate_format.py` — 🟢 43 tests for `MigrateFormatCommand`: happy path, provenance, file paths, edge cases, mixed-block re-seal, decrypt pre-validation, + `TestMigrateFormatSealWhitelist` (26 ADR-029/029a block-seal whitelist assertions A–F incl. unknown-type no-write safety) — all GREEN
 - `tests/test_chain_seal_whitelist.py` — 🟢 **NEW** — 30 tests for ADR-029/029a Python **type-aware** per-type seal whitelist (Groups A–E): per-type `SEAL_FIELDS` map, closed-set verifier, summary `month`/`year` identity sealing, unknown-type rejection, migrated-parity. Phase 3 GREEN + Phase 4 refactor (all sync sealers through `compute_seal`) complete. (2026-08-09)
 - `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
 - `testdata/canonical_test_vectors.json` — 🔴 Shared seal test vectors for cross-platform (PY + JS) canonical format tests (2026-07-03)
@@ -217,7 +217,9 @@ Key test files:
 | `../planning/ROW_LEVEL_STAGING_SYNC_PLAN.md` | 🔜 **NEW** — Row-level staging sync plan: 8-scenario LWW resolution, sync cycle contract, Worker endpoints, migration. Companion to ADR-025. (2026-07-08) |
 | `../planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` | 🔜 **ACTIVE** — ADR-029 canonical block-seal whitelist: 7 phases (Python/Web/Flutter/migrator/PHPSPEC/vectors/phone), 4-phase TDD each. (2026-08-09) |
 | `../planning/CANONICAL_SEALFIELD_PYTHON_PHASE1.md` | 🟡 **IN PROGRESS** — Ph-1/7 Python seal whitelist blueprint: 26 assertions (A–E); Ph-2 RED done (`tests/test_chain_seal_whitelist.py`, 6 RED). (2026-08-09) |
-| `../planning/CANONICAL_SEALFIELD_WEB_PHASE1.md` | 🔜 **ACTIVE** — Ph-2/7 Web seal whitelist blueprint: 27 assertions (A–E) for converging Web sealer/verifier + `merge.js` duplicate onto the closed whitelist. P1 blueprint done. (2026-09) |
+| `../planning/CANONICAL_SEALFIELD_WEB_PHASE1.md` | ✅ **COMPLETE** — Ph-2/7 Web seal whitelist blueprint: 27 assertions (A–E) for converging Web sealer/verifier + `merge.js` duplicate onto the closed whitelist. Phases 1–4 done (28/28). (2026-09) |
+| `../planning/CANONICAL_SEALFIELD_FLUTTER_PHASE1.md` | ✅ **COMPLETE** — Ph-3/7 Flutter `_sealFields` 6-field blueprint: 9 tests (groups A/C/D). Phases 1–4 done (9/9). (2026-09) |
+| `../planning/CANONICAL_SEALFIELD_MIGRATOR_PHASE1.md` | ✅ **COMPLETE** — Ph-4/7 Migrator seal whitelist blueprint: 26 assertions (A:7 day-seal, B:5 genesis-seal, C:4 summary-seal, D:4 e2e+closed-set, E:4 `_seal_block`/`_block_hash_key`, F:2 unknown-type safety). Phase docs `CANONICAL_SEALFIELD_MIGRATOR_PHASE{1,3,4}.md`. `_seal_block` routes through `compute_seal`; `execute()` pre-validates unknown types → `ValueError` before write (no-op atomicity); P4 REFACTOR deduped hash-strip + dropped unused `_seal_block` param. 43/43 migrate_format GREEN. (2026-09) |
 | `../planning/CCS4_PHASE1.md` | ✅ **COMPLETE** — CCS-4 Cross-Client E2E blueprint: 24 assertions (Groups A–E). Phase docs `CCS4_PHASE1/2/3.md` + `CCS4_PHASE4.md` (REFACTOR, complete). Crossref: `tests/test_ccs4_cross_client.py` (20/20), `tests/test_ccs4_live_worker.py` (5/5). (2026-09) |
 | `../planning/CLI_SQLITE_STAGING_PHASE1.md` | 🔜 **NEW** — Phase 1 test blueprint for CLI SQLite staging store: 104 assertions across 10 groups (A–J). |
 | `../planning/CLI_COMMAND_TIMING_FIXES.md` | 🔜 **NEW** — `ph view` latency investigation: 4 fixes (F1–F4) with 4-phase TDD per fix. Target: 16→2–4 HTTP requests, 5–26s→1–4s. (2026-07-14) |

@@ -23,9 +23,16 @@
 
 ## Immediate Next Steps 🎯
 
-### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Python ✅ · Web ✅ · **Flutter 🟡 next**
+### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Python ✅ · Web ✅ · **Flutter ✅ · Migrator ✅ · PHPSPEC/vectors/phone 🔜**
 - **Plan:** `docs/planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` (7 phases, each 4-phase TDD)
-- **Status:** Ph-1 (Python) ✅ P1–P4 · **Ph-2 (Web) ✅ P1–P4 complete** (28/28, `CANONICAL_SEALFIELD_WEB_PHASE1.md`; P4 deduped `sync.js`/`genesis_gate.js` builders onto the shared whitelist; no `format_version`/`key_version` sealing; legacy-tolerant verifiers kept) · **Ph-3 (Flutter) 🔜 NEXT** · Ph-4..7 🔜
+- **Status:** Ph-1 (Python) ✅ · Ph-2 (Web) ✅ P1–P4 · Ph-3 (Flutter) ✅ P1–P4 · **Ph-4 (Migrator) ✅ P1–P4 COMPLETE** · Ph-5 (PHPSPEC) / Ph-6 (vectors) / Ph-7 (re-migrate+phone) 🔜
+
+**Ph-3 Flutter P1–P4 (this session) — `_sealFields` → 6-field:**
+- **P1:** `docs/planning/CANONICAL_SEALFIELD_FLUTTER_PHASE1.md` (9 tests, groups A/C/D; sealer proven behaviorally via shared `_sealFields`).
+- **P2 RED:** `test/data/ledger/chain_seal_whitelist_test.dart` — 9 tests, 7 RED (confirms the missing-`original_hash` regression).
+- **P3 GREEN:** `chain.dart` `_sealFields` = `{type, day_index, date, prev_hash, entries, original_hash}`; `_sealBlock`/`_verifyBlockSeal` share the table; `original_hash` optional-if-present. **9/9 GREEN.**
+- **P4 REFACTOR:** 3-way JSON fallback kept; docstrings corrected (no longer misstate 5-field); no `format_version`/`key_version`/`identity_seal`/hash-key sealing.
+- **No new regressions:** `test/data` failure set unchanged (pre-existing `chain_test` K2/K3/K4, `engine_test` F15/AE2/AE4, `sync_service_test`, flaky `restore_integration`).
 
 **Ph-2 Web P1/P2/P3/P4 (current session):**
 - **P1 blueprint** — `docs/planning/CANONICAL_SEALFIELD_WEB_PHASE1.md`: 27 assertions across A–E. Records the latent Web exclusion bug (open-set minus `{hashKey, identity_seal, signature}` → seals `format_version`/`key_version`/stray fields) the closed whitelist fixes.
@@ -39,33 +46,22 @@
 - **Full Python suite GREEN: 2475 passed, 1 skipped / 0 failures** (re-verified after final consolidations).
 
 ### ✅ CCS-4 Cross-client E2E testing — Phases 1–4 ✅ COMPLETE
-- **Plan:** `docs/planning/CCS4_PHASE1.md` (24 assertions, Groups A–E) · docs `CCS4_PHASE2/3/4.md`
-- **Phase 1 ✅** BLUEPRINT · **Phase 2 ✅** RED (7 genuine divergences + 13 guards + 5 live) · **Phase 3 ✅** GREEN · **Phase 4 ✅** REFACTOR (this session)
-- **Phase 3 GREEN** — converged all divergences:
-  - **Python compact canonical activity JSON**: `domain/staging/row_merge.py` `json.dumps(activity, separators=(",", ":"))` (dtoToCanonicalRow + canonicalRowToDTO) → byte-identical to JS/Dart compact. A1–A5 fixed.
-  - **JS A6 block_index preserved**: `phpoc-web/src/sync/entry_dto.js` `canonicalRowToDTO` reads `activity.block_index ?? null`.
-  - **JS C6 deterministic sort**: `phpoc-web/src/sync/row_sync.js` `mergeRows` sorts by activity_id.
-  - **B2 verified = no real Flutter divergence**: Dart `json.encode` is compact → byte-identical to Python compact hash. No Flutter change needed.
-- **Tests GREEN:** `test_ccs4_cross_client.py` 20/20; `test_ccs4_live_worker.py` 5/5 (real Worker); full Python suite **2560 pass / 1 skip / 0 fail**; relevant Web files 0 fail; Flutter hash-index 8/8.
-- **Phase 4 REFACTOR (this session):** added `_canonical_json()` helper in `row_merge.py` to DRY the repeated `separators=(",", ":")` magic tuple at both call sites, with a docstring documenting why compact is the canonical cross-client form (CCS-4 A1–A5). JS files unchanged (single-line fixes already clean). Full suite re-verified GREEN.
-- **Backlog:** `docs/planning/BACKLOG.md` §CCS-4 marked ✅.
+- `test_ccs4_cross_client.py` 20/20 + live Worker 5/5; Python suite 2560 pass/1 skip/0 fail. Converged canonical compact activity JSON in `row_merge.py` (`_canonical_json()` P4 helper); JS `entry_dto.js` block_index + `row_sync.js` deterministic sort; no Flutter change (Dart `json.encode` already compact). Docs `docs/planning/CCS4_PHASE{1,2,3,4}.md`; backlog ✅.
 
 ### 🔜 Queued
 - **Staging Auto-Sync:** bidirectional `checkAndSync()` — `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
 
+## ✅ Ph-4 Migrator (Canonical Seal-Field plan Phase 4) — Phases 1–4 COMPLETE
+- **P1 blueprint** — `docs/planning/CANONICAL_SEALFIELD_MIGRATOR_PHASE1.md` (26 assertions A–F).
+- **P2 RED** — `TestMigrateFormatSealWhitelist`; 2 RED (F1/F2 unknown-type corrupting write).
+- **P3 GREEN** — `execute()` pre-validation loop rejects unknown/unsealable types (`_block_hash_key is None` → `ValueError`) BEFORE backup/write; input ledger stays byte-identical on failure (no-op atomicity). `TestMigrateFormatSealWhitelist` **26/26**; file **43/43**.
+- **P4 REFACTOR** — dropped unused `hash_key` param from `_seal_block` (never reached `compute_seal`); extracted `_preserve_and_strip` unifying 3 per-branch hash-strip loops in `execute()`; `_block_hash_key` → `dict.get` table, kept as strict unknown-type gate (NOT `chain._hash_key_for_block`, which defaults to `day_hash`). Sealer already shared (`_seal_block` → `compute_seal`). Doc `CANONICAL_SEALFIELD_MIGRATOR_PHASE4.md`. **Full suite 2586 pass / 1 skip / 0 fail — no regressions.**
+
 ### ✅ Completed: CCS-3 — CLI Sync-Gate Wiring → Phases 1–4 ✅
-- **Plan:** `docs/planning/CLI_SYNC_GATE_WIRING_PHASE1.md` (60 assertions)
-- **Result:** `tests/test_cli_sync_gate_wiring.py` **60/60 GREEN**; full Python suite **2535 pass / 1 skip / 0 fail**
-- **P3 delivered:** `domain/staging/row_merge.py` (`dtoToCanonicalRow`/`canonicalRowToDTO`); `MergeEngine.merge_rows()` (activity_id LWW); `StagingHashIndex.build_from_store`; `StagingService._merge_remote_into_local`; `LocalStagingCache` row-mode for `SqliteStagingStore` + `activity_id`/`updated_at` fidelity in blob path + `write_calls`
-- **P4 REFACTOR (this session):** extracted `StagingService._resolve_device_id()` (dedups device-identity resolution across `_ensure_cookie`/`_reconcile_and_claim`/`push_to_remote`/`push_blob_only`; removed dead nested `_remote is None` guards) and `_remote_entries_to_dtos()` (consolidates raw→DTO conversion across `_push_on_fast_path`/`_reconcile_and_claim`/`_merge_remote_into_local`); simplified `dtoToCanonicalRow` device_id default (`device_id or ""`). Full suite re-verified GREEN.
-- **Backlog:** `docs/planning/BACKLOG.md` §CCS-3 marked ✅.
+- `tests/test_cli_sync_gate_wiring.py` **60/60**; Python suite 2535 pass/1 skip/0 fail. P3: `row_merge.py` DTO↔canonical-row, `merge_rows`, `StagingHashIndex`, `_merge_remote_into_local`, LocalStagingCache row-mode. P4: extracted `_resolve_device_id()`/`_remote_entries_to_dtos()`. Backlog §CCS-3 ✅.
 
 ### ✅ Completed: CCS-2 — Web Row-Level Sync (Option B) → Phases 1–4 ✅
-- **Plan:** `docs/planning/CCS2_PHASE1.md` (24 assertions: 14 RED + 10 anchors)
-- **Result:** `phpoc-web/test/ccs2_row_level_reconcile_test.mjs` **41/41 GREEN**; full web suite no regressions (76/14, 14 pre-existing env/WASM/DOM)
-- **P3:** `mergeRows` (activity_id LWW local-wins) threaded into `sync.js` `_reconcileDifferentDevice`; `dtoToCanonicalRow` exported from `remote_sync.js`; legacy `{hash,data}` bridge + committed-exclusion; C2 status-only fast-path
-- **P4 (this session):** extracted `_mergeRemoteIntoLocal()` + module-level `_rowsFromRemoteBlob()`; precomputed `remoteWonIds` set; removed dead `compareStagingHashIndexes`/`computeHashForIndex` imports. CSV baseline unchanged.
-- **Backlog:** `docs/planning/BACKLOG.md` §CCS-2 marked ✅.
+- `ccs2_row_level_reconcile_test.mjs` **41/41**; web suite no new regressions. P3 `mergeRows` (activity_id LWW) + `dtoToCanonicalRow` + legacy bridge + C2 fast-path; P4 `_mergeRemoteIntoLocal()`/`_rowsFromRemoteBlob()`. Backlog §CCS-2 ✅.
 
 ### 🔜 In Progress: `ph migrate-format` — Canonical 0.4.0 Rehash
 - Built `phpoc_cli/migrate_format.py` + standalone `migrate-format.py` (project root)
