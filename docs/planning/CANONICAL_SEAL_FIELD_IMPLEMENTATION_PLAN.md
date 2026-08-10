@@ -4,7 +4,7 @@
 > implementations per **ADR-029** (✅ Adopted) and `docs/design/CANONICAL_SEAL-FIELD_Design.md`.
 > **Purpose:** Converge Python / Web / Flutter / migration-tool on ONE block-seal contract so
 > migrated 0.4.0 ledgers verify on every client (fixes the on-phone 0/129 verification failure).
-> **Status:** 🔜 In progress
+> **Status:** In progress (Ph-5 PHPSPEC done; Ph-6 vectors & Ph-7 phone next)
 > **Canonical whitelist:** `SEAL_FIELDS = { type, day_index, date, prev_hash, entries, original_hash }`
 
 ---
@@ -118,10 +118,11 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 
 **Goal:** Spec states the canonical `SEAL_FIELDS` set and the closed-set rule.
 
-- **[ ]** Add "Block Seal Field Set" section: the 6 fields, HMAC-SHA256 over
-  `json.dumps(seal_data, sort_keys=True)`, closed-set (excluded fields list), `original_hash`
-  optional-if-absent for pre-0.4.0 / legacy blocks.
-- **Status:** 🔜
+- [x] TDD P1 — blueprint in `docs/planning/CANONICAL_SEALFIELD_PHPSPEC_PHASE1.md` (27 spec-conformance assertions, groups A–F).
+- [x] TDD P2 — RED: confirmed current spec contradicts ADR-029 — §5.2 `compute_seal` was open-set (seals `format_version`/`key_version`/stray); §9.3 (L1449/L1481) falsely claimed `format_version` is **included in the block seal**.
+- [x] TDD P3 — GREEN: rewrote §5.2 into **Block Seal Field Set** (per-type tables), **Selection & Canonical Serialization** (`json.dumps sort_keys`), **Closed-Set Rule** (excluded fields incl. `format_version`/`key_version`/`identity`/`identity_seal`/`signature`/hash key), `original_hash` optional-if-absent, and **Unknown Block Types** rejection; fixed §1.4 Seal def + §9.3 two stale `format_version`-in-seal claims; routed `scripts/migrate_format_version.py` `compute_seal` through the shared `select_seal_fields` whitelist (was open-set).
+- [x] TDD P4 — REFACTOR: fixed the latent `_section_text` f-string regex bug in `tests/test_naming_i04.py` (`^#{{{1,{level}}}}\s` → `^#{{1,{level}}}\s`; ×2 copies) that silently made section-scoped spec tests scan to end-of-doc; updated H12 to allow the ADR-029 closed-set exclusion table (`signature` as an explicitly-not-sealed field). Dropped the now-dead `hash_key` local in `scripts/migrate_format_version.py` `compute_seal`. **Full Python suite: 2586 passed, 1 skipped, 0 failed** (+6 naming tests now GREEN that the broken regex had masked but the ADR-029 `signature` exclusion row had begun to trip).
+- **Status:** 🟢 (Ph-5 PHPSPEC P1–P4 COMPLETE)
 
 ---
 
@@ -168,6 +169,6 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 | 2 — Web `chain.js` | — | ✅ | ✅ | ✅ | ✅ | 🟢 P4 REFACTOR done (Phases 1–4 complete) |
 | 3 — Flutter `chain.dart` | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-3 Flutter P1–P4 complete |
 | 4 — Migration tool | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-4 Migrator P1–P4 COMPLETE (26 seal-whitelist + 17 existing = 43 GREEN; unknown-type pre-validation; P4 REFACTOR deduped sealer/hash-strip) |
-| 5 — PHPSPEC | — | — | — | — | — | 🔜 |
+| 5 — PHPSPEC | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-5 P1–P4 COMPLETE (27 assertions; §5.2 whitelist + closed-set + original_hash; §9.3 stale claims fixed; migrate_format_version routed to whitelist; test_naming_i04 regex bug fixed) |
 | 6 — Canonical vectors | — | — | — | — | — | 🔜 |
 | 7 — Re-migrate + phone | — | — | — | — | — | 🔜 |

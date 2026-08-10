@@ -129,7 +129,7 @@ A PHPOC ledger consists of the following files:
 | **Master Key (MK)** | 32 bytes — the decoded Seed. Derives all sub-keys. |
 | **Passphrase-Derived Key (PDK)** | Key derived via PBKDF2 from the user's passphrase. Only used to encrypt/decrypt the Seed. |
 | **Block** | A JSON object in the ledger chain. One of: genesis, year_summary, month_summary, day. |
-| **Seal** | An HMAC-SHA256 over a block's content (excluding the seal field itself). Proves block integrity. |
+| **Seal** | An HMAC-SHA256 over a closed, per-type whitelist of a block's fields (see §5.2), excluding the seal field itself. Proves block integrity. |
 | **Signature** | An HMAC-SHA256 over a block's seal hash, using the identity secret. Proves authorship. |
 | **Entry** | An individual activity record inside a Day block. Contains timestamps, title, duration, metadata. |
 | **Content Hash** | SHA-256 of a canonical plaintext representation of an entry. Survives re-encryption. |
@@ -890,38 +890,85 @@ Where `hash_field(block)` resolves to `block["day_hash"]`, `block["year_hash"]`,
 
 ### 5.2 Block Sealing (HMAC-SHA256)
 
-Every block carries a cryptographic **seal** — an HMAC-SHA256 computed over the block's content with the seal field itself and the `identity_seal` field excluded.
+Every block carries a cryptographic **seal** — an HMAC-SHA256 computed over a **closed, per-type whitelist** of the block's fields (ADR-029 / ADR-029a). The seal input is **never** the whole block: only the fields listed for the block's type below are rendered; the block's own seal (hash) field and every other field are excluded.
 
-The seal is computed using the **sealing sub-key** derived from the Master Key:
+#### Block Seal Field Set
+
+Each block type has a frozen set of seal-input fields. This set is identical across all four
+implementations (CLI Python, Web, Flutter, migration tool) and is verified by the shared
+canonical seal vectors (see `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12).
+
+| Block type | `type` value | Seal-input fields (closed) | Hash field (excluded) |
+|------------|--------------|----------------------------|------------------------|
+| Genesis | `"genesis"` | `type, day_index, date, prev_hash, entries, original_hash` | `day_hash` |
+| Day | `"day"` (or absent) | `type, day_index, date, prev_hash, entries, original_hash` | `day_hash` |
+| Month Summary | `"month_summary"` | `type, month, prev_hash, date, original_hash` | `month_hash` |
+| Year Summary | `"year_summary"` | `type, year, prev_hash, date, original_hash` | `year_hash` |
+
+Summary blocks (`month_summary` / `year_summary`) carry no `day_index`/`entries`; they seal
+their `month`/`year` partition identity, which is the trust anchor for modular loading and
+split-archive integrity (D5).
+
+#### Selection & Canonical Serialization
+
+Only fields present on the block are selected (missing keys are not rendered):
 
 ```python
-import hmac, hashlib, json
+rendered = {k: v for k, v in block.items() if k in SEAL_FIELDS[block["type"]]}
+data_str = json.dumps(rendered, sort_keys=True)   # or byte-equal jsonSort (Dart)
+```
+
+The seal is the HMAC-SHA256 of `data_str` using the **sealing sub-key** derived from the Master
+Key (§2.6):
+
+```python
+import hmac, hashlib
 
 def compute_seal(block: dict, master_key: bytes) -> str:
-    # Determine the hash field for this block type
-    hash_key = {
-        "genesis": "day_hash",
-        "year_summary": "year_hash",
-        "month_summary": "month_hash",
-        "day": "day_hash",
-    }.get(block.get("type", "day"))
-    
-    # Exclude the seal field and the identity seal
-    check_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal")}
-    
-    # Canonical JSON (sorted keys, no extra whitespace)
-    data_str = json.dumps(check_data, sort_keys=True)
-    
-    # Derive sealing sub-key (fixed salt)
+    rendered = select_seal_fields(block)          # closed per-type whitelist
+    data_str = json.dumps(rendered, sort_keys=True)
     seal_key = hmac.new(master_key, b"integrity-key-salt", hashlib.sha256).digest()
-    
-    # Compute HMAC
-    return hmac.new(seal_key, data_str.encode('utf-8'), hashlib.sha256).hexdigest()
+    return hmac.new(seal_key, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def select_seal_fields(block: dict) -> dict:
+    field_set = SEAL_FIELDS.get(block.get("type", "day"))
+    if field_set is None:
+        raise ValueError(f"Unknown block type for seal: {block.get('type')!r}")
+    return {k: v for k, v in block.items() if k in field_set}
 ```
 
 **Validation rule:** `compute_seal(block, master_key) == block[hash_key]`
 
-> The sealing sub-key is distinct from encryption/integrity sub-keys because it uses a fixed salt (`b"integrity-key-salt"`) rather than a per-operation random salt.
+> The sealing sub-key is distinct from encryption/integrity sub-keys because it uses a fixed salt
+> (`b"integrity-key-salt"`) rather than a per-operation random salt.
+
+#### Closed-Set Rule (Excluded Fields)
+
+The whitelist is a **closed set**: the following fields are **never** sealed for any block type,
+and any future or client-specific field must be added to the closed-set rule (via a spec revision
+and shared canonical-vector update, not silently):
+
+| Never sealed | Why |
+|--------------|-----|
+| `format_version` | Version metadata must not affect seals (ADR-029). |
+| `key_version` | Key-derivation metadata must not affect seals. |
+| `identity` | Identity object (seed / encrypted seed) stays outside the seal. |
+| `identity_seal` | The identity MAC is over the seal (see §5.3), not inside it. |
+| `signature` | The signature is over the seal hash, not inside it. |
+| the block's own hash key | The seal field itself can never be its own input. |
+
+#### `original_hash` Optional-if-Absent
+
+`original_hash` is **optional-if-absent**: it is sealed only when present. Migrated 0.4.0
+re-hashed blocks carry `original_hash` (the seal of the original chain), so it enters the seal;
+new / pre-0.4.0 blocks have no such field and omit it. A block's validity does not depend on
+`original_hash` being present.
+
+#### Unknown Block Types
+
+A block with a `type` not present in the per-type map is **verification-invalid** — there is no
+open-set fallback. All four implementations reject unknown types at seal/verify time
+(`ValueError` / throw).
 
 ### 5.3 Identity Seal
 
@@ -1446,7 +1493,7 @@ As described in [§3.7](#37-legacy-format-detection), ciphertexts created before
 
 ### 9.3 Format Evolution & Versioning
 
-Every ledger has an explicit format version stored in the genesis block's `format_version` field (added in v0.3.0 of the spec). This field is **included in the block seal** (see §5.2), making it cryptographically binding.
+Every ledger has an explicit format version stored in the genesis block's `format_version` field (added in v0.3.0 of the spec). **Note (ADR-029):** `format_version` is **excluded from the block seal** (see §5.2 closed-set rule) — it is *not* cryptographically bound by the seal. Version is validated structurally (presence/value of the genesis field), not by seal membership.
 
 #### Version Detection
 
@@ -1478,7 +1525,7 @@ Every ledger has an explicit format version stored in the genesis block's `forma
 
 #### One-Time Migration (v0.2.0 → v0.3.0)
 
-Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. Because `format_version` is included in the block seal, adding it changes `day_hash`, which **cascades through the entire chain**:
+Ledgers created before this spec (implicit v0.2.0) can be upgraded by adding `format_version` to genesis. **Note (ADR-029):** because `format_version` is excluded from the block seal (§5.2), merely adding it to genesis does *not* by itself change `day_hash`; the chain re-seal below recomputes each block's seal over the closed whitelist (so `prev_hash` linkage still cascades if any sealed field changes):
 
 ```python
 def upgrade_020_to_030(ledger: list, master_key, identity_secret=None) -> list:

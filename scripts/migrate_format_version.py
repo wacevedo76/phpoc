@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from security.auth import PassphraseAuthenticator
 from security.crypto import CryptoManager
+from domain.ledger.chain import select_seal_fields
 
 
 CONFIG_DIR = Path.home() / ".local" / "share" / "phpoc"
@@ -63,17 +64,13 @@ def _get_block_hash(block: dict) -> str:
 
 
 def compute_seal(block: dict, master_key: bytes) -> str:
-    """Recompute the HMAC-SHA256 seal for a block (see §5.2)."""
-    type_map = {
-        "genesis": "day_hash",
-        "year_summary": "year_hash",
-        "month_summary": "month_hash",
-        "day": "day_hash",
-    }
-    hash_key = type_map.get(block.get("type", "day"))
+    """Recompute the HMAC-SHA256 seal for a block (see §5.2).
 
-    # Exclude the seal field and the identity signature
-    check_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal", "signature")}
+    Routes seal-input selection through the canonical ADR-029/029a per-type
+    whitelist (`select_seal_fields`) so migrated seals match the closed set.
+    """
+    # Closed set: only the ADR-029a per-type whitelist fields are sealed
+    check_data = select_seal_fields(block)
     data_str = json.dumps(check_data, sort_keys=True)
 
     # Derive sealing sub-key (fixed salt)

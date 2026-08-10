@@ -541,7 +541,7 @@ class TestSpecFieldNaming(unittest.TestCase):
         if start == -1:
             return ""
         # Find next header at same or higher level
-        pattern = re.compile(rf"^#{{{1,{level}}}}\s", re.MULTILINE)
+        pattern = re.compile(rf"^#{{1,{level}}}\s", re.MULTILINE)
         match = pattern.search(text, start + len(section_header))
         end = match.start() if match else len(text)
         return text[start:end]
@@ -653,7 +653,7 @@ class TestSpecFieldNaming(unittest.TestCase):
             start = match.start()
             # Find next header of same or higher level
             level = match.group(0).count("#")
-            next_header = re.compile(rf"^#{{{1,{level}}}}\s", re.MULTILINE)
+            next_header = re.compile(rf"^#{{1,{level}}}\s", re.MULTILINE)
             next_match = next_header.search(self.spec_text, match.end())
             end = next_match.start() if next_match else len(self.spec_text)
             sections_of_interest.append(self.spec_text[start:end])
@@ -662,7 +662,25 @@ class TestSpecFieldNaming(unittest.TestCase):
         for section in sections_of_interest:
             # Only check table rows and JSON examples for 'signature' as field
             lines = section.split("\n")
+            skip_table = False          # inside §5.2 "Closed-Set Rule" exclusion table
+            seen_table_row = False      # whether the exclusion table has begun
             for line in lines:
+                if re.match(r"^#+\s*Closed-Set Rule", line):
+                    skip_table = True
+                    continue
+                if skip_table:
+                    # Stay in the exclusion table through its intro and rows;
+                    # exit on the first blank line that follows a table row.
+                    if not line.strip():
+                        if seen_table_row:
+                            skip_table = False
+                            seen_table_row = False
+                        continue
+                    if re.search(r"^\|\s*`[^`]+`\s*\|.*\|$", line):
+                        seen_table_row = True
+                        continue
+                    # A non-row, non-blank line still inside the exclusion block
+                    continue
                 # JSON field: "signature":
                 if '"signature"' in line:
                     violations.append(line.strip())
