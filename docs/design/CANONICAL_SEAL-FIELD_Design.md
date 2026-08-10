@@ -262,10 +262,12 @@ sealFields = ['type', 'day_index', 'date', 'prev_hash', 'entries']
 
 - ✅ **Decision:** **Choice 3 adopted** — closed whitelist `{type, day_index, date, prev_hash,
   entries, original_hash}` (ADR-029 → ✅ Adopted).
-- [ ] Implement across all four implementations: Python `chain.py`, Web `chain.js`,
-      Flutter `chain.dart`, migration tool `phpoc_cli/migrate_format.py` + standalone
-      `migrate-format.py`, and update `docs/spec/PHPSPEC.md` (seal whitelist).
-- [ ] Add cross-client canonical seal test vectors shared by Python/Web/Flutter.
+- [x] Python `chain.py` implemented (Ph 1/7) — `SEAL_FIELDS`/`select_seal_fields`/`compute_seal`; Type-aware summaries seal `month`/`year`.
+- [x] Web `chain.js` + `merge.js` + `summary_policy.js` implemented (Ph 2/7) — `seal_fields.js` `SEAL_FIELDS`/`selectSealFields`/`computeSeal`; fixes §3.4 latent `format_version`/`key_version` sealing and conforms Web genesis seal to exclude `identity`. P4 deduped `sync.js`/`genesis_gate.js` diagnostic builders through the shared whitelist.
+- [ ] Flutter `chain.dart` — `_sealFields` → add `original_hash` (Ph 3/7).
+- [ ] Migration tool `phpoc_cli/migrate_format.py` + standalone `migrate-format.py` (Ph 4/7).
+- [ ] Update `docs/spec/PHPSPEC.md` (seal whitelist) (Ph 5/7).
+- [ ] Add cross-client canonical seal test vectors shared by Python/Web/Flutter (Ph 6/7).
 - [ ] Re-migrate the current 0.4.0 ledger to restamp all 129 block seals to the 6-field form
       (original backed up; consistent with D5/D9).
 - [ ] Verify migrated output with Python `chain.verify()` AND Flutter `verify()`; push build to

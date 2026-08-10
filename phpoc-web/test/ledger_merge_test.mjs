@@ -28,6 +28,7 @@ import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
 import { jsonSort } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 
 const t = new TestHelpers();
 
@@ -194,8 +195,9 @@ function buildGenesisBlock() {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = jsonSort(content);
-  content.day_hash = crypto.seal(sealJson, MASTER_KEY);
+  // ADR-029a: seal over the closed per-type whitelist only. identity stays on
+  // the block but OUTSIDE the seal (matches the Python reference verifier).
+  content.day_hash = crypto.seal(jsonSort(selectSealFields(content)), MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
   }
@@ -763,10 +765,9 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
       else if (type === 'year_summary') hashKey = 'year_hash';
       else hashKey = 'day_hash';
 
-      const checkData = {};
-      for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
-      }
+      // ADR-029a: recompute over the closed per-type whitelist (matches the
+      // verifier and the merged chain's seals).
+      const checkData = selectSealFields(block);
       const sealJson = jsonSort(checkData);
       if (!crypto.verifySeal(sealJson, block[hashKey], MASTER_KEY)) {
         allSealsValid = false;
@@ -891,10 +892,8 @@ console.log('\n=== Group F — Chain Integrity After Merge ===');
       else if (type === 'year_summary') hashKey = 'year_hash';
       else hashKey = 'day_hash';
 
-      const checkData = {};
-      for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
-      }
+      // ADR-029a: recompute over the closed per-type whitelist.
+      const checkData = selectSealFields(block);
       const sealJson = jsonSort(checkData);
       const expectedSeal = crypto.seal(sealJson, MASTER_KEY);
       if (block[hashKey] !== expectedSeal) {
@@ -1112,7 +1111,7 @@ console.log('\n=== Group I — Edge Cases ===');
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson2 = jsonSort(genesis2Content);
+  const sealJson2 = jsonSort(selectSealFields(genesis2Content));
   genesis2Content.day_hash = crypto.seal(sealJson2, MASTER_KEY);
   if (IDENTITY_SECRET) {
     genesis2Content.identity_seal = crypto.mac(genesis2Content.day_hash, IDENTITY_SECRET);

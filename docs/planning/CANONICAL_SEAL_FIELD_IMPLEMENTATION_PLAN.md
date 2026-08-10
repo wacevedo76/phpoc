@@ -71,11 +71,11 @@ the 6-field whitelist; full Python suite GREEN.
 **Goal:** Web matches Python exactly; fixes its latent lack of `format_version`/`key_version`
 exclusion (which becomes irrelevant under the whitelist since those are already excluded).
 
-- **[ ] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_WEB_PHASE1.md`.
-- **[ ] TDD P2 — RED** — `phpoc-web/test/chain_seal_whitelist_test.mjs` (run `node --test`).
-- **[ ] TDD P3 — GREEN** — update `chain.js` verifier/sealer to the 6-field whitelist.
-- **[ ] TDD P4 — REFACTOR** — dedupe checkData builder; confirm no `format_version` sealing.
-- **Status:** 🔜
+- **[x] TDD P1** — blueprint in `docs/planning/CANONICAL_SEALFIELD_WEB_PHASE1.md` (27 assertions, groups A–E).
+- **[x] TDD P2 — RED** — `phpoc-web/test/chain_seal_whitelist_test.mjs` (run `node --test`).
+- **[x] TDD P3 — GREEN** — new `src/ledger/seal_fields.js` (`SEAL_FIELDS`/`selectSealFields`/`computeSeal`, mirror of Python `chain.py`); routed `buildDayBlock`/`buildGenesisBlock` (chain.js) and `makeMonthSummary`/`makeYearSummary` (summary_policy.js) sealers and the `chain.js`/`merge.js` `_verifyBlockData` verifiers through the shared whitelist; conformed the Web genesis sealer/verifier to exclude `identity` (canonical, matching Python). **28/28 chain_seal_whitelist_test.mjs GREEN.** Updated `ledger_chain_test.mjs`/`ledger_merge_test.mjs` fixtures to whitelist-sealed genesis (identity outside the seal).
+- **[x] TDD P4 — REFACTOR** — deduped the leftover open-set `checkData` builders in `sync.js` (`_genesisGatePhase` genesis + per-block diagnostics) and `genesis_gate.js` (genesis tamper-recompute) through the shared `selectSealFields` whitelist — the "F1/F5-style" copied seal-input builders of the verifier. **Confirmed no `format_version`/`key_version` sealing** anywhere: every Web sealer/verifier now routes through the shared whitelist. **Kept legacy-tolerant (reverted):** `export_auth.js` `_verifyGenesisSeal` and `ledger_import.js` per-block verify — they must verify legacy open-set-sealed ledgers (tests confirm) and are the documented backward-compat exception alongside `remote_import.js`/`DevModeContext.jsx` cross-client multi-format checks.
+- **Status:** ✅ Web seal-whitelist (Phases 1–4) complete
 
 ---
 
@@ -159,7 +159,7 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 | Phase | Owner | TDD P1 | P2 RED | P3 GREEN | P4 REFACTOR | Status |
 |-------|-------|--------|--------|----------|-------------|--------|
 | 1 — Python `chain.py` | — | ✅ | ✅ | ✅ | ⬜ | 🟡 P3 GREEN done (P4 REFACTOR next) |
-| 2 — Web `chain.js` | — | ⬜ | ⬜ | ⬜ | ⬜ | 🔜 |
+| 2 — Web `chain.js` | — | ✅ | ✅ | ✅ | ✅ | 🟢 P4 REFACTOR done (Phases 1–4 complete) |
 | 3 — Flutter `chain.dart` | — | ⬜ | ⬜ | ⬜ | ⬜ | 🔜 |
 | 4 — Migration tool | — | ⬜ | ⬜ | ⬜ | ⬜ | 🔜 |
 | 5 — PHPSPEC | — | — | — | — | — | 🔜 |

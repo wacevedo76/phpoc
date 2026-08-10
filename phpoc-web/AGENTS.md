@@ -11,7 +11,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/components/pills/` — ActiveTaskPill
 - `src/components/sync/` — SyncIndicator
 - `src/components/ui/` — Icon components
-- `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils
+- `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils, **seal_fields** (`SEAL_FIELDS`/`selectSealFields`/`computeSeal` — canonical ADR-029/029a block-seal whitelist, mirror of Python `chain.py`)
 - `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory, row_staging_store, row_sync, migration
 - `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
@@ -37,6 +37,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `test/` directory: 37 test files covering crypto, sync, ledger, storage, import/export, transport, and component rendering
 - New (Jun 2026): `ledger_import_chain_test.mjs` (31), `ledger_import_v2_test.mjs` (42), `import_orchestration_test.mjs` (51), `ledger_roundtrip_test.mjs` (46) — 170 tests for web import/export workflow coverage
 - **CCS-2 (Jul 2026):** `ccs2_row_level_reconcile_test.mjs` — 41/41 GREEN — canonical-row (activity_id LWW) reconcile layer in `sync.js` (Option B). Blueprint: `docs/planning/CCS2_PHASE1.md`
+- **Chain seal whitelist (ADR-029/029a, Web):** `chain_seal_whitelist_test.mjs` — 27 assertions (groups A–E) targeting convergence of Web seamers/verifiers (`chain.js`, `merge.js`, `summary_policy.js`) onto the closed `SEAL_FIELDS` whitelist. **GREEN 28/28 — Phases 1–4 complete.** P4 deduped the leftover open-set `checkData` builders in `sync.js`/`genesis_gate.js` through the shared whitelist; confirmed no `format_version`/`key_version` sealing. `export_auth.js`/`ledger_import.js`/`remote_import.js`/`DevModeContext.jsx` intentionally kept legacy-open-set tolerant (backward-compat multi-format verify). Blueprint: `docs/planning/CANONICAL_SEALFIELD_WEB_PHASE1.md`
 - Node-based tests: `node test/<name>.mjs`
 - Vitest component tests: `npx vitest run test/settings_genesis_component.test.mjs`
 - Smoke tests for WASM integration

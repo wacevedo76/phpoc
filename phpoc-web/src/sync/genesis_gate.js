@@ -30,6 +30,7 @@
 
 import { LedgerMerge } from '../ledger/merge.js';
 import { getBlockHash, jsonSort } from '../ledger/utils.js';
+import { selectSealFields } from '../ledger/seal_fields.js';
 import { bytesToBase64 } from './base64.js';
 import { REMOTE_LEDGER_BLOCKS_PREFIX, REMOTE_HASH_INDEX, REMOTE_HASH_INDEX_SHA256 } from './keys.js';
 import { buildHashIndex, compareHashIndexes } from './hash_index.js';
@@ -281,11 +282,10 @@ export class GenesisGate {
         // If the recomputed seal matches the LOCAL genesis hash,
         // the remote has the same content but a wrong seal → InvalidChainError.
         try {
-          const remoteHashKey = remoteGenesis.block_hash ? 'block_hash' : 'day_hash';
-          const checkData = {};
-          for (const [k, v] of Object.entries(remoteGenesis)) {
-            if (k !== remoteHashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version') checkData[k] = v;
-          }
+          // Recomputed from the ADR-029a closed whitelist (shared source) so
+          // the tamper check compares against the canonical genesis seal input
+          // (identity/identity_seal/signature/hash keys excluded).
+          const checkData = selectSealFields(remoteGenesis);
           const recomputedHash = crypto.seal(jsonSort(checkData), masterKey);
           if (recomputedHash === localGenesisHash) {
             // Same genesis content, but wrong seal → tampered chain

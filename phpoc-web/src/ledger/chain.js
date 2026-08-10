@@ -16,6 +16,7 @@
  */
 
 import { jsonSort, computeEntryHash, getBlockHash, verifyEntryHash } from './utils.js';
+import { selectSealFields, computeSeal } from './seal_fields.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
 
@@ -240,8 +241,7 @@ export class LedgerChain {
       entries: normalizedEntries,
     };
 
-    const dayJson = jsonSort(dayContent);
-    dayContent.day_hash = this.crypto.seal(dayJson, this.masterKey);
+    dayContent.day_hash = computeSeal(dayContent, this.crypto, this.masterKey);
 
     if (this.identitySecret) {
       dayContent.identity_seal = this.crypto.mac(dayContent.day_hash, this.identitySecret);
@@ -318,9 +318,9 @@ export class LedgerChain {
       entries: [],
     };
 
-    // 8. Compute block seal (block_hash per I-17)
-    const genesisJson = jsonSort(genesisContent);
-    genesisContent.block_hash = this.crypto.seal(genesisJson, this.masterKey);
+    // 8. Compute block seal (block_hash per I-17) over the ADR-029a whitelist.
+    // Identity (never a seal input) stays on the block but outside the seal.
+    genesisContent.block_hash = computeSeal(genesisContent, this.crypto, this.masterKey);
 
     // 9. Sign with identity secret
     genesisContent.identity_seal = this.crypto.mac(genesisContent.block_hash, identitySecret);
@@ -523,15 +523,14 @@ export class LedgerChain {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, identity_seal, and
-    // legacy signature. Flutter includes format_version + key_version in the
-    // seal (unlike Python/wallet which exclude them). Web-created blocks
-    // don't have these fields so the seal is unchanged either way.
-    const checkData = {};
-    for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') {
-        checkData[k] = v;
-      }
+    // Build check data from the ADR-029a per-type whitelist (closed set).
+    // format_version, key_version, identity, identity_seal, signature, and any
+    // stray/future field are never seal inputs. Unknown types are rejected.
+    let checkData;
+    try {
+      checkData = selectSealFields(block);
+    } catch (_) {
+      return false;
     }
 
     // 2. Block seal

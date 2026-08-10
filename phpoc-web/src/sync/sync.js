@@ -44,6 +44,7 @@ import { RemoteSync, BLOB_KEY_MISMATCH, dtoToCanonicalRow } from './remote_sync.
 import { mergeRows } from './row_sync.js';
 import { LocalCache } from './local_cache.js';
 import { LedgerChain } from '../ledger/chain.js';
+import { selectSealFields } from '../ledger/seal_fields.js';
 import { getOrCreateDeviceUuid, getOrCreateDeviceSecret, deriveDeviceId } from './device_uuid.js';
 import {
   GenesisGate,
@@ -1471,17 +1472,14 @@ export class SyncService {
 
       // Check genesis seal first (most common failure: wrong master key)
       const genesis = blocks[0];
-      const genesisType = genesis.type || 'day';
-      const genesisHashKey = genesisType === 'genesis'
+      const genesisHashKey = genesis.type === 'genesis'
         ? (genesis.block_hash ? 'block_hash' : 'day_hash')
         : 'day_hash';
-      const genesisCheck = {};
-      for (const [k, v] of Object.entries(genesis)) {
-        if (k !== genesisHashKey && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
-          genesisCheck[k] = v;
-        }
-      }
+      // Build the genesis seal input from the ADR-029a closed whitelist
+      // (shared source; identity/identity_seal/signature/hash keys excluded).
+      let genesisCheck;
       try {
+        genesisCheck = selectSealFields(genesis);
         if (!chain.verifySeal(genesisCheck, genesis[genesisHashKey])) {
           firstFailure = 0;
           failReason = 'genesis_seal_mismatch';
@@ -1514,21 +1512,21 @@ export class SyncService {
           else if (t === 'year_summary') hk = 'year_hash';
           else hk = 'day_hash';
 
-          const cd = {};
-          for (const [k, v] of Object.entries(current)) {
-            if (k !== hk && k !== 'signature' && k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
-              cd[k] = v;
-            }
-          }
+          // Per-block seal input from the ADR-029a closed whitelist (shared
+          // source; all hash keys, signature, identity_seal, identity,
+          // format_version, key_version excluded). Unknown types are caught
+          // below as a seal error.
+          let cd;
           try {
-            if (!chain.verifySeal(cd, current[hk])) {
-              firstFailure = i;
-              failReason = 'seal_mismatch';
-              break;
-            }
+            cd = selectSealFields(current);
           } catch {
             firstFailure = i;
             failReason = 'seal_error';
+            break;
+          }
+          if (!chain.verifySeal(cd, current[hk])) {
+            firstFailure = i;
+            failReason = 'seal_mismatch';
             break;
           }
         }

@@ -19,6 +19,7 @@
  */
 
 import { getBlockHash, jsonSort, computeEntryHash, verifyEntryHash } from './utils.js';
+import { selectSealFields } from './seal_fields.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
 
 // Default format_version when genesis has none (pre-spec, implicit 0.2.0)
@@ -239,9 +240,8 @@ export class LedgerMerge {
           entries: dateEntries,
         };
 
-        // Compute block seal
-        const dayJson = jsonSort(dayContent);
-        dayContent.day_hash = await crypto.seal(dayJson, masterKey);
+        // Compute block seal over the ADR-029a per-type whitelist (closed set).
+        dayContent.day_hash = await crypto.seal(jsonSort(selectSealFields(dayContent)), masterKey);
 
         // Identity seal if identity secret is available
         if (identitySecret) {
@@ -381,15 +381,13 @@ export class LedgerMerge {
       hashKey = 'day_hash';
     }
 
-    // Build check data: everything except the hash key, identity_seal, and
-    // legacy signature. Flutter includes format_version + key_version in the
-    // seal (unlike Python/wallet which exclude them). Web-created blocks
-    // don't have these fields so the seal is unchanged either way.
-    const checkData = {};
-    for (const [k, v] of Object.entries(block)) {
-      if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') {
-        checkData[k] = v;
-      }
+    // Build check data from the ADR-029a per-type whitelist (closed set),
+    // sharing the same source as chain.js (no drift). Unknown types rejected.
+    let checkData;
+    try {
+      checkData = selectSealFields(block);
+    } catch (_) {
+      return false;
     }
 
     // 1. Block seal

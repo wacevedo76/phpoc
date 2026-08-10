@@ -16,6 +16,7 @@ import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
 import { jsonSort, jsonSortIndent2, verifyEntryHash } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 
 const t = new TestHelpers();
 
@@ -573,7 +574,10 @@ if (typeof LedgerChain === 'function') {
         recovery_seed_enc: 'enc:deadbeef', identity_pub_key: 'a'.repeat(64),
         identity_secret_enc_fallback: 'enc:cafebabe' },
       prev_hash: '0'.repeat(64), entries: [] };
-    g.block_hash = clfComputeSeal(g);
+    // ADR-029a: seal over the closed per-type whitelist only — identity (and
+    // any non-whitelisted field) stays on the block but OUTSIDE the seal,
+    // matching the Python reference verifier.
+    g.block_hash = crypto.seal(jsonSort(selectSealFields(g)), MASTER_KEY);
     g.identity_seal = crypto.mac(g.block_hash, IDENTITY_SECRET);
     return g;
   };
