@@ -408,7 +408,7 @@ export function canonicalRowToDTO(row) {
       device_uuid: activity.device_uuid || '',
       end_device_uuid: activity.end_device_uuid || '',
       committed: row.committed || false,
-      block_index: null,
+      block_index: activity.block_index ?? null,
       has_encrypted_fields: false,
     };
   } catch {

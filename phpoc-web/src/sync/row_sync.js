@@ -256,5 +256,12 @@ export function mergeRows(local, remote) {
     result.push(row);
   }
 
+  // Deterministic output: sort by activity_id (matches Python merge_rows,
+  // PHPSPEC §8.5). Required so cross-client merge produces byte-identical
+  // results regardless of input order (CCS-4 C6).
+  result.sort((a, b) =>
+    a.activity_id < b.activity_id ? -1 : a.activity_id > b.activity_id ? 1 : 0
+  );
+
   return result;
 }

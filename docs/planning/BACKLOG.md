@@ -133,7 +133,9 @@
 
 ---
 
-### 🔜 CCS-4: Cross-Client E2E Testing
+### 🟠 CCS-4: Cross-Client E2E Testing
+
+**Status:** ✅ Complete — Phases 1–4 ✅ (Phase 1 blueprint, Phase 2 RED, Phase 3 GREEN, Phase 4 REFACTOR: added `_canonical_json` helper in `row_merge.py` to DRY canonical compact activity serialization). CCS-4 Phase docs: `CCS4_PHASE1/2/3/4.md`.
 
 **Depends on:** CCS-2 ✅ (Web), CCS-3 ✅ (CLI)
 

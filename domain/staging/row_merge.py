@@ -15,6 +15,18 @@ import time
 from typing import Dict, Any, Optional
 
 
+def _canonical_json(obj: Any) -> str:
+    """Serialize ``obj`` to the canonical compact JSON used for ``activity``.
+
+    JS ``JSON.stringify`` and Dart ``json.encode`` are compact by default
+    (``","`` / ``":"``); only Python's ``json.dumps`` defaults to spaced
+    separators. Compact is therefore the canonical cross-client form — the
+    serialized string feeds blob bytes and SHA-256, so any separator
+    divergence would break hash-index parity (CCS-4 A1–A5).
+    """
+    return json.dumps(obj, separators=(",", ":"))
+
+
 def _derive_status_from_dto(dto: Dict[str, Any]) -> str:
     """Derive ``activity_status`` from a legacy staging DTO's flags.
 
@@ -79,7 +91,7 @@ def dtoToCanonicalRow(
     return {
         "activity_id": dto.get("activity_id") or dto.get("entry_id") or "",
         "activity_status": _derive_status_from_dto(dto),
-        "activity": json.dumps(activity),
+        "activity": _canonical_json(activity),
         "updated_at": dto.get("updated_at") if dto.get("updated_at") is not None else now,
         "committed": dto.get("committed") or False,
     }
@@ -150,7 +162,7 @@ def canonicalRowToDTO(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "device_uuid": activity.get("device_uuid") or "",
         "end_device_uuid": activity.get("end_device_uuid") or "",
         "block_index": activity.get("block_index"),
-        "activity": json.dumps(activity),
+        "activity": _canonical_json(activity),
         "committed": row.get("committed") or False,
         "updated_at": row.get("updated_at") if row.get("updated_at") is not None else 0,
         "date": date_str,

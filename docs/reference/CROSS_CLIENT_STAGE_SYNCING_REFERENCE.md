@@ -1,7 +1,7 @@
 # Cross-Client Staging Sync & Reconciliation — Living Reference
 
 > **Status:** Living document — the primary source of truth for staging sync across all clients.
-> **Last updated:** 2026-08-07 (added §12 Abstract Protocol Workflow)
+> **Last updated:** 2026-09-15 (CCS-3/CCS-4: CLI + Web row-level sync gate GREEN — §12.9 matrix reconciled; canonical compact cross-client formats verified)
 > **Scope:** Local/Remote staging sync, reconciliation, cross-device merge, blob obfuscation, device cookie, hash index, row-level sync (ADR-025).
 
 This document is the authoritative reference for how PHPOC staging sync and reconciliation work across CLI (Python), Web (JavaScript), and Flutter (Dart) clients. It defines the protocol contracts, sync flow, resolution rules, and the relationship between current (monolithic blob) and target (row-level) architectures.
@@ -763,17 +763,22 @@ Before cross-client testing (CCS-4), every client must have ✅ in every row.
 | F1 | ✅ | ✅ | ✅ | Read-only fast path (no writes → skip network) |
 | F2 | ✅ | ✅ | ✅ | Pull remote cookie (32 bytes) |
 | F3 | ✅ | ✅ | ✅ | Specifier match (byte-for-byte) |
-| F4 | ✅ | ❌ | ✅ | Hash index Tier-1 fast path |
+| F4 | ✅ | ✅ | ✅ | Hash index Tier-1 fast path |
 | A1 | ✅ | ✅ | ✅ | Specifier mismatch → REAUTH_NEEDED |
 | A2 | ✅ | ✅ | ✅ | TTL expiry → REAUTH_NEEDED |
 | A3 | ✅ | ✅ | ✅ | CryptoManager.master_key check |
 | R1 | ✅ | ✅ | ✅ | Pull remote blob (staging/blob) |
 | R2 | ✅ | ✅ | ✅ | Read all local rows |
-| R3 | ⚠️\* | ❌ | ✅ | Merge (activity_id LWW) |
+| R3 | ✅ | ✅ | ✅ | Merge (activity_id LWW) |
 | R4 | ✅ | ✅ | ✅ | Filter committed entries |
-| R5 | ❌ | ❌ | ✅ | Write merged rows to store |
-| R6 | ✅ | ❌ | ✅ | Push to staging/blob |
-| R7 | ✅ | ❌ | ✅ | Push hash index to staging/hash_index.json |
+| R5 | ✅ | ✅ | ✅ | Write merged rows to store |
+| R6 | ✅ | ✅ | ✅ | Push to staging/blob |
+| R7 | ✅ | ✅ | ✅ | Push hash index to staging/hash_index.json |
 | R8 | ✅ | ✅ | ✅ | Create fresh device cookie |
 
-> ⚠️\* CLI R3 uses `entry_id`-based merge (`MergeEngine.merge()`), not `activity_id`-based LWW (`mergeEntries()`). Must be switched during CCS-3.
+**CCS-3 (CLI)** switched R3 to `MergeEngine.merge_rows()` (activity_id LWW,
+local-wins-on-tie, committed-exclusion) and wired row-mode `LocalStagingCache`
+for R4/R5. **CCS-4 (cross-client E2E)** verified all gates byte-consistent
+across CLI/Web/Flutter: compact canonical `activity` JSON, JS `canonicalRowToDTO`
+block_index preservation, deterministic JS `mergeRows` sort, and canonical
+compact hash index (Flutter `json.encode` already compact — no divergence).
