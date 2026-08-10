@@ -24,6 +24,17 @@ from security.crypto import (
     STAGING_ENCRYPTABLE_FIELDS,
 )
 from storage.staging_store import AbstractStagingStore
+from domain.staging.row_merge import dtoToCanonicalRow, canonicalRowToDTO
+
+
+def _is_mock(obj) -> bool:
+    """Best-effort detection of unittest.mock objects.
+
+    Mock/Virtual mock objects report ``hasattr()`` True for any attribute,
+    which would otherwise mislabel them as row-level stores.
+    """
+    cls = type(obj)
+    return cls.__module__.startswith("unittest.mock")
 
 
 # ── Field-name encryption constants ────────────────────────────────
@@ -43,10 +54,71 @@ class LocalStagingCache:
         _store: AbstractStagingStore for persistence (staging.json).
     """
 
+    # Standard DTO structural fields already represented in the raw ``data``
+    # dict (often as ``_enc`` variants). These must NOT be re-added as
+    # plaintext extras during write_entries pass-through (they'd change the
+    # serialized form and break hash-based change detection).
+    _DTO_NOT_PASSED_THROUGH = frozenset({
+        "title", "start_epoch", "end_epoch", "duration", "is_active",
+        "is_paused", "pauses", "tags", "comment", "media", "entry_id",
+        "metadata", "device_uuid", "end_device_uuid", "block_index",
+        "date", "source", "hash", "entry_index", "has_encrypted_fields",
+    })
+
     def __init__(self, crypto: AbstractCryptoManager, staging_store: AbstractStagingStore):
         self._crypto = crypto
         self._store = staging_store
         self._field_token_map_cache: Optional[Dict[str, str]] = None
+        # Row-level stores (e.g. SqliteStagingStore) expose get_all_rows/delete_row
+        # and store canonical rows; blob stores (FileStagingStore) store the
+        # legacy {hash, data, start_epoch} format. Detect which we are wired to.
+        # MagicMock stores (used widely in tests) report hasattr() True for any
+        # attribute, so exclude them explicitly.
+        self._row_mode = (
+            not _is_mock(staging_store)
+            and hasattr(staging_store, "get_all_rows")
+            and hasattr(staging_store, "delete_row")
+        )
+        # Audit trail of write_entries calls (primarily for the sync-gate tests
+        # asserting persistence-through-write_entries).
+        self.write_calls: List[Dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Row-mode helpers (canonical-row stores)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _activity_of(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse the ``activity`` JSON string of a canonical row."""
+        raw = row.get("activity")
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+
+    def _row_ordered_rows(self) -> List[Dict[str, Any]]:
+        """Return store rows ordered by activity start_epoch (capture order).
+
+        Positional CRUD (read_entries / update / remove_multiple / delete) uses
+        this ordering so index-based operations are stable regardless of the
+        store's activity_id-sort. Tie-breaks by activity_id for determinism.
+        """
+        rows = self._store.get_all_rows()
+
+        def _sort_key(row: Dict[str, Any]) -> Tuple:
+            epoch = self._activity_of(row).get("start_epoch")
+            try:
+                epoch = int(epoch or 0)
+            except (TypeError, ValueError):
+                epoch = 0
+            return (epoch, str(row.get("activity_id") or ""))
+
+        return sorted(rows, key=_sort_key)
 
     # ------------------------------------------------------------------
     # Internal: plain: encoding/decoding
@@ -403,6 +475,14 @@ class LocalStagingCache:
             List of dicts with decrypted fields (start_epoch, end_epoch, pauses, etc.)
             plus metadata (entry_index, hash, source).
         """
+        if self._row_mode:
+            result = []
+            for idx, row in enumerate(self._row_ordered_rows()):
+                dto = canonicalRowToDTO(row)
+                dto["entry_index"] = idx
+                dto["source"] = "local"
+                result.append(dto)
+            return result
         raw = self._store.read_entries()
         result = []
         token_map = self._build_field_token_map()
@@ -467,6 +547,15 @@ class LocalStagingCache:
                     "end_device_uuid": end_device_uuid or "",
                     "has_encrypted_fields": has_encrypted_fields,
                 }
+                # activity_id / updated_at / committed and other non-encryptable
+                # pass-through fields round-trip through the raw data dict.
+                for k in ("activity_id", "updated_at", "committed"):
+                    if k in decoded:
+                        dto[k] = decoded[k]
+                # Pass through any other extra keys stored on the decoded data.
+                for k, v in decoded.items():
+                    if k not in dto and not k.endswith("_enc"):
+                        dto[k] = v
                 result.append(dto)
             except Exception:
                 # Skip corrupt entries
@@ -483,6 +572,21 @@ class LocalStagingCache:
         fields (title, tags, comment, duration) are re-encrypted and stored
         as ``_enc`` variants.
         """
+        self.write_calls.append(list(entries))
+
+        if self._row_mode:
+            now = int(time.time() * 1000)
+            rows = []
+            for entry in entries:
+                if entry is None:
+                    continue
+                upd = entry.get("updated_at")
+                rows.append(dtoToCanonicalRow(
+                    entry, entry.get("device_uuid") or "", upd if upd is not None else now
+                ))
+            self._store.write_entries(rows)
+            return
+
         raw = []
         for entry in entries:
             has_enc = entry.get("has_encrypted_fields", False)
@@ -536,6 +640,29 @@ class LocalStagingCache:
                 if entry.get("comment") is not None:
                     data["comment"] = entry["comment"]
 
+            # Pass through sync-gate metadata (activity_id, updated_at,
+            # committed) plus any OTHER unknown/extra fields so DTOs round-trip
+            # through write/read with full fidelity (e.g. the sync-gate merge
+            # and my_extra_field fidelity tests). Standard DTO structural fields
+            # are already represented in ``data`` (often as _enc variants) and
+            # must NOT be re-added as plaintext extras — that would change the
+            # serialized form and break hash-based change detection. Falsy
+            # sync-gate defaults are only persisted when meaningful so re-writes
+            # stay byte-identical to captures for entries that never set them.
+            _SKIP = self._DTO_NOT_PASSED_THROUGH
+            for k, v in entry.items():
+                if k in _SKIP:
+                    continue
+                if k in data:
+                    continue
+                if k == "committed" and not v:
+                    continue
+                if k == "activity_id" and not v:
+                    continue
+                if k == "updated_at" and v is None:
+                    continue
+                data[k] = v
+
             # Encrypt field key names
             data = self._encode_data_keys(data)
 
@@ -569,6 +696,12 @@ class LocalStagingCache:
         Raises:
             ValueError: If a collision is detected (same start_epoch).
         """
+        if self._row_mode:
+            return self._append_row(
+                title, start_epoch, end_epoch=end_epoch,
+                metadata=metadata, is_active=is_active, tags=tags,
+                comment=comment, media=media, device_uuid=device_uuid,
+            )
         raw = self._store.read_entries()
 
         # Collision check
@@ -655,6 +788,61 @@ class LocalStagingCache:
         self._store.write_entries(raw)
         return entry_hash[:10]
 
+    def _append_row(self, title: str, start_epoch: int, *,
+                    end_epoch: Optional[int] = None,
+                    metadata: Optional[Dict[str, Any]] = None,
+                    is_active: bool = False,
+                    tags: Optional[List[str]] = None,
+                    comment: Optional[str] = None,
+                    media: Optional[List[Dict[str, Any]]] = None,
+                    device_uuid: Optional[str] = None) -> str:
+        """Append a new canonical row to a row-level store (capture).
+
+        Generates a stable entry_id (used as activity_id) and stores the
+        activity as a canonical JSON row. Returns the entry hash-like prefix
+        (first 10 chars of activity_id) to mirror the blob-path contract.
+        """
+        now = int(time.time() * 1000)
+        # Collision check by start_epoch across existing rows
+        for row in self._store.get_all_rows():
+            if self._activity_of(row).get("start_epoch") == start_epoch:
+                raise ValueError(
+                    "Collision detected: A task has already started "
+                    "at this millisecond."
+                )
+
+        entry_id = self._generate_entry_id()
+        normalized_tags = self._normalize_tags(tags)
+        computed_duration = (end_epoch - start_epoch) if end_epoch else 0
+
+        activity = {
+            "title": title,
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "duration": computed_duration,
+            "tags": normalized_tags,
+            "comment": comment,
+            "media": media if media is not None else [],
+            "entry_id": entry_id,
+            "is_active": is_active,
+            "is_paused": False,
+            "pauses": [],
+            "metadata": metadata if metadata is not None else {},
+            "device_uuid": device_uuid or "",
+            "end_device_uuid": "",
+            "block_index": None,
+        }
+
+        row = {
+            "activity_id": entry_id,
+            "activity_status": "active" if is_active else "ended",
+            "activity": json.dumps(activity),
+            "updated_at": now,
+            "committed": not is_active,
+        }
+        self._store.put_row(row)
+        return entry_id[:10]
+
     def update(self, index: int, fields: Dict[str, Any]):
         """Update specific fields on an entry at *index*.
 
@@ -668,6 +856,10 @@ class LocalStagingCache:
         Raises:
             IndexError: If *index* is out of range.
         """
+        if self._row_mode:
+            return self._update_row(
+                index, fields
+            )
         raw = self._store.read_entries()
         if index < 0 or index >= len(raw):
             raise IndexError(f"No staged entry at index {index}.")
@@ -727,6 +919,36 @@ class LocalStagingCache:
 
         self._store.write_entries(raw)
 
+    def _update_row(self, index: int, fields: Dict[str, Any]):
+        """Update fields on a canonical row at *index* (row-mode modify).
+
+        Maps the positional index to a row via :meth:`_row_ordered_rows`, merges
+        the given fields into the activity JSON, and bumps ``updated_at`` so the
+        mutation is visible to derived ``updated_at``-based logic (and stores).
+        """
+        ordered = self._row_ordered_rows()
+        if index < 0 or index >= len(ordered):
+            raise IndexError(f"No staged entry at index {index}.")
+        row = ordered[index]
+        aid = row.get("activity_id") or row.get("entry_id") or ""
+        dto = canonicalRowToDTO(row)
+        dto.update(fields)
+
+        now = int(time.time() * 1000)
+        old_ts = dto.get("updated_at") or 0
+        if now <= old_ts:
+            now = old_ts + 1
+        dto["updated_at"] = now
+
+        new_row = dtoToCanonicalRow(
+            dto, dto.get("device_uuid") or "", now
+        )
+        # Preserve the original activity_id (dtoToCanonicalRow falls back to
+        # entry_id in the activity JSON, which equals the activity_id for
+        # captured rows; keep it explicit for safety).
+        new_row["activity_id"] = aid
+        self._store.put_row(new_row)
+
     def _raw_entry_to_dto_inline(self, data: dict) -> dict:
         """Build a partial DTO from a decoded data dict for hash computation.
 
@@ -779,6 +1001,14 @@ class LocalStagingCache:
         Raises:
             IndexError: If *index* is out of range.
         """
+        if self._row_mode:
+            ordered = self._row_ordered_rows()
+            if index < 0 or index >= len(ordered):
+                raise IndexError(f"No staged entry at index {index}.")
+            aid = ordered[index].get("activity_id") or ordered[index].get("entry_id") or ""
+            if aid:
+                self._store.delete_row(aid)
+            return
         raw = self._store.read_entries()
         if index < 0 or index >= len(raw):
             raise IndexError(f"No staged entry at index {index}.")
@@ -791,6 +1021,17 @@ class LocalStagingCache:
         Args:
             indices: List of staging-level indices to remove.
         """
+        if self._row_mode:
+            ordered = self._row_ordered_rows()
+            ids = []
+            for i in sorted(indices):
+                if 0 <= i < len(ordered):
+                    aid = ordered[i].get("activity_id") or ordered[i].get("entry_id") or ""
+                    if aid:
+                        ids.append(aid)
+            for aid in ids:
+                self._store.delete_row(aid)
+            return
         self._store.remove_entries(indices)
 
     # ------------------------------------------------------------------

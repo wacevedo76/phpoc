@@ -40,8 +40,8 @@
  */
 
 import { DeviceCookie } from './cookie.js';
-import { RemoteSync, BLOB_KEY_MISMATCH } from './remote_sync.js';
-import { mergeEntries } from './merge_engine.js';
+import { RemoteSync, BLOB_KEY_MISMATCH, dtoToCanonicalRow } from './remote_sync.js';
+import { mergeRows } from './row_sync.js';
 import { LocalCache } from './local_cache.js';
 import { LedgerChain } from '../ledger/chain.js';
 import { getOrCreateDeviceUuid, getOrCreateDeviceSecret, deriveDeviceId } from './device_uuid.js';
@@ -72,7 +72,7 @@ import {
   LOCAL_STAGING_HASH_INDEX,
 } from './keys.js';
 import { buildHashIndex } from './hash_index.js';
-import { buildStagingHashIndex, compareStagingHashIndexes, computeHashForIndex } from './staging_hash_index.js';
+import { buildStagingHashIndex } from './staging_hash_index.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
@@ -84,6 +84,46 @@ export const SyncResult = Object.freeze({
 });
 
 const DEFAULT_COOKIE_TTL = 30; // minutes
+
+/**
+ * Normalize a remote staging blob's entries to canonical rows.
+ *
+ * Handles both formats produced by the remote:
+ *   - canonical: `{activity_id, activity_status, activity, updated_at, committed}`
+ *   - legacy:    `{hash, data: {_enc}}` (older pushRemoteBlob format) — bridged
+ *     through rawEntryToDTO → dtoToCanonicalRow (activity_id falls back to entry_id).
+ *
+ * Rows missing both activity_id and entry_id are dropped (defensive).
+ *
+ * @param {{entries: Array, device_id?: string}} remoteBlob - Decrypted remote blob.
+ * @param {number} now - Timestamp used to backfill missing updated_at.
+ * @returns {Array<{activity_id: string, activity_status: string, activity: string, updated_at: number, committed: boolean}>}
+ * @private
+ */
+function _rowsFromRemoteBlob(remoteBlob, now) {
+  const entries = (remoteBlob && remoteBlob.entries) || [];
+  const first = entries[0];
+  // Canonical rows expose activity_id at row level with no {data} wrapper.
+  const isCanonical = !!first && typeof first.activity_id === 'string' && !first.data;
+
+  if (isCanonical) {
+    return entries
+      .filter((r) => r && (r.activity_id || r.entry_id))
+      .map((r) => ({
+        activity_id: r.activity_id || r.entry_id || '',
+        activity_status: r.activity_status || 'active',
+        activity: r.activity || '{}',
+        updated_at: r.updated_at ?? now,
+        committed: r.committed || false,
+      }));
+  }
+
+  // Legacy {hash, data} format — decrypt-order via rawEntryToDTO before row conversion.
+  return entries
+    .map((raw) => rawEntryToDTO(raw))
+    .filter(Boolean)
+    .map((dto) => dtoToCanonicalRow(dto, (remoteBlob && remoteBlob.device_id) || '', now));
+}
 
 export class SyncService {
   /**
@@ -776,31 +816,9 @@ export class SyncService {
     }
 
     if (remoteBlob && Array.isArray(remoteBlob.entries)) {
+      const localEntries = await this._local.readEntries();
       try {
-        const localEntries = await this._local.readEntries();
-
-        // Detect format: canonical (activity_id at row level) vs legacy (data field)
-        const firstRaw = remoteBlob.entries[0];
-        const isCanonical = firstRaw && typeof firstRaw.activity_id === 'string' && !firstRaw.data;
-
-        let remoteDTOs;
-        if (isCanonical) {
-          // Canonical format (PHPSPEC §8): convert each row to DTO
-          remoteDTOs = remoteBlob.entries
-            .map((raw) => canonicalRowToDTO(raw))
-            .filter(Boolean);
-        } else {
-          // Legacy format ({hash, data: {_enc}}): use rawEntryToDTO
-          remoteDTOs = remoteBlob.entries
-            .map((raw) => rawEntryToDTO(raw))
-            .filter(Boolean);
-        }
-
-        const merged = mergeEntries(localEntries, remoteDTOs);
-        // Filter committed entries — same as CLI service.py:505-507:
-        // "merged = [e for e in merged if not e.get('committed')]"
-        const uncommitted = merged.filter((e) => !e.committed);
-        await this._local.writeEntries(uncommitted);
+        this._mergeRemoteIntoLocal(remoteBlob, localEntries, localDeviceUuid);
       } catch (err) {
         console.warn('Merge failed, pushing local blob:', err.message);
       }
@@ -834,6 +852,74 @@ export class SyncService {
     }
 
     return SyncResult.READY;
+  }
+
+  /**
+   * Merge a decrypted remote blob into the local staging store.
+   *
+   * CCS-2 (Option B): reconcile at the canonical-row level so rows that share
+   * an activity_id (across clients/devices) consolidate to one instead of
+   * duplicating under distinct entry_ids. LocalCache stays the DTO CRUD
+   * boundary: local DTOs → canonical rows → mergeRows → DTOs → writeEntries.
+   *
+   * Deduplicates DTOs by activity_id (entry_id fallback), detecting remote-wins
+   * rows (strictly-newer remote.updated_at) for canonical rebuild. Rows with
+   * committed:true are written then filtered before persist (matches the CLI
+   * service.py:505-507 committed-exclusion).
+   *
+   * @param {{entries: Array}} remoteBlob - Decrypted remote staging blob.
+   * @param {import('./local_cache.js').StagingEntry[]} localEntries - Local DTOs.
+   * @param {string} localDeviceUuid - This device's ID.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _mergeRemoteIntoLocal(remoteBlob, localEntries, localDeviceUuid) {
+    const now = Date.now();
+    const remoteRows = _rowsFromRemoteBlob(remoteBlob, now);
+
+    // Local DTOs → canonical rows (merged against the same key space).
+    const localRows = localEntries
+      .filter((dto) => dto && (dto.activity_id || dto.entry_id))
+      .map((dto) => dtoToCanonicalRow(dto, localDeviceUuid, now));
+
+    // Merge by activity_id (LWW, local-wins-on-tie, committed-exclusion).
+    const mergedRows = mergeRows(localRows, remoteRows);
+
+    // Pre-compute which activity_ids remote strictly won (remote.updated_at
+    // newer). Only those rows are rebuilt from their canonical row; every
+    // other merged row keeps the full-fidelity local DTO.
+    const localCanonById = new Map(localRows.map((r) => [r.activity_id, r]));
+    const remoteCanonById = new Map(remoteRows.map((r) => [r.activity_id, r]));
+    const remoteWonIds = new Set();
+    for (const [aid, localCanon] of localCanonById) {
+      const remoteCanon = remoteCanonById.get(aid);
+      if (remoteCanon && remoteCanon.updated_at > localCanon.updated_at) {
+        remoteWonIds.add(aid);
+      }
+    }
+
+    // Rebuild DTOs in merged order, deduplicating by activity_id (first wins).
+    const localDtoById = new Map();
+    for (const dto of localEntries) {
+      const aid = dto.activity_id || dto.entry_id || '';
+      if (aid && !localDtoById.has(aid)) localDtoById.set(aid, dto);
+    }
+
+    const mergedDTOs = [];
+    for (const mrow of mergedRows) {
+      const aid = mrow.activity_id;
+      const localDto = localDtoById.get(aid);
+      if (localDto && !remoteWonIds.has(aid)) {
+        mergedDTOs.push(mrow.committed ? { ...localDto, committed: true } : localDto);
+      } else {
+        mergedDTOs.push(canonicalRowToDTO(mrow) || localDto);
+      }
+    }
+
+    // Filter committed entries — same as CLI service.py:505-507:
+    // "merged = [e for e in merged if not e.get('committed')]"
+    const uncommitted = mergedDTOs.filter((e) => e && !e.committed);
+    await this._local.writeEntries(uncommitted);
   }
 
   // ------------------------------------------------------------------

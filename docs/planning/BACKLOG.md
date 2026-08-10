@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-08-07
+> **Last updated:** 2026-08-10
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -89,42 +89,30 @@
 
 ---
 
-### 🔴 CCS-2: Web — Wire Row-Level Sync Gate
+### ✅ CCS-2: Web — Wire Row-Level Sync (Option B) — COMPLETE
 
-**Status:** RowStagingStore + staging_hash_index.js + merge_engine.js all exist and pass tests independently. But `sync.js` still uses the old `staging/blobs/current.json` path and old merge logic.
+**Status:** ✅ Complete (4-phase TDD). **Option B** adopted — `LocalCache` stays the authoritative CRUD/DTO store; a row-level **reconcile layer** threads canonical-row (activity_id) semantics through `SyncService.checkAndSync()` while preserving the DTO contract. Unified 4-phase plan: `docs/planning/CCS2_PHASE1.md` (24 assertions; **14 new RED** across Groups A/B/C + U-rehome, **10 🟢 anchors**).
 
-**Plan:** `docs/planning/WEB_ROW_LEVEL_TESTS_PHASE1.md` (120 assertions) — tests exist but are RED (Phase 2).
+| Phase | Deliverable |
+|-------|-------------|
+| P1 ✅ | Blueprint `docs/planning/CCS2_PHASE1.md` |
+| P2 ✅ | RED tests `phpoc-web/test/ccs2_row_level_reconcile_test.mjs` |
+| P3 ✅ | GREEN — merged into `sync.js` `_reconcileDifferentDevice` via `mergeRows` (activity_id LWW local-wins-on-tie); `dtoToCanonicalRow` exported from `remote_sync.js`; canon/legacy blob bridge; committed-exclusion; C2 status-only fast-path detection |
+| P4 ✅ | REFACTOR — extracted `_mergeRemoteIntoLocal()` + module-level `_rowsFromRemoteBlob()`; removed dead `compareStagingHashIndexes`/`computeHashForIndex` imports |
 
-**What needs to happen:**
+**Result:** CCS-2 suite **41/41 GREEN**; full web suite no regressions (76/14, 14 pre-existing env/WASM/DOM). 21 `sync_service_test` ledger-chain failures remain known/out-of-scope.
 
-| # | Task | Source file |
-|---|------|------------|
-| 1 | Switch blob path to `staging/blob` in `checkAndSync()` | `sync.js` |
-| 2 | Wire `StagingHashIndex.compare()` into cookie fast-path (Tier-1) | `sync.js` |
-| 3 | Wire `RowStagingStore.getAllRows()` into read path (replace `LocalCache`) | `sync.js` |
-| 4 | Wire `MergeEngine.mergeEntries()` into reconcile (replace `mergeMaps()`) | `sync.js` |
-| 5 | Wire `RowStagingStore.putRow()` / `deleteRow()` into write path | `sync.js` |
-| 6 | Drop envelope `updated_at` from blob serialization | `remote_sync.js` |
-| 7 | Switch merge tie-break to local-wins (match Flutter) | `merge_engine.js` |
-| 8 | Add `staging/blob` to `keys.js` path constants | `keys.js` |
-| 9 | Bump RED tests (320 across 5 files) to GREEN | test files |
+**Explicitly NOT done (Option A deferred):** migrating `SyncService` CRUD to `RowStagingStore` as authoritative store — deferred to a future CCS task.
 
-**Test files to convert from RED → GREEN:**
-- `staging_hash_index_test.mjs` (43 tests)
-- `staging_backward_compat_test.mjs` (24 tests)
-- `row_staging_store_test.mjs` (49 tests)
-- `row_sync_test.mjs` (134 tests)
-- `row_integration_test.mjs` (70 tests)
-
-**Effort:** Medium (~1-2 days). **Blocks:** CCS-4 (Web cross-client testing).
+**Blocks:** CCS-4 (Web cross-client testing).
 
 ---
 
-### 🔜 CCS-3: CLI — Build Row-Level Store + Wire Sync Gate
+### ✅ CCS-3: CLI — Build Row-Level Store + Wire Sync Gate ✅
 
-**Status:** Transport layer uses `staging/blob` and hash index (B-05c). But local storage is still `staging.json` via `LocalCache` — no row-level store, no SQLite.
+**Status:** ✅ 4-Phase TDD Complete. Store-level foundation (tasks 1–3) covered by `tests/test_sqlite_staging.py` (104 tests GREEN); sync-gate wiring (tasks 4–8) covered by `tests/test_cli_sync_gate_wiring.py` (**60/60 GREEN**). **Phase 4 (REFACTOR):** extracted `StagingService._resolve_device_id()` (dedup device-identity resolution across `_ensure_cookie`/`_reconcile_and_claim`/`push_to_remote`/`push_blob_only`; removed dead nested `_remote is None` guards) and `_remote_entries_to_dtos()` (consolidates raw→DTO conversion across `_push_on_fast_path`/`_reconcile_and_claim`/`_merge_remote_into_local`); simplified `dtoToCanonicalRow` device_id default. Full suite GREEN: 2535 pass / 1 skip / 0 fail.
 
-**Plan:** `docs/planning/CLI_SQLITE_STAGING_PHASE1.md`
+**Plan:** `docs/planning/CLI_SYNC_GATE_WIRING_PHASE1.md` (Phase 1–3 done)
 
 **What needs to happen:**
 

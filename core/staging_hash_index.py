@@ -65,6 +65,28 @@ class StagingHashIndex:
         return result
 
     # ------------------------------------------------------------------
+    # build_from_store
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def build_from_store(store) -> list[dict]:
+        """Build a hash index directly from a row-level staging store.
+
+        Reads the store's canonical rows via ``store.get_all_rows()`` and
+        delegates to :meth:`build`. Equivalent to
+        ``build(store.get_all_rows())`` — a fast-path that avoids pulling + 
+        decrypting the full blob for change detection.
+
+        Args:
+            store: A store exposing ``get_all_rows()`` (e.g. SqliteStagingStore).
+
+        Returns:
+            Sorted list of ``{activity_id, activity_status}`` dicts (fresh).
+        """
+        rows = store.get_all_rows() if store is not None else []
+        return StagingHashIndex.build(rows)
+
+    # ------------------------------------------------------------------
     # computeHash
     # ------------------------------------------------------------------
 

@@ -45,6 +45,7 @@ from domain.cookie.device_cookie import DeviceCookie, META_FILE
 from domain.staging.local_cache import LocalStagingCache
 from domain.staging.merge_engine import MergeEngine
 from domain.staging.remote_sync import RemoteStagingSync, BLOB_KEY_MISMATCH
+from domain.staging.row_merge import dtoToCanonicalRow, canonicalRowToDTO
 from security.crypto import (
     AbstractCryptoManager,
     NoAuthCryptoManager,
@@ -177,6 +178,23 @@ class StagingService:
             return identity.device_id
         except Exception:
             return None
+
+    def _resolve_device_id(self, master_key: bytes) -> str:
+        """Resolve the push device UUID, falling back to ``"unknown"``.
+
+        Failure is non-critical: a missing device identity must not block a
+        push (the blob is still serialised with ``unknown`` provenance).
+        """
+        provider = self._device_id_provider
+        if provider is None and self._remote is not None:
+            provider = getattr(self._remote, "_device_id_provider", None)
+        if provider is None:
+            return "unknown"
+        try:
+            identity = provider.get_device_identity(master_key)
+            return identity.device_id
+        except Exception:
+            return "unknown"
 
     def capture(self, title, epoch_ms, *, stop_epoch=None, end_epoch=None, is_active=True, tags=None, comment=None, metadata=None, media=None,
                 encrypt_title=False, encrypt_tags=False, encrypt_comment=False,
@@ -544,16 +562,13 @@ class StagingService:
         if remote_blob is not None and remote_blob is not BLOB_KEY_MISMATCH and "entries" in remote_blob:
             try:
                 local_entries = self._local.read_entries()
-                remote_dtos = []
-                for raw_entry in remote_blob.get("entries", []):
-                    dto = self._raw_entry_to_dto(raw_entry, crypto=self._crypto)
-                    if dto is not None:
-                        remote_dtos.append(dto)
+                remote_dtos = self._remote_entries_to_dtos(
+                    remote_blob.get("entries", [])
+                )
                 merged = self._merge.merge(
                     local_entries, remote_dtos
                 )
                 # Filter out entries already committed by another client
-                # (e.g. web committed + pushed, CLI hasn't synced yet)
                 merged = [e for e in merged if not e.get("committed")]
                 self._local.write_entries(merged)
             except Exception:
@@ -596,9 +611,9 @@ class StagingService:
         if not isinstance(mk, bytes) or len(mk) != 32:
             return
         try:
-            identity = self._remote._device_id_provider.get_device_identity(mk)
+            device_id = self._resolve_device_id(mk)
             DeviceCookie.destroy_locally(self._data_dir)
-            self._push_cookie(identity.device_id)
+            self._push_cookie(device_id)
         except Exception:
             pass  # Non-critical: cookie creation failure doesn't block READY
 
@@ -752,6 +767,19 @@ class StagingService:
     # Reconcile and claim (shared by check_and_sync auth gate + ph login)
     # ------------------------------------------------------------------
 
+    def _remote_entries_to_dtos(self, raw_entries: list) -> List[dict]:
+        """Decrypt a list of raw remote entries into DTOs, dropping corrupt ones.
+
+        Shared by ``_push_on_fast_path`` and ``_reconcile_and_claim`` so the
+        blob-decryption bridge stays defined in one place.
+        """
+        dtos = []
+        for raw_entry in raw_entries:
+            dto = self._raw_entry_to_dto(raw_entry, crypto=self._crypto)
+            if dto is not None:
+                dtos.append(dto)
+        return dtos
+
     @staticmethod
     def _raw_entry_to_dto(raw_entry: dict, crypto=None) -> Optional[dict]:
         """Convert a single raw staging entry (from blob) to a decrypted DTO.
@@ -828,9 +856,22 @@ class StagingService:
                 "%Y-%m-%d", time.gmtime(start_epoch // 1000)
             )
 
+            # Remote blobs may carry updated_at at the row level (canonical
+            # legacy push) or inside data. Preserve it so LWW merge can
+            # compare remote vs local freshness.
+            updated_at = raw_entry.get("updated_at")
+            if updated_at is None:
+                updated_at = decoded.get("updated_at")
+
+            title_raw = decoded.get("title", "")
+            if isinstance(title_raw, str) and title_raw.startswith("plain:"):
+                title = title_raw[6:]
+            else:
+                title = title_raw or ""
+
             return {
                 "entry_id": decoded.get("entry_id", ""),
-                "title": decoded.get("title", ""),
+                "title": title,
                 "start_epoch": start_epoch,
                 "end_epoch": end_epoch,
                 "duration": decoded.get("duration", 0),
@@ -848,6 +889,7 @@ class StagingService:
                 "device_uuid": device_uuid,
                 "end_device_uuid": end_device_uuid,
                 "block_index": raw_entry.get("block_index"),
+                "updated_at": updated_at,
             }
         except Exception:
             return None
@@ -921,12 +963,9 @@ class StagingService:
         if remote_blob is not None and "entries" in remote_blob:
             try:
                 local_entries = self._local.read_entries()
-                # Convert remote raw entries to DTOs before merge
-                remote_dtos = []
-                for raw_entry in remote_blob.get("entries", []):
-                    dto = self._raw_entry_to_dto(raw_entry, crypto=self._crypto)
-                    if dto is not None:
-                        remote_dtos.append(dto)
+                remote_dtos = self._remote_entries_to_dtos(
+                    remote_blob.get("entries", [])
+                )
                 merged = self._merge.merge(
                     local_entries, remote_dtos
                 )
@@ -942,8 +981,7 @@ class StagingService:
 
         # Create new device cookie (fresh specifier, local + remote)
         try:
-            identity = self._remote._device_id_provider.get_device_identity(master_key)
-            device_id = identity.device_id
+            device_id = self._resolve_device_id(master_key)
             DeviceCookie.destroy_locally(self._data_dir)
             remote_cookie = DeviceCookie.create(device_id, self._data_dir)
             if remote_cookie is not None:
@@ -953,6 +991,99 @@ class StagingService:
             pass  # Non-critical: cookie creation failure doesn't block READY
 
         return SyncCheckResult.READY
+
+    # ------------------------------------------------------------------
+    # merge remote into local (canonical-row reconcile)
+    # ------------------------------------------------------------------
+
+    def _merge_remote_into_local(
+        self, remote_blob: Any, timeout_ms: Optional[int] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Reconcile a remote staging blob into local at the canonical-row level.
+
+        Port of the Web ``SyncService._mergeRemoteIntoLocal`` (CCS-2/CCS-3):
+        local DTOs → canonical rows → ``merge_rows`` (activity_id LWW,
+        committed-exclusion) → remote-won detection → DTO rebuild → persist.
+
+        * Committed entries are filtered out before persistence.
+        * Rows remote strictly won (``remote.updated_at > local.updated_at``)
+          are rebuilt from their canonical row; all other rows reuse the
+          full-fidelity local DTO.
+        * A ``BLOB_KEY_MISMATCH`` remote blob aborts and returns ``None`` with
+          local state untouched (data-loss guard).
+
+        Args:
+            remote_blob: Decrypted remote blob dict ``{entries, device_id}``
+                or the ``BLOB_KEY_MISMATCH`` sentinel.
+            timeout_ms: Unused placeholder (interface parity).
+
+        Returns:
+            The reconciled (uncommitted) DTO list, or ``None`` if aborted.
+        """
+        if remote_blob is BLOB_KEY_MISMATCH:
+            return None
+
+        now = int(time.time() * 1000)
+        local_dtos = self._local.read_entries()
+        local_device = self._get_device_id() or ""
+
+        if remote_blob is None or not isinstance(remote_blob, dict):
+            remote_entries = []
+            remote_device = ""
+        else:
+            remote_entries = remote_blob.get("entries", [])
+            remote_device = remote_blob.get("device_id", "") or ""
+
+        # Local DTOs → canonical rows (same key space as remote).
+        local_rows = []
+        for dto in local_dtos:
+            if dto and (dto.get("activity_id") or dto.get("entry_id")):
+                local_rows.append(dtoToCanonicalRow(dto, local_device, now))
+
+        # Remote raw entries → DTOs → canonical rows.
+        remote_rows = []
+        for dto in self._remote_entries_to_dtos(remote_entries):
+            remote_rows.append(dtoToCanonicalRow(dto, remote_device, now))
+
+        merged_rows = self._merge.merge_rows(local_rows, remote_rows)
+
+        # Pre-compute which activity_ids remote strictly won.
+        local_canon_by_id = {r.get("activity_id", ""): r for r in local_rows}
+        remote_canon_by_id = {r.get("activity_id", ""): r for r in remote_rows}
+        remote_won_ids = set()
+        for aid, local_canon in local_canon_by_id.items():
+            if not aid:
+                continue
+            remote_canon = remote_canon_by_id.get(aid)
+            if remote_canon and (
+                remote_canon.get("updated_at", 0) > local_canon.get("updated_at", 0)
+            ):
+                remote_won_ids.add(aid)
+
+        # Rebuild DTOs in merged order, dedup by activity_id (first wins).
+        local_dto_by_id = {}
+        for dto in local_dtos:
+            aid = dto.get("activity_id") or dto.get("entry_id") or ""
+            if aid and aid not in local_dto_by_id:
+                local_dto_by_id[aid] = dto
+
+        merged_dtos = []
+        for mrow in merged_rows:
+            aid = mrow.get("activity_id", "")
+            local_dto = local_dto_by_id.get(aid)
+            if local_dto and aid not in remote_won_ids:
+                if mrow.get("committed"):
+                    merged_dtos.append({**local_dto, "committed": True})
+                else:
+                    merged_dtos.append(local_dto)
+            else:
+                rebuilt = canonicalRowToDTO(mrow)
+                merged_dtos.append(rebuilt if rebuilt is not None else local_dto)
+
+        # Filter committed entries before persist (CLI committed-exclusion).
+        uncommitted = [e for e in merged_dtos if e and not e.get("committed")]
+        self._local.write_entries(uncommitted)
+        return uncommitted
 
     # ------------------------------------------------------------------
     # Push to remote
@@ -975,14 +1106,7 @@ class StagingService:
             return
 
         raw = self._local._store.read_entries()
-        identity = None
-        try:
-            if self._remote is not None:
-                identity = self._remote._device_id_provider.get_device_identity(master_key)
-        except Exception:
-            pass
-
-        device_id = identity.device_id if identity else "unknown"
+        device_id = self._resolve_device_id(master_key)
 
         # Push the staging blob FIRST, then the device cookie.
         # Order matters: if the blob push fails, the cookie is unchanged and
@@ -1044,14 +1168,7 @@ class StagingService:
             return
 
         raw = self._local._store.read_entries()
-        identity = None
-        try:
-            if self._remote is not None:
-                identity = self._remote._device_id_provider.get_device_identity(master_key)
-        except Exception:
-            pass
-
-        device_id = identity.device_id if identity else "unknown"
+        device_id = self._resolve_device_id(master_key)
         try:
             self._remote.push(raw, device_id, master_key=master_key, timeout_ms=timeout_ms)
         except (TypeError, ValueError):

@@ -53,9 +53,8 @@ function _deriveStatusFromDTO(e) {
  * @param {string} deviceId - Fallback device UUID
  * @param {number} now - Fallback timestamp (Date.now())
  * @returns {object} Canonical row
- * @private
  */
-function _dtoToCanonicalRow(e, deviceId, now) {
+export function dtoToCanonicalRow(e, deviceId, now) {
   return {
     activity_id: e.activity_id || e.entry_id || '',
     activity_status: _deriveStatusFromDTO(e),
@@ -177,7 +176,7 @@ export class RemoteSync {
           committed: e.committed || false,
         };
       }
-      return _dtoToCanonicalRow(e, deviceId, now);
+      return dtoToCanonicalRow(e, deviceId, now);
     });
 
     const blob = {

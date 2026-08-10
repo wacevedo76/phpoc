@@ -50,9 +50,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `domain/ledger/chain.py` | HOT | Chain building, sealing, verification — **ADR-029a per-type seal table** via `SEAL_FIELDS` map + `select_seal_fields`/`compute_seal`; uses `compute_entry_hash` from helpers |
 | `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
 | `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
-| `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
+| `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push, `_merge_remote_into_local()` (canonical-row reconcile, CCS-3) |
 | `domain/staging/remote_sync.py` | HOT | Blob obfuscation, pull/push, device cookie, hash index pull/push, canonical `staging/blob` path (PHPSPEC §8) |
-| `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id` |
+| `domain/staging/merge_engine.py` | COLD | Cross-device merge, dedup by `entry_id`; `merge_rows()` activity_id LWW (CCS-3) |
+| `domain/staging/row_merge.py` | COLD | **NEW (CCS-3)** — `dtoToCanonicalRow` / `canonicalRowToDTO` (PHPSPEC §8, port of Web) |
+| `domain/staging/local_cache.py` | COLD | `LocalStagingCache` — encrypt/decrypt + CRUD; `plain:` convention; row-mode (canonical) support for `SqliteStagingStore` (CCS-3) |
 | `domain/cookie/device_cookie.py` | COLD | Random-specifier device cookie |
 | `worker/src/index.ts` | HOT | Cloudflare Worker router (~175 lines): CORS, auth, generic blob handlers + row-level staging dispatch |
 | `worker/src/row_level_staging.ts` | HOT | **NEW (Phase 4 REFACTOR)** — Row-level staging types, validation, manifest helpers, 4 HTTP handlers extracted from index.ts (ADR-025) |
@@ -143,9 +145,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/sync/base64.js` | HOT | **NEW** — shared `base64ToBytes`/`bytesToBase64` utilities, used by sync.js, remote_sync.js, genesis_gate.js (2026-06-30) |
 | `phpoc-web/src/sync/keys.js` | HOT | **NEW** — canonical path constants (10 keys: remote staging/cookie/ledger + hash index, local cookie/blocks/index + hash_index), single source of truth (2026-06-30, updated 2026-07-02, 2026-07-05) |
 | `phpoc-web/src/sync/entry_dto.js` | 🟢 GREEN | DTO conversion: `rawCommittedEntryToDTO`, `rawEntryToDTO`, `parsePlainInt`, `parsePlainJSON`. Bug 3b: handles `device_uuid_enc` field. (2026-07-01) |
-| `phpoc-web/src/sync/remote_sync.js` | 🟢 GREEN | `RemoteSync` — blob pull/push, cookie pull/push via transport. Bug 3b: pushBlob converts DTOs to raw spec format. Uses shared `base64.js` + `keys.js`. |
+| `phpoc-web/src/sync/remote_sync.js` | 🟢 GREEN | `RemoteSync` — blob pull/push, cookie pull/push via transport. Bug 3b: pushBlob converts DTOs to raw spec format. Uses shared `base64.js` + `keys.js`. CCS-2: exports `dtoToCanonicalRow` (canonical-row reconcile bridge). |
 | `phpoc-web/src/sync/cookie.js` | COLD | `DeviceCookie` — TTL fallback bug fixed (nullish coalescing), stale header updated, uses `COOKIE_KEY` constant. |
-| `phpoc-web/src/sync/sync.js` | 🔴 RED | Core sync orchestrator. Bug 1: _genesisGatePhase catches typed errors. Bug 2: pushLedgerBlocks position counter. Bug 3a: _fastPathPhase relaxed. Bug 3b: reconcile via writeEntries DTO→raw. Hash index: pushLedgerBlocks pushes hash_index artifacts, _genesisGatePhase caches locally. Phase B2: `merged` flag gating, `_genesisCompatible` caching, `_lastRemoteCookie` reuse. Chain integrity (Jul 5): enumerate-order push, genesis collision guard. (2026-07-05)
+| `phpoc-web/src/sync/sync.js` | 🟢 GREEN | Core sync orchestrator. Bug 1: _genesisGatePhase catches typed errors. Bug 2: pushLedgerBlocks position counter. Bug 3a: _fastPathPhase relaxed. Bug 3b: reconcile via writeEntries DTO→raw. Hash index: pushLedgerBlocks pushes hash_index artifacts, _genesisGatePhase caches locally. Phase B2: `merged` flag gating, `_genesisCompatible` caching, `_lastRemoteCookie` reuse. Chain integrity (Jul 5): enumerate-order push, genesis collision guard. **CCS-2 (Phase 4):** row-level reconcile via `_mergeRemoteIntoLocal()` + module-level `_rowsFromRemoteBlob()` using `mergeRows` (activity_id LWW local-wins-on-tie); `compareStagingHashIndexes`/`computeHashForIndex` dead imports removed. (2026-07-05)
 | `phpoc-web/src/sync/activity_id.js` | 🟢 GREEN | **NEW (Phase 3)** — `generateActivityId()` 10-char CSPRNG alphanumeric IDs (~59 bits entropy) |
 | `phpoc-web/src/sync/staging_hash_index.js` | 🟢 GREEN | **NEW (Phase 3)** — `buildStagingHashIndex()`, `compareStagingHashIndexes()`, `computeHashForIndex()` |
 | `phpoc-web/src/sync/local_cache.js` | 🟢 GREEN | **MODIFIED (Phase 3)** — activity_id field, hash index persistence, injectible `generateId` test seam |
@@ -186,6 +188,7 @@ Key test files:
 - `phpoc-web/test/row_staging_store_test.mjs` — 🔴 RED **NEW (Phase 2)** — 49 assertions, Group S (S1–S25): RowStagingStore IndexedDB CRUD with activity_id key path
 - `phpoc-web/test/row_sync_test.mjs` — 🔴 RED **NEW (Phase 2)** — 134 assertions, Groups D (D1–D35: buildDiff 8-scenario resolution) + W (W1–W30: RowSync HTTP integration)
 - `phpoc-web/test/row_integration_test.mjs` — 🔴 RED **NEW (Phase 2)** — 70 assertions, Groups M (M1–M12: blob→rows migration) + I (I1–I18: full sync integration)
+- `phpoc-web/test/ccs2_row_level_reconcile_test.mjs` — 🟢 GREEN **NEW (CCS-2 Phases 3–4)** — 41/41 assertions. Option B row-level reconcile merged into `sync.js` `_reconcileDifferentDevice` via `mergeRows` (activity_id LWW local-wins); `dtoToCanonicalRow` exported from `remote_sync.js`; local DTO fidelity preserved on local-wins. **Phase 4:** reconcile extracted to `_mergeRemoteIntoLocal()` + `_rowsFromRemoteBlob()`; dead imports removed. Blueprint: `docs/planning/CCS2_PHASE1.md`
 - `phpoc-web/test/i09_device_attribution.test.mjs` — 🟢 GREEN **NEW (Phase 3)** — 17 tests for I-09 device attribution (Groups E, F, G): device_local_secret, deriveDeviceId, migration, sync.js integration
 
 ### Active docs

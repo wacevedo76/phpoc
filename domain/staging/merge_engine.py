@@ -67,3 +67,105 @@ class MergeEngine:
 
         # Sort by start_epoch ascending
         return sorted(seen.values(), key=lambda e: e.get("start_epoch", 0))
+
+    # ------------------------------------------------------------------
+    # row-level merge (activity_id LWW) — CCS-3 canonical-row sync gate
+    # ------------------------------------------------------------------
+
+    def merge_rows(self, local_rows, remote_rows):
+        """Merge two arrays of canonical staging rows by activity_id.
+
+        Ported from the Web ``mergeRows`` (row_sync.js) per PHPSPEC §8.5:
+
+          1. ``activity_id`` is the primary merge key; ``entry_id`` falls back.
+          2. On timestamp conflict, newer ``updated_at`` wins.
+          3. On equal ``updated_at``, the local row wins (matches Flutter).
+          4. Local-only rows with ``committed:true`` are excluded.
+          5. Remote-only rows are included unconditionally.
+          6. ``committed:true`` is irreversible (never downgraded to false).
+
+        Output rows are sorted deterministically by ``activity_id`` so repeated
+        merges of the same input produce byte-identical ordering.
+
+        Pure function — does not mutate inputs; returns fresh dicts.
+
+        Args:
+            local_rows: Local canonical rows.
+            remote_rows: Remote canonical rows.
+
+        Returns:
+            List of merged canonical rows, each with exactly the keys
+            ``{activity_id, activity_status, activity, updated_at, committed}``.
+        """
+        loc = list(local_rows) if local_rows else []
+        rem = list(remote_rows) if remote_rows else []
+
+        merged: Dict[str, Any] = {}
+        remote_keys = set()
+
+        def _norm_activity_status(row):
+            v = row.get("activity_status")
+            return v if v else "active"
+
+        def _build(row, updated_at, committed):
+            return {
+                "activity_id": row.get("activity_id") or row.get("entry_id") or "",
+                "activity_status": _norm_activity_status(row),
+                "activity": row.get("activity") if row.get("activity") is not None else "{}",
+                "updated_at": updated_at,
+                "committed": committed,
+            }
+
+        # Process local rows first
+        for row in loc:
+            if not row:
+                continue
+            key = row.get("activity_id") or row.get("entry_id")
+            if not key:
+                continue
+            merged[key] = _build(
+                row, row.get("updated_at") or 0, row.get("committed") or False
+            )
+
+        # Set of remote keys for committed-exclusion lookup
+        for row in rem:
+            if row:
+                key = row.get("activity_id") or row.get("entry_id")
+                if key:
+                    remote_keys.add(key)
+
+        # Merge remote rows
+        for row in rem:
+            if not row:
+                continue
+            key = row.get("activity_id") or row.get("entry_id")
+            if not key:
+                continue
+            remote_time = row.get("updated_at") or 0
+            remote_committed = row.get("committed") or False
+            existing = merged.get(key)
+            local_time = existing.get("updated_at", -1) if existing else -1
+
+            if existing is None:
+                # Remote-only row → include unconditionally
+                merged[key] = _build(row, remote_time, remote_committed)
+            elif remote_time > local_time:
+                # Remote newer → remote wins, committed is irreversible
+                merged[key] = _build(
+                    row, remote_time, bool(existing.get("committed")) or remote_committed
+                )
+            elif remote_committed:
+                # Remote time ≤ local → local wins but committed is irreversible
+                existing["committed"] = True
+
+        # Exclude local-only rows with committed:true (rule 4). Local-only
+        # means the row's activity_id is NOT in the remote set.
+        result = []
+        for row in merged.values():
+            if row.get("committed") and row.get("activity_id") not in remote_keys:
+                continue
+            result.append(row)
+
+        # Deterministic output ordering
+        result.sort(key=lambda r: r.get("activity_id", ""))
+        return result

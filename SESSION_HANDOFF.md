@@ -13,6 +13,8 @@
 - **Flutter test suite:** 1600/1663 passing (63 failing: all pre-existing)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
 - **Active TDD:** ✅ Canonical Seal-Field (ADR-029/029a) Phases 1–4 complete — seal sites converged on `compute_seal` (see QUEUE TOP below)
+- **Active TDD:** ✅ CCS-2 Web row-level sync (Option B) Phases 1–4 complete — 41/41 GREEN
+- **Active TDD:** ✅ CCS-3 CLI sync-gate wiring Phases 1–4 complete — 60/60 GREEN, full suite 2535 pass / 1 skip / 0 fail
 
 ## Cross-Client Staging Sync — Reference Chain
 - **Plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md`
@@ -32,10 +34,22 @@
 - **Full Python suite GREEN: 2475 passed, 1 skipped / 0 failures** (re-verified after final consolidations).
 
 ### 🔜 Queued
-- **CCS-2:** Web — wire `RowStagingStore` + `StagingHashIndex` + `mergeEntries` into `sync.js`
-- **CCS-3:** CLI — build `SqliteStagingStore`, switch to activity_id LWW, wire into `StagingService`
 - **CCS-4:** Cross-client E2E testing (Flutter↔Web, Flutter↔CLI, Web↔CLI)
 - **Staging Auto-Sync:** bidirectional `checkAndSync()` — `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
+
+### ✅ Completed: CCS-3 — CLI Sync-Gate Wiring → Phases 1–4 ✅
+- **Plan:** `docs/planning/CLI_SYNC_GATE_WIRING_PHASE1.md` (60 assertions)
+- **Result:** `tests/test_cli_sync_gate_wiring.py` **60/60 GREEN**; full Python suite **2535 pass / 1 skip / 0 fail**
+- **P3 delivered:** `domain/staging/row_merge.py` (`dtoToCanonicalRow`/`canonicalRowToDTO`); `MergeEngine.merge_rows()` (activity_id LWW); `StagingHashIndex.build_from_store`; `StagingService._merge_remote_into_local`; `LocalStagingCache` row-mode for `SqliteStagingStore` + `activity_id`/`updated_at` fidelity in blob path + `write_calls`
+- **P4 REFACTOR (this session):** extracted `StagingService._resolve_device_id()` (dedups device-identity resolution across `_ensure_cookie`/`_reconcile_and_claim`/`push_to_remote`/`push_blob_only`; removed dead nested `_remote is None` guards) and `_remote_entries_to_dtos()` (consolidates raw→DTO conversion across `_push_on_fast_path`/`_reconcile_and_claim`/`_merge_remote_into_local`); simplified `dtoToCanonicalRow` device_id default (`device_id or ""`). Full suite re-verified GREEN.
+- **Backlog:** `docs/planning/BACKLOG.md` §CCS-3 marked ✅.
+
+### ✅ Completed: CCS-2 — Web Row-Level Sync (Option B) → Phases 1–4 ✅
+- **Plan:** `docs/planning/CCS2_PHASE1.md` (24 assertions: 14 RED + 10 anchors)
+- **Result:** `phpoc-web/test/ccs2_row_level_reconcile_test.mjs` **41/41 GREEN**; full web suite no regressions (76/14, 14 pre-existing env/WASM/DOM)
+- **P3:** `mergeRows` (activity_id LWW local-wins) threaded into `sync.js` `_reconcileDifferentDevice`; `dtoToCanonicalRow` exported from `remote_sync.js`; legacy `{hash,data}` bridge + committed-exclusion; C2 status-only fast-path
+- **P4 (this session):** extracted `_mergeRemoteIntoLocal()` + module-level `_rowsFromRemoteBlob()`; precomputed `remoteWonIds` set; removed dead `compareStagingHashIndexes`/`computeHashForIndex` imports. CSV baseline unchanged.
+- **Backlog:** `docs/planning/BACKLOG.md` §CCS-2 marked ✅.
 
 ### 🔜 In Progress: `ph migrate-format` — Canonical 0.4.0 Rehash
 - Built `phpoc_cli/migrate_format.py` + standalone `migrate-format.py` (project root)
