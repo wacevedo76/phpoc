@@ -6,8 +6,8 @@ the original behavior exactly.
 """
 
 from domain.ledger.helpers import get_block_hash
+from domain.ledger.chain import compute_seal
 
-import json
 import time
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any
@@ -56,9 +56,7 @@ class SummaryPolicy(ABC):
             "prev_hash": prev_hash,
             "date": date_str,
         }
-        summary["year_hash"] = self.crypto.seal(
-            json.dumps(summary, sort_keys=True)
-        )
+        summary["year_hash"] = compute_seal(self.crypto, summary)
         if self.identity_secret:
             summary["identity_seal"] = self.crypto.mac(
                 summary["year_hash"], self.identity_secret
@@ -75,9 +73,7 @@ class SummaryPolicy(ABC):
             "prev_hash": prev_hash,
             "date": date_str,
         }
-        summary["month_hash"] = self.crypto.seal(
-            json.dumps(summary, sort_keys=True)
-        )
+        summary["month_hash"] = compute_seal(self.crypto, summary)
         if self.identity_secret:
             summary["identity_seal"] = self.crypto.mac(
                 summary["month_hash"], self.identity_secret

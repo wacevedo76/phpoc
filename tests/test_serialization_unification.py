@@ -104,27 +104,32 @@ def _make_day_block(prev_hash: str, day_index: int = 1,
 
 
 def _make_month_summary_block(prev_hash: str) -> dict:
-    """Build a minimal month summary block."""
+    """Build a minimal month summary block (real ADR-029a shape).
+
+    Real summaries carry {type, month, prev_hash, date} — no fixture-only
+    month_index/days fields.
+    """
     return {
         "type": "month_summary",
-        "month_index": 1,
-        "year": 2026,
-        "month": 1,
+        "month": "2026-01",
         "prev_hash": prev_hash,
+        "date": "2026-01-31",
         "month_hash": "d" * 64,
-        "days": [],
     }
 
 
 def _make_year_summary_block(prev_hash: str) -> dict:
-    """Build a minimal year summary block."""
+    """Build a minimal year summary block (real ADR-029a shape).
+
+    Real summaries carry {type, year, prev_hash, date} — no fixture-only
+    year_index/months fields.
+    """
     return {
         "type": "year_summary",
-        "year_index": 1,
         "year": 2026,
         "prev_hash": prev_hash,
+        "date": "2026-12-31",
         "year_hash": "e" * 64,
-        "months": [],
     }
 
 

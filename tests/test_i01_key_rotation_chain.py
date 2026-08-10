@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any
 
 HAS_I01_CHAIN = False
 try:
-    from domain.ledger.chain import LedgerChain  # noqa: F811
+    from domain.ledger.chain import LedgerChain, select_seal_fields  # noqa: F811
     HAS_I01_CHAIN = True
 except (ImportError, ModuleNotFoundError):
     LedgerChain = None
@@ -115,11 +115,10 @@ def _make_genesis(mk_version=0):
 def _seal_genesis(genesis, crypto):
     """Compute and set a proper block_hash for a genesis block.
 
-    Excludes key_version from seal data (metadata, like format_version).
+    Route through the ADR-029a per-type whitelist — metadata (key_version,
+    format_version, identity) is excluded by the closed set.
     """
-    check_data = {k: v for k, v in genesis.items()
-                  if k not in ("block_hash", "identity_seal", "signature",
-                               "format_version", "key_version")}
+    check_data = select_seal_fields(genesis)
     genesis["block_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     return genesis
 
@@ -127,16 +126,14 @@ def _seal_genesis(genesis, crypto):
 def _seal_block(block, crypto):
     """Compute and set a proper hash for any block (day, month_summary, etc).
 
-    Excludes key_version from seal data.
+    Uses the ADR-029a per-type whitelist for the block's type.
     """
     hash_key = "day_hash"
     if block.get("type") == "month_summary":
         hash_key = "month_hash"
     elif block.get("type") == "year_summary":
         hash_key = "year_hash"
-    check_data = {k: v for k, v in block.items()
-                  if k not in (hash_key, "identity_seal", "signature",
-                               "format_version", "key_version")}
+    check_data = select_seal_fields(block)
     block[hash_key] = crypto.seal(json.dumps(check_data, sort_keys=True))
     return block
 
@@ -260,9 +257,7 @@ class TestBlockStructureWithKeyVersion(unittest.TestCase):
 
         # Verify that key_version is NOT in the seal check set
         hash_key = "day_hash"
-        check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "identity_seal", "signature",
-                                   "format_version", "key_version")}
+        check_data = select_seal_fields(block)
         self.assertNotIn("key_version", check_data,
                          "key_version must be excluded from seal check data")
 
@@ -344,8 +339,7 @@ class TestBlockStructureWithKeyVersion(unittest.TestCase):
         crypto = _MockCrypto(mk, key_version=1)
         genesis = _make_genesis(mk_version=1)
         genesis["block_hash"] = crypto.seal(json.dumps(
-            {k: v for k, v in genesis.items()
-             if k not in ("block_hash", "identity_seal", "signature", "format_version")},
+            select_seal_fields(genesis),
             sort_keys=True))
         store = _MockLedgerStore([genesis])
         chain = LedgerChain(crypto, store)
@@ -497,8 +491,7 @@ class TestMultiVersionChainVerification(unittest.TestCase):
 
         crypto_v1 = _MockCrypto(mk_v1, key_version=1)
         genesis = _make_genesis(mk_version=1)
-        check_data = {k: v for k, v in genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto_v1.seal(json.dumps(check_data, sort_keys=True))
 
         store = _MockLedgerStore([genesis])
@@ -591,8 +584,7 @@ class TestMultiVersionChainVerification(unittest.TestCase):
         mk_v1 = _compute_mk(self.seed, 1)
         crypto_v1 = _MockCrypto(mk_v1, key_version=1)
         genesis = _make_genesis(mk_version=1)
-        check_data = {k: v for k, v in genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto_v1.seal(json.dumps(check_data, sort_keys=True))
 
         identity_secret = self.identity_secret
@@ -650,8 +642,7 @@ class TestMultiVersionChainVerification(unittest.TestCase):
             "identity": {"identity_pub_key": "ab" * 32},
             "format_version": "0.4.0",
         }
-        check_data = {k: v for k, v in genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
 
         store = _MockLedgerStore([genesis])
@@ -685,8 +676,7 @@ class TestMultiVersionChainVerification(unittest.TestCase):
             "identity": {"identity_pub_key": "ab" * 32},
             "format_version": "0.4.0",
         }
-        check_data = {k: v for k, v in genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
 
         store = _MockLedgerStore([genesis])
@@ -723,8 +713,7 @@ class TestMultiVersionChainVerification(unittest.TestCase):
 
         crypto_v2 = _MockCrypto(mk_v2, key_version=2)
         genesis = _make_genesis(mk_version=2)
-        check_data = {k: v for k, v in genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto_v2.seal(json.dumps(check_data, sort_keys=True))
 
         store = _MockLedgerStore([genesis])

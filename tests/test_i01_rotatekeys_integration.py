@@ -18,7 +18,7 @@ from pathlib import Path
 from security.crypto import CryptoManager, derive_mk
 from security.auth import PassphraseAuthenticator
 from security.recovery import RecoveryManager
-from domain.ledger.chain import LedgerChain
+from domain.ledger.chain import LedgerChain, select_seal_fields
 from domain.ledger.helpers import get_block_hash
 from domain.ledger.index_manager import IndexManager
 from domain.staging.local_cache import LocalStagingCache
@@ -51,8 +51,7 @@ def _build_genesis(seed: bytes, key_version: int = 1, format_version: str = "0.5
         "format_version": format_version,
         "identity": identity,
     }
-    check_data = {k: v for k, v in genesis.items()
-                  if k not in ("block_hash", "identity_seal", "signature", "format_version", "key_version")}
+    check_data = select_seal_fields(genesis)
     genesis["block_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     genesis["identity_seal"] = crypto.mac(genesis["block_hash"], identity_secret)
     return genesis, identity_secret
@@ -103,7 +102,7 @@ def _build_day_block(crypto, entries, prev_hash, date_str, day_index=1,
         "type": "day", "day_index": day_index, "date": date_str,
         "prev_hash": prev_hash, "entries": normalized, "key_version": key_version,
     }
-    seal_data = {k: v for k, v in day_content.items() if k not in ("key_version",)}
+    seal_data = select_seal_fields(day_content)
     day_content["day_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
     if identity_secret:
         day_content["identity_seal"] = crypto.mac(day_content["day_hash"], identity_secret)

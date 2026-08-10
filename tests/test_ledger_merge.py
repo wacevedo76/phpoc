@@ -32,6 +32,7 @@ from typing import Optional, Dict, Any, List
 HAS_MERGE = True
 try:
     from domain.ledger.merge import LedgerMerge  # noqa: E402
+    from domain.ledger.chain import select_seal_fields  # noqa: E402
     HAS_MERGE_FUNC = LedgerMerge.merge is not None
 except (ImportError, NotImplementedError):
     HAS_MERGE_FUNC = False
@@ -228,8 +229,8 @@ def build_day_block(
         "prev_hash": prev_hash,
         "entries": sorted_entries,
     }
-    # Build seal from sorted keys (minus hash/signature)
-    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "identity_seal", "signature")})
+    # Build seal over the ADR-029a per-type whitelist (day row)
+    check_data = _sort_keys(select_seal_fields(content))
     content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     if IDENTITY_SECRET:
         content["identity_seal"] = crypto.mac(content["day_hash"], IDENTITY_SECRET_BYTES)
@@ -253,7 +254,9 @@ def build_genesis_block() -> dict:
         "prev_hash": ZERO_HASH,
         "entries": [],
     }
-    check_data = _sort_keys({k: v for k, v in content.items() if k not in ("day_hash", "identity_seal", "signature")})
+    # Seal over the ADR-029a per-type genesis whitelist (excludes
+    # format_version and identity — closed set)
+    check_data = _sort_keys(select_seal_fields(content))
     content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
     if IDENTITY_SECRET:
         content["identity_seal"] = crypto.mac(content["day_hash"], IDENTITY_SECRET_BYTES)
@@ -832,8 +835,7 @@ class TestChainIntegrity(unittest.IsolatedAsyncioTestCase):
                 else:
                     hash_key = "day_hash"
 
-                check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "identity_seal", "signature")}
+                check_data = select_seal_fields(block)
                 check_data = _sort_keys(check_data)
                 if not crypto.verify_seal(json.dumps(check_data, sort_keys=True),
                                           block[hash_key]):
@@ -949,8 +951,7 @@ class TestChainIntegrity(unittest.IsolatedAsyncioTestCase):
                 else:
                     hash_key = "day_hash"
 
-                check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "identity_seal", "signature")}
+                check_data = select_seal_fields(block)
                 check_data = _sort_keys(check_data)
                 expected_seal = crypto.seal(json.dumps(check_data, sort_keys=True))
                 if block[hash_key] != expected_seal:
@@ -1173,8 +1174,7 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
             "prev_hash": ZERO_HASH,
             "entries": [],
         }
-        check_data = _sort_keys({k: v for k, v in genesis2_content.items()
-                                 if k not in ("day_hash", "identity_seal", "signature")})
+        check_data = _sort_keys(select_seal_fields(genesis2_content))
         genesis2_content["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
         if IDENTITY_SECRET:
             genesis2_content["identity_seal"] = crypto.mac(genesis2_content["day_hash"],
@@ -1411,8 +1411,7 @@ class TestInputValidation(unittest.IsolatedAsyncioTestCase):
             "prev_hash": ZERO_HASH,
             "entries": [],
         }
-        check_data = _sort_keys({k: v for k, v in genesis2.items()
-                                 if k not in ("day_hash", "identity_seal", "signature")})
+        check_data = _sort_keys(select_seal_fields(genesis2))
         genesis2["day_hash"] = crypto.seal(json.dumps(check_data, sort_keys=True))
         if IDENTITY_SECRET:
             genesis2["identity_seal"] = crypto.mac(genesis2["day_hash"], IDENTITY_SECRET_BYTES)

@@ -52,6 +52,7 @@ def _hash_key_for_block_type(block: dict) -> str:
 
 
 from domain.ledger.helpers import get_block_hash, compute_entry_hash
+from domain.ledger.chain import select_seal_fields
 
 
 def _verify_migrated_chain(migrated: List[dict], integrity_key: bytes) -> None:
@@ -97,9 +98,7 @@ def _verify_migrated_chain(migrated: List[dict], integrity_key: bytes) -> None:
             raise ValueError(
                 f"Verification failed: block {i} missing {hash_key}"
             )
-        check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "identity_seal",
-                                   "signature", "format_version", "key_version")}
+        check_data = select_seal_fields(block)
         expected = _seal(json.dumps(check_data, sort_keys=True), integrity_key)
         if expected != stored_hash:
             raise ValueError(
@@ -179,9 +178,7 @@ def migrate_chain(
 
     # ── 5. Recompute genesis seal (no prev_hash dependency) ──────────
     genesis_hash_key = _hash_key_for_block_type(genesis)
-    genesis_check_data = {k: v for k, v in genesis.items()
-                          if k not in (genesis_hash_key, "identity_seal",
-                                       "signature", "format_version", "key_version")}
+    genesis_check_data = select_seal_fields(genesis)
     genesis[genesis_hash_key] = _seal(json.dumps(genesis_check_data, sort_keys=True), integrity_key)
 
     # ── 6. Process remaining blocks: fix prev_hash → recompute seal ───
@@ -191,9 +188,7 @@ def migrate_chain(
         block["prev_hash"] = get_block_hash(migrated[i - 1])
         # Recompute seal with correct prev_hash
         hash_key = _hash_key_for_block_type(block)
-        check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "identity_seal",
-                                   "signature", "format_version", "key_version")}
+        check_data = select_seal_fields(block)
         block[hash_key] = _seal(json.dumps(check_data, sort_keys=True), integrity_key)
 
     # ── 7. Self-verification ────────────────────────────────────────

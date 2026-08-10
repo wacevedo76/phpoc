@@ -28,6 +28,7 @@ TDD: GREEN phase — implementation complete.
 import hashlib
 import inspect
 from domain.ledger.helpers import get_block_hash
+from domain.ledger.chain import select_seal_fields
 
 import json
 from datetime import datetime, timezone
@@ -210,8 +211,9 @@ class LedgerMerge:
                     "entries": date_entries,
                 }
 
-                # Compute block seal
-                day_json = json.dumps(day_content, sort_keys=True)
+                # Compute block seal — ADR-029a per-type whitelist (day row)
+                seal_data = select_seal_fields(day_content)
+                day_json = json.dumps(seal_data, sort_keys=True)
 
                 if inspect.iscoroutinefunction(crypto.seal):
                     day_content["day_hash"] = await crypto.seal(day_json)
@@ -340,11 +342,8 @@ class LedgerMerge:
         else:
             hash_key = "day_hash"
 
-        # Build check data: everything except the hash key, identity_seal, and signature
-        check_data = {
-            k: v for k, v in block.items()
-            if k != hash_key and k != "signature" and k != "identity_seal"
-        }
+        # Build check data from the ADR-029a per-type whitelist (closed-set)
+        check_data = select_seal_fields(block)
 
         # 1. Block seal
         if not crypto.verify_seal(

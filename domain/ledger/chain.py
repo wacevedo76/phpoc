@@ -23,6 +23,51 @@ _DEFAULT_FORMAT_VERSION = (0, 2, 0)
 # Content hash is required at this version and above
 _CONTENT_HASH_REQUIRED_VERSION = (0, 4, 0)
 
+# ADR-029 / ADR-029a: canonical closed, **type-aware** block-seal field table.
+# A block's seal is an HMAC over exactly the fields in the row for that block
+# type that are PRESENT, serialized with sort_keys=True. Fields OUTSIDE the row
+# (format_version, key_version, identity, identity_seal, signature, the hash
+# keys, and any stray/future/client-specific field) are NEVER sealed.
+# `original_hash` is optional-presence on every type: sealed only when present
+# (migrated blocks), absent on new/pre-0.4.0 blocks.
+# Summaries seal their `month`/`year` (partition identity — D5 trust anchor)
+# and carry no `day_index`/`entries`, so their rows differ from day/genesis.
+SEAL_FIELDS = {
+    "genesis":      {"type", "day_index", "date", "prev_hash", "entries",
+                      "original_hash"},
+    "day":          {"type", "day_index", "date", "prev_hash", "entries",
+                      "original_hash"},
+    "month_summary": {"type", "month", "date", "prev_hash", "original_hash"},
+    "year_summary":  {"type", "year", "date", "prev_hash", "original_hash"},
+}
+
+
+def select_seal_fields(block: dict) -> dict:
+    """Return the seal-input dict for a block: only the ADR-029a per-type
+    whitelist fields present.
+
+    Both sealers and verifiers/recompute across ALL implementations must use
+    this single per-type selection so a block's seal never depends on
+    non-whitelisted fields (closed-set) and summary identity (`month`/`year`)
+    stays authenticated. Unknown block types are verification-invalid.
+    """
+    btype = block.get("type", "day")
+    field_set = SEAL_FIELDS.get(btype)
+    if field_set is None:
+        raise ValueError(f"Unknown block type for seal: {btype!r}")
+    return {k: v for k, v in block.items() if k in field_set}
+
+
+def compute_seal(crypto, block: dict) -> str:
+    """Compute a block's HMAC-SHA256 seal over its ADR-029a per-type fields.
+
+    Centralizes `json.dumps(select_seal_fields(block), sort_keys=True)` + seal
+    so every re-seal/verify site routes through the same per-type table.
+    ``original_hash`` is sealed when present (in every row); the hash key and
+    all non-whitelisted fields are excluded automatically.
+    """
+    return crypto.seal(json.dumps(select_seal_fields(block), sort_keys=True))
+
 
 def _decrypt_or_plain(decrypt_fn, data: dict):
     """Return a callable that resolves plaintext or _enc field values.
@@ -262,11 +307,9 @@ class LedgerChain:
         if key_version is not None:
             day_content["key_version"] = key_version
 
-        # Exclude key_version from seal (metadata like format_version)
-        seal_data = {k: v for k, v in day_content.items()
-                     if k not in ("key_version",)}
-        day_json = json.dumps(seal_data, sort_keys=True)
-        day_content["day_hash"] = self.crypto.seal(day_json)
+        # Seal over the ADR-029a per-type whitelist (key_version excluded)
+        # via the shared compute_seal entry point.
+        day_content["day_hash"] = compute_seal(self.crypto, day_content)
         if self.identity_secret:
             day_content["identity_seal"] = self.crypto.mac(
                 day_content["day_hash"], self.identity_secret
@@ -446,8 +489,9 @@ class LedgerChain:
             crypto = version_crypto
 
         hash_key = LedgerChain._hash_key_for_block(block)
-        check_data = {k: v for k, v in block.items()
-                      if k not in (hash_key, "identity_seal", "signature", "format_version", "key_version")}
+        # Verify against the ADR-029a canonical per-type whitelist (closed-set). A stray
+        # non-whitelisted field in the block is excluded from recompute.
+        check_data = select_seal_fields(block)
         if not crypto.verify_seal(
             json.dumps(check_data, sort_keys=True), block[hash_key]
         ):
@@ -548,9 +592,8 @@ class LedgerChain:
             version_crypto = get_mk_for_version(key_version)
             if version_crypto is not None:
                 hash_key = LedgerChain._hash_key_for_block(block)
-                check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "identity_seal", "signature",
-                                           "format_version", "key_version")}
+                # Recompute over the ADR-029a canonical per-type whitelist (closed-set).
+                check_data = select_seal_fields(block)
                 recomputed = version_crypto.seal(
                     json.dumps(check_data, sort_keys=True)
                 )

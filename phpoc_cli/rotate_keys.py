@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from security.crypto import CryptoManager, derive_mk
-from domain.ledger.chain import LedgerChain
+from domain.ledger.chain import LedgerChain, compute_seal, select_seal_fields
 from domain.ledger.index_manager import IndexManager
 from domain.staging.local_cache import LocalStagingCache
 from domain.cookie.device_cookie import DeviceCookie
@@ -320,12 +320,8 @@ class RotateKeysCommand:
         if old_genesis_hash:
             genesis[f"prev_block_hash_v{current_version}"] = old_genesis_hash
 
-        # Re-seal genesis
-        check_data = {
-            k: v for k, v in genesis.items()
-            if k not in ("block_hash", "identity_seal", "signature",
-                         "format_version", "key_version")
-        }
+        # Re-seal genesis — ADR-029a per-type whitelist
+        check_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto_v2.seal(
             json.dumps(check_data, sort_keys=True)
         )
@@ -404,9 +400,7 @@ class RotateKeysCommand:
                     block[f"prev_block_hash_v{current_version}"] = old_hash
 
                 hash_key = "block_hash"
-                check_data = {k: v for k, v in block.items()
-                              if k not in (hash_key, "identity_seal", "signature",
-                                           "format_version", "key_version")}
+                check_data = select_seal_fields(block)
                 block[hash_key] = crypto_v2.seal(
                     json.dumps(check_data, sort_keys=True)
                 )
@@ -444,11 +438,7 @@ class RotateKeysCommand:
 
                 old_day_hash = block.get("day_hash")
                 hash_key = "day_hash"
-                seal_data = {k: v for k, v in block.items()
-                             if k not in (hash_key, "key_version", "identity_seal")}
-                block[hash_key] = crypto_v2.seal(
-                    json.dumps(seal_data, sort_keys=True)
-                )
+                block[hash_key] = compute_seal(crypto_v2, block)
                 if self.identity_secret:
                     block["identity_seal"] = crypto_v2.mac(
                         block[hash_key], self.identity_secret

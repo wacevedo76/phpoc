@@ -44,6 +44,7 @@ except ImportError:
 
 from security.crypto import CryptoManager
 from security.recovery import RecoveryManager
+from domain.ledger.chain import select_seal_fields
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Test Constants
@@ -201,7 +202,7 @@ class TestGroupB_AuthMultiSaltTrial(unittest.TestCase):
             "signature": "",
         }
 
-        seal_data = {k: v for k, v in genesis.items() if k != "signature"}
+        seal_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
         genesis["identity_seal"] = crypto.mac(
             genesis["block_hash"], bytes.fromhex(identity_secret_hex)
@@ -576,7 +577,7 @@ class TestGroupD_PassphraseChange(unittest.TestCase):
             "entries": [],
             "signature": "",
         }
-        seal_data = {k: v for k, v in genesis.items() if k != "signature"}
+        seal_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
         genesis["identity_seal"] = crypto.mac(
             genesis["block_hash"], bytes.fromhex(identity_secret_hex)
@@ -730,8 +731,7 @@ class TestGroupH_Integration(unittest.TestCase):
         genesis = ledger_data[0]
         # Exclude block_hash, identity_seal, signature — same as factory seal computation
         hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
-        seal_data = {k: v for k, v in genesis.items()
-                     if k not in (hash_key, "identity_seal", "signature", "format_version")}
+        seal_data = select_seal_fields(genesis)
         self.assertTrue(
             crypto.verify_seal(
                 json.dumps(seal_data, sort_keys=True),
@@ -766,7 +766,7 @@ class TestGroupH_Integration(unittest.TestCase):
             "entries": [],
             "signature": "",
         }
-        seal_data = {k: v for k, v in genesis.items() if k != "signature"}
+        seal_data = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
         genesis["identity_seal"] = crypto.mac(
             genesis["block_hash"], bytes.fromhex(identity_secret_hex)
@@ -784,8 +784,7 @@ class TestGroupH_Integration(unittest.TestCase):
             ledger_data = json.loads(self.ledger_file.read_text())
             genesis_after = ledger_data[0]
             hash_key2 = "block_hash" if "block_hash" in genesis_after else "day_hash"
-            seal_data_after = {k: v for k, v in genesis_after.items()
-                               if k not in (hash_key2, "identity_seal", "signature", "format_version")}
+            seal_data_after = select_seal_fields(genesis_after)
             self.assertTrue(
                 crypto.verify_seal(
                     json.dumps(seal_data_after, sort_keys=True),

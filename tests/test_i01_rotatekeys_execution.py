@@ -20,7 +20,7 @@ from pathlib import Path
 
 from security.crypto import CryptoManager, derive_mk, NoAuthCryptoManager
 from security.auth import PassphraseAuthenticator
-from domain.ledger.chain import LedgerChain
+from domain.ledger.chain import LedgerChain, select_seal_fields
 from domain.ledger.helpers import get_block_hash
 from domain.ledger.index_manager import IndexManager
 from domain.staging.local_cache import LocalStagingCache
@@ -63,10 +63,10 @@ def _build_genesis(seed: bytes, key_version: int = 1, format_version: str = "0.5
         "identity": identity,
     }
 
-    # Compute seal over fields excluding hash/mac/signature/format_version/key_version
+    # Compute seal over the ADR-029a per-type genesis fields (identity,
+    # format_version, key_version, hash/mac excluded automatically).
     hash_key = "block_hash"
-    check_data = {k: v for k, v in genesis.items()
-                  if k not in (hash_key, "identity_seal", "signature", "format_version", "key_version")}
+    check_data = select_seal_fields(genesis)
     genesis[hash_key] = crypto.seal(json.dumps(check_data, sort_keys=True))
     genesis["identity_seal"] = crypto.mac(genesis[hash_key], identity_secret)
 
@@ -94,8 +94,7 @@ def _build_day_block(crypto: CryptoManager, entries: list, prev_hash: str,
         "key_version": key_version,
     }
 
-    seal_data = {k: v for k, v in day_content.items()
-                 if k not in ("key_version",)}
+    seal_data = select_seal_fields(day_content)
     day_content["day_hash"] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
     if identity_secret:
@@ -393,9 +392,7 @@ class TestSoftRotationExecution(unittest.TestCase):
         # v2 crypto must verify the new seal
         mk_v2 = derive_mk(self.seed, 2)
         crypto_v2 = CryptoManager(mk_v2, key_version=2)
-        check_data = {k: v for k, v in new_genesis.items()
-                      if k not in ("block_hash", "identity_seal", "signature",
-                                   "format_version", "key_version")}
+        check_data = select_seal_fields(new_genesis)
         self.assertTrue(
             crypto_v2.verify_seal(json.dumps(check_data, sort_keys=True), new_seal),
             "New seal must verify with v2 crypto"

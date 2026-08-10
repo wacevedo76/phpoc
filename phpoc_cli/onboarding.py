@@ -37,7 +37,7 @@ from core.sync.git_transport import GitStagingTransport
 from storage.file_store import LedgerStore
 from core.ledger import LedgerDomain
 from domain.ledger.helpers import get_block_hash
-
+from domain.ledger.chain import compute_seal
 logger = logging.getLogger(__name__)
 
 
@@ -539,14 +539,9 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
     ledger_domain = LedgerDomain(crypto, store)
     identity_secret = ledger_domain._get_identity_secret()
     
-    # Re-seal and re-sign genesis
-    # I-17: genesis uses block_hash (not day_hash). I-07: exclude format_version.
+    # Re-seal and re-sign genesis — ADR-029a per-type whitelist
     genesis_hash_key = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
-    check_data = {
-        k: v for k, v in ledger_data[0].items()
-        if k not in (genesis_hash_key, "signature", "format_version")
-    }
-    ledger_data[0][genesis_hash_key] = crypto.seal(json.dumps(check_data, sort_keys=True))
+    ledger_data[0][genesis_hash_key] = compute_seal(crypto, ledger_data[0])
     
     if identity_secret:
         ledger_data[0]["identity_seal"] = crypto.mac(
@@ -566,12 +561,9 @@ def _recover_ledger(ledger_path: Path, data_dir: Path, mk: bytes) -> bool:
             "year_hash"
         )
         
-        # I-07: format_version excluded from seal. identity_seal also excluded.
-        seal_data = {
-            k: v for k, v in block.items()
-            if k not in (hash_key, "identity_seal", "signature", "format_version")
-        }
-        block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
+        # ADR-029a per-type whitelist — identity_seal/signature/format_version/key_version
+        # are outside the closed set and excluded automatically.
+        block[hash_key] = compute_seal(crypto, block)
         
         if identity_secret and block.get("identity_seal") is not None:
             block["identity_seal"] = crypto.mac(block[hash_key], identity_secret)

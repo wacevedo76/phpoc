@@ -16,6 +16,7 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `FLUTTER_ARCHITECTURE.md` — Flutter mobile architecture: comparative analysis (web vs CLI), state management (Riverpod), navigation (go_router), data layer (SQLite/drift), flutter_rust_bridge integration, project structure, screen inventory (2026-07-17)
 - `FLUTTER_AXIOMS.md` — 31 axioms for Flutter app development organized into 6 categories: Protocol (A1–A8), Architecture (B1–B6), State Management (C1–C5), Data (D1–D6), Development (E1–E6), Decision (F1–F6). Quick-reference card with 20 yes/no checks before writing code. (2026-07-17)
 - `TOP_LEVEL_DIRECTIVES.md` — Binding principles (D1–D11) read first for every architectural discussion. Referenced by `SESSION_HANDOFF.md`.
+- `CANONICAL_SEAL-FIELD_Design.md` — Cross-client block-seal field-set convergence design (**ADR-029 adopted**: closed 6-field whitelist incl. `original_hash`)
 
 ## Local Contracts
 - **TOP_LEVEL_DIRECTIVES.md is the first read-in for every architectural discussion.** All ADRs, design goals, axioms, and workflow specs must be consistent with D1–D11.

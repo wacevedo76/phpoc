@@ -12,7 +12,7 @@
 - **Branch:** `Flutter-features_and_ux`
 - **Flutter test suite:** 1600/1663 passing (63 failing: all pre-existing)
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
-- **Active TDD:** None — Verify/Restore Fix Plan B ✅ complete → archived to `docs/planning/archive/SESSION_HISTORY_2026-07-26.md`
+- **Active TDD:** ✅ Canonical Seal-Field (ADR-029/029a) Phases 1–4 complete — seal sites converged on `compute_seal` (see QUEUE TOP below)
 
 ## Cross-Client Staging Sync — Reference Chain
 - **Plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md`
@@ -20,6 +20,16 @@
 - **Backlog:** `docs/planning/BACKLOG.md` §CCS
 
 ## Immediate Next Steps 🎯
+
+### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Phases 1–4 ✅ COMPLETE
+- **Plan:** `docs/planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` (7 phases, each 4-phase TDD)
+- **Status:** Ph-1 · P1 ✅ blueprint · P2 ✅ RED · P3 ✅ GREEN · **P4 ✅ REFACTOR complete**
+
+**P4 REFACTOR (this session) — done:**
+- Routed remaining inline `crypto.seal(json.dumps(select_seal_fields(...), sort_keys=True))` sites through `compute_seal`: `auth.py`, `onboarding.py` (genesis + loop), `onboarding_file.py` (genesis + loop), `rotate_keys.py` (passes `crypto_v2` as first arg), `migrate_format.py:_seal_block`. Cleaned now-unused imports + a redundant `check_data` var in onboarding.py.
+- **This session (final pass):** also routed `core/factory.py` genesis seal and `chain.py` `create_day` day seal through `compute_seal` — every synchronous block sealer now uses the single entry point. Merge.py seal uses keep `inspect.iscoroutinefunction` dispatch and stay on `select_seal_fields` (async-safe); verify/recompute sites in chain.py/migrate/rotate_keys keep `select_seal_fields` for check-data clarity.
+- **Exception (unchanged):** `migrate.py` `_seal(..., integrity_key)` uses a per-chain integrity key — documented in plan, not `compute_seal`.
+- **Full Python suite GREEN: 2475 passed, 1 skipped / 0 failures** (re-verified after final consolidations).
 
 ### 🔜 Queued
 - **CCS-2:** Web — wire `RowStagingStore` + `StagingHashIndex` + `mergeEntries` into `sync.js`

@@ -17,6 +17,8 @@ import hashlib
 import hmac
 from typing import Optional, Dict, Any, List
 
+from domain.ledger.chain import select_seal_fields
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Module existence flags
 # ═════════════════════════════════════════════════════════════════════════════
@@ -485,13 +487,11 @@ class TestGroupDEndToEndImport(unittest.TestCase):
         genesis = self._make_genesis_block()
         genesis_hash = "0" * 64
         # Re-seal genesis properly
-        genesis_check = {k: v for k, v in sorted(genesis.items())
-                         if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        genesis_check = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(genesis_check, sort_keys=True))
 
         day = self._make_day_block(genesis["block_hash"], [day_entry])
-        day_check = {k: v for k, v in sorted(day.items())
-                     if k not in ("day_hash", "identity_seal", "signature", "format_version")}
+        day_check = select_seal_fields(day)
         day["day_hash"] = crypto.seal(json.dumps(day_check, sort_keys=True))
 
         ledger_blocks = [genesis, day]
@@ -541,13 +541,11 @@ class TestGroupDEndToEndImport(unittest.TestCase):
 
         # Build genesis + day block
         genesis = self._make_genesis_block()
-        genesis_check = {k: v for k, v in sorted(genesis.items())
-                         if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        genesis_check = select_seal_fields(genesis)
         genesis["block_hash"] = crypto.seal(json.dumps(genesis_check, sort_keys=True))
 
         day = self._make_day_block(genesis["block_hash"], [day_entry])
-        day_check = {k: v for k, v in sorted(day.items())
-                     if k not in ("day_hash", "identity_seal", "signature", "format_version")}
+        day_check = select_seal_fields(day)
         day["day_hash"] = crypto.seal(json.dumps(day_check, sort_keys=True))
 
         blocks = [genesis, day]

@@ -9,6 +9,7 @@ from typing import Optional, Tuple
 from pathlib import Path
 
 from security.crypto import CryptoManager
+from domain.ledger.chain import compute_seal, select_seal_fields
 
 _logger = logging.getLogger(__name__)
 
@@ -246,11 +247,7 @@ class PassphraseAuthenticator(AbstractAuthenticator):
         # Re-seal genesis since recovery_seed_enc changed
         crypto = CryptoManager(mk)
         hash_key = "block_hash" if "block_hash" in ledger_data[0] else "day_hash"
-        check_data = {
-            k: v for k, v in ledger_data[0].items()
-            if k not in (hash_key, "identity_seal", "signature", "format_version")
-        }
-        ledger_data[0][hash_key] = crypto.seal(json.dumps(check_data, sort_keys=True))
+        ledger_data[0][hash_key] = compute_seal(crypto, ledger_data[0])
         self.ledger_path.write_text(json.dumps(ledger_data, indent=2))
 
     def authenticate(self) -> bool:
@@ -392,10 +389,8 @@ class PassphraseAuthenticator(AbstractAuthenticator):
             genesis = ledger_data[0]
             crypto = CryptoManager(key)
             # I-17: genesis uses block_hash (not day_hash).
-            # I-07: format_version excluded from seal check data.
             hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
-            check_data = {k: v for k, v in genesis.items()
-                          if k not in (hash_key, "identity_seal", "signature", "format_version")}
+            check_data = select_seal_fields(genesis)
             return crypto.verify_seal(
                 json.dumps(check_data, sort_keys=True),
                 genesis[hash_key]

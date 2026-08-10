@@ -47,7 +47,7 @@ except ImportError:
 
 HAS_CHAIN = True
 try:
-    from domain.ledger.chain import LedgerChain
+    from domain.ledger.chain import LedgerChain, select_seal_fields
 except ImportError:
     HAS_CHAIN = False
 
@@ -191,9 +191,10 @@ def build_minimal_genesis(crypto, include_format_version=True, include_block_has
     if include_format_version:
         genesis["format_version"] = "0.3.0"
 
-    # Compute seal
+    # Compute seal — ADR-029a per-type closed set (excludes identity,
+    # format_version, key_version, hash/mac).
     hash_key = "block_hash" if include_block_hash else "day_hash"
-    seal_data = {k: v for k, v in genesis.items() if k not in (hash_key, "identity_seal", "signature")}
+    seal_data = select_seal_fields(genesis)
     genesis[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
 
     # Add signature placeholder
@@ -220,7 +221,7 @@ def build_day_block(crypto, prev_hash, entries_data, day_index=1, date_str="2026
     }
 
     hash_key = "day_hash"
-    seal_data = {k: v for k, v in block.items() if k not in (hash_key, "identity_seal", "signature")}
+    seal_data = select_seal_fields(block)
     block[hash_key] = crypto.seal(json.dumps(seal_data, sort_keys=True))
     block["identity_seal"] = crypto.mac(block[hash_key], IDENTITY_SECRET_BYTES)
 
@@ -314,9 +315,8 @@ class TestGroupAGenesisCreation(unittest.TestCase):
         # Build genesis without format_version, using block_hash
         genesis = build_minimal_genesis(self.crypto, include_format_version=False, include_block_hash=True)
 
-        # Recompute: verify the stored block_hash matches seal of data without format_version
-        seal_data = {k: v for k, v in genesis.items()
-                     if k not in ("block_hash", "identity_seal", "signature")}
+        # Recompute: stored block_hash matches seal over the per-type fields
+        seal_data = select_seal_fields(genesis)
         computed_seal = self.crypto.seal(json.dumps(seal_data, sort_keys=True))
         self.assertEqual(computed_seal, genesis["block_hash"],
                          "Genesis seal must be computed without format_version in check data")
@@ -415,24 +415,26 @@ class TestGroupBSealComputation(unittest.TestCase):
         v = self._get_vector("V-genesis")
         block_data = dict(v["block_data"])  # copy
 
-        # Compute seal without format_version
-        seal_without = self.crypto.seal(json.dumps(block_data, sort_keys=True))
+        # Canonical per-type seal over the ADR-029a whitelist
+        # (format_version and other non-whitelisted fields excluded).
+        seal_without = self.crypto.seal(
+            json.dumps(select_seal_fields(block_data), sort_keys=True))
 
         # Add format_version and recompute — seal should be the SAME
         block_data_with_fv = dict(block_data)
         block_data_with_fv["format_version"] = "99.99.99"
-        seal_with = self.crypto.seal(json.dumps(block_data_with_fv, sort_keys=True))
+        seal_with = self.crypto.seal(
+            json.dumps(select_seal_fields(block_data_with_fv), sort_keys=True))
+        self.assertEqual(seal_without, seal_with,
+                         "format_version added to seal data should NOT change"
+                         " the canonical per-type seal (I-07/ADR-029a)")
 
-        self.assertNotEqual(seal_without, seal_with,
-                            "format_version added to seal data should NOT change seal — "
-                            "proves format_version is excluded from seal computation (I-07)")
-
-        # Verify using check data exclusion: exclude hash key + signature + format_version
-        check_data = {k: v for k, v in block_data_with_fv.items()
-                      if k not in ("block_hash", "identity_seal", "signature", "format_version")}
+        # Verify using the ADR-029a per-type closed set
+        check_data = select_seal_fields(block_data_with_fv)
         seal_check = self.crypto.seal(json.dumps(check_data, sort_keys=True))
         self.assertEqual(seal_without, seal_check,
-                         "Seal must be identical when format_version is excluded from check data")
+                         "Seal must be identical when non-whitelisted fields"
+                         " (format_version) are excluded from check data")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -520,8 +522,7 @@ class TestGroupCChainVerification(unittest.TestCase):
             else:
                 hash_key = "day_hash"
 
-            check_data = {k: v for k, v in block.items()
-                          if k not in (hash_key, "identity_seal", "signature")}
+            check_data = select_seal_fields(block)
             self.assertTrue(
                 self.crypto.verify_seal(json.dumps(check_data, sort_keys=True), block[hash_key]),
                 f"Block seal must verify for {block_type} block"
@@ -583,16 +584,67 @@ class TestGroupDMigrationCommand(unittest.TestCase):
         self.crypto = _MockCrypto()
 
     def _build_old_format_chain(self):
-        """Build a chain in the old format (format_version present, day_hash)."""
-        genesis = build_minimal_genesis(self.crypto, include_format_version=True, include_block_hash=False)
-        entries = [
-            {"title": "Task 1", "startTime_enc": "enc:0", "endTime_enc": "enc:3600",
-             "duration": 3600000, "tags": ["test"], "pauses_enc": "enc:[]",
-             "metadata_enc": "enc:{}", "comment": "", "media": [], "content_hash": "c" * 64}
-        ]
-        day1 = build_day_block(self.crypto, genesis["day_hash"], entries, day_index=1, date_str="2026-07-03")
-        day2 = build_day_block(self.crypto, day1["day_hash"], entries, day_index=2, date_str="2026-07-04")
+        """Build a chain in the OLD pre-0.4.0 format.
+
+        Old format seals `format_version` (open-set minus hash/signature) and
+        uses `day_hash` on genesis. This is the pre-migration input to
+        `migrate_chain`; after migration format_version is stripped and all
+        seals are recomputed per ADR-029a, so every seal legitimately changes.
+        """
+        genesis = {
+            "type": "genesis",
+            "format_version": "0.3.0",
+            "day_index": 0,
+            "date": "2026-07-03",
+            "identity": {
+                "username": "tester",
+                "email": "test@example.com",
+                "recovery_seed_enc": "enc:deadbeef",
+                "identity_pub_key": "a" * 64,
+                "identity_secret_enc_fallback": "enc:cafebabe",
+            },
+            "prev_hash": ZERO_HASH,
+            "entries": [],
+        }
+        # OLD rule: seal INCLUDES format_version and identity (open-set)
+        seal_data = {k: v for k, v in sorted(genesis.items())
+                     if k not in ("day_hash", "identity_seal", "signature")}
+        genesis["day_hash"] = self.crypto.seal(
+            json.dumps(seal_data, sort_keys=True))
+        genesis["identity_seal"] = self.crypto.mac(
+            genesis["day_hash"], IDENTITY_SECRET_BYTES)
+
+        day1 = self._old_day_block(
+            genesis["day_hash"], "Task 1", day_index=1, date_str="2026-07-03")
+        day2 = self._old_day_block(
+            day1["day_hash"], "Task 2", day_index=2, date_str="2026-07-04")
         return [genesis, day1, day2]
+
+    def _old_day_block(self, prev_hash, title, day_index, date_str):
+        """Build an OLD-format day block sealing format_version (open-set)."""
+        block = {
+            "type": "day",
+            "format_version": "0.3.0",
+            "day_index": day_index,
+            "date": date_str,
+            "prev_hash": prev_hash,
+            "entries": [
+                {
+                    "hash": hashlib.sha256(
+                        json.dumps({"title": title, "duration": 600},
+                                   sort_keys=True, indent=2).encode()
+                    ).hexdigest(),
+                    "data": {"title": title, "duration": 600},
+                }
+            ],
+        }
+        seal_data = {k: v for k, v in sorted(block.items())
+                     if k not in ("day_hash", "identity_seal", "signature")}
+        block["day_hash"] = self.crypto.seal(
+            json.dumps(seal_data, sort_keys=True))
+        block["identity_seal"] = self.crypto.mac(
+            block["day_hash"], IDENTITY_SECRET_BYTES)
+        return block
 
     # ── D1: format_version stripped ──────────────────────────────────────
 

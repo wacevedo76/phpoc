@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 from security.crypto import CryptoManager
 from security.recovery import RecoveryManager
+from domain.ledger.chain import compute_seal
 
 class LedgerFactory:
     """Handles the creation and initial setup of the ledger environment."""
@@ -53,13 +54,9 @@ class LedgerFactory:
         }
         
         # 5. Seal and Sign the Genesis
-        # Bug 4 fix: Strip signature before sealing, matching web behavior
-        # and verification paths (onboarding_file.py, auth.py). Including
-        # signature: "" in the sealed JSON produces a different hash.
-        # I-07/I-17: format_version excluded from seal, block_hash replaces day_hash.
-        seal_data = {k: v for k, v in genesis.items() if k != "signature"}
-        genesis_json = json.dumps(seal_data, sort_keys=True)
-        genesis["block_hash"] = crypto.seal(genesis_json)
+        # Route through compute_seal for the ADR-029a canonical per-type whitelist
+        # (identity/signature/identity metadata stay OUT of the seal).
+        genesis["block_hash"] = compute_seal(crypto, genesis)
         genesis["identity_seal"] = crypto.mac(genesis["block_hash"], identity_secret)
         
         # Create directory first

@@ -13,6 +13,7 @@ from security.auth import PassphraseAuthenticator, RecoveryAuthenticator
 from security.recovery import RecoveryManager
 from storage.file_store import LedgerStore
 from core.factory import LedgerFactory
+from domain.ledger.chain import select_seal_fields
 from phpoc_cli.interface import CLIInterface
 
 # --- Test Crypto Manager ---
@@ -313,15 +314,10 @@ class TestGenesisSealVerification(unittest.TestCase):
         seal_hash = genesis[hash_key]
         signature = genesis.get('signature', '')
 
-        # Recompute the seal WITHOUT the signature field
-        # (matching onboarding_file.py and auth.py)
-        import copy
-        check_data = copy.deepcopy(genesis)
-        del check_data[hash_key]
-        if 'signature' in check_data:
-            del check_data['signature']
-        if 'identity_seal' in check_data:
-            del check_data['identity_seal']
+        # Recompute the seal over the ADR-029a per-type genesis whitelist
+        # (matching onboarding_file.py and auth.py) — signature, format_version,
+        # identity, and hash keys are all excluded by the closed set.
+        check_data = select_seal_fields(genesis)
 
         # Derive master key from seed and create crypto
         mk = RecoveryManager.seed_to_key(seed)
@@ -349,14 +345,11 @@ class TestGenesisSealVerification(unittest.TestCase):
         ledger_data = json.loads(self.ledger_path.read_text())
         genesis = ledger_data[0]
 
-        # Simulate auth.py _verify_cached_key() logic:
-        # Copy block, remove hash/signature/format_version, recompute seal
+        # Simulate auth.py _verify_cached_key() logic via the ADR-029a
+        # per-type genesis whitelist (excludes identity/format_version/etc).
         # I-17: genesis now uses block_hash (not day_hash).
         hash_key = "block_hash" if "block_hash" in genesis else "day_hash"
-        check_data = {}
-        for k, v in genesis.items():
-            if k not in (hash_key, 'identity_seal', 'signature', 'format_version'):
-                check_data[k] = v
+        check_data = select_seal_fields(genesis)
 
         mk = RecoveryManager.seed_to_key(seed)
         crypto = CryptoManager(mk)

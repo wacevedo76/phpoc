@@ -47,7 +47,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `security/auth.py` | HOT | Passphrase + Recovery authenticators — per-user PBKDF2 salt, transparent upgrade |
 | `security/device_identity.py` | HOT | `DeviceIdentity`, `AbstractDeviceIdentityProvider`. Bug 3a: `-cli` suffix. I-09: `derive_device_id()` from MK + device_local_secret. |
 | `domain/ledger/helpers.py` | HOT | `get_block_hash()`, `compute_entry_hash()`, `verify_entry_hash_two_way()` — canonical hash extraction + cross-client entry hash + 2-way hash verifier (used by onboarding + chain flex) |
-| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification — uses `compute_entry_hash` from helpers |
+| `domain/ledger/chain.py` | HOT | Chain building, sealing, verification — **ADR-029a per-type seal table** via `SEAL_FIELDS` map + `select_seal_fields`/`compute_seal`; uses `compute_entry_hash` from helpers |
 | `domain/ledger/remote_sync.py` | HOT | `RemoteLedgerSync` — push/pull ledger blocks + `pull_full_chain()` + `pull_block_by_index()`. TEMP: [DIAG] logging for chain integrity investigation (2026-07-05).
 | `domain/ledger/merge.py` | HOT | `LedgerMerge` — merge divergent chains sharing genesis (GREEN phase — 47 tests all pass) |
 | `domain/staging/service.py` | HOT | `StagingService` — auth gate, `check_and_sync()`, push |
@@ -162,7 +162,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 
 **Test files:** phpoc-web has 42 test files (~2,400+ total tests). Most GREEN; ~116 new RED tests for staging hash index (Phase 2 complete — implementation in Phase 3).
 
-### Tests (39 files, ~22,000 lines, ~1929 tests)
+### Tests (40 files, ~22,000 lines, ~1929 tests)
 
 Key test files:
 - `tests/test_ledger_merge.py` — 47 tests for `LedgerMerge.merge()` — TDD GREEN phase (47 PASS, 0 FAIL)
@@ -172,6 +172,7 @@ Key test files:
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
 - `tests/test_migration.py` — 🔴 27 tests for canonical ledger format migration (Groups A–F), Phase 2 RED (12P/6F/9S, 2026-07-03)
 - `tests/test_migrate_format.py` — 🟢 17 tests for `MigrateFormatCommand` (happy path, provenance, file paths, edge cases, mixe-block re-seal, decrypt pre-validation) — all GREEN
+- `tests/test_chain_seal_whitelist.py` — 🟢 **NEW** — 30 tests for ADR-029/029a Python **type-aware** per-type seal whitelist (Groups A–E): per-type `SEAL_FIELDS` map, closed-set verifier, summary `month`/`year` identity sealing, unknown-type rejection, migrated-parity. Phase 3 GREEN + Phase 4 refactor (all sync sealers through `compute_seal`) complete. (2026-08-09)
 - `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
 - `testdata/canonical_test_vectors.json` — 🔴 Shared seal test vectors for cross-platform (PY + JS) canonical format tests (2026-07-03)
 - `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
@@ -207,6 +208,8 @@ Key test files:
 | `../planning/STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` | 🔜 **ACTIVE** — Stable `activity_id` + staging hash index plan. 4-phase TDD. (2026-07-07) |
 | `../planning/STAGING_ACTIVITY_ID_TESTS.md` | 🔴 **NEW** — Phase 1 test catalog: 116 tests (A–J). Phase 2 RED pending. (2026-07-07) |
 | `../planning/ROW_LEVEL_STAGING_SYNC_PLAN.md` | 🔜 **NEW** — Row-level staging sync plan: 8-scenario LWW resolution, sync cycle contract, Worker endpoints, migration. Companion to ADR-025. (2026-07-08) |
+| `../planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` | 🔜 **ACTIVE** — ADR-029 canonical block-seal whitelist: 7 phases (Python/Web/Flutter/migrator/PHPSPEC/vectors/phone), 4-phase TDD each. (2026-08-09) |
+| `../planning/CANONICAL_SEALFIELD_PYTHON_PHASE1.md` | 🟡 **IN PROGRESS** — Ph-1/7 Python seal whitelist blueprint: 26 assertions (A–E); Ph-2 RED done (`tests/test_chain_seal_whitelist.py`, 6 RED). (2026-08-09) |
 | `../planning/CLI_SQLITE_STAGING_PHASE1.md` | 🔜 **NEW** — Phase 1 test blueprint for CLI SQLite staging store: 104 assertions across 10 groups (A–J). |
 | `../planning/CLI_COMMAND_TIMING_FIXES.md` | 🔜 **NEW** — `ph view` latency investigation: 4 fixes (F1–F4) with 4-phase TDD per fix. Target: 16→2–4 HTTP requests, 5–26s→1–4s. (2026-07-14) |
 | `../planning/CLI_COMMAND_TIMING_F2_PHASE1.md` | 🔜 **NEW** — F2 Phase 1 blueprint: persistent cache for remote ledger blocks. 23 assertions across 6 groups (A–F). (2026-07-14) |
@@ -221,6 +224,7 @@ Key test files:
 | `../design/workflows/phpoc_cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |
 | `../design/workflows/phpoc_cli/CLI_Staging_Interaction-Workflow.md` | CLI staging interaction + multi-machine sharing via Worker/R2 |
 | `../design/DESIGN_MULTI_DEVICE_SESSION.md` | Multi-device session architecture |
+| `../design/CANONICAL_SEAL-FIELD_Design.md` | ✅ Cross-client block-seal field-set convergence — **ADR-029 adopted** (Choice 3: closed 6-field whitelist incl. `original_hash`) (2026-08-09) |
 | `../design/workflows/web/Remote_Local-Workflow.md` | Compressed remote/local sync workflow (AI troubleshooting reference) |
 | `../design/workflows/web/Local_Import-Export-Workflow.md` | File-based import/export workflow: v1/v2/raw-chain, two-phase validation, genesis gating |
 | `../design/workflows/Cross_Device_Staging-Workflow.md` | Cross-device staging sharing: CLI ↔ Web via Worker/R2 — sync gate, merge engine, device cookie, genesis gate |

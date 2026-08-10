@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from security.crypto import CryptoManager, derive_mk
-from domain.ledger.chain import LedgerChain
+from domain.ledger.chain import LedgerChain, compute_seal
 from domain.ledger.helpers import compute_entry_hash
 from storage.implementations.file_ledger import FileLedgerStore
 
@@ -104,22 +104,21 @@ class MigrateFormatCommand:
         ).hexdigest()
 
     def _seal_block(self, block: dict, crypto: CryptoManager, hash_key: str = None) -> str:
-        """Compute a block seal: HMAC-SHA256 of seal fields.
+        """Compute a block seal: HMAC-SHA256 over the ADR-029a per-type fields.
 
-        Excludes the same fields as the verifier (_verify_single_block):
-        hash_key, identity_seal, signature, format_version, key_version.
-        The hash_key is derived from block type unless provided explicitly,
-        so genesis (block_hash), day (day_hash), month (month_hash) and
-        year (year_hash) blocks are all sealed consistently.
+        Routes through `chain.select_seal_fields` so all sealers share the
+        canonical per-type whitelist (genesis/day = 6 fields, summaries =
+        {type, month|year, date, prev_hash, original_hash}). The hash_key is
+        derived from block type unless provided explicitly, so genesis
+        (block_hash), day (day_hash), month (month_hash) and year (year_hash)
+        blocks are all sealed consistently. `original_hash` is sealed when
+        present; format_version/key_version/identity/signature stay out.
         """
         if hash_key is None:
             hash_key = self._block_hash_key(block)
         if hash_key is None:
             raise ValueError(f"Cannot seal block of unknown type: {block.get('type')}")
-        seal_data = {k: v for k, v in block.items()
-                     if k not in (hash_key, "identity_seal", "signature",
-                                  "format_version", "key_version")}
-        return crypto.seal(json.dumps(seal_data, sort_keys=True))
+        return compute_seal(crypto, block)
 
     @staticmethod
     def _block_hash_key(block: dict) -> str:

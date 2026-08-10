@@ -14,6 +14,7 @@ Ledger chain building, block sealing and signing, chain verification, blind inde
 - Block format must be byte-identical to `core/ledger.py` output (constraint O8)
 - Chain structure: Genesis → (Year Summary → Month Summary)* → Day blocks
 - Every block is sealed and signed (HMAC-SHA256 Ed25519-proxy)
+- **Block seal = ADR-029a closed per-type table** (`chain.py` `SEAL_FIELDS` / `select_seal_fields`): genesis/day seal `{type, day_index, date, prev_hash, entries, original_hash}`; month_summary seals `{type, month, prev_hash, date, original_hash}`; year_summary seals `{type, year, prev_hash, date, original_hash}`. Non-whitelisted fields never sealed; unknown type rejects; `original_hash` optional-if-absent
 - Blind index (`index.json`): `{date: {title: total_ms}}` — plaintext, queryable without decryption
 - Content hash: SHA-256 of resolved plaintext fields — survives re-encryption
 - Master Key = 32 bytes from base64-decoded seed (`RecoveryManager.seed_to_key`)

@@ -21,6 +21,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from domain.ledger.chain import select_seal_fields
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Mock Helpers
@@ -514,20 +516,16 @@ class TestMigrateFormatEdgeCases(unittest.TestCase):
 
         chain = build_chain(self.crypto, self.identity_secret, num_day_blocks=1)
 
-        # Add a month_summary block after the day block
+        # Add a month_summary block after the day block (real shape per ADR-029a:
+        # {type, month, prev_hash, date} — no fixture-only month_index/day_count)
         month_block = {
             "type": "month_summary",
-            "month_index": "2026-07",
+            "month": "2026-07",
             "prev_hash": chain[1]["day_hash"],
-            "day_count": 1,
-            "total_duration": 60,
-            "entries": [],
+            "date": "2026-07-31",
         }
         month_block["month_hash"] = self.crypto.seal(
-            json.dumps({k: v for k, v in month_block.items()
-                        if k not in ("month_hash", "identity_seal", "signature",
-                                     "format_version", "key_version")},
-                       sort_keys=True)
+            json.dumps(select_seal_fields(month_block), sort_keys=True)
         )
         chain.append(month_block)
 

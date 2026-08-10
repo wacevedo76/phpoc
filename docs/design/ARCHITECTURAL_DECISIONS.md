@@ -2187,3 +2187,210 @@ seed (which requires the passphrase to decrypt).
 - ADR-009 (Local-First) — local storage is authoritative; remote is mirror
 - lib/data/storage/database.dart — Current provider stub (to be replaced
   with full Drift database class)
+
+---
+
+## ADR-029: Canonical Block-Seal Field Set (Cross-Client Convergence)
+
+**Date:** 2026-08-09
+**Status:** ✅ Adopted (Choice 3 from `CANONICAL_SEAL-FIELD_Design.md`)
+
+### Context
+
+A 0.4.0-migrated ledger (`2303-2026-08-08-Ledger-after-4-migration.json`, 129 blocks,
+270 entries) verifies under Python (`chain.verify()` → True) but fails to verify on the
+phpoc-flutter phone build (0/129 block seals). Diagnosis isolated the failure to the
+block-seal field set: the four implementations seal over different fields.
+
+At `format_version ≥ 0.4.0`, every block carries an HMAC-SHA256 seal over a canonical
+subset of its fields. That subset is currently inconsistent across clients:
+
+| # | Client | Seal includes | Excludes |
+|---|--------|---------------|----------|
+| A | Python `chain.py:450` | all fields | `{hash_key, identity_seal, signature, format_version, key_version}` |
+| B | Web `chain.js:528` | all fields | `{hash_key, signature, identity_seal}` (does NOT exclude `format_version`/`key_version`) |
+| C | Flutter Phase-4 `_sealFields` | `{type, day_index, date, prev_hash, entries}` (fixed whitelist) | everything else |
+| D | Migration tool `_seal_block` | all fields (Python convention) | `{hash_key, identity_seal, signature, format_version, key_version}` |
+
+On the migrated ledger the only differing field is **`original_hash`** (the provenance
+hash the migration writes on every block before re-sealing). The Phase-4 refactor
+(`a5b124e`) narrowed Flutter's verification to a 5-field whitelist that excludes it
+by omission. PHPSPEC does not define a 5-field whitelist; its seal definition
+("HMAC over a block's content, excluding the seal field itself") implies an open set.
+
+### Options Considered
+
+1. **Open set: all fields except `{hash_key, identity_seal, signature, format_version,
+   key_version}`** (Python/migration). Includes `original_hash`. No re-migration needed.
+   But future/client-specific block fields silently enter the seal → cross-client
+   breakage on every schema addition (the failure class that caused this incident).
+
+2. **Open set: all fields except `{hash_key, signature, identity_seal}`** (Web's current).
+   Includes `format_version` and `key_version` in the seal — these are mutated by
+   rotation/migration, so seals break on every key rotation / format bump. Rejected.
+
+3. **Closed whitelist including `original_hash`** — `{type, day_index, date, prev_hash,
+   entries, original_hash}`. Explicit, rotation-safe, provenance-tamper-covered, but
+   requires re-migrating the ledger and updating all three clients + the migration tool.
+
+4. **Closed whitelist excluding `original_hash`** (current Flutter Phase-4) —
+   `{type, day_index, date, prev_hash, entries}`. Tightest, but leaves provenance
+   outside the seal and still requires re-migration + updating Python/Web.
+
+### Decision
+
+**Adopt Option 3: a closed canonical whitelist.**
+
+```
+SEAL_FIELDS = { type, day_index, date, prev_hash, entries, original_hash }
+```
+
+All four implementations (Python, Web, Flutter, migration tool) seal over **exactly these
+six fields**, in that canonical role, using `json.dumps(seal_data, sort_keys=True)`
+(Python) / byte-equivalent `jsonSort` (Dart) with space-separated separators. Fields
+outside the whitelist — `format_version`, `key_version`, `identity`, `identity_seal`,
+`signature`, and any future metadata — are **never** part of the block seal.
+
+`original_hash` is included so provenance (proof that a block is unchanged from its source
+chain) is itself tamper-covered. `format_version` / `key_version` are excluded so key
+rotation and format bumps do not invalidate seals.
+
+### Rationale
+
+- **Predictability (D4):** a closed set means future fields never silently invalidate
+  cross-client seals — the exact failure class from this incident.
+- **Provenance integrity:** `original_hash` is sealed, so the migration's provenance
+  guarantee is authenticated, not merely stored.
+- **Rotation/format-safe:** `format_version` / `key_version` stay out of the seal, fixing
+  Web's latent exclusion bug and avoiding key-rotation breakage.
+- **Deterministic contract:** six fixed, named fields identical across all four
+  implementations and documentable in PHPSPEC with shared canonical test vectors.
+- **Consistency:** preserves the Phase-4 `_sealFields` closed-set design while correcting
+  its single omission (`original_hash`).
+
+### Consequences
+
+- **Positive:** verified-elsewhere ledgers verify on Flutter; one canonical contract across
+  all clients; provenance tamper-covered; rotation/format bumps don't break seals; the
+  web exclusion bug is removed.
+- **Negative / effort:**
+  - Requires updating PHPSPEC, Python `chain.py`, Web `chain.js`, Flutter `chain.dart`,
+    and the migration tool (`phpoc_cli/migrate_format.py`, standalone `migrate-format.py`)
+    to the same 6-field whitelist.
+  - Requires **re-migrating** the current 0.4.0 ledger to restamp all 129 block seals
+    (`original_hash` retained in its field; `format_version`/`key_version`/etc. stay
+    non-sealed). Original is backed up — consistent with D5/D9.
+  - Requires new cross-client canonical seal test vectors shared by Python/Web/Flutter.
+- **Backward compatibility (D9):** pre-0.4.0 ledgers and pre-existing 0.4.0 blocks that do
+  not carry `original_hash` still verify, because the whitelist only *includes fields that
+  are present* (`original_hash` is optional-if-absent; the other five are present on all
+  canonical block types).
+
+### Related
+
+- `docs/design/CANONICAL_SEAL-FIELD_Design.md` — full cross-client divergence analysis and
+  option comparison
+- `docs/spec/PHPSPEC.md` — block structure; seal definition (to be updated with whitelist)
+- ADR-005 (Extensible Content Hash) — content-hash open-set; seal field-set is a separate,
+  closed contract
+- ADR-007 (Chain of Trust), ADR-011 (Backward Compatibility)
+- Verifiers: `domain/ledger/chain.py`, `phpoc-web/src/ledger/chain.js`,
+  `phpoc-flutter/lib/data/ledger/chain.dart`; migration tool `phpoc_cli/migrate_format.py`
+
+---
+
+## ADR-029a: Canonical Block-Seal Field Set Is Type-Aware (Amends ADR-029)
+
+**Date:** 2026-08-09
+**Status:** ✅ Adopted (per-type amendment to ADR-029; see `SEAL_FIELDS_TYPE_AWARE_AMENDMENT.md`)
+
+### Context
+
+ADR-029 fixed a single closed 6-field whitelist for **all** block types:
+
+```
+SEAL_FIELDS = { type, day_index, date, prev_hash, entries, original_hash }
+```
+
+That flat rule is correct for `genesis` and `day` blocks but structurally **cannot** be the
+seal-input rule for summary blocks, which carry `month`/`year` and **no** `day_index`/`entries`.
+On a `month_summary`/`year_summary` the flat whitelist selects only `{type, date, prev_hash,
+original_hash}` and drops the block's identity field (`month`/`year`) from the seal.
+
+Ground truth from the four implementations shows summary blocks already diverge cross-client:
+Python/Web/migration seal `month`/`year` (open-set) while Flutter's `_sealFields` drops them.
+So the ADR-029 claim that the *only* differing field is `original_hash` is **false for summaries**.
+
+The security stakes: per PHPSPEC §4.2 and D5, a summary is the **chain split/archive trust
+anchor** — loading a multi-year ledger modularly relies on the summary's `month`/`year` being
+authentic. Leaving them outside the seal permits re-labeling a partition boundary without
+violating verification, and the "re-derive from sealed day blocks" mitigation is unusable in a
+modular design where adjacent blocks may not be loaded.
+
+### Options Considered
+
+1. **Strict ADR-029 (flat whitelist):** summaries drop `month`/`year` from the seal. Keep the
+   single 6-field constant, but `month`/`year` become non-authenticated metadata.
+   Rejected: breaks existing cross-client summary parity, leaves partition identity unprotected.
+2. **Type-aware closed whitelist (this amendment):** one frozen per-type field set; `genesis`/`day`
+   unchanged, summaries seal their `month`/`year`. Preserves the closed-set and `original_hash`
+   properties while sealing the summary's partition identity.
+3. **Open-set for summaries:** seal all summary fields. Reintroduces the open-set failure class
+   (future/client fields silently enter the seal). Rejected.
+
+### Decision
+
+Adopt Option 2 — a closed, **type-aware** seal-input field set:
+
+| Block type | Seal-input fields (closed) |
+|-----------|-----------------------------|
+| `genesis`  | `type, day_index, date, prev_hash, entries, original_hash` |
+| `day`      | `type, day_index, date, prev_hash, entries, original_hash` |
+| `month_summary` | `type, month, prev_hash, date, original_hash` |
+| `year_summary`  | `type, year, prev_hash, date, original_hash` |
+
+Selection/serialization:
+
+```
+rendered  = { k: v for k, v in block.items() if k in SEAL_FIELDS[block["type"]] }
+json.dumps(rendered, sort_keys=True)   # or byte-equal jsonSort (Dart)
+```
+
+- `original_hash` stays optional-presence on all four types (sealed when present; absent on
+  new/pre-0.4.0 blocks).
+- A block type with no entry in the map is verification-invalid (reject).
+- Fields outside the per-type set are **never** sealed (`format_version`, `key_version`, `identity`,
+  `identity_seal`, `signature`, the hash keys, and any future/client-specific field).
+
+### Rationale
+
+- **Partition integrity (D5):** the summary's `month`/`year` identity is the split/archive trust
+  anchor; sealing it prevents undetected re-labeling of chain boundaries in modular loading.
+- **Closes a real divergence:** Python/Web/migration and Flutter already disagree on summary seals;
+  this makes cross-client summary verification converge to one rule.
+- **Preserves closed-set contract (D4):** per-type sets are explicit and frozen; no open-set rule,
+  no silent future-field leakage.
+- **Backward compatible (D9):** `genesis`/`day` unchanged (identical to ADR-029). Summaries carry
+  `month`/`year`/`date`/`prev_hash` in all current formats, so the per-type set selects them
+  consistently after re-migration.
+
+### Consequences
+
+- **Positive:** summary partition identity is tamper-covered; fixes a real pre-existing
+  cross-client summary divergence; enables modular/split-chain integrity (D5).
+- **Negative / effort:** the whitelist is no longer a single constant — cross-client per-type
+  tables must be identical and tested (Phase 6 vectors per block type); existing migrated ledgers'
+  summary seals must be re-stamped onto the exact per-type set during re-migration (backup first,
+  D5/D9). `Python Ph-3` verification must route all ~13 seal sites across 8 files through the table
+  to clear the 55 regressions exposed by the partial change.
+- **Fixture correction:** hand-built test summaries that carry fixture-only variants
+  (`month_index`, `day_count`, `total_duration` — not real ledger fields) must be corrected to the
+  real `{type, month, prev_hash, date}` shape so tests reflect production.
+
+### Related
+
+- ADR-029 (this amendment refines its flat whitelist for summary blocks)
+- `docs/design/CANONICAL_SEAL-FIELD_Design.md`
+- `docs/planning/SEAL_FIELDS_TYPE_AWARE_AMENDMENT.md` (per-type table + rationale)
+- `docs/planning/CANONICAL_SEALFIELD_PYTHON_PHASE1.md` (Phase 1 blueprint — A7/C3/C4 to update)
+- PHPSPEC `docs/spec/PHPSPEC.md` §4.1–§4.3, §4.2 (partition point) — to document the per-type set
