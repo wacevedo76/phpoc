@@ -1,0 +1,227 @@
+{
+  "_description": "Cross-client, CLOSED block-seal vector fixture (ADR-029/029a). Each expected_seal is the HMAC-SHA256 over exactly select_seal_fields(block_data) \u2014 the ADR-029a per-type whitelist \u2014 serialized with json.dumps(..., sort_keys=True) under MASTER_KEY deadbeef\u2026 with salt 'integrity-key-salt'. The wide block_data ALSO carries excluded fields (identity, format_version, key_version, identity_seal, signature, and for summaries the removed month_index/year_index/total_* telemetry) to prove closed-set exclusion. Supersedes the stale open-set canonical_test_vectors.json.",
+  "_master_key_hex": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "_vectors_count": 8,
+  "vectors": {
+    "V-genesis": {
+      "description": "V-genesis block (type=genesis, original_hash=absent).",
+      "block_data": {
+        "type": "genesis",
+        "day_index": 0,
+        "date": "2026-07-03",
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "entries": [],
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        }
+      },
+      "expected_seal": "a8eb11d9aa10ae6838e62588304012ad3fccebeb035ce9f94715d11a2898ed0a"
+    },
+    "V-day": {
+      "description": "V-day block (type=day, original_hash=absent).",
+      "block_data": {
+        "type": "day",
+        "day_index": 1,
+        "date": "2026-07-03",
+        "entries": [],
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "prev_hash": "37ae636d2cd765a25fd5f30e6562c313bfc5a4739c4958a548fdfedbf26d327e"
+      },
+      "expected_seal": "55fc3f57deb09c3f83e53bbe5d0162ca048ef45eb11a2e82369ffd52976fa0dc"
+    },
+    "V-month": {
+      "description": "V-month block (type=month_summary, original_hash=absent).",
+      "block_data": {
+        "type": "month_summary",
+        "month": "2026-07",
+        "date": "2026-07",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "month_index": 0,
+        "total_entries": 10,
+        "total_duration_ms": 36000000,
+        "prev_hash": "bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142"
+      },
+      "expected_seal": "37ae636d2cd765a25fd5f30e6562c313bfc5a4739c4958a548fdfedbf26d327e"
+    },
+    "V-year": {
+      "description": "V-year block (type=year_summary, original_hash=absent).",
+      "block_data": {
+        "type": "year_summary",
+        "year": 2026,
+        "date": "2026",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "year_index": 0,
+        "total_entries": 120,
+        "total_duration_ms": 432000000,
+        "prev_hash": "a8eb11d9aa10ae6838e62588304012ad3fccebeb035ce9f94715d11a2898ed0a"
+      },
+      "expected_seal": "bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142"
+    },
+    "V-genesis-orig": {
+      "description": "V-genesis-orig block (type=genesis, original_hash=present).",
+      "block_data": {
+        "type": "genesis",
+        "day_index": 0,
+        "date": "2026-07-03",
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "entries": [],
+        "original_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        }
+      },
+      "expected_seal": "d78b356e4c9f8ff045329b4271d9697aeecd5e8ec5aed54cbc954553b86080d0"
+    },
+    "V-day-orig": {
+      "description": "V-day-orig block (type=day, original_hash=present).",
+      "block_data": {
+        "type": "day",
+        "day_index": 1,
+        "date": "2026-07-03",
+        "entries": [],
+        "original_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "prev_hash": "4c1c3fa257dc9f212388d3bc2938c4af1312a5ef3eec6e4626783bb4c3c136dc"
+      },
+      "expected_seal": "afd0a71de62dafe1cf49091f016a7aafa5e404e552c724e36c06cd746cd38a95"
+    },
+    "V-month-orig": {
+      "description": "V-month-orig block (type=month_summary, original_hash=present).",
+      "block_data": {
+        "type": "month_summary",
+        "month": "2026-07",
+        "date": "2026-07",
+        "original_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "month_index": 0,
+        "total_entries": 10,
+        "total_duration_ms": 36000000,
+        "prev_hash": "f611e17e1cf520ed17331e5d75e60bc1ec044fdbff33d5bcc0b2dc5d2df0f407"
+      },
+      "expected_seal": "4c1c3fa257dc9f212388d3bc2938c4af1312a5ef3eec6e4626783bb4c3c136dc"
+    },
+    "V-year-orig": {
+      "description": "V-year-orig block (type=year_summary, original_hash=present).",
+      "block_data": {
+        "type": "year_summary",
+        "year": 2026,
+        "date": "2026",
+        "original_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "format_version": [
+          0,
+          4,
+          0
+        ],
+        "key_version": 1,
+        "identity_seal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identity": {
+          "username": "testuser",
+          "email": "test@example.com",
+          "recovery_seed_enc": "enc:deadbeef",
+          "identity_pub_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "identity_secret_enc_fallback": "enc:cafebabe"
+        },
+        "year_index": 0,
+        "total_entries": 120,
+        "total_duration_ms": 432000000,
+        "prev_hash": "d78b356e4c9f8ff045329b4271d9697aeecd5e8ec5aed54cbc954553b86080d0"
+      },
+      "expected_seal": "f611e17e1cf520ed17331e5d75e60bc1ec044fdbff33d5bcc0b2dc5d2df0f407"
+    }
+  }
+}

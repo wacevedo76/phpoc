@@ -260,8 +260,14 @@ def build_chain_with_entries(crypto, num_days=2, include_format_version=True):
 
 
 def load_test_vectors():
-    """Load shared test vectors from testdata/canonical_test_vectors.json."""
-    vectors_path = Path(__file__).parent.parent / "testdata" / "canonical_test_vectors.json"
+    """Load the CLOSED cross-client seal-vector fixture.
+
+    Supersedes the stale pre-ADR-029a open-set `testdata/canonical_test_vectors.json`
+    (whose V-genesis/V-month/V-year seals baked excluded fields). Every
+    `expected_seal` here is the HMAC-SHA256 over `select_seal_fields(block_data)`
+    (ADR-029a per-type whitelist) under the fixed deadbeef MASTER_KEY.
+    """
+    vectors_path = Path(__file__).parent.parent / "testdata" / "canonical_seal_vectors.json"
     if not vectors_path.exists():
         return {}
     with open(vectors_path) as f:
@@ -354,9 +360,12 @@ class TestGroupAGenesisCreation(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestGroupBSealComputation(unittest.TestCase):
-    """Tests that seals are deterministic and defined without format_version.
+    """Tests that seals are deterministic and defined over the ADR-029a
+    per-type CLOSED whitelist.
 
-    B1–B4: Seals match shared test vector expected values.
+    B1–B4: Seals match the CLOSED canonical vector expected values (every
+summary seals `month`/`year`, and excluded identity/metadata fields never
+enter the seal).
     B5: Adding format_version to data does NOT change the seal.
     """
 
@@ -369,44 +378,48 @@ class TestGroupBSealComputation(unittest.TestCase):
     def _get_vector(self, name):
         """Get a test vector by name, skipping if not available."""
         if name not in self.vectors:
-            self.skipTest(f"Test vector {name} not found in testdata/canonical_test_vectors.json")
+            self.skipTest(f"Test vector {name} not found in testdata/canonical_seal_vectors.json")
         return self.vectors[name]
 
     # ── B1: Genesis seal vector ───────────────────────────────────────────
 
     def test_b1_seal_vector_genesis(self):
-        """HMAC-SHA256(jsonSort(genesis_data)) == expected_seal for V-genesis."""
+        """select_seal_fields(genesis) == expected_seal for V-genesis."""
         v = self._get_vector("V-genesis")
-        computed = self.crypto.seal(json.dumps(v["block_data"], sort_keys=True))
+        check = select_seal_fields(v["block_data"])
+        computed = self.crypto.seal(json.dumps(check, sort_keys=True))
         self.assertEqual(computed, v["expected_seal"],
-                         "Genesis seal must match shared test vector")
+                         "Genesis CLOSED-set seal must match shared test vector")
 
     # ── B2: Day seal vector ───────────────────────────────────────────────
 
     def test_b2_seal_vector_day(self):
-        """HMAC-SHA256(jsonSort(day_data)) == expected_seal for V-day."""
+        """select_seal_fields(day) == expected_seal for V-day."""
         v = self._get_vector("V-day")
-        computed = self.crypto.seal(json.dumps(v["block_data"], sort_keys=True))
+        check = select_seal_fields(v["block_data"])
+        computed = self.crypto.seal(json.dumps(check, sort_keys=True))
         self.assertEqual(computed, v["expected_seal"],
-                         "Day block seal must match shared test vector")
+                         "Day CLOSED-set seal must match shared test vector")
 
     # ── B3: Month summary seal vector ────────────────────────────────────
 
     def test_b3_seal_vector_month(self):
-        """HMAC-SHA256(jsonSort(month_data)) == expected_seal for V-month."""
+        """select_seal_fields(month_summary) == expected_seal for V-month."""
         v = self._get_vector("V-month")
-        computed = self.crypto.seal(json.dumps(v["block_data"], sort_keys=True))
+        check = select_seal_fields(v["block_data"])
+        computed = self.crypto.seal(json.dumps(check, sort_keys=True))
         self.assertEqual(computed, v["expected_seal"],
-                         "Month summary seal must match shared test vector")
+                         "Month summary CLOSED-set seal must match shared test vector")
 
     # ── B4: Year summary seal vector ──────────────────────────────────────
 
     def test_b4_seal_vector_year(self):
-        """HMAC-SHA256(jsonSort(year_data)) == expected_seal for V-year."""
+        """select_seal_fields(year_summary) == expected_seal for V-year."""
         v = self._get_vector("V-year")
-        computed = self.crypto.seal(json.dumps(v["block_data"], sort_keys=True))
+        check = select_seal_fields(v["block_data"])
+        computed = self.crypto.seal(json.dumps(check, sort_keys=True))
         self.assertEqual(computed, v["expected_seal"],
-                         "Year summary seal must match shared test vector")
+                         "Year summary CLOSED-set seal must match shared test vector")
 
     # ── B5: format_version excluded from seal ─────────────────────────────
 

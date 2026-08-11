@@ -11,9 +11,10 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux`
-- **Flutter test suite:** 1600/1663 passing (63 failing: all pre-existing)
+- **Flutter test suite:** `test/data/ledger/` 279/279 GREEN (**6 pre-existing ledger failures S1–S6 FIXED**); full-suite failures now only pre-existing cloud-sync/vault + flaky G3/G8 (57–63 run-to-run). `flutter analyze` clean on `engine_test.dart` + `summary_policy.dart`.
+- **Flutter Ledger Verify & Commit Fix:** ✅ **4-Phase TDD COMPLETE** (Phase 3 green fixed S1–S6; Phase 4 refactor clean). Now focused on **Ph-6 Phase 4 (REFACTOR).**
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
-- **Canonical Seal-Field (ADR-029/029a):** Phases 1–5 complete (Python/Web/Flutter/Migrator/PHPSPEC). Ph-6 (vectors) & Ph-7 (phone e2e) next.
+- **Canonical Seal-Field (ADR-029/029a):** Phases 1–5 complete (Python/Web/Flutter/Migrator/PHPSPEC). **Ph-6 (vectors) 4-Phase TDD COMPLETE — P4 (REFACTOR) DONE.** Ph-7 (phone e2e) next.
 - **Python suite:** 2586 pass / 1 skip / 0 fail. **Naming conformance (`test_naming_i04.py`): 50/50 GREEN** (fixed latent `_section_text` regex bug).
 
 ## Cross-Client Staging Sync — Reference Chain
@@ -23,15 +24,24 @@
 
 ## Immediate Next Steps 🎯
 
-### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Python ✅ · Web ✅ · Flutter ✅ · Migrator ✅ · **PHPSPEC ✅ · Ph-6 vectors / Ph-7 phone 🔜**
+### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Python ✅ · Web ✅ · Flutter ✅ · Migrator ✅ · **PHPSPEC ✅ · Ph-6 vectors ✅ · Ph-7 phone e2e 🔜**
 - **Plan:** `docs/planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` (7 phases, each 4-phase TDD)
 
 **Ph-5 PHPSPEC — DONE (P1–P4):**
 - Rewrote `docs/spec/PHPSPEC.md` §5.2 → **Block Seal Field Set** (per-type genesis/day/month/year), **Closed-Set Rule** (excluded `format_version`,`key_version`,`identity`,`identity_seal`,`signature`,hash key), `original_hash` optional-if-absent, **Unknown Block Types** reject; fixed §1.4 + §9.3 stale `format_version`-in-seal claims; routed `scripts/migrate_format_version.py` through `select_seal_fields`. Blueprint: `docs/planning/CANONICAL_SEALFIELD_PHPSPEC_PHASE1.md` (27 assertions). Fixed `test_naming_i04.py` latent `_section_text` regex bug + H12 closed-set allowance. Full suite 2586 pass/1 skip/0 fail.
 
-**🔜 Next — Ph-6 Cross-client canonical seal vectors:**
-- Generate genesis/day/month/year blocks (with/without `original_hash`) + expected 6-field seals into `testdata/`; Python/Web/Flutter verify against SAME vectors.
-- **Then Ph-7:** re-migrate 0.4.0 ledger (backup first), rebuild Flutter APK, `adb install -r`, on-device `verify()` 129/129.
+**🔜 NEXT — Ph-6 Cross-client canonical seal vectors** (4-phase TDD; **Phase-3 GREEN DONE** → `docs/planning/CANONICAL_SEALFIELD_PHASE6_VECTORS_PHASE1.md` — 29 assertions A–E):
+- **P2 DONE:** `scripts/gen_canonical_seal_vectors.py` + `testdata/canonical_seal_vectors.json` (8 vectors, TWO chain-linked sequences); `tests/test_canonical_seal_vectors.py` (14) + `test_migration.py` B1–B5 rewired to `select_seal_fields`; Web B1-js–B5-js exact `expected_seal` via native HMAC (WASM glue broken on Node v24). Python full suite 2600 pass/1 skip/0 fail.
+- **P3 DONE (Flutter summary convergence FIXED):** `chain.dart` `_sealFields` → per-type `_sealFieldsByType`; `_sealBlock`/`_verifyBlockSeal` select `{type, month|year, date, prev_hash, original_hash}` for summaries. Group E C1–C4 **GREEN**; C5/C6/D2 guards GREEN.
+- **P4 (REFACTOR) DONE:** `test_canonical_seal_vectors.py` — shared `_vector_map` helper (kills 3× duplicated `setUpClass`); `gen_canonical_seal_vectors.py` — chain A/B build+link deduped into a single `for orig in (False, True)` loop (byte-identical fixture, diff-verified); fixed `ledger_chain_test.mjs` comment typo. Analyzer + all suites GREEN. **NEXT → Ph-7 phone e2e.**
+
+### ✅ QUEUE 2: Flutter Ledger Verify & Commit Fix — **4-PHASE TDD COMPLETE**
+- **Plan:** `docs/planning/FLUTTER_LEDGER_VERIFY_FIX_PHASE1.md` — fixed 6 pre-existing failures (S1–S6): K2/K3/K4 verify content-hash, F15 empty-title encrypt, AE2/AE4 date-less commit summary.
+- **P3 (GREEN) DONE:** `test/data/ledger/` **279/279 GREEN** (incl. all 12 assertions A–D and the 6 former S1–S6 failures):
+  - `engine.dart`: allow empty `title`/`tags` encrypt when `has_encrypted_fields=true`; still reject non-string + whitespace-only title.
+  - `summary_policy.dart`: **fixed latent summary-seal bug** (non-canonical `entries` in seal); now seals only `{type, month/year, date, prev_hash}` (ADR-029a) + skip summary fabrication on date-less prev.
+  - Fixtures corrected: K2/K3/K4 valid `content_hash`; `_buildGenesis`/`_buildDayBlockNoDate` compute valid ADR-029a seals.
+- **P4 (REFACTOR) DONE:** removed unused `chain.dart`/`index_manager.dart` imports in `engine_test.dart`; `summary_policy.dart` map entries → null-aware `?month`/`?year`; removed dead `_buildDayBlock` fixture; renamed local helpers per `no_leading_underscores`. `flutter analyze` clean on both files.
 
 ## Other In-Flight
 - **Staging Auto-Sync** (queued): bidirectional `checkAndSync()` — `docs/planning/STAGING_AUTO_SYNC_PLAN.md`

@@ -11,7 +11,10 @@
  *   node test/ledger_chain_test.mjs
  */
 
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
+import { readFileSync } from 'fs';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { MockCrypto } from './mock_crypto.mjs';
 import { TestHelpers } from './test_helpers.mjs';
@@ -28,6 +31,21 @@ try {
 } catch (err) {
   LedgerChain = undefined;
 }
+
+// ── Real HMAC-SHA256 sealer (matches Python/Flutter & the vector fixture) ──
+// Node's WASM CryptoService glue is broken on Node v24 (`__wbindgen_free` not
+// wired — see crypto_service_smoke.mjs), so the B-js group reproduces the exact
+// closed-set seal with Node's native HMAC using the SAME PHPSPEC §5.2 derivation
+// the real web CryptoService uses:
+//   seal_key = HMAC-SHA256(MK, "integrity-key-salt")
+//   seal     = HMAC-SHA256(seal_key, jsonSort(selectSealFields(block)))
+const sealClosedSet = (block, masterKeyHex = MASTER_KEY) => {
+  const mk = Buffer.from(masterKeyHex, 'hex');
+  const sealKey = createHmac('sha256', mk).update('integrity-key-salt').digest();
+  return createHmac('sha256', sealKey)
+    .update(jsonSort(selectSealFields(block)))
+    .digest('hex');
+};
 
 // ── Sample data ─────────────────────────────────────────────────────
 const MASTER_KEY = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
@@ -526,42 +544,50 @@ if (typeof LedgerChain === 'function') {
       'A2-js: Genesis must NOT have day_hash (I-17)');
   }
 
-  // ── Group B-js: Block Seal Computation ──────────────────
-  console.log('\n=== Canonical Format: Group B — Seal Vectors (B1-js..B5-js) ===');
+  // ── Group B-js: Block Seal Computation (Ph-6 closed-whitelist vectors) ├─
+  // Supersedes the stale open-set `canonical_test_vectors.json` (whose
+  // V-genesis/V-month/V-year seals baked excluded fields). Each vector's
+  // `expected_seal` must be reproduced EXACTLY over selectSealFields via the
+  // real WASM CryptoService — the djb2 MockCrypto cannot match Python's HMAC.
+  console.log('\n=== Canonical Format: Group B — Closed Seal Vectors (B1-js..B5-js) ===');
 
-  let testVectors;
+  let sealVectors;
   try {
-    const { readFileSync } = await import('fs');
-    const { dirname, join } = await import('path');
-    const { fileURLToPath } = await import('url');
+    const { join } = await import('path');
     const __dirname = dirname(fileURLToPath(import.meta.url));
-    const vp = join(__dirname, '..', '..', 'testdata', 'canonical_test_vectors.json');
-    testVectors = JSON.parse(readFileSync(vp, 'utf-8')).vectors;
-  } catch (_) { testVectors = null; }
+    const vp = join(__dirname, '..', '..', 'testdata', 'canonical_seal_vectors.json');
+    sealVectors = JSON.parse(readFileSync(vp, 'utf-8')).vectors;
+  } catch (_) { sealVectors = null; }
 
-  if (testVectors) {
-    if (testVectors['V-genesis']) {
-      const s = clfComputeSeal(testVectors['V-genesis'].block_data);
-      t.assert(typeof s === 'string' && s.length === 64, 'B1-js: Genesis seal from vector is 64 hex chars');
-      t.assertEq(s, clfComputeSeal(testVectors['V-genesis'].block_data), 'B1-js: Genesis seal deterministic');
+  const expectExactClosedSeal = (name) => {
+    const v = sealVectors?.[name];
+    if (!v) {
+      t.assert(true, `${name}: vector present in canonical_seal_vectors.json`);
+      return;
     }
-    if (testVectors['V-day']) {
-      const s = clfComputeSeal(testVectors['V-day'].block_data);
-      t.assert(typeof s === 'string' && s.length === 64, 'B2-js: Day seal from vector is 64 hex chars');
+    const s = sealClosedSet(v.block_data);
+    t.assert(typeof s === 'string' && s.length === 64,
+      `${name}: closed-set seal is 64 hex chars`);
+    t.assertEq(s, v.expected_seal,
+      `${name}: Web reproduces EXACT closed-set expected_seal over selectSealFields`);
+  };
+
+  if (sealVectors) {
+    expectExactClosedSeal('V-genesis');
+    expectExactClosedSeal('V-day');
+    expectExactClosedSeal('V-month');
+    expectExactClosedSeal('V-year');
+    // Both provenance states of EVERY type.
+    for (const n of ['genesis', 'day', 'month', 'year']) {
+      expectExactClosedSeal(`V-${n}-orig`);
     }
-    if (testVectors['V-month']) {
-      const s = clfComputeSeal(testVectors['V-month'].block_data);
-      t.assert(typeof s === 'string' && s.length === 64, 'B3-js: Month summary seal from vector is 64 hex chars');
-    }
-    if (testVectors['V-year']) {
-      const s = clfComputeSeal(testVectors['V-year'].block_data);
-      t.assert(typeof s === 'string' && s.length === 64, 'B4-js: Year summary seal from vector is 64 hex chars');
-    }
-    if (testVectors['V-genesis']) {
-      const s1 = clfComputeSeal(testVectors['V-genesis'].block_data);
-      const s2 = clfComputeSeal({ ...testVectors['V-genesis'].block_data, format_version: '99.99.99' });
-      t.assertEq(s1, s2,
-        'B5-js: format_version added to block data must NOT change seal (I-07 — RED)');
+    // B5-js: adding excluded metadata (format_version, and for summaries the
+    // removed telemetry) must NOT change the exact closed-set seal.
+    const g = sealVectors['V-genesis'];
+    if (g) {
+      t.assertEq(sealClosedSet({ ...g.block_data, format_version: '99.99.99' }),
+        g.expected_seal,
+        'B5-js: format_version must NOT change the closed-set seal (I-07/ADR-029a — exact)');
     }
   }
 

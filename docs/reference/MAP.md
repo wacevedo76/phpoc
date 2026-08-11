@@ -173,11 +173,14 @@ Key test files:
 - `tests/test_http_transport.py` — 68 tests, HTTP + ETag
 - `tests/test_wal.py` — WAL lifecycle
 - `tests/test_phase4_staging_interaction_flow.py` — 69 tests, sync lifecycle
-- `tests/test_migration.py` — 🔴 27 tests for canonical ledger format migration (Groups A–F), Phase 2 RED (12P/6F/9S, 2026-07-03)
+- `tests/test_migration.py` — 🟢 47 tests (Groups A–H), canonical ledger format migration; B1–B5 now assert the CLOSED `select_seal_fields` seal against `canonical_seal_vectors.json` (Ph-6 ADR-029/029a)
 - `tests/test_migrate_format.py` — 🟢 43 tests for `MigrateFormatCommand`: happy path, provenance, file paths, edge cases, mixed-block re-seal, decrypt pre-validation, + `TestMigrateFormatSealWhitelist` (26 ADR-029/029a block-seal whitelist assertions A–F incl. unknown-type no-write safety) — all GREEN
 - `tests/test_chain_seal_whitelist.py` — 🟢 **NEW** — 30 tests for ADR-029/029a Python **type-aware** per-type seal whitelist (Groups A–E): per-type `SEAL_FIELDS` map, closed-set verifier, summary `month`/`year` identity sealing, unknown-type rejection, migrated-parity. Phase 3 GREEN + Phase 4 refactor (all sync sealers through `compute_seal`) complete. (2026-08-09)
+- `tests/test_canonical_seal_vectors.py` — 🟢 **NEW (Ph-6 Phase 2 RED)** — 14 tests for the cross-client CLOSED canonical seal-vector fixture (Groups A, B5/B7/B8, D1/D3/D4, E1): fixture shape/closed-set, exact summary/month-year parity, integrated chain verify, divergence & tamper detection, supersede guard. (2026-08-10)
 - `tests/test_onboarding_e2e.py` — 76 E2E tests (all GREEN), Phase 5d: 44 pipeline tests + 14 registry-integration + 8 picker UI + 10 real-transport E2E
-- `testdata/canonical_test_vectors.json` — 🔴 Shared seal test vectors for cross-platform (PY + JS) canonical format tests (2026-07-03)
+- `testdata/canonical_test_vectors.json` — 🔲 SUPERSEDED (Ph-6) — pre-ADR-029a open-set seal vectors; its stale `expected_seal` values are no longer consumed by any live test (referenced only by supersession guards/docstrings)
+- `testdata/canonical_seal_vectors.json` — 🟢 **NEW (Ph-6)** — closed-whitelist cross-client seal vectors: 8 vectors (genesis/day/month_summary/year_summary × original_hash absent/present) in TWO chain-linked sequences, each with exact `expected_seal` over `select_seal_fields`
+- `scripts/gen_canonical_seal_vectors.py` — 🟢 **NEW (Ph-6)** — generator that computes every `expected_seal` from `select_seal_fields` (A2 generation-self-consistent), writes `testdata/canonical_seal_vectors.json`
 - `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
 - `tests/test_transport_registry.py` — 50 tests (all GREEN), TransportProvider + TransportRegistry unit tests
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories

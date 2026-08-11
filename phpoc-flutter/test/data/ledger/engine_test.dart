@@ -1,9 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
-import 'package:phpoc_flutter/data/ledger/chain.dart';
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
 import 'package:phpoc_flutter/data/ledger/engine.dart';
 import 'package:phpoc_flutter/data/ledger/helpers.dart';
-import 'package:phpoc_flutter/data/ledger/index_manager.dart';
 
 /// LedgerEngine — Phase 2 (RED) test suite.
 ///
@@ -890,27 +889,47 @@ void main() {
   // These tests verify the fix works end-to-end.
 
   group('AE: Commit with Entries-Only Blocks in Chain', () {
-    /// Helper: build a minimal genesis block for the fake store.
-    Map<String, dynamic> _buildGenesis() => {
+    /// Helper: build a minimal genesis block for the fake store with a
+    /// validly-sealed `block_hash` so the chain stays `verify()`-able.
+    /// The seal covers the canonical ADR-029a genesis fields present
+    /// (`type`, `prev_hash`, `entries`). Pass the test's crypto instance.
+    Map<String, dynamic> buildGenesis({required CryptoService crypto}) => {
           'type': 'genesis',
-          'block_hash': '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+          'block_hash': crypto.seal(
+            jsonSort({
+              'type': 'genesis',
+              'prev_hash': '0' * 64,
+              'entries': <Map<String, dynamic>>[],
+            }),
+            mkHex,
+          ),
           'prev_hash': '0' * 64,
           'key_version': 1,
           'entries': <Map<String, dynamic>>[],
-          'identity_seal': '13b3193331988e23ae2b93525ac598873f9f84bf6ff3babaf268e4ca694f34c7',
         };
 
     /// Helper: build a day block with entries but no date field in
     /// data_enc (simulating the reconstructed-from-entries-only case
     /// BEFORE the fix, where _blockToMap returned {}).
-    Map<String, dynamic> _buildDayBlockNoDate({
-      required String dayHash,
+    ///
+    /// The `day_hash` is a valid ADR-029a seal over the present (date-less)
+    /// seal fields `{type, prev_hash, entries}`, so the reconstructed block
+    /// still verifies.
+    Map<String, dynamic> buildDayBlockNoDate({
       required String prevHash,
       required List<Map<String, dynamic>> entries,
+      required CryptoService crypto,
     }) =>
         {
           'type': 'day',
-          'day_hash': dayHash,
+          'day_hash': crypto.seal(
+            jsonSort({
+              'type': 'day',
+              'prev_hash': prevHash,
+              'entries': entries,
+            }),
+            mkHex,
+          ),
           'prev_hash': prevHash,
           'key_version': 1,
           'entries': entries,
@@ -918,32 +937,21 @@ void main() {
           // entries-only data_enc reconstruction bug
         };
 
-    /// Helper: build a day block with date field (post-fix).
-    Map<String, dynamic> _buildDayBlock({
-      required String dayHash,
-      required String prevHash,
-      required String date,
-      required List<Map<String, dynamic>> entries,
-    }) =>
-        {
-          'type': 'day',
-          'day_hash': dayHash,
-          'prev_hash': prevHash,
-          'date': date,
-          'key_version': 1,
-          'entries': entries,
-        };
-
-    /// Helper: build an entry wrapper {hash, data}.
-    Map<String, dynamic> _wrapEntry(
-        String title, int startEpoch, int duration) => {
-          'hash': 'e' * 64,
-          'data': {
-            'title': title,
-            'start_epoch': startEpoch,
-            'duration': duration,
-          },
-        };
+    /// Helper: build a 0.4.0-valid entry wrapper {hash, data} with a valid
+    /// `content_hash` and a matching `hash` so the block verifies.
+    Map<String, dynamic> wrapEntry(
+        String title, int startEpoch, int duration, CryptoService crypto) {
+      final data = <String, dynamic>{
+        'title': title,
+        'start_epoch': startEpoch,
+        'duration': duration,
+      };
+      data['content_hash'] = computeContentHash(data, crypto);
+      return {
+        'hash': computeEntryHash(data),
+        'data': data,
+      };
+    }
 
     // AE1 — commit succeeds when previous day block has entries-only
     // legacy format (no date) — the exact reproduction of the reported bug
@@ -954,18 +962,17 @@ void main() {
 
       // Build a chain with genesis → day (no date) — simulating
       // the chain after _blockToMap lost the date field
-      final genesis = _buildGenesis();
+      final genesis = buildGenesis(crypto: engine.crypto);
       engine.chain.store.appendBlocks([genesis]);
 
-      final prevDayHash = 'd1' + '0' * 62;
       final prevEntries = [
-        _wrapEntry('Old Entry', 1750780800000, 3600000),
+        wrapEntry('Old Entry', 1750780800000, 3600000, engine.crypto),
         // 2025-06-24 in ms
       ];
-      final prevDay = _buildDayBlockNoDate(
-        dayHash: prevDayHash,
-        prevHash: '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+      final prevDay = buildDayBlockNoDate(
+        prevHash: genesis['block_hash'] as String,
         entries: prevEntries,
+        crypto: engine.crypto,
       );
       engine.chain.store.appendBlocks([prevDay]);
 
@@ -991,7 +998,7 @@ void main() {
         'AE2: commit does not insert duplicate summary blocks '
         'when they already exist in chain', () {
       final engine = _makeEngine(identitySecretHex: identitySecret);
-      final genesis = _buildGenesis();
+      final genesis = buildGenesis(crypto: engine.crypto);
       engine.chain.store.appendBlocks([genesis]);
 
       // Commit #1: entry for 2025-01-15
@@ -1048,15 +1055,15 @@ void main() {
       final engine = _makeEngine(identitySecretHex: identitySecret);
 
       // Build legacy chain (genesis + day with missing date)
-      engine.chain.store.appendBlocks([_buildGenesis()]);
+      final genesis = buildGenesis(crypto: engine.crypto);
+      engine.chain.store.appendBlocks([genesis]);
       engine.chain.store.appendBlocks([
-        _buildDayBlockNoDate(
-          dayHash: 'd2' + '0' * 62,
-          prevHash:
-              '8b43949f938fc44136a8bc38a3ffe78edc0a7073dbdf58e905d018adea632230',
+        buildDayBlockNoDate(
+          prevHash: genesis['block_hash'] as String,
           entries: [
-            _wrapEntry('Legacy', 1700000000000, 1000),
+            wrapEntry('Legacy', 1700000000000, 1000, engine.crypto),
           ],
+          crypto: engine.crypto,
         ),
       ]);
 
@@ -1082,7 +1089,7 @@ void main() {
         'AE4: multiple commits on legacy chain → '
         'chain.verify() passes', () {
       final engine = _makeEngine(identitySecretHex: identitySecret);
-      final genesis = _buildGenesis();
+      final genesis = buildGenesis(crypto: engine.crypto);
       engine.chain.store.appendBlocks([genesis]);
 
       // Commit 1: entry for 2025-01-15

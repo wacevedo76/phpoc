@@ -130,10 +130,23 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 
 **Goal:** Shared fixture proving all clients compute identical seals.
 
-- **[ ]** Generate a canonical set of blocks (genesis/day/month/year; some with `original_hash`,
-  some without) and their expected 6-field seals into `testdata/`.
-- **[ ]** Python / Web / Flutter tests each verify against the SAME vectors (proving convergence).
-- **Status:** 🔜
+- [x] Supersede the **pre-ADR-029a open-set** `testdata/canonical_test_vectors.json` (its `expected_seal`
+      values are HMAC over the FULL block_data, incl. excluded fields) with a **closed-whitelist**
+      vector set `testdata/canonical_seal_vectors.json`: genesis/day/month_summary/year_summary,
+      some with `original_hash`, some without, each with an exact `expected_seal` over the ADR-029a
+      per-type whitelist (`select_seal_fields`).
+- [x] Python (`tests/test_migration.py` B1–B5 + `tests/test_canonical_seal_vectors.py`) and Web
+      (`ledger_chain_test.mjs` B1-js–B5-js) assert the EXACT shared seal via `select_seal_fields`.
+- [x] Fix the **Flutter summary divergence**: `chain.dart _sealFields` is now a per-type
+      `_sealFieldsByType` map — genesis/day seal {type, day_index, date, prev_hash, entries,
+      original_hash}; `month_summary`/`year_summary` seal their identity field {type, month|year,
+      date, prev_hash, original_hash}. `_sealBlock`/`_verifyBlockSeal` select per-type fields
+      (P3 GREEN). Flutter summary-vector tests C1–C4 GREEN.
+- [x] Python / Web / Flutter each verify against the SAME vectors (proving convergence).
+- **Status:** ✅ Phase-3 GREEN — Flutter summary divergence FIXED in `chain.dart` (per-type
+  `_sealFieldsByType`; C1–C4 GREEN, C5/C6/D2 guards GREEN). **Phase 4 REFACTOR complete**: Ph-6
+  vector fixture/tests DRYed (byte-identical), plus the separate Flutter Ledger Verify & Commit Fix
+  workstream (S1–S6) 4-phase complete. Ledger suite 279/279 GREEN. Next: Phase 7 (phone e2e).
 
 ---
 

@@ -97,6 +97,61 @@ Map<String, dynamic> _sealedDay({
   return {...payload, 'day_hash': seal, 'key_version': 1};
 }
 
+/// Fixed canonical DEADBEEF master key used by the cross-client vector fixture
+/// `testdata/canonical_seal_vectors.json` (Ph-6), so Flutter's computed seal can
+/// be compared byte-for-byte with Python/Web expected_seal values.
+const deadbeefMkHex = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+/// Build a month_summary block sealed over the CANONICAL ADR-029a month set
+/// `{type, month, date, prev_hash, original_hash}` (the real `month` shape, NOT
+/// the old fixture-only `month_index`).
+Map<String, dynamic> _sealedMonthSummary({
+  required CryptoService crypto,
+  required String prevHash,
+  String? originalHash,
+  String month = '2026-07',
+  String Function(Map<String, dynamic>)? serializer,
+}) {
+  final s = serializer ?? jsonSort;
+  final payload = <String, dynamic>{
+    'type': 'month_summary',
+    'month': month,
+    'date': '2026-07',
+    'prev_hash': prevHash,
+    if (originalHash != null) 'original_hash': originalHash,
+  };
+  final seal = crypto.seal(s(payload), mkHex);
+  return {...payload, 'month_hash': seal, 'key_version': 1};
+}
+
+/// Build a year_summary block sealed over the CANONICAL ADR-029a year set
+/// `{type, year, date, prev_hash, original_hash}` (real `year` int, NOT `year_index`).
+Map<String, dynamic> _sealedYearSummary({
+  required CryptoService crypto,
+  required String prevHash,
+  String? originalHash,
+  int year = 2026,
+  String Function(Map<String, dynamic>)? serializer,
+}) {
+  final s = serializer ?? jsonSort;
+  final payload = <String, dynamic>{
+    'type': 'year_summary',
+    'year': year,
+    'date': '2026',
+    'prev_hash': prevHash,
+    if (originalHash != null) 'original_hash': originalHash,
+  };
+  final seal = crypto.seal(s(payload), mkHex);
+  return {...payload, 'year_hash': seal, 'key_version': 1};
+}
+
+/// Build a chain instance using the CANONICAL deadbeef MK (Ph-6 vector parity).
+LedgerChain _makeDeadbeefChain() {
+  final crypto = CryptoService()..initialize();
+  crypto.setMasterKey(deadbeefMkHex);
+  return LedgerChain(crypto: crypto, store: _FakeLedgerStore());
+}
+
 void main() {
   // ═══════════════════════════════════════════════════════════════
   // Group A: `_sealFields` is the 6-field closed set (behavioral).
@@ -244,6 +299,139 @@ void main() {
           reason: 'genesis WITHOUT original_hash verifies');
       expect(chain.verifyBlock(1), isTrue,
           reason: 'genesis WITH original_hash verifies (same verifier)');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Phase 6 — Flutter summary convergence (ADR-029a month/year seal-port).
+  // Blueprint: CANONICAL_SEALFIELD_PHASE6_VECTORS_PHASE1.md Group C (C1–C6)
+  // + D2. These are RED until chain.dart `_sealFields` becomes per-type and
+  // seals month_summary `month` / year_summary `year` (currently it uses a
+  // single day-style list {type, day_index, date, prev_hash, entries,
+  // original_hash}, so a summary recompute drops month/year → seal mismatch).
+  group('E: Flutter month/year summary convergence (Ph-6)', () {
+    test('C1 month_summary sealed over {type,month,date,prev_hash} verifies', () {
+      final chain = _makeChain();
+      final crypto = chain.crypto as CryptoService;
+      final gen = _sealedGenesis(crypto: crypto, originalHash: null);
+      final month = _sealedMonthSummary(
+          crypto: crypto, prevHash: getBlockHash(gen), originalHash: null);
+      chain.store.appendBlocks([gen, month]);
+      expect(chain.verifyBlock(0), isTrue,
+          reason: 'genesis must still verify');
+      expect(chain.verifyBlock(1), isTrue,
+          reason: 'C1: month_summary sealed over canonical month set verifies');
+    });
+
+    test('C2 year_summary sealed over {type,year,date,prev_hash} verifies', () {
+      final chain = _makeChain();
+      final crypto = chain.crypto as CryptoService;
+      final gen = _sealedGenesis(crypto: crypto, originalHash: null);
+      final year = _sealedYearSummary(
+          crypto: crypto, prevHash: getBlockHash(gen), originalHash: null);
+      chain.store.appendBlocks([gen, year]);
+      expect(chain.verifyBlock(0), isTrue,
+          reason: 'genesis must still verify');
+      expect(chain.verifyBlock(1), isTrue,
+          reason: 'C2: year_summary sealed over canonical year set verifies');
+    });
+
+    test('C3 month_summary with original_hash present verifies', () {
+      final chain = _makeChain();
+      final crypto = chain.crypto as CryptoService;
+      final gen = _sealedGenesis(crypto: crypto, originalHash: null);
+      final month = _sealedMonthSummary(
+          crypto: crypto,
+          prevHash: getBlockHash(gen),
+          originalHash: 'ab' * 32);
+      chain.store.appendBlocks([gen, month]);
+      expect(chain.verifyBlock(1), isTrue,
+          reason: 'C3: month_summary with original_hash in canonical month set verifies');
+    });
+
+    test('C4 year_summary with original_hash present verifies', () {
+      final chain = _makeChain();
+      final crypto = chain.crypto as CryptoService;
+      final gen = _sealedGenesis(crypto: crypto, originalHash: null);
+      final year = _sealedYearSummary(
+          crypto: crypto,
+          prevHash: getBlockHash(gen),
+          originalHash: 'ab' * 32);
+      chain.store.appendBlocks([gen, year]);
+      expect(chain.verifyBlock(1), isTrue,
+          reason: 'C4: year_summary with original_hash in canonical year set verifies');
+    });
+
+    test('C5 Flutter computeSeal reproduces EXACT canonical vector expected_seal', () {
+      // Cross-client byte-identity: Flutter's HMAC over the ADR-029a summary
+      // fields must equal the fixture expected_seal Python/Web also reproduce.
+      final chain = _makeDeadbeefChain();
+
+      // V-month format: {type, month, date, prev_hash}. prev_hash = V-year seal.
+      final monthSeal = chain.computeSeal(const {
+        'type': 'month_summary',
+        'month': '2026-07',
+        'date': '2026-07',
+        'prev_hash': 'bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142',
+      });
+      // V-month fixture expected_seal:
+      expect(monthSeal, '37ae636d2cd765a25fd5f30e6562c313bfc5a4739c4958a548fdfedbf26d327e',
+          reason: 'C5: Flutter month_summary computeSeal == canonical vector expected_seal');
+
+      // V-year format: {type, year, date, prev_hash}. prev_hash = V-genesis seal.
+      final yearSeal = chain.computeSeal(const {
+        'type': 'year_summary',
+        'year': 2026,
+        'date': '2026',
+        'prev_hash': 'a8eb11d9aa10ae6838e62588304012ad3fccebeb035ce9f94715d11a2898ed0a',
+      });
+      // V-year fixture expected_seal:
+      expect(yearSeal, 'bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142',
+          reason: 'C5: Flutter year_summary computeSeal == canonical vector expected_seal');
+    });
+
+    test('C6 day/genesis non-summary blocks STILL verify after the per-type split', () {
+      final chain = _makeChain();
+      final crypto = chain.crypto as CryptoService;
+      final gen = _sealedGenesis(crypto: crypto, originalHash: 'ab' * 32);
+      final day = _sealedDay(
+          crypto: crypto, prevHash: getBlockHash(gen), originalHash: 'cd' * 32);
+      chain.store.appendBlocks([gen, day]);
+      expect(chain.verifyBlock(0), isTrue,
+          reason: 'C6: genesis still verifies');
+      expect(chain.verifyBlock(1), isTrue,
+          reason: 'C6: day still verifies after per-type refactor');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Phase 6 — divergence detection (Flutter day-style summary bug must FAIL).
+  group('F: divergence detection (D2)', () {
+    test('D2 Flutter day-style summary seal does NOT equal canonical vector seal', () {
+      // The PRE-FIX Flutter sealer uses the day-style list {type, day_index,
+      // date, prev_hash, entries, original_hash} for ALL block types. For a
+      // month_summary (no day_index/entries), it seals over {type, date,
+      // prev_hash} — with NO month — so its seal DIFFERS from the canonical
+      // V-month vector seal that includes `month`. This guard catches the bug.
+      final chain = _makeDeadbeefChain();
+      // Canonical V-month selected fields include `month`:
+      final monthInclusiveSeal = chain.computeSeal(const {
+        'type': 'month_summary',
+        'month': '2026-07',
+        'date': '2026-07',
+        'prev_hash': 'bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142',
+      });
+      // Pre-fix day-style sealer DROPS `month` (and never reads it):
+      final dayStyleSeal = chain.computeSeal(const {
+        'type': 'month_summary',
+        'date': '2026-07',
+        'prev_hash': 'bdf9ee1c7151a35acce71e0824db504fea031aee629bf67d4dfbc8f822ac9142',
+      });
+      // The two must differ AND the inclusive one must be the canonical vector seal.
+      expect(monthInclusiveSeal, '37ae636d2cd765a25fd5f30e6562c313bfc5a4739c4958a548fdfedbf26d327e',
+          reason: 'D2: month-inclusive seal is the canonical V-month expected_seal');
+      expect(dayStyleSeal, isNot(monthInclusiveSeal),
+          reason: 'D2: day-style (month-less) seal must NOT equal the canonical month seal');
     });
   });
 }

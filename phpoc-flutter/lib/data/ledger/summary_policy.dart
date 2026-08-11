@@ -57,10 +57,23 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
     final summaries = <Map<String, dynamic>>[];
 
     final prevType = prevBlock['type'] as String? ?? '';
-    final prevDateStr = prevBlock['date'] as String? ?? '1970-01-01';
+    final prevDateStr = prevBlock['date'] as String? ?? '';
+
+    // A block with no usable date anchor (missing date, or the 1970-01-01
+    // sentinel left by entries-only data_enc reconstruction / date-less
+    // genesis) has no trustworthy period to summarize from. Sealing summaries
+    // off a fabricated 1970 period would insert decades of spurious summary
+    // blocks and break the chain, so skip summary fabrication entirely when
+    // the previous block carries no real date.
+    final prevDateMissing = prevDateStr.isEmpty || prevDateStr == '1970-01-01';
+    if (prevDateMissing) {
+      return [];
+    }
+
+    final usableDate = prevDateStr.isEmpty ? '1970-01-01' : prevDateStr;
 
     // Parse dates
-    final prevDate = _parseDate(prevDateStr);
+    final prevDate = _parseDate(usableDate);
     final currDate = _parseDate(currentDate);
 
     // Resolve effective previous year and month
@@ -139,7 +152,6 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
     final block = <String, dynamic>{
       'type': type,
       'prev_hash': prevHash,
-      'entries': <Map<String, dynamic>>[],
       'date': month != null ? '$month-01' : '$year-01-01',
     };
 
@@ -150,11 +162,18 @@ class YearMonthSummaryPolicy extends SummaryPolicy {
       block['month'] = month;
     }
 
-    // Compute seal over the block
+    // Compute the seal over only the canonical per-type ADR-029a fields
+    // (type + month/year + date + prev_hash). Summaries carry no entries and
+    // never seal client-specific/stray metadata, matching Python
+    // `domain/ledger/chain.py` select_seal_fields and Web `seal_fields.js`.
     final hashKey = type == 'year_summary' ? 'year_hash' : 'month_hash';
-    final sealData = Map<String, dynamic>.from(block);
-    sealData.remove(hashKey);
-    sealData.remove('identity_seal');
+    final sealData = <String, dynamic>{
+      'type': block['type'],
+      'prev_hash': prevHash,
+      'date': block['date'],
+      'month': ?month,
+      'year': ?year,
+    };
     final seal = _computeSeal(sealData);
     block[hashKey] = seal;
 

@@ -370,21 +370,26 @@ class LedgerChain {
   // Internal helpers
   // ═══════════════════════════════════════════════════════════════
 
-  /// Canonical block-seal fields shared across all block types (ADR-029).
-  /// Exactly {type, day_index, date, prev_hash, entries, original_hash} are
-  /// sealed — a closed set. `original_hash` is sealed only when present
-  /// (migrated / post-0.4.0 blocks); its absence must not break verification.
-  /// Extra metadata like format_version, key_version, username, identity_seal,
-  /// and the hash keys are NEVER part of the seal (matches Python
-  /// `domain/ledger/chain.py` SEAL_FIELDS and Web `seal_fields.js`).
-  static const _sealFields = [
-    'type',
-    'day_index',
-    'date',
-    'prev_hash',
-    'entries',
-    'original_hash',
-  ];
+  /// Canonical per-type block-seal fields (ADR-029/029a).
+  ///
+  /// genesis/day seal `{type, day_index, date, prev_hash, entries,
+  /// original_hash}`; month_summary seals `{type, month, date, prev_hash,
+  /// original_hash}` (carries no day_index/entries); year_summary seals
+  /// `{type, year, date, prev_hash, original_hash}`. `original_hash` is sealed
+  /// only when present (migrated / post-0.4.0 blocks); its absence must not
+  /// break verification. Extra metadata like format_version, key_version,
+  /// username, identity_seal, summary telemetry, and the hash keys are NEVER
+  /// part of the seal (matches Python `domain/ledger/chain.py` SEAL_FIELDS and
+  /// Web `seal_fields.js`).
+  static const Map<String, List<String>> _sealFieldsByType = {
+    'genesis': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'day': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'month_summary': ['type', 'month', 'date', 'prev_hash', 'original_hash'],
+    'year_summary': ['type', 'year', 'date', 'prev_hash', 'original_hash'],
+  };
+
+  /// Return the sealed-field names for [type], or null for an unknown type.
+  static List<String>? _sealFieldsFor(String? type) => _sealFieldsByType[type];
 
   /// Verify prev_hash linkage between [prev] and [current] blocks.
   bool _prevHashValid(Map<String, dynamic>? prev, Map<String, dynamic> current) {
@@ -400,15 +405,21 @@ class LedgerChain {
     return getDayBlocks().length;
   }
 
-  /// Compute a seal over the canonical ADR-029 seal fields of [block].
+  /// Compute a seal over the canonical per-type ADR-029a seal fields of [block].
   ///
-  /// Includes {type, day_index, date, prev_hash, entries, original_hash} —
-  /// the closed seal set shared across all clients. `original_hash` is sealed
-  /// only when present. Extra metadata like format_version, key_version,
-  /// username, identity_seal, and the hash keys are NOT part of the seal.
+  /// day/genesis seal {type, day_index, date, prev_hash, entries,
+  /// original_hash}; month_summary/year_summary seal their identity field
+  /// (`month`/`year`) instead, so summaries match Python/Web byte-for-byte.
+  /// `original_hash` is sealed only when present. Unknown types throw (matches
+  /// Python `select_seal_fields` raising `ValueError` on an unknown type).
   String _sealBlock(Map<String, dynamic> block) {
+    final type = block['type'] as String?;
+    final fields = _sealFieldsFor(type);
+    if (fields == null) {
+      throw StateError('Unknown block type for seal: $type');
+    }
     final sealData = <String, dynamic>{};
-    for (final field in _sealFields) {
+    for (final field in fields) {
       if (block.containsKey(field)) {
         sealData[field] = block[field];
       }
@@ -447,9 +458,12 @@ class LedgerChain {
     final storedHash = block[hashKey] as String?;
     if (storedHash == null || storedHash.isEmpty) return false;
 
-    // Extract canonical PHPSPEC seal fields for verification.
+    // Extract the per-type ADR-029a seal fields for verification. Unknown
+    // types and summaries outside the table (no matching fields) are invalid.
+    final fields = _sealFieldsFor(type);
+    if (fields == null) return false;
     final sealData = <String, dynamic>{};
-    for (final field in _sealFields) {
+    for (final field in fields) {
       if (block.containsKey(field)) {
         sealData[field] = block[field];
       }

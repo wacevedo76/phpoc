@@ -1453,9 +1453,17 @@ void main() {
       );
       chain.append(gen);
 
+      final crypto = chain.crypto;
+      final data = {'title': 'Task', 'duration': 60};
       final day = chain.buildDayBlock(
         entries: [
-          {'title': 'Task', 'duration': 60}
+          {
+            'data': {
+              ...data,
+              // 0.4.0 genesis requires a valid content_hash on every entry.
+              'content_hash': computeContentHash(data, crypto),
+            },
+          },
         ],
         prevHash: getBlockHash(gen),
         dateStr: '2025-01-02',
@@ -1496,16 +1504,16 @@ void main() {
       ]);
 
       // Simulate CLI-created day block (Python indent2 seal)
+      const entryData = {'title': 'CLI entry', 'duration': 120};
+      final dataWithHash = Map<String, dynamic>.from(entryData)
+        ..['content_hash'] = computeContentHash(entryData, crypto);
       final dayPayload = <String, dynamic>{
         'type': 'day',
         'day_index': 1,
         'date': '2025-01-02',
         'prev_hash': genSeal,
         'entries': [
-          {
-            'hash': 'a' * 64,
-            'data': {'title': 'CLI entry', 'duration': 120}
-          }
+          {'hash': computeEntryHash(dataWithHash), 'data': dataWithHash}
         ],
       };
       final daySeal =
@@ -1551,16 +1559,16 @@ void main() {
       ]);
 
       // Simulate Web-created day block (JS no-space seal)
+      const entryData = {'title': 'Web entry', 'duration': 90};
+      final dataWithHash = Map<String, dynamic>.from(entryData)
+        ..['content_hash'] = computeContentHash(entryData, crypto);
       final dayPayload = <String, dynamic>{
         'type': 'day',
         'day_index': 1,
         'date': '2025-01-02',
         'prev_hash': genSeal,
         'entries': [
-          {
-            'hash': 'b' * 64,
-            'data': {'title': 'Web entry', 'duration': 90}
-          }
+          {'hash': computeEntryHash(dataWithHash), 'data': dataWithHash}
         ],
       };
       final noSpaceDay =

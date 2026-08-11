@@ -26,6 +26,22 @@
 
 ---
 
+## ✅ Flutter Ledger Verify & Commit Fix (6 pre-existing ledger failures)
+
+**Status:** ✅ **4-Phase TDD COMPLETE.** Phase 3 GREEN (12/12) fixed all 6 S1–S6 failures; Phase 4 (REFACTOR) clean — removed unused `chain.dart`/`index_manager.dart` imports from `engine_test.dart`, replaced `if (x != null)` map entries with null-aware `?x` in `summary_policy.dart`, removed dead `_buildDayBlock` fixture, renamed local helper decls per `no_leading_underscores`. `test/data/ledger/` 279/279 GREEN; `flutter analyze` clean on both files. `docs/planning/FLUTTER_LEDGER_VERIFY_FIX_PHASE1.md`.
+
+**Why:** 6 pre-existing failures in `phpoc-flutter/test/data/ledger/` (verified unchanged before/after the ADR-029a seal port). Separate 4-phase TDD workstream; Ph-6 Phase 4 (REFACTOR) resumes after.
+
+| # | Test | Root cause | Fix target |
+|---|------|-----------|------------|
+| S1–S3 | K2/K3/K4 (`chain.verify()`) | `verify()` requires `content_hash` at ≥0.4.0; K-fixtures build entries with no valid `content_hash` | `chain.dart` (`buildDayBlock`/`commit`) + K-fixtures |
+| S4 | F15 (empty title encrypt) | `engine.dart:61` rejects `title:''` before `_prepareEntries` can encrypt; `_prepareEntries` already handles empty-title encrypt | `engine.dart` commit validation |
+| S5–S6 | AE2/AE4 (date-less legacy commit) | `commit()` feeds a date-less prev day into `YearMonthSummaryPolicy` → duplicate/malformed summaries; policy unit (AD1–AD3) passes — integration bug | `engine.dart` + `summary_policy.dart` |
+
+**Groups:** A = 3 (empty-title encryption), B = 3 (date-less commit integration), C = 3 (positive content-hash verify), D = 3 (regression guards). **BLOCKER(s):** none.
+
+---
+
 ## 🟠 CCS: Cross-Client Staging Sync & Reconciliation
 
 **Goal:** Full staging sync interoperability across Flutter, Web, and CLI.

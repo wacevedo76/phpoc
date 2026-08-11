@@ -54,13 +54,27 @@ class LedgerEngine {
     // from old KV store (which only have 'activity' populated, not row-level extra fields)
     entries = _normalizeEntries(entries);
 
-    // Validate
+    // Validate. Empty title/tags are allowed through when
+    // has_encrypted_fields=true so they can be encrypted (F15 encrypt-empty
+    // contract); non-string and whitespace-only titles are always rejected.
     for (final entry in entries) {
       final title = entry['title'];
-      if (title is! String || title.isEmpty) {
+      final isEncrypted =
+          entry['has_encrypted_fields'] as bool? ?? false;
+      if (title is! String) {
         throw Exception(
-          'Entry title must be a non-empty string (got ${title.runtimeType})',
+          'Entry title must be a string (got ${title.runtimeType})',
         );
+      }
+      if (!isEncrypted && title.isEmpty) {
+        throw Exception(
+          'Entry title must be a non-empty string when fields are not '
+          'encrypted (got empty title)',
+        );
+      }
+      // Whitespace-only titles are invalid in every path.
+      if (title.isNotEmpty && title.trim().isEmpty) {
+        throw Exception('Entry title must not be whitespace-only');
       }
       final startEpoch = entry['start_epoch'];
       if (startEpoch is! int || startEpoch <= 0) {

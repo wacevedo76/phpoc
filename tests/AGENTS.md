@@ -34,6 +34,7 @@ Comprehensive test suite for the Python reference implementation of PH Ledger. C
 - `test_remote_config_wiring.py` — Remote config wiring
 - `test_cross_platform_integration.py` — Cross-platform live integration tests (CLI ↔ Worker)
 - `test_pbkdf2_per_user_salt.py` — Per-user PBKDF2 salt: derivation, auth upgrade, init flow, passphrase change, integration (29 tests, I-05)
+- `test_canonical_seal_vectors.py` — Cross-client canonical seal-vector fixture (Groups A, B5/B7/B8, D, E1; Ph-6 ADR-029/029a).
 
 ## Local Contracts
 - **33 test files, ~14,800 lines, 1583 tests passing (I-05 Phase 2 RED added 2026-07-15)**
