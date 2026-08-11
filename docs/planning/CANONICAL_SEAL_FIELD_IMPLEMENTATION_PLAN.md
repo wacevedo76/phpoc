@@ -161,12 +161,37 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
   A–D); `TestMigrateFormatSummarySynthesis` 14/14 GREEN; `test_migrate_format.py` 57/57; full
   Python suite 2614 pass/1 skip. Phase 4 refactor done (`_canonicalize_summary` → explicit
   mutator, no change to behavior).
-- **[ ]** Re-run migration on the current 0.4.0 ledger (backup first; D5/D9) to restamp all 129
-  block seals to the 6-field whitelist.
-- **[ ]** Verify with Python `chain.verify()` (129/129).
+- **[x]** **Re-run migration on the current 0.4.0 ledger + Python `chain.verify()`:** the live
+  `~/.local/share/phpoc/ledger.json` is the re-migrated 132-block chain (genesis `block_hash`
+  `0a885c…`, `original_hash` preserves the pre-migration hash `dcabcd…`; summaries carry
+  canonical `month`/`year`, stray `day_index`/`entries` dropped). Pre-migration input backed up
+  at `~/.local/share/phpoc/backup_20260811_105703/` (== `/tmp/phpoc-ph7/ledger_input.json`).
+  Independently verified `chain.verify() → True` (132/132) under Python with the ADR-029a
+  whitelist.
 - **[ ]** Rebuild Flutter debug APK; `adb install -r` (preserves data).
-- **[ ]** Re-onboard migrated file on phone; confirm `verify()` passes (129/129).
-- **Status:** 🔜
+- **[ ]** Re-onboard migrated file on phone; confirm `verify()` passes (132/132).
+- **Storage-fidelity prerequisite (Flutter): 4-Phase TDD P3/GREEN done.** Root cause of on-device
+  "Integrity Check Failed" after PHPSPEC pull was `LedgerBackupService._phpSpecToBlock` storing only
+  the `entries` array into `data_enc`, dropping `type`/`date`/`month`/`year`/`day_index`/hashes so
+  `_blockToMap` reconstructed the wrong `date` and no summary `month`/`year` → every summary/date
+  block failed `verify()`. Fix: serialize the full canonical block map into `data_enc`, carry
+  sealed `date`/`month`/`year` through `PhpSpecFormat.blockToMap` export, and preserve sealed
+  `day_index` in `_blockToMap` (don't clobber with the DB array index). Blueprint
+  `FLUTTER_STORAGE_FIDELITY_PHASE1.md`; fidelity suite 11/11 GREEN; analyzer clean; no new
+  regressions (also fixed pre-existing genesis-export failures A2/A7/F2). Phase 4 (REFACTOR) done.
+- **On-device e2e (emulator-5554) — `original_hash` storage-fidelity bug FIXED:** ran a real
+  `integration_test/onboard_verify_test.dart` on the Android emulator. Path A (genesis-preserving
+  `LedgerBackupService.importFromJson`, i.e. the PHPSPEC pull) initially FAILED verify → root
+  cause: `original_hash` (an ADR-029a per-type seal field) was being dropped in the data_enc
+  round-trip (`_serializeCanonicalMap` + `blockToMap` didn't carry it), so `_blockToMap`
+  reconstructed the chain WITHOUT it and the sealer recomputed a different hash than Python/Web.
+  The host-VM fidelity tests had masked this because their fixtures had no `original_hash`. Fix:
+  add `PhpSpecFormat.kOriginalHash`, carry `original_hash` through `_serializeCanonicalMap`
+  (import) and `blockToMap` (export). **After fix: Path A `verify() = True` (132/132) on the
+  emulator.** Regression guards added (`ledger_backup_service_fidelity_test.dart` A4 + C6);
+  fidelity suite 15/15 GREEN; only pre-existing B1/B4/E6 remain. 0 new regressions.
+- **Path B onboarding import-from-file genesis preservation FIXED:** `_importRawChain`/`_importV2` now call `_postImportSetup(..., keepExistingGenesis: true)` (mirroring `restoreFromCloud`), so `_buildAndPersistGenesis` no longer DELETEs the migrated canonical genesis and swaps in a Flutter-format `{seed}` genesis. `OnboardingService.importFromFile` therefore preserves the imported chain and verify()=True (132). Regression-guarded: unit `onboarding_service_test.dart` L10 (asserts canonical genesis block_hash preserved) + `integration_test/onboard_verify_test.dart` Path B (asserts verify).
+- **Status:** 🟢 Ph-7 re-migration + Python verify + on-device PHPSPEC-pull verify DONE; onboarding import-from-file (Path B) genesis-preservation FIXED. On-device Path-B confirm (rebuild APK + run) pending.
 
 ---
 
@@ -191,4 +216,4 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 | 4 — Migration tool | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-4 Migrator P1–P4 COMPLETE (26 seal-whitelist + 17 existing = 43 GREEN; unknown-type pre-validation; P4 REFACTOR deduped sealer/hash-strip) |
 | 5 — PHPSPEC | — | ✅ | ✅ | ✅ | ✅ | 🟢 Ph-5 P1–P4 COMPLETE (27 assertions; §5.2 whitelist + closed-set + original_hash; §9.3 stale claims fixed; migrate_format_version routed to whitelist; test_naming_i04 regex bug fixed) |
 | 6 — Canonical vectors | — | — | — | — | — | 🔜 |
-| 7 — Re-migrate + phone | — | — | — | — | — | 🔜 |
+| 7 — Re-migrate + phone | — | — | — | — | — | 🟡 migration ✓ Python ✓ on-device PHPSPEC-pull ✓; onboarding-screen path fix pending |

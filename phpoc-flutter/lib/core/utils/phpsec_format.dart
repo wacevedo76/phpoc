@@ -25,6 +25,10 @@ class PhpSpecFormat {
   static const kFormatVersion = 'format_version';
   static const kBlockHash = 'block_hash';
   static const kIdentitySeal = 'identity_seal';
+  static const kMonth = 'month';
+  static const kYear = 'year';
+  static const kKeyVersion = 'key_version';
+  static const kOriginalHash = 'original_hash';
 
   // ── PHPSPEC type strings ────────────────────────────────────
 
@@ -77,24 +81,49 @@ class PhpSpecFormat {
     final sealField = sealFieldNames[typeStr] ?? '${typeStr}_hash';
     final entries = extractEntries(block.dataEnc);
 
+    // Decode the data_enc chain map to recover the faithful `date` and
+    // summary identity (`month`/`year`) that were sealed. Storing the full
+    // block map in data_enc (see LedgerBackupService._phpSpecToBlock) makes
+    // export -> import lossless so an on-device verify() stays GREEN.
+    final encodedMap = _decodeDataEncMap(block.dataEnc);
+
     // Use the hash from dataEnc as the seal field value, falling back
     // to block.blockId (DB column) when dataEnc can't be decoded.
     // Migration recomputes hashes inside dataEnc; blockId may be stale.
     final dataHash = extractHash(block.dataEnc, typeStr);
     final sealValue = dataHash ?? block.blockId;
 
-    // All blocks include date (Python genesis seal includes date per
-    // core/factory.py — genesis is NOT sealed without it).
-    // Must be placed before prev_hash so that key order matches
-    // _buildAndPersistGenesis seal payload: type, day_index, date, prev_hash, entries
+    // `date` is carried from the sealed map when present (genesis is sealed
+    // without date on the Flutter side, so it emits none), falling back to
+    // the DB createdAt for legacy entries-only data_enc. Must be placed
+    // before prev_hash so key order matches the seal payload.
     final result = <String, dynamic>{
       kType: typeStr,
       kDayIndex: block.blockIndex,
-      kDate: FormatUtils.epochToIsoDate(block.createdAt),
       kPrevHash: block.prevHash,
       kEntries: entries,
       sealField: sealValue,
     };
+    final sealedDate = encodedMap[kDate];
+    if (sealedDate is String && sealedDate.isNotEmpty) {
+      result[kDate] = sealedDate;
+    } else if (typeStr != typeGenesis) {
+      result[kDate] = FormatUtils.epochToIsoDate(block.createdAt);
+    }
+    // Canonical summaries carry their calendar identity (ADR-029a); carry
+    // it through export so import can restore it losslessly.
+    for (final identityKey in const [kMonth, kYear]) {
+      if (encodedMap.containsKey(identityKey)) {
+        result[identityKey] = encodedMap[identityKey];
+      }
+    }
+    // original_hash is part of the ADR-029a per-type seal set (sealed when
+    // present on migrated blocks). Carry it through export so re-import is
+    // lossless and on-device verify() recomputes the same seal input as
+    // Python/Web over the whitelist.
+    if (encodedMap.containsKey(kOriginalHash)) {
+      result[kOriginalHash] = encodedMap[kOriginalHash];
+    }
 
     // Include block_hash as a convenience for consumers (same as seal field).
     result[kBlockHash] = sealValue;
@@ -105,6 +134,21 @@ class PhpSpecFormat {
     }
 
     return result;
+  }
+
+  /// Decode [dataEnc] into a map if it holds a full block map; otherwise
+  /// return an empty map (legacy entries-only or opaque payloads).
+  static Map<String, dynamic> _decodeDataEncMap(String dataEnc) {
+    try {
+      final decoded = utf8.decode(base64.decode(dataEnc));
+      final parsed = jsonDecode(decoded);
+      if (parsed is Map<String, dynamic>) {
+        return parsed;
+      }
+    } catch (_) {
+      // data_enc is opaque or malformed
+    }
+    return <String, dynamic>{};
   }
 
   // ── Entry extraction ────────────────────────────────────────

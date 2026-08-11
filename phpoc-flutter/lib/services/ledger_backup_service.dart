@@ -175,11 +175,16 @@ class LedgerBackupService {
         ? _isoDateToEpoch(dateStr, index)
         : 0;
 
-    // ── entries → data_enc (base64 JSON) ─────────────────────
-    final entries = json[PhpSpecFormat.kEntries];
-    final entriesList = (entries is List) ? entries : <dynamic>[];
-    final entriesJson = jsonEncode(entriesList);
-    final dataEnc = base64.encode(utf8.encode(entriesJson));
+    // ── full canonical block map → data_enc (base64 JSON) ───
+    // Persist the WHOLE canonical map so `_blockToMap` can faithfully
+    // reconstruct the chain for `verify()`. See [_serializeCanonicalMap].
+    final dataEnc = _serializeCanonicalMap(
+      type: typeStr,
+      prevHash: prevHash,
+      blockId: blockId,
+      sealField: sealField,
+      source: json,
+    );
 
     return Block(
       blockId: blockId,
@@ -191,6 +196,49 @@ class LedgerBackupService {
       prevHash: prevHash,
       createdAt: createdAt,
     );
+  }
+
+  /// Serialize the canonical map into a `data_enc` payload.
+  ///
+  /// Encodes the full block map (type, prev_hash, seal fields, identity,
+  /// and any of day_index/date/month/year/entries present in [source]) so
+  /// `LedgerBlockStore._blockToMap` can reconstruct `date`, `month`/`year`,
+  /// and resolvable seals for `verify()`. Only fields present in [source]
+  /// are carried: a genesis has no sealed `date`, and summaries carry
+  /// `month`/`year` instead of `day_index`. Legacy entries-only `data_enc`
+  /// (Bug C) is still handled as a read fallback in `store_adapters.dart`.
+  String _serializeCanonicalMap({
+    required String type,
+    required String prevHash,
+    required String blockId,
+    required String sealField,
+    required Map<String, dynamic> source,
+  }) {
+    final blockMap = <String, dynamic>{
+      PhpSpecFormat.kType: type,
+      PhpSpecFormat.kPrevHash: prevHash,
+      PhpSpecFormat.kBlockHash: blockId,
+      PhpSpecFormat.kKeyVersion: 1,
+      sealField: blockId,
+    };
+    for (final field in const [
+      PhpSpecFormat.kDayIndex,
+      PhpSpecFormat.kDate,
+      PhpSpecFormat.kMonth,
+      PhpSpecFormat.kYear,
+      PhpSpecFormat.kIdentitySeal,
+      PhpSpecFormat.kEntries,
+      // original_hash is part of the ADR-029a per-type seal set (sealed when
+      // present on migrated blocks). It must survive the data_enc round-trip
+      // or _blockToMap reconstructs the chain WITHOUT it and the sealer
+      // recomputes a different hash than Python/Web over the same block.
+      PhpSpecFormat.kOriginalHash,
+    ]) {
+      if (source.containsKey(field)) {
+        blockMap[field] = source[field];
+      }
+    }
+    return base64.encode(utf8.encode(jsonEncode(blockMap)));
   }
 
   /// Parse legacy-format block JSON into internal [Block] model.

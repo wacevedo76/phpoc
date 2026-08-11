@@ -281,10 +281,17 @@ class CryptoService {
         return utf8.decode(_aesCtrProcess(ciphertext, flutterAesKey, nonce, encrypt: false));
       }
 
-      // Both auth paths failed — try raw decrypt (treat tag as ciphertext)
+      // Both auth paths failed — Python-compatible old/no-tag fallback
+      // (treat the trailing 32 bytes as ciphertext, exactly as Python
+      // `CryptoManager.decrypt` does when the canonical tag does not verify).
+      // Python uses the canonical salt-derived AES key, NOT mk[:16]; using
+      // mk[:16] here produced garbage for legacy no-tag ciphertexts (e.g.
+      // pause blobs) and broke cross-client verify. Mirror Python so the
+      // fallback round-trips identically.
+      final derKey = _hmacSha256Truncate(mk, salt, 16);
       final plaintextBytes = _aesCtrProcess(
         Uint8List.sublistView(data, 24),
-        flutterAesKey,
+        derKey,
         nonce,
         encrypt: false,
       );

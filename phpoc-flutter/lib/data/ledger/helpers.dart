@@ -175,12 +175,14 @@ Map<String, dynamic> _buildCanonicalMap(
       if (value is String && value.isNotEmpty) {
         try {
           final decrypted = decryptFn(value);
-          try {
-            final parsed = jsonDecode(decrypted);
-            value = parsed;
-          } catch (_) {
-            value = decrypted;
-          }
+          // Canonical cross-client behavior: keep the decrypted plaintext as
+          // a STRING (JSON-encoding it verbatim), matching Python
+          // `_verify_content_hash` / migrator `_compute_content_hash` and Web
+          // `_verifyContentHash`. Do NOT jsonDecode (that would turn `"{}"` into
+          // an empty map and change the canonical JSON bytes → a divergent
+          // content_hash, failing cross-client verification on a migrated
+          // ledger). Sort lists afterward so list fields hash deterministically.
+          value = decrypted;
         } catch (_) {
           // Decryption failed — keep raw value
         }

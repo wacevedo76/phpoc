@@ -192,6 +192,31 @@ void main() {
           isTrue);
     });
 
+    // A13b — regression: JSON-typed _enc plaintext is hashed as a STRING,
+    // matching Python `_verify_content_hash` / migrator `_compute_content_hash`
+    // and Web `_verifyContentHash`. Decrypting `"{}"` to an empty map (via
+    // jsonDecode) changed the canonical JSON bytes and made Flutter reject a
+    // Python-migrated ledger. Digital plaintext must stay verbatim.
+    test(
+        'A13b: JSON-typed _enc plaintext is kept as string in content hash',
+        () {
+      crypto.setMasterKey(
+          '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
+
+      final data = {
+        'duration': 598172,
+        'metadata_enc': crypto.encrypt('{}', crypto.getMasterKey()!),
+        'startTime_enc': crypto.encrypt('1777028295844', crypto.getMasterKey()!),
+        'title': 'Music Practice - Flute',
+      };
+
+      final hash = computeContentHash(data, crypto);
+      // Encrypt deterministic ciphertext each run, but the canonical string
+      // must round-trip.
+      expect(verifyContentHash(data, hash,
+          decryptFn: (c) => crypto.decrypt(c, crypto.getMasterKey()!)), isTrue);
+    });
+
     // A14 — verifyContentHash returns false when decryption fails and hash differs
     test(
         'A14: verifyContentHash returns false when decryption fails and hash differs',

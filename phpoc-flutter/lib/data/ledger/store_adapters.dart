@@ -196,7 +196,12 @@ class LedgerBlockStore {
     if (hashKey != null) {
       map[hashKey] = b.blockId;
     }
-    if (b.blockType == BlockType.day) {
+    if (b.blockType == BlockType.day && !map.containsKey('day_index')) {
+      // Preserve the sealed day_index from a full-map data_enc (the
+      // authoritative value the block_hash was computed over). Fall back to
+      // the DB array index only for legacy/entries-only data_enc where no
+      // day_index was stored. Clobbering it with the array position breaks
+      // verify() when summaries interleave with days.
       map['day_index'] = b.blockIndex;
     }
   }

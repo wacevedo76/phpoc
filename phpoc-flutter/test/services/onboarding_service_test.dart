@@ -1017,7 +1017,7 @@ void main() {
 
     // L4
     test('L4: importFromFile with raw chain (ledger.json) → ledger blocks '
-        'written', () async {
+        'written and canonical genesis PRESERVED', () async {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       await crypto.initialize();
@@ -1033,6 +1033,17 @@ void main() {
           reason: 'Raw chain format (ledger.json) must import blocks');
       expect(blocks.length, greaterThanOrEqualTo(2),
           reason: 'Raw chain fixture has 2 blocks');
+
+      // The imported canonical genesis must survive — NOT be replaced by a
+      // Flutter-format {seed} genesis (Ph-7 Path B fix). block_hash of the
+      // sample genesis is 'a'*64.
+      final genesis = blocks.firstWhere(
+        (b) => b.blockType == BlockType.genesis,
+        orElse: () => throw StateError('no genesis block imported'),
+      );
+      expect(genesis.blockId, 'a' * 64,
+          reason: 'raw-chain onboarding must preserve the imported canonical '
+              'genesis so LedgerChain.verify() can pass');
     });
 
     // L5
@@ -1172,8 +1183,9 @@ void main() {
     });
 
     // L10
-    test('L10: importFromFile creates Flutter-format genesis block with '
-        'PDK-encrypted seed', () async {
+    test('L10: importFromFile PRESERVES the imported canonical genesis '
+        '(does not replace with a Flutter-format genesis) and stores the '
+        'seed in the vault', () async {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       await crypto.initialize();
@@ -1184,25 +1196,29 @@ void main() {
       final onboarding = await _makeOnboarding(crypto: crypto, db: db);
       await onboarding.importFromFile(filePath, testSeedB64, validPassphrase);
 
-      // A genesis block must exist with Flutter-format data_enc
+      // The imported canonical genesis must survive — NOT be deleted and
+      // replaced by a Flutter-format genesis (the Ph-7 Path-B bug broke
+      // chain verification by swapping the genesis). block_hash of the
+      // sample genesis is 'a'*64.
       final genesisBlocks =
           await db.blockDao.getBlocksByType(BlockType.genesis);
       expect(genesisBlocks, isNotEmpty,
-          reason: 'Flutter-format genesis must exist after import');
+          reason: 'imported canonical genesis must exist after import');
 
       final genesis = genesisBlocks.first;
-      // data_enc must be non-empty (contains PDK-encrypted seed)
-      expect(genesis.dataEnc, isNotEmpty);
-      expect(genesis.dataEnc.length, greaterThan(10),
-          reason: 'data_enc must contain encrypted seed for auth');
+      expect(genesis.blockId, 'a' * 64,
+          reason: 'the canonical imported genesis block_hash must be '
+              'preserved, not replaced by a rebuilt Flutter genesis');
+      expect(genesis.prevHash, '0' * 64,
+          reason: 'canonical genesis keeps its original prev_hash linkage');
 
-      // data_enc must NOT contain the plaintext seed
-      expect(genesis.dataEnc, isNot(contains(testSeedB64)),
-          reason: 'Seed must be PDK-encrypted in genesis (D2 compliance)');
-
-      // Genesis must have a valid identity_seal
-      expect(genesis.identitySeal, isNotNull);
-      expect(genesis.identitySeal, isNotEmpty);
+      // The recovery seed must still be stored in the vault post-import
+      // (auth flow depends on it), independent of genesis preservation.
+      final vaultRows = db.customSelect(
+        "SELECT value FROM _phpoc_meta WHERE key = 'recovery_seed_enc'",
+      ).get();
+      expect(vaultRows, isNotEmpty,
+          reason: 'importFromFile must store seed in vault for auth');
     });
   });
 

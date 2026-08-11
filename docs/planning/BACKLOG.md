@@ -178,9 +178,9 @@
 
 ---
 
-### 🔜 Staging Auto-Sync: Flutter — Upgrade Auto-Push to Bidirectional Sync
+### 🟡 Staging Auto-Sync: Flutter — Upgrade Auto-Push to Bidirectional Sync
 
-**Status:** Queued (after CCS-4). **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
+**Status:** Phase 3 (GREEN) done (AS1–AS6 all GREEN). Phase 4 (REFACTOR) next. **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
 
 **What:** Replace `_doPush()` → `_attemptPush()` (push-only) with `checkAndSync()` (pull + merge + push). Every staging mutation automatically syncs bidirectionally instead of just pushing.
 

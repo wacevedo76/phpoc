@@ -1742,4 +1742,206 @@ void main() {
       await h.close();
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group AS: Auto-Sync (bidirectional _doPush) + status contract
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Phase 1 (RED) tests for STAGING_AUTO_SYNC_AS_PHASE1.md. These target the
+  // debounced auto-push path (_doPush): every mutation schedules a push that,
+  // after this upgrade, routes through checkAndSync() (pull + merge + push)
+  // instead of the old push-only _attemptPush(). AS1–AS4 cover the bidirectional
+  // behavior; AS5/AS6 pin the sync-status-stream contract (SyncingStatus derived
+  // from SyncCheckResult).
+
+  group('AS: Auto-Sync (Bidirectional _doPush)', () {
+    // AS1
+    test('AS1: auto-push after capture() pulls a remote-only entry and '
+        'merges it locally (bidirectional, no manual button)', () async {
+      final h = await _makeRowSync();
+
+      // Remote has an entry that does NOT exist locally.
+      final remoteRows = [
+        {
+          'activity_id': 'remoteOnly',
+          'activity_status': 'active',
+          'activity': '{"title":"Remote Only Task"}',
+          'updated_at': 5000,
+        },
+      ];
+      h.transport.setPullResponse(
+        'staging/blob',
+        await h.makeObfuscatedBlob(remoteRows),
+      );
+
+      // Local mutation schedules the debounced auto-push.
+      await h.svc.capture(title: 'Local Push Task');
+
+      // Wait past the 500ms debounce so the auto-push fires.
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // The remote-only entry must now exist in local staging without a
+      // manual checkAndSync() call.
+      final rows = await h.stagingStore.getAllRows();
+      expect(rows.where((r) => r['activity_id'] == 'remoteOnly'), isNotEmpty,
+          reason: 'Auto-push must pull remote entries down and merge them '
+              'locally — not just push local rows up');
+
+      await h.close();
+    });
+
+    // AS2
+    test('AS2: reauthNeeded during auto-push degrades silently — no throw, '
+        'local cookie destroyed, no error status surfaced', () async {
+      final h = await _makeRowSync();
+
+      // Remote advertises a DIFFERENT cookie specifier → checkAndSync()
+      // returns reauthNeeded and destroys the local cookie.
+      h.transport.setPullResponse(
+        StagingPaths.remoteDeviceCookie,
+        _makeRemoteCookie('ffffffffffffffffffffffffffffffff'),
+      );
+
+      final statuses = <SyncingStatus>[];
+      final sub = h.svc.syncStatus.listen((s) => statuses.add(s));
+
+      // Local mutation — must NOT throw even though sync will reauth.
+      await h.svc.capture(title: 'Conflict Task');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // No throw above and no error surfaced via the status stream.
+      expect(statuses.contains(SyncingStatus.error), isFalse,
+          reason: 'reauthNeeded must degrade silently in auto-push, NOT '
+              'surface an error status');
+
+      // The cookie conflict must have been routed through checkAndSync()
+      // (which destroys the mismatched local cookie), proving auto-push now
+      // consults the remote cookie rather than blindly pushing.
+      final cookie = await h.storage.get('cookie');
+      expect(cookie, isNull,
+          reason: 'Auto-sync must detect and destroy the mismatched cookie '
+              'instead of silently pushing against a conflicting identity');
+
+      await sub.cancel();
+      await h.close();
+    });
+
+    // AS3
+    test('AS3: no transport → auto-push no-ops safely and settles to '
+        'inSync (no throw, no stuck pendingPush)', () async {
+      final crypto = await _makeCrypto();
+      final storage = _FakeStorage();
+      final db = AppDatabase.inMemory();
+      final stagingStore = StagingStore(db);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        transport: null, // local-only mode
+        stagingStore: stagingStore,
+      );
+
+      final statuses = <SyncingStatus>[];
+      final sub = svc.syncStatus.listen((s) => statuses.add(s));
+
+      // Mutation schedules the debounce; no transport should be configured.
+      await svc.capture(title: 'Offline Task');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // No throw (test completing is the proof), no push happens (trivially),
+      // and the status must NOT stay stuck on pendingPush — a no-op auto-push
+      // should settle back to inSync.
+      expect(statuses.last, SyncingStatus.inSync,
+          reason: 'A no-op auto-push (no transport) must settle to inSync, '
+              'not leave the status stream stuck on pendingPush');
+
+      await sub.cancel();
+      svc.dispose();
+      await db.close();
+    });
+
+    // AS4
+    test('AS4: with a valid matching cookie, auto-push uses the fast path '
+        '(pulls hash index, pushes if changed) rather than a full blob '
+        'reconcile', () async {
+      final h = await _makeRowSync();
+
+      // Create a row so there is a pending write past the F1 gate.
+      await h.svc.capture(title: 'Fast Path Task');
+
+      // Match the cookie for the fast path.
+      h.transport.setPullResponse(
+        StagingPaths.remoteDeviceCookie,
+        _makeRemoteCookie(_knownSpecifier),
+      );
+
+      // Seed an identical remote hash index so diff.identical == true.
+      final localIndex = await StagingHashIndex.build(h.stagingStore);
+      h.transport.setPullResponse(
+        StagingPaths.remoteStagingHashIndex,
+        Uint8List.fromList(utf8.encode(json.encode(localIndex))),
+      );
+
+      // Let the debounced auto-push fire.
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // Fast path: hash index was pulled, but NO full blob pull happened.
+      expect(h.transport.pullPaths,
+          contains(StagingPaths.remoteStagingHashIndex),
+          reason: 'Auto-push must exercise the Tier-1 hash-index fast path');
+      expect(h.transport.pullPaths, isNot(contains('staging/blob')),
+          reason: 'On a matching cookie with identical hash index, auto-push '
+              'must skip the full blob reconcile');
+
+      await h.close();
+    });
+  });
+
+  group('AS+: Auto-Sync — Status-Stream Contract', () {
+    // AS5
+    test('AS5: after a successful auto-sync, status stream emits '
+        'pendingPush then settles to inSync (not stuck, no error)', () async {
+      final h = await _makeRowSync();
+
+      final statuses = <SyncingStatus>[];
+      final sub = h.svc.syncStatus.listen((s) => statuses.add(s));
+
+      await h.svc.capture(title: 'Sync OK Task');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // Must have gone through pendingPush and settled to inSync.
+      expect(statuses.contains(SyncingStatus.pendingPush), isTrue,
+          reason: 'A mutation must first surface pendingPush before the sync');
+      expect(statuses.last, SyncingStatus.inSync,
+          reason: 'A successful auto-sync must settle the status to inSync, '
+              'not leave it stuck on pendingPush');
+      expect(statuses.contains(SyncingStatus.error), isFalse,
+          reason: 'A successful auto-sync must not emit an error status');
+
+      await sub.cancel();
+      await h.close();
+    });
+
+    // AS6
+    test('AS6: network failure during auto-sync surfaces as error status '
+        '(distinct from the silent reauthNeeded path)', () async {
+      final h = await _makeRowSync();
+      h.transport.setThrowOnAll(true);
+
+      final statuses = <SyncingStatus>[];
+      final sub = h.svc.syncStatus.listen((s) => statuses.add(s));
+
+      await h.svc.capture(title: 'Network Fail Task');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      // Real transport failures must surface visually as error.
+      expect(statuses.contains(SyncingStatus.error), isTrue,
+          reason: 'A genuine network failure must emit error status so the UI '
+              'can surface it');
+      expect(statuses.last, SyncingStatus.error,
+          reason: 'A failed auto-sync must end in error, not inSync');
+
+      await sub.cancel();
+      await h.close();
+    });
+  });
 }

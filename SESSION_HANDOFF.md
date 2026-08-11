@@ -11,11 +11,13 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux`
-- **Flutter test suite:** `test/data/ledger/` 279/279 GREEN (**6 pre-existing ledger failures S1–S6 FIXED**); full-suite failures now only pre-existing cloud-sync/vault + flaky G3/G8 (57–63 run-to-run). `flutter analyze` clean on `engine_test.dart` + `summary_policy.dart`.
-- **Flutter Ledger Verify & Commit Fix:** ✅ **4-Phase TDD COMPLETE** (Phase 3 green fixed S1–S6; Phase 4 refactor clean). Now focused on **Ph-7 phone e2e step 2 (re-migrate real ledger + phone verify).**
+- **Ph-7 step 2 phone e2e (emulator-5554):** ✅ COMPLETE. On-device `integration_test/onboard_verify_test.dart` CONFIRMED both import paths on the migrated 132-block ledger. **Path A** (genesis-preserving `LedgerBackupService.importFromJson` = PHPSPEC pull) **`verify()=True` (132)**. **Path B** (`OnboardingService.importFromFile` onboarding) **`verify()=True` (132)** — genesis-replace bug FIXED via `keepExistingGenesis: true` (`_importRawChain`/`_importV2`) and confirmed on-device.
+- **🟢 History/calendar empty after onboarding FIXED:** `OnboardingService._seedStagingFromImportedBlocks` (+ `_backfillCommentAndMedia`) decoded `data_enc` as a legacy entries-only ARRAY, but migrated (post-0.4.0 / full-map) blocks store the payload as a full canonical MAP with `entries` nested → cast threw → no staging seeded → calendar showed no activities after onboarding. Added `_decodeBlockEntries()` handling both shapes; unit regression U1 (`test/services/onboarding_staging_seed_test.dart`).
+- **`original_hash` storage-fidelity bug FIXED:** `PhpSpecFormat` had no `kOriginalHash`; `_serializeCanonicalMap` + `blockToMap` dropped `original_hash` in the data_enc round-trip, so `_blockToMap` rebuilt migrated blocks WITHOUT it and the sealer recomputed a different hash than Python/Web. Added `kOriginalHash` + carry in import/export. Fidelity suite 15/15; `test/data/ledger/` 0 new failures (only pre-existing B1/B4/E6); analyzer clean.
+- **Flutter test suite:** `test/data/ledger/` + fidelity + backup + seal suites GREEN except pre-existing cloud-sync/vault + B1/B4/E6 + flaky G3/G8. `flutter analyze lib` clean on changed files.
+- **Python side (already done):** live ledger re-migrated (132 blocks), `chain.verify()=True`; backup at `~/.local/share/phpoc/backup_20260811_105703/`.
 - **Remote sync E2E:** 8/8 GREEN (requires `--timeout 180s`)
-- **Canonical Seal-Field (ADR-029/029a):** Phases 1–5 complete (Python/Web/Flutter/Migrator/PHPSPEC). **Ph-6 (vectors) 4-Phase TDD COMPLETE — P4 (REFACTOR) DONE. Ph-7 migrator summary synthesis 4-Phase TDD COMPLETE — P4 (REFACTOR) DONE.** Ph-7 (real re-migrate + phone e2e verify) next.
-- **Python suite:** 2586 pass / 1 skip / 0 fail. **Naming conformance (`test_naming_i04.py`): 50/50 GREEN** (fixed latent `_section_text` regex bug).
+- **Python suite:** 2614 pass / 1 skip / 0 fail.
 
 ## Cross-Client Staging Sync — Reference Chain
 - **Plan:** `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md`
@@ -24,17 +26,21 @@
 
 ## Immediate Next Steps 🎯
 
-### 🥇 QUEUE TOP: Canonical Seal-Field (ADR-029/029a) — Python ✅ · Web ✅ · Flutter ✅ · Migrator ✅ · **PHPSPEC ✅ · Ph-6 vectors ✅ · Ph-7 (migrator summary synth) ✅ · phone e2e 🔜**
-- **Plan:** `docs/planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md` (7 phases, each 4-phase TDD)
+### 🥈 Canonical Seal-Field (ADR-029/029a) — **Ph-7 step 2 phone e2e: ✅ COMPLETE**
+- **Plan:** `docs/planning/CANONICAL_SEAL_FIELD_IMPLEMENTATION_PLAN.md`
+**DONE this session:**
+- Re-migrated live ledger (132 blocks) verified under Python (`chain.verify()=True`).
+- Rebuilt Flutter debug APK; ran on-device `integration_test/onboard_verify_test.dart` on emulator-5554.
+- **Fixed Path B (onboarding import-from-file genesis preservation):** `_importRawChain`/`_importV2` → `_postImportSetup(..., keepExistingGenesis: true)`; the imported canonical genesis is preserved instead of deleted/replaced by a Flutter-format `{seed}` genesis. Unit regression L10 + integration Path B assert verify.
+- **Fixed `original_hash` storage-fidelity bug** (Part of ADR-029a seal set was dropped in data_enc round-trip) → Path A (PHPSPEC pull, genesis-preserving) `verify()=True` (132) on the emulator. Fidelity suite 15/15.
+- Added regression guards (fidelity A4 + C6).
+**✅ Ph-7 inbound onboarding paths COMPLETE & CONFIRMED ON-DEVICE.**
+Rebuilt debug APK; ran `integration_test/onboard_verify_test.dart` on emulator-5554 → `PH7E2E RESULT: pathA(importFromJson)=verify:true blocks:132 | pathB(importFromFile)=verify:true blocks:132` — **BOTH Path A and Path B verify()=True with all 132 migrated blocks. All tests passed.**
 
-**Ph-7 migrator summary synthesis — DONE (P1–P4):**
-- **P4 (REFACTOR) DONE:** `_canonicalize_summary` → explicit mutator (`-> None`, dropped unused `return block`; caller already owns a shallow copy). No behavior change. `TestMigrateFormatSummarySynthesis` 14/14 GREEN; `test_migrate_format.py` 57/57; migration+vectors scope 117 pass; **full Python suite 2614 pass / 1 skip / 0 fail** (the 1 prior full-suite flake passed this run).
-- **P3 (GREEN) recap:** added `_canonicalize_summary` in Phase-1 else-branch (synthesize `month=date[:7]` / `year=int(date[:4])` when absent, preserve explicit, drop stray `day_index`/`entries`; runs before re-seal so the partition identity is sealed). 14/14 GREEN.
-- **P1/P2 recap:** blueprint `docs/planning/CANONICAL_SEALFIELD_PHASE7_MIGRATOR_SUMMARY_PHASE1.md` (14 assertions A–D); RED 8, regression 6.
+**NEW this session (physical phone SM_S911B):** ledger onboards + verifies, but History/calendar showed NO activities. Root cause: onboarding staging-seed decode bug (fix + U1 regression above). **FIXED & CONFIRMED:** `Path B seededStaging=259` on emulator-5554 (was 0). APK rebuilt + reinstalled on the phone; re-onboard to see activities in the calendar.
 
-**🔜 NEXT — Ph-7 step 2: actually re-migrate the real ledger + rebuild/reinstall phone + confirm on-device `verify()`** (the remaining `- [ ]` boxes in the Phase 7 plan section). 132-block ledger; `chain.verify()` currently False (seals diverge); `migrate-format --force` on /tmp copy now succeeds+verifies with canonical `month`/`year` after the synthesis fix.
-
-_Prior: Ph-6 vectors (DONE):_
+### ✅ Flutter Storage Fidelity for Canonical Summaries — **4-PHASE TDD COMPLETE (P1–P4) + on-device validated**
+- Root cause of on-device "Integrity Check Failed" (full-map data_enc lossless import) P3 GONE; **P4 REFACTOR done**; on-device Path-A verify now True.
 - **P2 DONE:** `scripts/gen_canonical_seal_vectors.py` + `testdata/canonical_seal_vectors.json` (8 vectors, TWO chain-linked sequences); `tests/test_canonical_seal_vectors.py` (14) + `test_migration.py` B1–B5 rewired to `select_seal_fields`; Web B1-js–B5-js exact `expected_seal` via native HMAC (WASM glue broken on Node v24). Python full suite 2600 pass/1 skip/0 fail.
 - **P3 DONE (Flutter summary convergence FIXED):** `chain.dart` `_sealFields` → per-type `_sealFieldsByType`; `_sealBlock`/`_verifyBlockSeal` select `{type, month|year, date, prev_hash, original_hash}` for summaries. Group E C1–C4 **GREEN**; C5/C6/D2 guards GREEN.
 - **P4 (REFACTOR) DONE:** vectors DRYed (shared `_vector_map`; chain A/B dedup loop; fixture diff-verified, byte-identical); fixed `ledger_chain_test.mjs` typo. Analyzer + suites GREEN.
@@ -47,8 +53,17 @@ _Prior: Ph-6 vectors (DONE):_
   - Fixtures corrected: K2/K3/K4 valid `content_hash`; `_buildGenesis`/`_buildDayBlockNoDate` compute valid ADR-029a seals.
 - **P4 (REFACTOR) DONE:** removed unused `chain.dart`/`index_manager.dart` imports in `engine_test.dart`; `summary_policy.dart` map entries → null-aware `?month`/`?year`; removed dead `_buildDayBlock` fixture; renamed local helpers per `no_leading_underscores`. `flutter analyze` clean on both files.
 
+## Immediate Next Steps
+
+### Staging Auto-Sync — **Phases 1–3 ✅ DONE, Phase 4 (REFACTOR) NEXT**
+- **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`; **Phase1 doc:** `docs/planning/STAGING_AUTO_SYNC_AS_PHASE1.md`
+- **Change:** `_doPush()` → `checkAndSync(skipReadOnlyFastPath: true)` (bidirectional pull+merge+push on every debounced auto-push), silent on `reauthNeeded`, derive `SyncingStatus` from `SyncCheckResult`.
+- **Prereqs done:** CCS-1✅ CCS-2✅ CCS-3✅ CCS-4✅
+- **Phase 3 (GREEN) DONE in `sync_service.dart`:** added `skipReadOnlyFastPath` param to `checkAndSync()` (skips F1 read-only fast path so remove()/commit() still reconcile the stale remote); new `_runAutoSync()` helper maps `SyncCheckResult`→bool (ready/reauth→true, offline/genesisMismatch→false) and swallows thrown errors so a dangling debounce never escapes an unhandled exception; `_doPush()` now settles `inSync` on no-transport (AS3) and routes through `_runAutoSync()`.
+- **AS1–AS6 all GREEN:** `sync_service_row_level_test.dart` 60/60; `sync_service_overhaul_test.dart` 43/43 (incl. D12/F4/F5, previously regressed by F1 short-circuit — fixed); `test/data/ledger/` 280/280; sync dir `-11` identical pre-existing failures (K3/K7/M5/M10/N3/N18 + flaky restore G1/G3/G5/G6/G10).
+- **NEXT (Phase 4):** REFACTOR — review `_runAutoSync`/`_doPush` for modularity/clarity/security/conciseness; keep all new + existing tests GREEN.
+
 ## Other In-Flight
-- **Staging Auto-Sync** (queued): bidirectional `checkAndSync()` — `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
 
 ---
 
@@ -61,4 +76,5 @@ _Prior: Ph-6 vectors (DONE):_
 - Pre-existing Web red (unchanged): `ledger_merge_test` (block-1 entry-hash), `import_entries_test`, `genesis_gate_test`; `sync_service_test` 42 red
 - 2 pre-existing Flutter `restore_integration` flaky tests (G3, G8) — pass in isolation, fail in full suite
 - `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie. Remove after legacy path cleanup.
+
 - **🟢 `verify()` after cloud restore** — FIXED (Plan B: RC1–RC3). See `docs/planning/VERIFY_RESTORE_FIX_PLAN_B.md`.

@@ -181,6 +181,7 @@ Key test files:
 - `testdata/canonical_test_vectors.json` — 🔲 SUPERSEDED (Ph-6) — pre-ADR-029a open-set seal vectors; its stale `expected_seal` values are no longer consumed by any live test (referenced only by supersession guards/docstrings)
 - `testdata/canonical_seal_vectors.json` — 🟢 **NEW (Ph-6)** — closed-whitelist cross-client seal vectors: 8 vectors (genesis/day/month_summary/year_summary × original_hash absent/present) in TWO chain-linked sequences, each with exact `expected_seal` over `select_seal_fields`
 - `scripts/gen_canonical_seal_vectors.py` — 🟢 **NEW (Ph-6)** — generator that computes every `expected_seal` from `select_seal_fields` (A2 generation-self-consistent), writes `testdata/canonical_seal_vectors.json`
+- `phpoc-flutter/integration_test/onboard_verify_test.dart` — 🟡 **NEW (Ph-7 step 2)** — on-device integration test (runs on Android emulator via `flutter test integration_test/...`). Loads bundled `assets/migrated_ledger.json` (132-block migrated chain), drives Path A (`LedgerBackupService.importFromJson`, genesis-preserving) → `verify()` True; Path B (`OnboardingService.importFromFile`, onboard genesis-replace) → verify false (known finding). Revealed + guards the `original_hash` storage-fidelity bug. (2026-08-11)
 - `tests/test_phase5_main_wiring.py` — 72 tests, sync/onboarding CLI dispatch + argparse routing
 - `tests/test_transport_registry.py` — 50 tests (all GREEN), TransportProvider + TransportRegistry unit tests
 - `tests/conftest.py` — `TransportSpy`, cookie helpers, staging blob factories

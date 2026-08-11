@@ -463,7 +463,10 @@ class SyncService {
   // Sync Gate
   // ═════════════════════════════════════════════════════════════
 
-  Future<SyncCheckResult> checkAndSync({int cookieTtlMinutes = 30}) async {
+  Future<SyncCheckResult> checkAndSync({
+    int cookieTtlMinutes = 30,
+    bool skipReadOnlyFastPath = false,
+  }) async {
     if (transport == null) return SyncCheckResult.ready;
 
     try {
@@ -479,9 +482,12 @@ class SyncService {
         await _cookie.isValidLocally(storage, ttlMinutes: cookieTtlMinutes);
 
     if (localCookie != null) {
-      // F1: Read-only fast path — skip network when no pending writes
+      // F1: Read-only fast path — skip network when no pending writes.
+      // Skipped when [skipReadOnlyFastPath] is set (auto-push after a
+      // mutation): remove()/commit() can leave the LOCAL state clean while
+      // the REMOTE is stale, so we must still reconcile (pull + push).
       final pending = await hasPendingWrites();
-      if (!pending) {
+      if (!pending && !skipReadOnlyFastPath) {
         return SyncCheckResult.ready;
       }
 
@@ -822,30 +828,53 @@ class SyncService {
     _debounceTimer = Timer(_debounceWindow, () => _doPush());
   }
 
-  /// Execute the actual push with one automatic retry on failure.
+  /// Run one bidirectional auto-sync and report whether it settled cleanly.
+  ///
+  /// Routes through {@link checkAndSync} with [SyncCheckResult] mapped to a
+  /// bool: `ready`→true, `reauthNeeded`→true (silent, AS2),
+  /// `offline`/`genesisMismatch`→false. Any thrown error is swallowed and
+  /// reported as false so a background auto-push never escapes an unhandled
+  /// exception (e.g. a dangling debounce firing after a DB is closed).
+  ///
+  /// [skipReadOnlyFastPath] is always set: a mutation just occurred, so even
+  /// if the local store has no pending uncommitted rows (e.g. after
+  /// remove()/commit()), the remote must still be reconciled — the F1 fast
+  /// path would otherwise short-circuit and skip pulling the remote's stale
+  /// data.
+  Future<bool> _runAutoSync() async {
+    try {
+      final result = await checkAndSync(skipReadOnlyFastPath: true);
+      return switch (result) {
+        SyncCheckResult.ready => true,
+        SyncCheckResult.reauthNeeded => true,
+        SyncCheckResult.offline => false,
+        SyncCheckResult.genesisMismatch => false,
+      };
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Execute the debounced auto-sync (bidirectional pull + merge + push) with
+  /// one automatic retry on failure.
   Future<void> _doPush() async {
-    if (transport == null) return; // D15: local-only
+    if (transport == null) {
+      // D15: local-only — no network, settle back to inSync so the status
+      // stream isn't left stuck on pendingPush (AS3).
+      _syncStatusController.add(SyncingStatus.inSync);
+      return;
+    }
     if (!crypto.hasMasterKey) return; // D14: pre-auth
 
     _isSyncing = true;
     _syncStatusController.add(SyncingStatus.pendingPush);
 
-    bool ok = await _attemptPush();
-    if (!ok) ok = await _attemptPush(); // single retry per G8
+    bool ok = await _runAutoSync();
+    if (!ok) ok = await _runAutoSync(); // single retry per G8
 
     _isSyncing = false;
     _syncStatusController
         .add(ok ? SyncingStatus.inSync : SyncingStatus.error);
-  }
-
-  /// Try one push; returns true on success.
-  Future<bool> _attemptPush() async {
-    try {
-      await _pushStagingRowsToRemote();
-      return true;
-    } catch (_) {
-      return false;
-    }
   }
 
   /// Push current staging rows to remote as an obfuscated blob.

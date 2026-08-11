@@ -275,6 +275,27 @@ void main() {
       expect(service.decrypt(ct, mkHex), plaintext);
       expect(ct.length, greaterThan(48)); // min: salt(16) + nonce(8) + tag(32) → 56 * 2 hex
     });
+
+    // C9 — regression: legacy no-auth-tag ciphertext (long, ≥56 B) decrypts
+    // via the Python-compatible salt-derived key fallback (not mk[:16]).
+    //
+    // A pre-migration pause blob may be long enough that the trailing 32 bytes
+    // are ciphertext, not a valid auth tag. Python's `CryptoManager.decrypt`
+    // falls back to old/no-tag format and decrypts with `_derive_sub_key(salt)`.
+    // Flutter must match, or `utf8.decode` of the wrong-key garbage throws and
+    // cross-client on-device `verify()` fails on such entries.
+    test('C9: legacy long no-tag ciphertext decrypts via salt-derived key', () {
+      const plaintext = 'long legacy blob that spans multiple 16-byte blocks ' +
+          'so the ciphertext without a tag is long enough to trigger the ' +
+          'ambiguous length path>56 bytes'; // > 56 bytes plaintext
+      final ct = service.encrypt(plaintext, mkHex);
+      // Strip the trailing 32-byte auth tag → old/no-tag format. The remaining
+      // salt(16)+nonce(8)+ciphertext is >= 56 bytes, so decrypt() sees a
+      // non-verifying "tag" and must use the derived-key raw fallback.
+      final tagless = ct.substring(0, ct.length - 64); // 32 bytes = 64 hex
+      expect(tagless.length, greaterThan(112));
+      expect(service.decrypt(tagless, mkHex), plaintext);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════

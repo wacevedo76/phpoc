@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Personal migrated ledger — never commit (rich-device e2e fixture)
+/assets/migrated_ledger.json

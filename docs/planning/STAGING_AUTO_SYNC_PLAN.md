@@ -1,6 +1,6 @@
 # Staging Auto-Sync — Plan
 
-> **Status:** 🔜 Queued (after CCS-4)
+> **Status:** ✅ Phase 3 (GREEN) complete — `_doPush()` now routes through `checkAndSync()`. Phase 4 (REFACTOR) next.
 > **Depends on:** CCS-2 (Web), CCS-3 (CLI), CCS-4 (E2E testing)
 > **Scope:** Flutter — upgrade debounced auto-push to full bidirectional staging sync
 

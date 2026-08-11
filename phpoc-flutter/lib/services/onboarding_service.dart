@@ -425,8 +425,12 @@ class OnboardingService with DecryptHelpers {
     // Write staging entries
     await _writeStagingEntries(staging);
 
-    // Post-import: Flutter-format genesis, device identity, flag
-    await _postImportSetup(passphrase, seedB64);
+    // Post-import: preserve the imported canonical genesis (already written
+    // to the blocks table by importFromJson), set device identity/flag.
+    // keepExistingGenesis:true mirrors the cloud-restore path and prevents
+    // _buildAndPersistGenesis from deleting the canonical imported genesis
+    // and swapping in a Flutter-format one (which breaks chain verification).
+    await _postImportSetup(passphrase, seedB64, keepExistingGenesis: true);
 
     // Seed staging from imported blocks (in addition to the explicit
     // staging entries above) so committed ledger entries are visible.
@@ -471,8 +475,12 @@ class OnboardingService with DecryptHelpers {
     final backupService = LedgerBackupService(db: db);
     await backupService.importFromJson(jsonEncode(blocks));
 
-    // Post-import: Flutter-format genesis, device identity, flag
-    await _postImportSetup(passphrase, seedB64);
+    // Post-import: preserve the imported canonical genesis (already written
+    // to the blocks table by importFromJson), set device identity/flag.
+    // keepExistingGenesis:true prevents _buildAndPersistGenesis from deleting
+    // the canonical imported genesis and swapping in a Flutter-format one
+    // (which breaks chain verification).
+    await _postImportSetup(passphrase, seedB64, keepExistingGenesis: true);
 
     // Seed staging table from imported blocks so Dashboard/History
     // can display committed ledger entries without a separate sync step.
@@ -532,6 +540,27 @@ class OnboardingService with DecryptHelpers {
     }
   }
 
+  /// Decode a stored block's `data_enc` payload into a list of PHPSPEC
+  /// entry objects (`{hash, data}`).
+  ///
+  /// `data_enc` is base64(UTF8(JSON(payload))) where payload is EITHER:
+  ///   - a full canonical block map (post-0.4.0 / migrated PHPSPEC format)
+  ///     with the entries array nested under the `entries` key, OR
+  ///   - a legacy entries-only array (Bug C).
+  /// Both shapes are handled; returns an empty list when unparseable.
+  static List<dynamic> _decodeBlockEntries(String dataEnc) {
+    try {
+      final jsonStr = utf8.decode(base64.decode(dataEnc));
+      final dynamic parsed = jsonDecode(jsonStr);
+      if (parsed is List) return parsed;
+      if (parsed is Map) {
+        final entries = parsed['entries'];
+        if (entries is List) return entries;
+      }
+    } catch (_) {}
+    return const [];
+  }
+
   /// Seed the staging table with entries extracted from imported ledger
   /// blocks (raw chain and v2 imports).
   ///
@@ -575,14 +604,11 @@ class OnboardingService with DecryptHelpers {
         continue;
       }
 
-      // Decode data_enc: base64 → UTF-8 JSON array of PHPSPEC entry objects.
-      List<dynamic> entriesList;
-      try {
-        final jsonStr = utf8.decode(base64.decode(block.dataEnc));
-        entriesList = jsonDecode(jsonStr) as List<dynamic>;
-      } catch (_) {
-        continue; // Corrupted or genesis-format data_enc — skip
-      }
+      // Decode data_enc — may be a full canonical MAP (migrated/PHPSPEC
+      // format, entries nested under `entries`) or a legacy entries-only
+      // ARRAY. Skips blocks with no decodable entries.
+      final entriesList = _decodeBlockEntries(block.dataEnc);
+      if (entriesList.isEmpty) continue;
 
       for (final raw in entriesList) {
         if (raw is! Map<String, dynamic>) continue;
@@ -709,13 +735,8 @@ class OnboardingService with DecryptHelpers {
           block.blockType == BlockType.year) {
         continue;
       }
-      List<dynamic> entriesList;
-      try {
-        final jsonStr = utf8.decode(base64.decode(block.dataEnc));
-        entriesList = jsonDecode(jsonStr) as List<dynamic>;
-      } catch (_) {
-        continue;
-      }
+      final entriesList = _decodeBlockEntries(block.dataEnc);
+      if (entriesList.isEmpty) continue;
       for (final raw in entriesList) {
         if (raw is! Map<String, dynamic>) continue;
         final h = raw['hash'] as String?;
