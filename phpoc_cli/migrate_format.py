@@ -138,6 +138,38 @@ class MigrateFormatCommand:
         }.get(block.get("type"))
 
     @staticmethod
+    def _canonicalize_summary(block: dict) -> None:
+        """Synthesize the canonical ADR-029a summary partition-identity fields.
+
+        This is a mutating helper: it edits `block` in place and returns
+        nothing (the caller already owns a shallow copy).
+
+        For a `month_summary` input lacking `month`, derive
+        ``month = date[:7]`` (the ``YYYY-MM`` partition); for a `year_summary`
+        lacking `year`, derive ``year = int(date[:4])``. An explicit
+        `month`/`year` is always preserved (migration is a re-stamp, not a
+        re-semantic). Stray `day_index`/`entries` are dropped so the summary
+        keeps PHPSPEC's closed shape (summaries carry neither). `date`,
+        `prev_hash`, `original_hash`, `type` are left intact. The synthesized
+        identity then feeds the Phase-2 re-seal through `select_seal_fields`.
+        """
+        btype = block.get("type")
+        if btype == "month_summary":
+            if "month" not in block:
+                block["month"] = (block.get("date") or "")[:7]
+        elif btype == "year_summary":
+            if "year" not in block:
+                year_prefix = (block.get("date") or "")[:4]
+                try:
+                    block["year"] = int(year_prefix)
+                except ValueError:
+                    # Non-numeric/empty year prefix — derive nothing rather
+                    # than crash the migration (atomic, non-raising).
+                    pass
+        block.pop("day_index", None)
+        block.pop("entries", None)
+
+    @staticmethod
     def _preserve_and_strip(block: dict, hk: str) -> dict:
         """Save the current hash under `original_hash`, then clear every stale
         hash key and the identity_seal so Phase 2 re-seals onto one value.
@@ -346,8 +378,12 @@ class MigrateFormatCommand:
                 print(f"  Block {i}: day — {len(new_entries)} entries migrated")
 
             else:
-                # month_summary, year_summary — re-seal in Phase 2 (must be
-                # rebuilt since preceding day hashes change their prev_hash).
+                # month_summary, year_summary — synthesize the canonical
+                # ADR-029a partition identity (month/year) from `date` when
+                # the input carries none (e.g. a replaced ledger), then re-seal
+                # in Phase 2 (must be rebuilt since preceding day hashes change
+                # their prev_hash).
+                self._canonicalize_summary(block)
                 self._preserve_and_strip(block, self._block_hash_key(block))
                 new_blocks.append(block)
 

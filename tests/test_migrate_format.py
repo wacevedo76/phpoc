@@ -991,5 +991,240 @@ class TestMigrateFormatSealWhitelist(unittest.TestCase):
         self.assertIn("oddball", [b["type"] for b in reloaded])
 
 
+class TestMigrateFormatSummarySynthesis(unittest.TestCase):
+    """Ph-7 migrator summary identity synthesis (bp CANONICAL_SEALFIELD_PHASE7_MIGRATOR_SUMMARY_PHASE1.md).
+
+    Groups A–D: the migrator must synthesize canonical ADR-029a `month`/`year`
+    on `month_summary`/`year_summary` *input* blocks that lack it (the real
+    132-block replaced-ledger rep, where summaries carry `day_index`/`entries`
+    but no partition identity), drop the stray fields, and re-seal so the
+    partition identity is sealed into `month_hash`/`year_hash`.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.crypto = _MockCrypto()
+        cls.identity_secret = b"test-identity-16b"
+
+    # ── helpers ───────────────────────────────────────────────────
+
+    def _migrate_to(self, chain, name="ledger.json"):
+        """Write `chain`, run a full migration in a temp dir."""
+        from phpoc_cli.migrate_format import MigrateFormatCommand
+        tmpdir = Path(tempfile.mkdtemp())
+        lp = tmpdir / name
+        lp.write_text(json.dumps(chain, indent=2))
+        migrator = MigrateFormatCommand(
+            data_dir=tmpdir, identity_secret=self.identity_secret, ledger_path=lp)
+        migrator._derive_crypto = lambda genesis: self.crypto
+        result = migrator.execute(skip_prompt=True)
+        return migrator, lp, json.loads(lp.read_text())
+
+    def _verify(self, migrated_blocks, path):
+        from domain.ledger.chain import LedgerChain
+        from storage.implementations.file_ledger import FileLedgerStore
+        path.write_text(json.dumps(migrated_blocks, indent=2))
+        ch = LedgerChain(self.crypto, FileLedgerStore(path),
+                         identity_secret=self.identity_secret)
+        return ch.verify()
+
+    def _chain_with_noncanonical_summaries(self, num_day_blocks=1):
+        """Build genesis + N days + non-canonical month/year summaries.
+
+        The summaries deliberately lack `month`/`year` and carry stray
+        `day_index`/`entries` — reproducing the replaced-ledger 132-block case.
+        """
+        chain = build_chain(self.crypto, self.identity_secret, num_day_blocks=num_day_blocks)
+        last = chain[-1]
+        last_key = "block_hash" if last["type"] == "genesis" else "day_hash"
+
+        month = {"type": "month_summary", "date": "2026-07-31",
+                 "prev_hash": last.get(last_key), "day_index": 31, "entries": []}
+        month["month_hash"] = self.crypto.seal(
+            json.dumps(select_seal_fields(month), sort_keys=True))
+
+        year = {"type": "year_summary", "date": "2026-12-31",
+                "prev_hash": month["month_hash"], "day_index": 31, "entries": []}
+        year["year_hash"] = self.crypto.seal(
+            json.dumps(select_seal_fields(year), sort_keys=True))
+
+        chain.append(month)
+        chain.append(year)
+        return chain
+
+    def _single_summary(self, summary):
+        """Migration of a single pre-sealed summary appended to a 1-day chain."""
+        chain = build_chain(self.crypto, self.identity_secret, num_day_blocks=1)
+        last = chain[-1]
+        last_key = "day_hash" if last["type"] == "day" else "block_hash"
+        summary["prev_hash"] = last.get(last_key)
+        summary["month_hash" if summary["type"] == "month_summary" else "year_hash"] = \
+            self.crypto.seal(json.dumps(select_seal_fields(summary), sort_keys=True))
+        chain.append(summary)
+        return self._migrate_to(chain)
+
+    # ── Group A: month_summary identity synthesis ────────────────
+
+    def test_A1_month_synthesized_from_date(self):
+        """A1: month_summary input lacking `month` gains month == date[:7]."""
+        from domain.ledger.chain import select_seal_fields
+        month = {"type": "month_summary", "date": "2026-05-02"}  # no `month`
+        _, _, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertEqual(block["month"], "2026-05",
+                         "month must be synmed from date[:7]")
+        self.assertIn("month", select_seal_fields(block),
+                      "synthesized month must enter the seal input")
+
+    def test_A2_existing_month_preserved(self):
+        """A2: month_summary already carrying `month` keeps it even if it differs from date[:7]."""
+        month = {"type": "month_summary", "date": "2026-05-02", "month": "1999-01"}
+        _, _, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertEqual(block["month"], "1999-01",
+                         "explicit month must be preserved, not overwritten")
+
+    def test_A3_month_stray_fields_stripped(self):
+        """A3: stray day_index/entries dropped from month_summary."""
+        month = {"type": "month_summary", "date": "2026-05-02",
+                 "day_index": 42, "entries": [{"hash": "h" * 64, "data": {}}]}
+        _, _, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertNotIn("day_index", block,
+                         "day_index must be dropped per PHPSPEC closed summary shape")
+        self.assertNotIn("entries", block,
+                         "entries must be dropped per PHPSPEC closed summary shape")
+
+    def test_A4_month_is_sealed(self):
+        """A4: month_hash == compute_seal over {type, month, date, prev_hash, original_hash}."""
+        from domain.ledger.chain import compute_seal, select_seal_fields
+        month = {"type": "month_summary", "date": "2026-05-02"}
+        _, _, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertEqual(block["month"], "2026-05")
+        self.assertEqual(block["month_hash"], compute_seal(self.crypto, block),
+                         "synthesized month must be covered by the summary seal")
+        self.assertEqual(set(select_seal_fields(block).keys()),
+                         {"type", "month", "date", "prev_hash", "original_hash"})
+
+    # ── Group B: year_summary identity synthesis ─────────────────
+
+    def test_B1_year_synthesized_from_date(self):
+        """B1: year_summary input lacking `year` gains year == int(date[:4])."""
+        from domain.ledger.chain import select_seal_fields
+        year = {"type": "year_summary", "date": "2026-06-19"}
+        _, _, migrated = self._single_summary(year)
+        block = next(b for b in migrated if b["type"] == "year_summary")
+        self.assertEqual(block["year"], 2026,
+                         "year must be synthesized as int(date[:4])")
+        self.assertIn("year", select_seal_fields(block),
+                      "synthesized year must enter the seal input")
+
+    def test_B2_existing_year_preserved(self):
+        """B2: year_summary already carrying `year` keeps it even if it differs from int(date[:4])."""
+        year = {"type": "year_summary", "date": "2026-06-19", "year": 1999}
+        _, _, migrated = self._single_summary(year)
+        block = next(b for b in migrated if b["type"] == "year_summary")
+        self.assertEqual(block["year"], 1999,
+                         "explicit year must be preserved, not overwritten")
+
+    def test_B3_year_stray_fields_stripped(self):
+        """B3: stray day_index/entries dropped from year_summary."""
+        year = {"type": "year_summary", "date": "2026-06-19",
+                "day_index": 365, "entries": [{"hash": "h" * 64, "data": {}}]}
+        _, _, migrated = self._single_summary(year)
+        block = next(b for b in migrated if b["type"] == "year_summary")
+        self.assertNotIn("day_index", block,
+                         "day_index must be dropped from year_summary")
+        self.assertNotIn("entries", block,
+                         "entries must be dropped from year_summary")
+
+    def test_B4_year_is_sealed(self):
+        """B4: year_hash == compute_seal over {type, year, date, prev_hash, original_hash}."""
+        from domain.ledger.chain import compute_seal, select_seal_fields
+        year = {"type": "year_summary", "date": "2026-06-19"}
+        _, _, migrated = self._single_summary(year)
+        block = next(b for b in migrated if b["type"] == "year_summary")
+        self.assertEqual(block["year"], 2026)
+        self.assertEqual(block["year_hash"], compute_seal(self.crypto, block),
+                         "synthesized year must be covered by the summary seal")
+        self.assertEqual(set(select_seal_fields(block).keys()),
+                         {"type", "year", "date", "prev_hash", "original_hash"})
+
+    # ── Group C: chain integrity after synthesis ─────────────────
+
+    def test_C1_chain_verifies_with_canonical_synthesized_summaries(self):
+        """C1: a chain of non-canonical summaries verifies AND gains canonical month/year."""
+        chain = self._chain_with_noncanonical_summaries(num_day_blocks=2)
+        _, lp, migrated = self._migrate_to(chain)
+        # end-to-end: synthesized chain must be fully valid
+        self.assertTrue(self._verify(migrated, lp),
+                        "synthesized canonical chain must verify")
+        month = next(b for b in migrated if b["type"] == "month_summary")
+        year = next(b for b in migrated if b["type"] == "year_summary")
+        self.assertEqual(month["month"], "2026-07")
+        self.assertEqual(year["year"], 2026)
+
+    def test_C2_prev_hash_linkage_survives_synthesis(self):
+        """C2: synthesized summary prev_hash still points to the previous block's new hash."""
+        chain = self._chain_with_noncanonical_summaries(num_day_blocks=2)
+        _, lp, migrated = self._migrate_to(chain)
+        idx_month = next(i for i, b in enumerate(migrated) if b["type"] == "month_summary")
+        prev = migrated[idx_month - 1]
+        prev_key = {"genesis": "block_hash", "day": "day_hash"}[prev["type"]]
+        self.assertEqual(migrated[idx_month]["prev_hash"], prev[prev_key],
+                         "month prev_hash must point to previous block's new hash")
+        idx_year = next(i for i, b in enumerate(migrated) if b["type"] == "year_summary")
+        self.assertEqual(migrated[idx_year]["prev_hash"], migrated[idx_month]["month_hash"],
+                         "year prev_hash must point to the migrated month_hash")
+
+    def test_C3_tampered_month_detected(self):
+        """C3: mutating a synthesized summary's month/year makes chain.verify() False."""
+        chain = self._chain_with_noncanonical_summaries(num_day_blocks=1)
+        _, lp, migrated = self._migrate_to(chain)
+        month = next(b for b in migrated if b["type"] == "month_summary")
+        month["month"] = "2099-99"  # tamper the now-sealed partition identity
+        self.assertFalse(self._verify(migrated, lp),
+                         "tampered synthesized month must be detected")
+
+    # ── Group D: edge cases / robustness ─────────────────────────
+
+    def test_D1_short_date_migrates_without_raise(self):
+        """D1: a month_summary with a short/non-ISO date still migrates (no raise) and verifies."""
+        month = {"type": "month_summary", "date": "26-05"}
+        _, lp, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertIn("month", block,
+                      "synthesis must not raise and must still emit a month")
+        self.assertTrue(self._verify(migrated, lp),
+                        "short-date summary chain must still verify")
+
+    def test_D2_already_canonical_summary_is_noop(self):
+        """D2: an already-canonical summary keeps its identity and gains no stray fields."""
+        month = {"type": "month_summary", "date": "2026-05-02", "month": "2026-05"}
+        _, _, migrated = self._single_summary(month)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertEqual(block["month"], "2026-05")
+        self.assertNotIn("day_index", block)
+        self.assertNotIn("entries", block)
+
+    def test_D3_original_hash_preserved_and_sealed(self):
+        """D3: original_hash (provenance) survives on a synthesized summary and is sealed."""
+        from domain.ledger.chain import select_seal_fields
+        month = {"type": "month_summary", "date": "2026-05-02"}
+        chain = build_chain(self.crypto, self.identity_secret, num_day_blocks=1)
+        last_key = "day_hash" if chain[-1]["type"] == "day" else "block_hash"
+        old_hash = self.crypto.seal("old-seal-for-provenance")
+        month["prev_hash"] = chain[-1].get(last_key)
+        month["month_hash"] = old_hash
+        chain.append(month)
+        _, _, migrated = self._migrate_to(chain)
+        block = next(b for b in migrated if b["type"] == "month_summary")
+        self.assertEqual(block["original_hash"], old_hash,
+                         "original_hash must be preserved alongside synthesis")
+        self.assertIn("original_hash", select_seal_fields(block),
+                       "original_hash must remain sealed on the synthesized summary")
+
+
 if __name__ == "__main__":
     unittest.main()

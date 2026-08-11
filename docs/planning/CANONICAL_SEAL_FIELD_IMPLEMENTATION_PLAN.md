@@ -154,6 +154,13 @@ Migrated ledger (`after-4-migration.json`) verifies on Flutter — the exact 0/1
 
 **Goal:** End-to-end proof on the phone.
 
+- **[x]** Migrator summary-synthesis sub-task **4-Phase TDD COMPLETE**: `_canonicalize_summary`
+  synthesizes ADR-029a `month`/`year` on non-canonical summary input blocks (the real
+  132-block replaced-ledger rep), drops stray `day_index`/`entries`, and re-seals the partition
+  identity. Blueprint `CANONICAL_SEALFIELD_PHASE7_MIGRATOR_SUMMARY_PHASE1.md` (14 assertions
+  A–D); `TestMigrateFormatSummarySynthesis` 14/14 GREEN; `test_migrate_format.py` 57/57; full
+  Python suite 2614 pass/1 skip. Phase 4 refactor done (`_canonicalize_summary` → explicit
+  mutator, no change to behavior).
 - **[ ]** Re-run migration on the current 0.4.0 ledger (backup first; D5/D9) to restamp all 129
   block seals to the 6-field whitelist.
 - **[ ]** Verify with Python `chain.verify()` (129/129).
