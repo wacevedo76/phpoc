@@ -6,6 +6,8 @@
 
 This document is the authoritative reference for how PHPOC staging sync and reconciliation work across CLI (Python), Web (JavaScript), and Flutter (Dart) clients. It defines the protocol contracts, sync flow, resolution rules, and the relationship between current (monolithic blob) and target (row-level) architectures.
 
+> **Flutter note (2026-08, Option A retirement):** The Flutter `SyncService` legacy `LocalCache` monolithic-blob path (`staging/blobs/current.json`, `_pushBlobOnly`) was **fully retired**. `stagingStore` is now required/non-null; all Flutter sync operations use the row-level `StagingStore` and push `staging/blob` (+ `staging/hash_index.json`). See `docs/planning/ZOMBIE_BLOB_CLEANUP_PHASE3.md`.
+
 ---
 
 ## 1. Architecture Overview

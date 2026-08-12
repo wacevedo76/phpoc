@@ -101,7 +101,7 @@
 | 3 | A2 | Check cookie existence before TTL; return `reauthNeeded` on expiry; `isValidLocally` no longer destroys cookie | `sync_service.dart` + `device_cookie.dart` |
 | 4 | F1 | Implement `hasPendingWrites()`; skip network in `checkAndSync` on zero writes | `sync_service.dart` |
 
-**Remaining known issue:** `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie (line 738, `staging/blobs/current.json`). Only hit when `stagingStore == null` (legacy LocalCache fallback, never reached in normal operation). Remove after CCS-2 lands.
+**~~Remaining known issue~~ RESOLVED ✅:** `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — old-path zombie (`staging/blobs/current.json`). **2026-08 Option A (full legacy-LocalCache retirement) complete via 4-phase TDD: P1 ✅, P2 (RED Z1–Z10) ✅, P3 (GREEN) ✅, P4 (REFACTOR) ✅ — Z1–Z10 all GREEN.** `stagingStore` required/non-null; all legacy blob branches deleted. P4: removed duplicate auto-push header + over-indentation in `end`/`pause`/`unpause`; moved `LocalCache.computeDuration` → `FormatUtils.computeDurationMsec`; collapsed the `_reconcileAndClaim()` wrapper into `_reconcileAndClaimRowLevel()` (`docs/planning/ZOMBIE_BLOB_CLEANUP_PHASE3.md`).
 
 ---
 
@@ -178,9 +178,9 @@
 
 ---
 
-### 🟡 Staging Auto-Sync: Flutter — Upgrade Auto-Push to Bidirectional Sync
+### ✅ Staging Auto-Sync: Flutter — Upgrade Auto-Push to Bidirectional Sync
 
-**Status:** Phase 3 (GREEN) done (AS1–AS6 all GREEN). Phase 4 (REFACTOR) next. **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
+**Status:** 4-Phase TDD COMPLETE. **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
 
 **What:** Replace `_doPush()` → `_attemptPush()` (push-only) with `checkAndSync()` (pull + merge + push). Every staging mutation automatically syncs bidirectionally instead of just pushing.
 

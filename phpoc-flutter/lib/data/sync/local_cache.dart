@@ -108,7 +108,8 @@ class LocalCache {
     }
 
     final deviceUuid = _decrypt(data['device_uuid_enc'] as String?) ?? '';
-    final endDeviceUuid = _decrypt(data['end_device_uuid_enc'] as String?) ?? '';
+    final endDeviceUuid =
+        _decrypt(data['end_device_uuid_enc'] as String?) ?? '';
 
     // Per-field encryption fields
     String title = data['title'] as String? ?? '';
@@ -164,20 +165,40 @@ class LocalCache {
   }
 
   /// Convert a flat DTO to raw {hash, data: {...}} format.
-  Map<String, dynamic> _dtoToRaw(Map<String, dynamic> dto, {bool forcePlain = false}) {
+  Map<String, dynamic> _dtoToRaw(
+    Map<String, dynamic> dto, {
+    bool forcePlain = false,
+  }) {
     final data = <String, dynamic>{
       'entry_id': dto['entry_id'] ?? '',
       'title': dto['title'] ?? '',
-      'startTime_enc': _encrypt(dto['start_epoch'] ?? 0, forcePlain: forcePlain),
-      'endTime_enc': dto['end_epoch'] != null ? _encrypt(dto['end_epoch'], forcePlain: forcePlain) : null,
+      'startTime_enc': _encrypt(
+        dto['start_epoch'] ?? 0,
+        forcePlain: forcePlain,
+      ),
+      'endTime_enc': dto['end_epoch'] != null
+          ? _encrypt(dto['end_epoch'], forcePlain: forcePlain)
+          : null,
       'duration': dto['duration'] ?? 0,
       'is_active': dto['is_active'] ?? true,
       'is_paused': dto['is_paused'] ?? false,
-      'pauses_enc': _encrypt(json.encode(dto['pauses'] ?? []), forcePlain: forcePlain),
+      'pauses_enc': _encrypt(
+        json.encode(dto['pauses'] ?? []),
+        forcePlain: forcePlain,
+      ),
       'tags': dto['tags'] ?? [],
-      'device_uuid_enc': _encrypt(dto['device_uuid'] ?? '', forcePlain: forcePlain),
-      'end_device_uuid_enc': _encrypt(dto['end_device_uuid'] ?? '', forcePlain: forcePlain),
-      'metadata_enc': _encrypt(json.encode(dto['metadata'] ?? {}), forcePlain: forcePlain),
+      'device_uuid_enc': _encrypt(
+        dto['device_uuid'] ?? '',
+        forcePlain: forcePlain,
+      ),
+      'end_device_uuid_enc': _encrypt(
+        dto['end_device_uuid'] ?? '',
+        forcePlain: forcePlain,
+      ),
+      'metadata_enc': _encrypt(
+        json.encode(dto['metadata'] ?? {}),
+        forcePlain: forcePlain,
+      ),
     };
     if (dto['comment'] != null) data['comment'] = dto['comment'];
 
@@ -263,8 +284,13 @@ class LocalCache {
       'metadata_enc': _encrypt('{}'),
     };
     // Per-field encryptable fields (title, tags, comment)
-    if (!shouldEncrypt('title')) data['title_enc'] = _encrypt(title, forcePlain: true);
-    if (!shouldEncrypt('tags')) data['tags_enc'] = _encrypt(json.encode(normalizedTags), forcePlain: true);
+    if (!shouldEncrypt('title'))
+      data['title_enc'] = _encrypt(title, forcePlain: true);
+    if (!shouldEncrypt('tags'))
+      data['tags_enc'] = _encrypt(
+        json.encode(normalizedTags),
+        forcePlain: true,
+      );
     if (comment != null) {
       data['comment'] = comment;
       if (!shouldEncrypt('comment')) {
@@ -293,11 +319,7 @@ class LocalCache {
       'comment': comment,
     });
 
-    final rawEntry = {
-      'hash': hash,
-      'data': data,
-      'committed': false,
-    };
+    final rawEntry = {'hash': hash, 'data': data, 'committed': false};
 
     entries.add(rawEntry);
     await storage.set('entries', entries);
@@ -337,7 +359,11 @@ class LocalCache {
   /// No-op on committed entries.
   /// [encryptFields] controls per-field encryption for title/tags/comment
   /// (default empty = only timestamps encrypted).
-  Future<void> update(int index, Map<String, dynamic> fields, {Set<String> encryptFields = const {}}) async {
+  Future<void> update(
+    int index,
+    Map<String, dynamic> fields, {
+    Set<String> encryptFields = const {},
+  }) async {
     final rawEntries = (await storage.get('entries') as List?) ?? [];
     if (index < 0 || index >= rawEntries.length) return;
 
@@ -357,18 +383,34 @@ class LocalCache {
 
     // ── Per-field encryptable: title, tags, comment (plain + _enc) ─
     if (fields.containsKey('title')) {
-      _upsertEncryptableField(data, 'title', fields['title'], encrypt: shouldEncrypt('title'));
+      _upsertEncryptableField(
+        data,
+        'title',
+        fields['title'],
+        encrypt: shouldEncrypt('title'),
+      );
     }
     if (fields.containsKey('tags')) {
       final norm = _normalizeTags(fields['tags']);
-      _upsertEncryptableField(data, 'tags', norm, encrypt: shouldEncrypt('tags'), encode: json.encode);
+      _upsertEncryptableField(
+        data,
+        'tags',
+        norm,
+        encrypt: shouldEncrypt('tags'),
+        encode: json.encode,
+      );
     }
     if (fields.containsKey('comment')) {
       if (fields['comment'] == null) {
         data.remove('comment');
         data.remove('comment_enc');
       } else {
-        _upsertEncryptableField(data, 'comment', fields['comment'], encrypt: shouldEncrypt('comment'));
+        _upsertEncryptableField(
+          data,
+          'comment',
+          fields['comment'],
+          encrypt: shouldEncrypt('comment'),
+        );
       }
     }
 
@@ -392,8 +434,10 @@ class LocalCache {
     }
 
     // ── Plain-only fields (no encryption) ─────────────────────────
-    if (fields.containsKey('is_active')) data['is_active'] = fields['is_active'];
-    if (fields.containsKey('is_paused')) data['is_paused'] = fields['is_paused'];
+    if (fields.containsKey('is_active'))
+      data['is_active'] = fields['is_active'];
+    if (fields.containsKey('is_paused'))
+      data['is_paused'] = fields['is_paused'];
     if (fields.containsKey('duration')) data['duration'] = fields['duration'];
 
     if (encryptFields.isNotEmpty) {
@@ -467,25 +511,6 @@ class LocalCache {
     raw['hash'] = _computeEntryHash(dto);
     rawEntries[index] = raw;
     await storage.set('entries', rawEntries);
-  }
-
-  // ── Duration computation ──────────────────────────────────────
-
-  /// Compute active duration as wall time minus all completed pause intervals.
-  static int computeDuration(int? startEpoch, int? endEpoch, List pauses) {
-    if (endEpoch == null || startEpoch == null) return 0;
-    int totalPauseMs = 0;
-    for (final p in pauses) {
-      if (p is Map) {
-        final stop = p['pause_stop'];
-        final start = p['pause_start'];
-        if (stop != null && start != null) {
-          totalPauseMs += (stop as int) - (start as int);
-        }
-      }
-    }
-    final result = endEpoch - startEpoch - totalPauseMs;
-    return result < 0 ? 0 : result;
   }
 
   // ── markCommitted ─────────────────────────────────────────────

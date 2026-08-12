@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 
@@ -32,6 +34,15 @@ Future<CryptoService> _makeCrypto() async {
     '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
   );
   return crypto;
+}
+
+/// Create a SyncService wired with a row-level StagingStore.
+SyncService _mk(_FakeStorage storage, CryptoService crypto) {
+  return SyncService(
+    storage: storage,
+    crypto: crypto,
+    stagingStore: StagingStore(AppDatabase.inMemory()),
+  );
 }
 
 /// Build an obfuscated staging blob from entries + deviceId.
@@ -70,7 +81,7 @@ void main() {
       // Create a mock transport that returns a known blob
       // RED: mock transport not yet wired
 
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // The SyncService must support an initial pull operation that
       // can be called from OnboardingService.restoreFromCloud.
@@ -119,7 +130,7 @@ void main() {
       // RED: Full merge pipeline — pull → deobfuscate → merge → write
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // After a successful reconcile, entries from remote should be visible
       // via getEntries(). Phase 3: mock transport + reconcile call.
@@ -137,7 +148,7 @@ void main() {
       // must create a local cookie and push it to claim ownership.
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Phase 3: after reconcile, storage must contain a cookie entry.
       // For now, verify the storage interface is available.
@@ -155,7 +166,7 @@ void main() {
       // the restore should result in empty staging.
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Genesis-only state: no entries in staging
       final entries = await svc.getEntries();
@@ -237,7 +248,7 @@ void main() {
       // RED: Corrupted blob must not corrupt local state.
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Capture a local entry first
       await svc.capture(title: 'Local Task Before Pull');
@@ -269,7 +280,7 @@ void main() {
       // remains empty — this is the normal first-device case.
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Without a transport configured, isRemoteAvailable is false
       expect(svc.isRemoteAvailable, isFalse,
@@ -287,7 +298,7 @@ void main() {
       // RED: Network errors during blob pull must not corrupt local state.
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Capture a local entry
       await svc.capture(title: 'Local Task Survives Network Error');

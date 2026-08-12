@@ -4,11 +4,12 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
-import 'package:phpoc_flutter/core/models/push_result.dart';
 import 'package:phpoc_flutter/core/models/sync_result.dart';
 import 'package:phpoc_flutter/data/ledger/engine.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/staging_hash_index.dart';
 import 'package:phpoc_flutter/data/sync/staging_paths.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
@@ -42,12 +43,14 @@ class _FakeStorage {
     _data.putIfAbsent('blocks', () => []);
     (_data['blocks'] as List).addAll(blocks);
   }
+
   List truncate(int keepCount) {
     final blocks = (_data['blocks'] as List?) ?? [];
     final removed = List.from(blocks.sublist(keepCount));
     _data['blocks'] = List.from(blocks.sublist(0, keepCount));
     return removed;
   }
+
   int getBlockCount() => (_data['blocks'] as List?)?.length ?? 0;
   Map<String, dynamic>? getLastBlock() {
     final blocks = _data['blocks'] as List?;
@@ -78,6 +81,7 @@ Future<SyncService> _makeSync({HttpTransport? transport}) async {
     storage: storage,
     crypto: crypto,
     transport: transport,
+    stagingStore: StagingStore(AppDatabase.inMemory()),
   );
 }
 
@@ -86,7 +90,8 @@ class _SpyTransport extends HttpTransport {
   final List<String> pushPaths = [];
   final List<String> pullPaths = [];
 
-  _SpyTransport() : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
+  _SpyTransport()
+    : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
 
   @override
   Future<Uint8List?> pull(String path) async {
@@ -114,17 +119,21 @@ class _SpyTransport extends HttpTransport {
 /// Configurable spy transport that can return specific cookie bytes for T2 tests.
 class _CookieSpyTransport extends HttpTransport {
   final Uint8List? cookieBytes;
+  Uint8List? hashIndexBytes;
   final List<String> pushPaths = [];
   final List<String> pullPaths = [];
 
   _CookieSpyTransport({this.cookieBytes})
-      : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
+    : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
 
   @override
   Future<Uint8List?> pull(String path) async {
     pullPaths.add(path);
     if (path == StagingPaths.remoteDeviceCookie) {
       return cookieBytes;
+    }
+    if (path == StagingPaths.remoteStagingHashIndex) {
+      return hashIndexBytes;
     }
     return null;
   }
@@ -145,16 +154,20 @@ class _CookieSpyTransport extends HttpTransport {
 
 /// Build a remote-cookie byte payload from a specifier + optional device_uuid.
 Uint8List _makeRemoteCookie(String specifier, {String? deviceUuid}) {
-  return Uint8List.fromList(utf8.encode(json.encode({
-    'device_uuid': deviceUuid ?? 'remote-device-uuid',
-    'device_specifier': specifier,
-  })));
+  return Uint8List.fromList(
+    utf8.encode(
+      json.encode({
+        'device_uuid': deviceUuid ?? 'remote-device-uuid',
+        'device_specifier': specifier,
+      }),
+    ),
+  );
 }
 
 /// Spy transport that throws on cookie pull (for network-error tests).
 class _ThrowingCookieSpyTransport extends HttpTransport {
   _ThrowingCookieSpyTransport()
-      : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
+    : super(baseUrl: 'https://test.example.com', apiKey: 'spy-key');
 
   @override
   Future<Uint8List?> pull(String path) async {
@@ -176,25 +189,12 @@ class _ThrowingCookieSpyTransport extends HttpTransport {
 
 const _knownSpecifier = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
 
-/// Spy LedgerEngine that records commit() calls for T8 tests.
-class _SpyLedgerEngine {
-  List<Map<String, dynamic>>? _lastCommitted;
-  int _callCount = 0;
-  String? _returnHash;
-  bool _throwOnCommit = false;
-
-  List<Map<String, dynamic>>? get lastCommitted => _lastCommitted;
-  int get callCount => _callCount;
-
-  void setReturnHash(String? hash) => _returnHash = hash;
-  void setThrowOnCommit(bool value) => _throwOnCommit = value;
-
-  String? commit(List<Map<String, dynamic>> entries) {
-    if (_throwOnCommit) throw Exception('LedgerEngine commit failed');
-    _callCount++;
-    _lastCommitted = List<Map<String, dynamic>>.from(entries);
-    return _returnHash;
-  }
+/// Build the row-level remote hash index payload for a StagingStore so the
+/// fast path sees an *identical* remote index (→ genuine fast path, no
+/// reconcile, no cookie round-trip). Mirrors StagingHashIndex.build.
+Future<Uint8List> _buildHashIndex(StagingStore store) async {
+  final index = await StagingHashIndex.build(store);
+  return Uint8List.fromList(utf8.encode(json.encode(index)));
 }
 
 /// Create a SyncService with a real LedgerEngine backed by fake storage.
@@ -203,6 +203,7 @@ Future<SyncService> _makeSyncWithEngine({HttpTransport? transport}) async {
   final crypto = await _makeCrypto();
   final chainStore = _FakeStorage();
   final indexStore = _FakeStorage();
+  final stagingStore = StagingStore(AppDatabase.inMemory());
   final engine = LedgerEngine(
     crypto: crypto,
     store: chainStore,
@@ -213,6 +214,7 @@ Future<SyncService> _makeSyncWithEngine({HttpTransport? transport}) async {
     storage: storage,
     crypto: crypto,
     transport: transport,
+    stagingStore: stagingStore,
     ledgerEngine: engine,
   );
 }
@@ -247,14 +249,21 @@ void main() {
     test('E3: capture() touches local cookie TTL', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Cookie Test');
 
       // Local cookie should exist after capture
       final cookie = await storage.get('cookie');
-      expect(cookie, isNotNull,
-          reason: 'Every local write must touch the device cookie');
+      expect(
+        cookie,
+        isNotNull,
+        reason: 'Every local write must touch the device cookie',
+      );
     });
 
     // E4
@@ -263,8 +272,11 @@ void main() {
       await svc.capture(title: 'Attributed Task');
 
       final entries = await svc.getEntries();
-      expect(entries[0]['device_uuid'], isNotEmpty,
-          reason: 'Entry must carry device attribution for cross-device merge');
+      expect(
+        entries[0]['device_uuid'],
+        isNotEmpty,
+        reason: 'Entry must carry device attribution for cross-device merge',
+      );
     });
 
     // E5
@@ -281,10 +293,7 @@ void main() {
     // E6
     test('E6: end() throws when no active task matches title', () async {
       final svc = await _makeSync();
-      expect(
-        () => svc.end('Nonexistent', 5000),
-        throwsA(isA<Exception>()),
-      );
+      expect(() => svc.end('Nonexistent', 5000), throwsA(isA<Exception>()));
     });
 
     // E7
@@ -298,8 +307,11 @@ void main() {
       final pauses = entries[0]['pauses'] as List;
       // The open pause should be closed (pause_stop should be set)
       if (pauses.isNotEmpty) {
-        expect(pauses.last['pause_stop'], isNotNull,
-            reason: 'end() must auto-close any open pause');
+        expect(
+          pauses.last['pause_stop'],
+          isNotNull,
+          reason: 'end() must auto-close any open pause',
+        );
       }
       expect(entries[0]['is_active'], false);
     });
@@ -325,8 +337,11 @@ void main() {
       await svc.pause('Pause Task', 2000);
 
       final active = await svc.getActive();
-      expect(active[0]['is_paused'], true,
-          reason: 'Task should be marked as paused');
+      expect(
+        active[0]['is_paused'],
+        true,
+        reason: 'Task should be marked as paused',
+      );
 
       final entries = await svc.getEntries();
       final pauses = entries[0]['pauses'] as List;
@@ -338,10 +353,7 @@ void main() {
     // E10
     test('E10: pause() throws when no active task matches title', () async {
       final svc = await _makeSync();
-      expect(
-        () => svc.pause('Nonexistent', 2000),
-        throwsA(isA<Exception>()),
-      );
+      expect(() => svc.pause('Nonexistent', 2000), throwsA(isA<Exception>()));
     });
 
     // E11
@@ -352,8 +364,11 @@ void main() {
       await svc.unpause('Unpause Task', 3000);
 
       final active = await svc.getActive();
-      expect(active[0]['is_paused'], false,
-          reason: 'Task should be resumed after unpause');
+      expect(
+        active[0]['is_paused'],
+        false,
+        reason: 'Task should be resumed after unpause',
+      );
 
       final entries = await svc.getEntries();
       final pauses = entries[0]['pauses'] as List;
@@ -363,10 +378,7 @@ void main() {
     // E12
     test('E12: unpause() throws when no active task matches title', () async {
       final svc = await _makeSync();
-      expect(
-        () => svc.unpause('Nonexistent', 3000),
-        throwsA(isA<Exception>()),
-      );
+      expect(() => svc.unpause('Nonexistent', 3000), throwsA(isA<Exception>()));
     });
 
     // E13
@@ -410,7 +422,11 @@ void main() {
       // No transport = local-only mode
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       // All operations should succeed without transport
       await svc.capture(title: 'Offline Task');
@@ -421,8 +437,7 @@ void main() {
       await svc.remove(0);
 
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'All CRUD ops must work fully offline');
+      expect(entries, isEmpty, reason: 'All CRUD ops must work fully offline');
     });
   });
 
@@ -477,16 +492,19 @@ void main() {
     });
 
     // F5
-    test('F5: entries are returned as decrypted objects with entry_index', () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Flat DTO');
+    test(
+      'F5: entries are returned as decrypted objects with entry_index',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Flat DTO');
 
-      final entries = await svc.getEntries();
-      expect(entries[0], isA<Map>());
-      expect(entries[0]['title'], isA<String>());
-      expect(entries[0]['start_epoch'], isA<int>());
-      expect(entries[0]['entry_id'], isA<String>());
-    });
+        final entries = await svc.getEntries();
+        expect(entries[0], isA<Map>());
+        expect(entries[0]['title'], isA<String>());
+        expect(entries[0]['start_epoch'], isA<int>());
+        expect(entries[0]['entry_id'], isA<String>());
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -498,7 +516,11 @@ void main() {
     test('G1: no remote transport → returns READY', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       final result = await svc.checkAndSync();
       expect(result, SyncCheckResult.ready);
@@ -514,13 +536,16 @@ void main() {
     });
 
     // G3
-    test('G3: local cookie valid + remote cookie match → READY (fast path)', () async {
-      final svc = await _makeSync();
-      // RED test: fast path not yet implemented
-      final result = await svc.checkAndSync();
-      // Currently returns ready (stub), but will exercise real fast path later
-      expect(result, isA<SyncCheckResult>());
-    });
+    test(
+      'G3: local cookie valid + remote cookie match → READY (fast path)',
+      () async {
+        final svc = await _makeSync();
+        // RED test: fast path not yet implemented
+        final result = await svc.checkAndSync();
+        // Currently returns ready (stub), but will exercise real fast path later
+        expect(result, isA<SyncCheckResult>());
+      },
+    );
 
     // G4
     test('G4: fast path pushes local blob only (pushBlobOnly)', () async {
@@ -534,20 +559,26 @@ void main() {
     });
 
     // G5
-    test('G5: local cookie valid + remote cookie mismatch → REAUTH_NEEDED', () async {
-      final svc = await _makeSync();
-      // RED: cookie mismatch path not yet implemented
-      final result = await svc.checkAndSync();
-      expect(result, isA<SyncCheckResult>());
-    });
+    test(
+      'G5: local cookie valid + remote cookie mismatch → REAUTH_NEEDED',
+      () async {
+        final svc = await _makeSync();
+        // RED: cookie mismatch path not yet implemented
+        final result = await svc.checkAndSync();
+        expect(result, isA<SyncCheckResult>());
+      },
+    );
 
     // G6
-    test('G6: local cookie valid + no remote cookie → auth gate (merge)', () async {
-      final svc = await _makeSync();
-      // RED: first push path not yet implemented
-      final result = await svc.checkAndSync();
-      expect(result, isA<SyncCheckResult>());
-    });
+    test(
+      'G6: local cookie valid + no remote cookie → auth gate (merge)',
+      () async {
+        final svc = await _makeSync();
+        // RED: first push path not yet implemented
+        final result = await svc.checkAndSync();
+        expect(result, isA<SyncCheckResult>());
+      },
+    );
 
     // G7
     test('G7: local cookie expired → REAUTH_NEEDED', () async {
@@ -566,28 +597,42 @@ void main() {
     });
 
     // G9
-    test('G9: MK available + cookie valid → reconcile (pull+merge+push)', () async {
-      final svc = await _makeSync();
-      // RED: auth gate reconcile not yet implemented
-      await svc.capture(title: 'Reconcile Entry');
-      final result = await svc.checkAndSync();
-      expect(result, isA<SyncCheckResult>());
-    });
+    test(
+      'G9: MK available + cookie valid → reconcile (pull+merge+push)',
+      () async {
+        final svc = await _makeSync();
+        // RED: auth gate reconcile not yet implemented
+        await svc.capture(title: 'Reconcile Entry');
+        final result = await svc.checkAndSync();
+        expect(result, isA<SyncCheckResult>());
+      },
+    );
 
     // G10
-    test('G10: MK not available + no transport → READY (local-only mode)', () async {
-      final storage = _FakeStorage();
-      // Crypto WITHOUT master key
-      final crypto = CryptoService();
-      await crypto.initialize();
-      // No setMasterKey call — MK unavailable
+    test(
+      'G10: MK not available + no transport → READY (local-only mode)',
+      () async {
+        final storage = _FakeStorage();
+        // Crypto WITHOUT master key
+        final crypto = CryptoService();
+        await crypto.initialize();
+        // No setMasterKey call — MK unavailable
 
-      final svc = SyncService(storage: storage, crypto: crypto);
-      final result = await svc.checkAndSync();
-      // No transport = local-only mode, always READY
-      expect(result, SyncCheckResult.ready,
-          reason: 'Without transport, sync is trivially ready — nothing to push');
-    });
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
+        final result = await svc.checkAndSync();
+        // No transport = local-only mode, always READY
+        expect(
+          result,
+          SyncCheckResult.ready,
+          reason:
+              'Without transport, sync is trivially ready — nothing to push',
+        );
+      },
+    );
 
     // G11
     test('G11: network error during cookie pull → OFFLINE', () async {
@@ -647,12 +692,15 @@ void main() {
     });
 
     // G18
-    test('G18: same-device cookie match before remote push prevents race', () async {
-      final svc = await _makeSync();
-      // RED: race prevention not yet implemented
-      final result = await svc.checkAndSync();
-      expect(result, isA<SyncCheckResult>());
-    });
+    test(
+      'G18: same-device cookie match before remote push prevents race',
+      () async {
+        final svc = await _makeSync();
+        // RED: race prevention not yet implemented
+        final result = await svc.checkAndSync();
+        expect(result, isA<SyncCheckResult>());
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -684,17 +732,24 @@ void main() {
     });
 
     // H4
-    test('H4: pushToRemote() includes device_id + device_proof in blob', () async {
-      final svc = await _makeSync();
-      // RED: device attribution in blob not yet implemented
-      expect(() => svc.pushToRemote(), returnsNormally);
-    });
+    test(
+      'H4: pushToRemote() includes device_id + device_proof in blob',
+      () async {
+        final svc = await _makeSync();
+        // RED: device attribution in blob not yet implemented
+        expect(() => svc.pushToRemote(), returnsNormally);
+      },
+    );
 
     // H5
     test('H5: pushToRemote() no-ops when no remote transport', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       // Should not throw — no transport is valid (local-only mode)
       await svc.pushToRemote();
@@ -720,8 +775,11 @@ void main() {
       final svc = await _makeSync();
       // RED: lastPushAt not yet implemented
       // API contract: service should expose lastPushAt
-      expect(svc.lastPushAt, isA<int>(),
-          reason: 'SyncService must expose lastPushAt diagnostic property');
+      expect(
+        svc.lastPushAt,
+        isA<int>(),
+        reason: 'SyncService must expose lastPushAt diagnostic property',
+      );
       expect(() => svc.pushToRemote(), returnsNormally);
     });
   });
@@ -732,37 +790,51 @@ void main() {
 
   group('L: SyncService — getCompleted()', () {
     // L1
-    test('L1: getCompleted() returns only entries with is_active==false',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Active Task');
-      await svc.capture(title: 'Done Task');
-      await svc.end('Done Task', 5000);
+    test(
+      'L1: getCompleted() returns only entries with is_active==false',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Active Task');
+        await svc.capture(title: 'Done Task');
+        await svc.end('Done Task', 5000);
 
-      final completed = await svc.getCompleted();
+        final completed = await svc.getCompleted();
 
-      // Only the ended task (is_active==false) should appear
-      expect(completed.length, 1,
-          reason: 'getCompleted() must exclude active (is_active==true) entries');
-      expect(completed[0]['title'], 'Done Task');
-      expect(completed[0]['is_active'], false);
-    });
+        // Only the ended task (is_active==false) should appear
+        expect(
+          completed.length,
+          1,
+          reason:
+              'getCompleted() must exclude active (is_active==true) entries',
+        );
+        expect(completed[0]['title'], 'Done Task');
+        expect(completed[0]['is_active'], false);
+      },
+    );
 
     // L2
-    test('L2: each completed entry has a date field (YYYY-MM-DD from start_epoch)',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Dated Task');
-      await svc.end('Dated Task', 5000);
+    test(
+      'L2: each completed entry has a date field (YYYY-MM-DD from start_epoch)',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Dated Task');
+        await svc.end('Dated Task', 5000);
 
-      final completed = await svc.getCompleted();
+        final completed = await svc.getCompleted();
 
-      expect(completed[0]['date'], isA<String>(),
-          reason: 'Every completed entry must carry a normalized date string');
-      // Must match YYYY-MM-DD pattern
-      expect(completed[0]['date'], matches(r'^\d{4}-\d{2}-\d{2}$'),
-          reason: 'date field must be ISO format YYYY-MM-DD');
-    });
+        expect(
+          completed[0]['date'],
+          isA<String>(),
+          reason: 'Every completed entry must carry a normalized date string',
+        );
+        // Must match YYYY-MM-DD pattern
+        expect(
+          completed[0]['date'],
+          matches(r'^\d{4}-\d{2}-\d{2}$'),
+          reason: 'date field must be ISO format YYYY-MM-DD',
+        );
+      },
+    );
 
     // L3
     test('L3: entries with start_epoch==0 get date="unknown"', () async {
@@ -774,47 +846,64 @@ void main() {
 
       final completed = await svc.getCompleted();
 
-      expect(completed[0]['date'], 'unknown',
-          reason: 'Degraded data (epoch=0) must produce "unknown" date, not crash');
+      expect(
+        completed[0]['date'],
+        'unknown',
+        reason:
+            'Degraded data (epoch=0) must produce "unknown" date, not crash',
+      );
     });
 
     // L4
-    test('L4: getCompleted() returns entries sorted by start_epoch descending',
-        () async {
-      final svc = await _makeSync();
-      // Create entries with known timestamps
-      await svc.capture(title: 'Oldest');
-      await svc.modify(0, {'start_epoch': 1000});
-      await svc.end('Oldest', 2000);
+    test(
+      'L4: getCompleted() returns entries sorted by start_epoch descending',
+      () async {
+        final svc = await _makeSync();
+        // Create entries with known timestamps
+        await svc.capture(title: 'Oldest');
+        await svc.modify(0, {'start_epoch': 1000});
+        await svc.end('Oldest', 2000);
 
-      await svc.capture(title: 'Middle');
-      await svc.modify(1, {'start_epoch': 2000});
-      await svc.end('Middle', 3000);
+        await svc.capture(title: 'Middle');
+        await svc.modify(1, {'start_epoch': 2000});
+        await svc.end('Middle', 3000);
 
-      await svc.capture(title: 'Newest');
-      await svc.modify(2, {'start_epoch': 3000});
-      await svc.end('Newest', 4000);
+        await svc.capture(title: 'Newest');
+        await svc.modify(2, {'start_epoch': 3000});
+        await svc.end('Newest', 4000);
 
-      final completed = await svc.getCompleted();
+        final completed = await svc.getCompleted();
 
-      expect(completed.length, 3);
-      expect(completed[0]['title'], 'Newest',
-          reason: 'Most recent entry (highest start_epoch) must be first');
-      expect(completed[1]['title'], 'Middle');
-      expect(completed[2]['title'], 'Oldest',
-          reason: 'Oldest entry (lowest start_epoch) must be last');
-    });
+        expect(completed.length, 3);
+        expect(
+          completed[0]['title'],
+          'Newest',
+          reason: 'Most recent entry (highest start_epoch) must be first',
+        );
+        expect(completed[1]['title'], 'Middle');
+        expect(
+          completed[2]['title'],
+          'Oldest',
+          reason: 'Oldest entry (lowest start_epoch) must be last',
+        );
+      },
+    );
 
     // L5
-    test('L5: getCompleted() returns empty list when staging is empty',
-        () async {
-      final svc = await _makeSync();
+    test(
+      'L5: getCompleted() returns empty list when staging is empty',
+      () async {
+        final svc = await _makeSync();
 
-      final completed = await svc.getCompleted();
+        final completed = await svc.getCompleted();
 
-      expect(completed, isEmpty,
-          reason: 'Empty staging must return empty list, not null or throw');
-    });
+        expect(
+          completed,
+          isEmpty,
+          reason: 'Empty staging must return empty list, not null or throw',
+        );
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -823,8 +912,11 @@ void main() {
 
   group('P: SyncService — Date range filter fix', () {
     // Helper: create an entry at a specific epoch and end it
-    Future<SyncService> _seededSync(
-        String title, int startEpoch, int endEpoch) async {
+    Future<SyncService> seededSync(
+      String title,
+      int startEpoch,
+      int endEpoch,
+    ) async {
       final svc = await _makeSync();
       await svc.capture(title: title);
       await svc.modify(0, {'start_epoch': startEpoch});
@@ -835,52 +927,84 @@ void main() {
     // P1
     test('P1: getEntries(to: date) includes entries ON the end date', () async {
       // Entry at noon on June 15
-      final jun15Noon = DateTime.utc(2026, 6, 15, 12, 0, 0).millisecondsSinceEpoch;
-      final svc = await _seededSync('Midday Entry', jun15Noon, jun15Noon + 1000);
+      final jun15Noon = DateTime.utc(
+        2026,
+        6,
+        15,
+        12,
+        0,
+        0,
+      ).millisecondsSinceEpoch;
+      final svc = await seededSync('Midday Entry', jun15Noon, jun15Noon + 1000);
 
       // to: midnight June 15 — entry at noon should still be included
       final toDate = DateTime.utc(2026, 6, 15); // midnight
       final entries = await svc.getEntries(to: toDate);
 
-      expect(entries.length, 1,
-          reason: 'Entry at noon on June 15 must be included when to=midnight June 15 '
-              '(end date must be inclusive)');
+      expect(
+        entries.length,
+        1,
+        reason:
+            'Entry at noon on June 15 must be included when to=midnight June 15 '
+            '(end date must be inclusive)',
+      );
       expect(entries[0]['title'], 'Midday Entry');
     });
 
     // P2
-    test('P2: getEntries(from: date) includes entries ON the start date',
-        () async {
-      final jun15Midnight =
-          DateTime.utc(2026, 6, 15).millisecondsSinceEpoch;
-      final svc = await _seededSync(
-          'Midnight Entry', jun15Midnight, jun15Midnight + 1000);
+    test(
+      'P2: getEntries(from: date) includes entries ON the start date',
+      () async {
+        final jun15Midnight = DateTime.utc(2026, 6, 15).millisecondsSinceEpoch;
+        final svc = await seededSync(
+          'Midnight Entry',
+          jun15Midnight,
+          jun15Midnight + 1000,
+        );
 
-      final fromDate = DateTime.utc(2026, 6, 15); // midnight
-      final entries = await svc.getEntries(from: fromDate);
+        final fromDate = DateTime.utc(2026, 6, 15); // midnight
+        final entries = await svc.getEntries(from: fromDate);
 
-      expect(entries.length, 1,
-          reason: 'Entry at midnight on June 15 must be included when from=midnight June 15 '
-              '(start date must be inclusive)');
-      expect(entries[0]['title'], 'Midnight Entry');
-    });
+        expect(
+          entries.length,
+          1,
+          reason:
+              'Entry at midnight on June 15 must be included when from=midnight June 15 '
+              '(start date must be inclusive)',
+        );
+        expect(entries[0]['title'], 'Midnight Entry');
+      },
+    );
 
     // P3
-    test('P3: range filter uses end-of-day for to boundary (entries at 11 PM pass)',
-        () async {
-      // Entry at 11 PM on June 15
-      final jun15Late = DateTime.utc(2026, 6, 15, 23, 0, 0).millisecondsSinceEpoch;
-      final svc = await _seededSync('Late Entry', jun15Late, jun15Late + 1000);
+    test(
+      'P3: range filter uses end-of-day for to boundary (entries at 11 PM pass)',
+      () async {
+        // Entry at 11 PM on June 15
+        final jun15Late = DateTime.utc(
+          2026,
+          6,
+          15,
+          23,
+          0,
+          0,
+        ).millisecondsSinceEpoch;
+        final svc = await seededSync('Late Entry', jun15Late, jun15Late + 1000);
 
-      // to: midnight June 15 — but entry at 11 PM should still be included
-      final toDate = DateTime.utc(2026, 6, 15); // midnight
-      final entries = await svc.getEntries(to: toDate);
+        // to: midnight June 15 — but entry at 11 PM should still be included
+        final toDate = DateTime.utc(2026, 6, 15); // midnight
+        final entries = await svc.getEntries(to: toDate);
 
-      expect(entries.length, 1,
-          reason: 'Entry at 11 PM on June 15 must pass when to=midnight June 15. '
-              'The to boundary must use end-of-day, not midnight, to avoid the off-by-one bug');
-      expect(entries[0]['title'], 'Late Entry');
-    });
+        expect(
+          entries.length,
+          1,
+          reason:
+              'Entry at 11 PM on June 15 must pass when to=midnight June 15. '
+              'The to boundary must use end-of-day, not midnight, to avoid the off-by-one bug',
+        );
+        expect(entries[0]['title'], 'Late Entry');
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -889,40 +1013,58 @@ void main() {
 
   group('K: SyncService — T2 Cookie Check wiring', () {
     // K1
-    test('K1: valid local cookie + matching remote → READY (fast path)',
-        () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
+    test(
+      'K1: valid local cookie + matching remote → READY (fast path)',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
 
-      // Seed a valid (fresh) local cookie
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await storage.set('cookie', {
-        'device_specifier': _knownSpecifier,
-        'creation_time': now,
-      });
+        // Seed a valid (fresh) local cookie
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await storage.set('cookie', {
+          'device_specifier': _knownSpecifier,
+          'creation_time': now,
+        });
 
-      // Spy returns matching remote cookie
-      final spy = _CookieSpyTransport(
-        cookieBytes: _makeRemoteCookie(_knownSpecifier),
-      );
-      final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        final store = StagingStore(AppDatabase.inMemory());
+        // Spy returns matching remote cookie
+        final spy = _CookieSpyTransport(
+          cookieBytes: _makeRemoteCookie(_knownSpecifier),
+        );
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: store,
+        );
 
-      await svc.capture(title: 'Fast Path Entry');
-      final result = await svc.checkAndSync();
+        await svc.capture(title: 'Fast Path Entry');
+        // Feed a matching remote hash index so the fast path genuinely matches
+        // (identical hash → push rows only, no reconcile, no cookie round-trip).
+        spy.hashIndexBytes = await _buildHashIndex(store);
+        final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Matching cookies must trigger fast path → READY');
-      // Fast path pushes blob only (no cookie push)
-      expect(spy.pushPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: 'Fast path must push local blob to remote');
-      expect(spy.pushPaths, isNot(contains(StagingPaths.remoteDeviceCookie)),
-          reason: 'Fast path must NOT push cookie when specs match');
-    });
+        expect(
+          result,
+          SyncCheckResult.ready,
+          reason: 'Matching cookies must trigger fast path → READY',
+        );
+        // Fast path pushes rows only (no cookie push)
+        expect(
+          spy.pushPaths,
+          contains(StagingPaths.remoteRowLevelBlob),
+          reason: 'Fast path must push local blob to remote',
+        );
+        expect(
+          spy.pushPaths,
+          isNot(contains(StagingPaths.remoteDeviceCookie)),
+          reason: 'Fast path must NOT push cookie when specs match',
+        );
+      },
+    );
 
     // K2
-    test('K2: expired local cookie → falls to auth gate (reconcile)',
-        () async {
+    test('K2: expired local cookie → falls to auth gate (reconcile)', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
 
@@ -936,74 +1078,116 @@ void main() {
 
       final spy = _CookieSpyTransport();
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Reconcile Entry');
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Expired cookie must fall to reconcile, which returns READY on success');
+      expect(
+        result,
+        SyncCheckResult.ready,
+        reason:
+            'Expired cookie must fall to reconcile, which returns READY on success',
+      );
       // Reconcile pushes both blob and new cookie
-      expect(spy.pushPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: 'Reconcile must push merged blob');
-      expect(spy.pushPaths, contains(StagingPaths.remoteDeviceCookie),
-          reason: 'Reconcile must create and push a new cookie');
+      expect(
+        spy.pushPaths,
+        contains(StagingPaths.remoteRowLevelBlob),
+        reason: 'Reconcile must push merged blob',
+      );
+      expect(
+        spy.pushPaths,
+        contains(StagingPaths.remoteDeviceCookie),
+        reason: 'Reconcile must create and push a new cookie',
+      );
     });
 
     // K3
-    test('K3: expired cookie removed from storage after checkAndSync',
-        () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
+    test(
+      'K3: expired cookie removed from storage after checkAndSync',
+      () async {
+        // A2 contract: with no new mutation (empty staging), an expired cookie
+        // is NOT silently replaced with a fresh identity. Instead the stale
+        // cookie is destroyed and the caller is asked to re-authenticate. This
+        // differs from a mutation-driven flow (K2) where _touchLocalCookie
+        // refreshes the cookie and reconcile proceeds to READY.
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
 
-      final farPast =
-          DateTime.now().millisecondsSinceEpoch - (31 * 60 * 1000);
-      await storage.set('cookie', {
-        'device_specifier': _knownSpecifier,
-        'creation_time': farPast,
-      });
+        final farPast =
+            DateTime.now().millisecondsSinceEpoch - (31 * 60 * 1000);
+        await storage.set('cookie', {
+          'device_specifier': _knownSpecifier,
+          'creation_time': farPast,
+        });
 
-      final spy = _CookieSpyTransport();
-      final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        final spy = _CookieSpyTransport();
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      await svc.checkAndSync();
+        final result = await svc.checkAndSync();
 
-      final cookie = await storage.get('cookie');
-      // After reconcile, a NEW cookie should exist (so cookie is not null).
-      // But the EXPIRED cookie should be gone. The test verifies the
-      // expired cookie was cleaned up and replaced.
-      expect(cookie, isNotNull,
-          reason: 'Reconcile creates a fresh cookie after expiry');
-      expect(cookie['creation_time'],
-          greaterThan(farPast + (25 * 60 * 1000)),
-          reason: 'New cookie must have a recent creation_time, not the expired one');
-    });
+        // A2: expired cookie (no pending writes) → stale cookie destroyed,
+        // caller must re-auth rather than silently mint a new device identity.
+        expect(
+          result,
+          SyncCheckResult.reauthNeeded,
+          reason: 'Expired cookie with no pending writes requests reauth',
+        );
+        final cookie = await storage.get('cookie');
+        expect(
+          cookie,
+          isNull,
+          reason: 'Expired cookie must be removed (not replaced) from storage',
+        );
+      },
+    );
 
     // K4
-    test('K4: malformed cookie (null specifier) → treated as expired → reconcile',
-        () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
+    test(
+      'K4: malformed cookie (null specifier) → treated as expired → reconcile',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
 
-      // Malformed: null specifier
-      await storage.set('cookie', {
-        'device_specifier': null,
-        'creation_time': DateTime.now().millisecondsSinceEpoch,
-      });
+        // Malformed: null specifier
+        await storage.set('cookie', {
+          'device_specifier': null,
+          'creation_time': DateTime.now().millisecondsSinceEpoch,
+        });
 
-      final spy = _CookieSpyTransport();
-      final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        final spy = _CookieSpyTransport();
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      await svc.capture(title: 'Malformed Cookie Entry');
-      final result = await svc.checkAndSync();
+        await svc.capture(title: 'Malformed Cookie Entry');
+        final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Malformed cookie must be treated as expired → reconcile → READY');
-      expect(spy.pushPaths, contains(StagingPaths.remoteDeviceCookie),
-          reason: 'Reconcile must push a fresh cookie after malformed cleanup');
-    });
+        expect(
+          result,
+          SyncCheckResult.ready,
+          reason:
+              'Malformed cookie must be treated as expired → reconcile → READY',
+        );
+        expect(
+          spy.pushPaths,
+          contains(StagingPaths.remoteDeviceCookie),
+          reason: 'Reconcile must push a fresh cookie after malformed cleanup',
+        );
+      },
+    );
 
     // K5
     test('K5: valid cookie but no MK cached → REAUTH_NEEDED', () async {
@@ -1021,12 +1205,19 @@ void main() {
 
       final spy = _CookieSpyTransport();
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.reauthNeeded,
-          reason: 'MK gate must take priority — valid cookie alone is not enough');
+      expect(
+        result,
+        SyncCheckResult.reauthNeeded,
+        reason: 'MK gate must take priority — valid cookie alone is not enough',
+      );
     });
 
     // K6
@@ -1041,17 +1232,24 @@ void main() {
       });
 
       // No transport → fully local mode
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Local-only mode (no transport) must return READY even with a valid cookie');
+      expect(
+        result,
+        SyncCheckResult.ready,
+        reason:
+            'Local-only mode (no transport) must return READY even with a valid cookie',
+      );
     });
 
     // K7: configurable TTL propagated to isValidLocally
-    test('K7: checkAndSync honors configurable TTL (not hardcoded 30 min)',
-        () async {
+    test('K7: checkAndSync honors configurable TTL (not hardcoded 30 min)', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
 
@@ -1067,15 +1265,30 @@ void main() {
         cookieBytes: _makeRemoteCookie(_knownSpecifier),
       );
       final svc15 = SyncService(
-          storage: storage, crypto: crypto, transport: spy15);
+        storage: storage,
+        crypto: crypto,
+        transport: spy15,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       final result15 = await svc15.checkAndSync(cookieTtlMinutes: 15);
-      expect(result15, SyncCheckResult.ready,
-          reason: '10-min-old cookie must be valid with 15-min TTL → fast path → READY');
-      expect(spy15.pushPaths, isNot(contains(StagingPaths.remoteDeviceCookie)),
-          reason: 'Fast path with 15-min TTL must not push cookie');
+      expect(
+        result15,
+        SyncCheckResult.ready,
+        reason:
+            '10-min-old cookie must be valid with 15-min TTL → fast path → READY',
+      );
+      expect(
+        spy15.pushPaths,
+        isNot(contains(StagingPaths.remoteDeviceCookie)),
+        reason: 'Fast path with 15-min TTL must not push cookie',
+      );
 
-      // Test 2: With 5-min TTL, cookie is expired → reconcile
+      // Test 2: With 5-min TTL, the same 10-min-old cookie is EXPIRED. A2
+      // contract: with no new mutation (empty staging) an expired cookie is
+      // destroyed and returns reauthNeeded — it is not auto-replaced. The
+      // contrast with Test 1 (same cookie, 15-min TTL → READY) proves the
+      // TTL is honored as configurable rather than hardcoded to 30 min.
       final storage2 = _FakeStorage();
       await storage2.set('cookie', {
         'device_specifier': _knownSpecifier,
@@ -1083,13 +1296,26 @@ void main() {
       });
       final spy5 = _CookieSpyTransport();
       final svc5 = SyncService(
-          storage: storage2, crypto: crypto, transport: spy5);
+        storage: storage2,
+        crypto: crypto,
+        transport: spy5,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       final result5 = await svc5.checkAndSync(cookieTtlMinutes: 5);
-      expect(result5, SyncCheckResult.ready,
-          reason: '10-min-old cookie must be expired with 5-min TTL → reconcile → READY');
-      expect(spy5.pushPaths, contains(StagingPaths.remoteDeviceCookie),
-          reason: 'Reconcile after 5-min TTL expiry must push new cookie');
+      expect(
+        result5,
+        SyncCheckResult.reauthNeeded,
+        reason:
+            '10-min-old cookie must be expired with 5-min TTL → reauth, not READY',
+      );
+      final cookie5 = await storage2.get('cookie');
+      expect(
+        cookie5,
+        isNull,
+        reason:
+            'Expired cookie under a short TTL must be removed, not auto-replaced',
+      );
     });
   });
 
@@ -1099,37 +1325,49 @@ void main() {
 
   group('M: SyncService — T3 Cookie Compare (fast path + mismatch)', () {
     // M1
-    test('M1: valid local + matching remote → _pushBlobOnly called → READY',
-        () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
+    test(
+      'M1: valid local + matching remote → _pushBlobOnly called → READY',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
 
-      // Seed a fresh valid local cookie
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await storage.set('cookie', {
-        'device_specifier': _knownSpecifier,
-        'creation_time': now,
-      });
+        // Seed a fresh valid local cookie
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await storage.set('cookie', {
+          'device_specifier': _knownSpecifier,
+          'creation_time': now,
+        });
 
-      // Spy returns matching remote cookie
-      final spy = _CookieSpyTransport(
-        cookieBytes: _makeRemoteCookie(_knownSpecifier),
-      );
-      final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        // Spy returns matching remote cookie
+        final spy = _CookieSpyTransport(
+          cookieBytes: _makeRemoteCookie(_knownSpecifier),
+        );
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      await svc.capture(title: 'Fast Path Entry');
-      final result = await svc.checkAndSync();
+        await svc.capture(title: 'Fast Path Entry');
+        final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Matching cookies must trigger fast path → READY');
-      // Fast path calls _pushBlobOnly → blob pushed
-      expect(spy.pushPaths, isNotEmpty,
-          reason: 'Fast path must push local blob to remote');
-    });
+        expect(
+          result,
+          SyncCheckResult.ready,
+          reason: 'Matching cookies must trigger fast path → READY',
+        );
+        // Fast path calls _pushBlobOnly → blob pushed
+        expect(
+          spy.pushPaths,
+          isNotEmpty,
+          reason: 'Fast path must push local blob to remote',
+        );
+      },
+    );
 
     // M2
-    test('M2: spy confirms blob pushed to StagingPaths.remoteStagingBlob '
+    test('M2: spy confirms blob pushed to StagingPaths.remoteRowLevelBlob '
         'during fast path', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
@@ -1144,14 +1382,22 @@ void main() {
         cookieBytes: _makeRemoteCookie(_knownSpecifier),
       );
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Path Check Entry');
       await svc.checkAndSync();
 
-      expect(spy.pushPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: 'Fast-path blob must go to canonical staging blob path '
-              'for CLI/web interop');
+      expect(
+        spy.pushPaths,
+        contains(StagingPaths.remoteRowLevelBlob),
+        reason:
+            'Fast-path blob must go to canonical staging blob path '
+            'for CLI/web interop',
+      );
     });
 
     // M3
@@ -1168,15 +1414,26 @@ void main() {
       final spy = _CookieSpyTransport(
         cookieBytes: _makeRemoteCookie(_knownSpecifier),
       );
+      final store = StagingStore(AppDatabase.inMemory());
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: store,
+      );
 
       await svc.capture(title: 'No Cookie Push Entry');
+      // Matching remote hash index → genuine fast path (no reconcile/cookie).
+      spy.hashIndexBytes = await _buildHashIndex(store);
       await svc.checkAndSync();
 
-      expect(spy.pushPaths, isNot(contains(StagingPaths.remoteDeviceCookie)),
-          reason: 'Fast path must NOT push cookie when specs match — '
-              'cookie is unchanged, pushing wastes bandwidth');
+      expect(
+        spy.pushPaths,
+        isNot(contains(StagingPaths.remoteDeviceCookie)),
+        reason:
+            'Fast path must NOT push cookie when specs match — '
+            'cookie is unchanged, pushing wastes bandwidth',
+      );
     });
 
     // M4
@@ -1196,14 +1453,22 @@ void main() {
         cookieBytes: _makeRemoteCookie('ffffffffffffffffffffffffffffffff'),
       );
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Mismatch Entry');
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.reauthNeeded,
-          reason: 'Different remote specifier = different device session → '
-              'must re-authenticate');
+      expect(
+        result,
+        SyncCheckResult.reauthNeeded,
+        reason:
+            'Different remote specifier = different device session → '
+            'must re-authenticate',
+      );
     });
 
     // M5
@@ -1218,18 +1483,34 @@ void main() {
         'creation_time': now,
       });
 
+      // F1 read-only fast path is bypassed (skipReadOnlyFastPath: true) so
+      // the cookie-comparison branch actually runs despite empty staging.
+      // Otherwise F1 would short-circuit to READY before the mismatch is seen.
       final spy = _CookieSpyTransport(
         cookieBytes: _makeRemoteCookie('ffffffffffffffffffffffffffffffff'),
       );
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
-      await svc.checkAndSync();
+      final result = await svc.checkAndSync(skipReadOnlyFastPath: true);
 
+      expect(
+        result,
+        SyncCheckResult.reauthNeeded,
+        reason: 'Mismatched remote cookie must require reauth',
+      );
       final cookie = await storage.get('cookie');
-      expect(cookie, isNull,
-          reason: 'Mismatch must destroy local cookie — stale cookie left '
-              'behind would carry wrong device identity');
+      expect(
+        cookie,
+        isNull,
+        reason:
+            'Mismatch must destroy local cookie — stale cookie left '
+            'behind would carry wrong device identity',
+      );
     });
 
     // M6
@@ -1247,18 +1528,30 @@ void main() {
       // Spy returns null cookieBytes → simulates no remote cookie
       final spy = _CookieSpyTransport(cookieBytes: null);
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'First Push Entry');
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'When remote has no cookie, local device claims it via '
-              'reconcile → READY');
+      expect(
+        result,
+        SyncCheckResult.ready,
+        reason:
+            'When remote has no cookie, local device claims it via '
+            'reconcile → READY',
+      );
       // Reconcile pushes both blob and a new cookie
-      expect(spy.pushPaths, contains(StagingPaths.remoteDeviceCookie),
-          reason: 'Reconcile must create and push a cookie when remote has '
-              'none (first-push-wins)');
+      expect(
+        spy.pushPaths,
+        contains(StagingPaths.remoteDeviceCookie),
+        reason:
+            'Reconcile must create and push a cookie when remote has '
+            'none (first-push-wins)',
+      );
     });
 
     // M7
@@ -1275,20 +1568,32 @@ void main() {
       // Spy throws on cookie pull — simulates network blip
       final spy = _ThrowingCookieSpyTransport();
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Offline Entry');
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.offline,
-          reason: 'Network blip during cookie pull must return OFFLINE — '
-              'must not destroy local cookie or mislabel as REAUTH');
+      expect(
+        result,
+        SyncCheckResult.offline,
+        reason:
+            'Network blip during cookie pull must return OFFLINE — '
+            'must not destroy local cookie or mislabel as REAUTH',
+      );
 
       // Local cookie must survive the network error
       final cookie = await storage.get('cookie');
-      expect(cookie, isNotNull,
-          reason: 'Network error must preserve local cookie — destroying it '
-              'would force unnecessary re-auth');
+      expect(
+        cookie,
+        isNotNull,
+        reason:
+            'Network error must preserve local cookie — destroying it '
+            'would force unnecessary re-auth',
+      );
       expect(cookie['device_specifier'], _knownSpecifier);
     });
 
@@ -1306,20 +1611,36 @@ void main() {
 
       // Same specifier → same device → remote cookie carries same device_uuid
       final spy = _CookieSpyTransport(
-        cookieBytes: _makeRemoteCookie(_knownSpecifier,
-            deviceUuid: 'same-device-uuid'),
+        cookieBytes: _makeRemoteCookie(
+          _knownSpecifier,
+          deviceUuid: 'same-device-uuid',
+        ),
       );
+      final store = StagingStore(AppDatabase.inMemory());
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: store,
+      );
 
       await svc.capture(title: 'Same Device Entry');
+      // Matching remote hash index → genuine fast path (same-device reboot).
+      spy.hashIndexBytes = await _buildHashIndex(store);
       final result = await svc.checkAndSync();
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'After app restart, same device (matching specifier) must '
-              'hit fast path, not auth gate');
-      expect(spy.pushPaths, isNot(contains(StagingPaths.remoteDeviceCookie)),
-          reason: 'Same-device fast path must not waste a cookie round-trip');
+      expect(
+        result,
+        SyncCheckResult.ready,
+        reason:
+            'After app restart, same device (matching specifier) must '
+            'hit fast path, not auth gate',
+      );
+      expect(
+        spy.pushPaths,
+        isNot(contains(StagingPaths.remoteDeviceCookie)),
+        reason: 'Same-device fast path must not waste a cookie round-trip',
+      );
     });
 
     // M9
@@ -1337,48 +1658,94 @@ void main() {
         cookieBytes: _makeRemoteCookie(_knownSpecifier),
       );
       final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       // lastPushAt should be 0 before any push
-      expect(svc.lastPushAt, 0,
-          reason: 'lastPushAt must start at 0 before any sync');
+      expect(
+        svc.lastPushAt,
+        0,
+        reason: 'lastPushAt must start at 0 before any sync',
+      );
 
       await svc.capture(title: 'Timestamp Entry');
       final beforeSync = DateTime.now().millisecondsSinceEpoch;
       await svc.checkAndSync();
 
-      expect(svc.lastPushAt, greaterThan(0),
-          reason: 'Fast path must update lastPushAt for diagnostic tracking');
-      expect(svc.lastPushAt, greaterThanOrEqualTo(beforeSync),
-          reason: 'lastPushAt must reflect the actual push time');
+      expect(
+        svc.lastPushAt,
+        greaterThan(0),
+        reason: 'Fast path must update lastPushAt for diagnostic tracking',
+      );
+      expect(
+        svc.lastPushAt,
+        greaterThanOrEqualTo(beforeSync),
+        reason: 'lastPushAt must reflect the actual push time',
+      );
     });
 
     // M10
-    test('M10: fast path with empty staging (no entries) still pushes blob',
-        () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
+    test(
+      'M10: fast path with empty staging still pushes blob when forced',
+      () async {
+        // F1 contract: with empty staging the default read-only fast path
+        // short-circuits to READY without network work (no push). Passing
+        // skipReadOnlyFastPath: true (the post-mutation / explicit-sync path)
+        // forces the cookie-match fast path to run and push the (empty) blob
+        // so the remote is reconciled. This locks in the F1 short-circuit for
+        // the default case while keeping the reconcile-on-empty fast path
+        // meaningful.
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await storage.set('cookie', {
-        'device_specifier': _knownSpecifier,
-        'creation_time': now,
-      });
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await storage.set('cookie', {
+          'device_specifier': _knownSpecifier,
+          'creation_time': now,
+        });
 
-      final spy = _CookieSpyTransport(
-        cookieBytes: _makeRemoteCookie(_knownSpecifier),
-      );
-      final svc = SyncService(
-          storage: storage, crypto: crypto, transport: spy);
+        final spy = _CookieSpyTransport(
+          cookieBytes: _makeRemoteCookie(_knownSpecifier),
+        );
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      // No captures — empty staging
-      final result = await svc.checkAndSync();
+        // No captures — empty staging
+        // Default: F1 read-only fast path skips network for idle local state.
+        final idleResult = await svc.checkAndSync();
+        expect(
+          idleResult,
+          SyncCheckResult.ready,
+          reason: 'Empty staging default must still be READY',
+        );
+        expect(
+          spy.pushPaths,
+          isEmpty,
+          reason:
+              'F1 read-only fast path must not push network for idle local state',
+        );
 
-      expect(result, SyncCheckResult.ready,
-          reason: 'Empty staging must not crash fast path');
-      expect(spy.pushPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: 'Empty blob clears remote — must not skip push');
-    });
+        // Forced: cookie-match fast path pushes the empty blob to clear remote.
+        final forcedResult = await svc.checkAndSync(skipReadOnlyFastPath: true);
+        expect(
+          forcedResult,
+          SyncCheckResult.ready,
+          reason: 'Forced fast path must not crash on empty staging',
+        );
+        expect(
+          spy.pushPaths,
+          contains(StagingPaths.remoteRowLevelBlob),
+          reason: 'Forced fast path must push empty blob to clear remote',
+        );
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -1395,15 +1762,20 @@ void main() {
       await svc.end('Hash Test', 5000);
 
       final hash = await svc.commitEntries();
-      expect(hash, isNotNull,
-          reason: 'commitEntries must return the block hash prefix');
-      expect(hash!.length, 10,
-          reason: 'Hash prefix must be exactly 10 characters');
+      expect(
+        hash,
+        isNotNull,
+        reason: 'commitEntries must return the block hash prefix',
+      );
+      expect(
+        hash!.length,
+        10,
+        reason: 'Hash prefix must be exactly 10 characters',
+      );
     });
 
     // N2
-    test('N2: commitEntries filters out is_active==true entries',
-        () async {
+    test('N2: commitEntries filters out is_active==true entries', () async {
       final svc = await _makeSyncWithEngine();
       // Create one active and one completed entry
       await svc.capture(title: 'Active Task');
@@ -1415,11 +1787,19 @@ void main() {
       // Verify only the completed entry was passed to engine
       final entries = await svc.getEntries();
       final activeEntry = entries.firstWhere(
-          (e) => e['title'] == 'Active Task', orElse: () => {});
-      expect(activeEntry['is_active'], true,
-          reason: 'Active entry must NOT be committed');
-      expect(activeEntry['committed'], isNot(true),
-          reason: 'Active entry must not be marked committed');
+        (e) => e['title'] == 'Active Task',
+        orElse: () => {},
+      );
+      expect(
+        activeEntry['is_active'],
+        true,
+        reason: 'Active entry must NOT be committed',
+      );
+      expect(
+        activeEntry['committed'],
+        isNot(true),
+        reason: 'Active entry must not be marked committed',
+      );
     });
 
     // N3
@@ -1436,52 +1816,77 @@ void main() {
       await svc.end('Fresh Done', 6000);
 
       await svc.commitEntries();
-      // Fresh Done was committed and deleted.
-      // Already Done was skipped by the commit filter but removed by the
-      // temporary stale-entry cleanup (TODO: remove after 2026-08-01).
+      // Row-level: Fresh Done is committed; Already Done stays committed.
+      // Both are retained in staging (no delete-after-commit).
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'Both entries must be gone: Fresh Done was committed+deleted, '
-              'Already Done was removed by temporary stale cleanup '
-              '(amend this test after 2026-08-01 when cleanup is removed).');
+      expect(
+        entries.length,
+        2,
+        reason: 'Both ended entries are retained in staging (row-level).',
+      );
+      for (final e in entries) {
+        expect(
+          e['committed'],
+          isTrue,
+          reason: 'Each retained ended entry is flagged committed.',
+        );
+      }
     });
 
     // N4
-    test('N4: commitEntries with empty staging returns null (no-op)',
-        () async {
+    test('N4: commitEntries with empty staging returns null (no-op)', () async {
       final svc = await _makeSyncWithEngine();
 
       final result = await svc.commitEntries();
-      expect(result, isNull,
-          reason: 'Empty staging must return null — no entries to commit');
+      expect(
+        result,
+        isNull,
+        reason: 'Empty staging must return null — no entries to commit',
+      );
     });
 
     // N5
-    test('N5: commitEntries with all entries already committed returns null',
-        () async {
-      final svc = await _makeSyncWithEngine();
-      await svc.capture(title: 'All Done');
-      await svc.end('All Done', 5000);
-      await svc.modify(0, {'committed': true});
+    test(
+      'N5: commitEntries with all entries already committed returns null',
+      () async {
+        final svc = await _makeSyncWithEngine();
+        await svc.capture(title: 'All Done');
+        await svc.end('All Done', 5000);
+        await svc.modify(0, {'committed': true});
 
-      final result = await svc.commitEntries();
-      expect(result, isNull,
-          reason: 'All-done must return null — sync screen may re-trigger '
-              'commit; must not crash');
-    });
+        final result = await svc.commitEntries();
+        expect(
+          result,
+          isNull,
+          reason:
+              'All-done must return null — sync screen may re-trigger '
+              'commit; must not crash',
+        );
+      },
+    );
 
     // N6
-    test('N6: after commit, committed entries are deleted from staging',
-        () async {
+    test('N6: after commit, committed entries are marked committed and kept '
+        'for History (row-level retention)', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Mark Me');
       await svc.end('Mark Me', 5000);
 
       await svc.commitEntries();
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'After commit, committed entries must be deleted from '
-              'staging — they already live in the ledger chain');
+      expect(
+        entries.length,
+        1,
+        reason:
+            'Row-level keeps committed entries in staging (marked '
+            'committed=true) so History/Dashboard can display them — the '
+            'Sync tab filters them out via the committed flag.',
+      );
+      expect(
+        entries[0]['committed'],
+        isTrue,
+        reason: 'After commit, the entry must be flagged committed=true.',
+      );
     });
 
     // N7
@@ -1498,13 +1903,24 @@ void main() {
       await svc.commitEntries();
       final entries = await svc.getEntries();
       final activeEntry = entries.firstWhere(
-          (e) => e['title'] == 'Still Active', orElse: () => {});
-      expect(activeEntry['is_active'], true,
-          reason: 'Active entry must be preserved unchanged');
-      expect(activeEntry['committed'], isNot(true),
-          reason: 'Active entry must not be touched by commit');
-      expect(activeEntry['title'], 'Still Active',
-          reason: 'Entry fields must be preserved');
+        (e) => e['title'] == 'Still Active',
+        orElse: () => {},
+      );
+      expect(
+        activeEntry['is_active'],
+        true,
+        reason: 'Active entry must be preserved unchanged',
+      );
+      expect(
+        activeEntry['committed'],
+        isNot(true),
+        reason: 'Active entry must not be touched by commit',
+      );
+      expect(
+        activeEntry['title'],
+        'Still Active',
+        reason: 'Entry fields must be preserved',
+      );
     });
 
     // N8
@@ -1516,27 +1932,31 @@ void main() {
 
       final hash = await svc.commitEntries();
       // The real LedgerEngine processed the entry and returned a hash
-      expect(hash, isNotNull,
-          reason: 'commitEntries must delegate to LedgerEngine.commit '
-              'and return the block hash prefix');
+      expect(
+        hash,
+        isNotNull,
+        reason:
+            'commitEntries must delegate to LedgerEngine.commit '
+            'and return the block hash prefix',
+      );
     });
 
     // N9
-    test('N9: commitEntries with no LedgerEngine throws clear error',
-        () async {
+    test('N9: commitEntries with no LedgerEngine throws clear error', () async {
       // Create SyncService WITHOUT ledgerEngine
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
       // No ledgerEngine set
 
       await svc.capture(title: 'No Engine');
       await svc.end('No Engine', 5000);
 
-      expect(
-        () => svc.commitEntries(),
-        throwsA(isA<Exception>()),
-      );
+      expect(() => svc.commitEntries(), throwsA(isA<Exception>()));
     });
 
     // N10
@@ -1548,19 +1968,26 @@ void main() {
 
       final hash = await svc.commitEntries();
       // Commit must succeed — flag is passed to LedgerEngine, not validated
-      // in staging (committed entries are deleted after commit)
-      expect(hash, isNotNull,
-          reason: 'commitEntries must succeed when entries have '
-              'has_encrypted_fields flag — engine processes it');
-      // Staging must be clean after commit
+      // in staging. Row-level keeps committed entries (marked committed=true).
+      expect(
+        hash,
+        isNotNull,
+        reason:
+            'commitEntries must succeed when entries have '
+            'has_encrypted_fields flag — engine processes it',
+      );
+      // Row-level retention: committed entry kept, flagged committed=true
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'Committed entries must be removed from staging');
+      expect(
+        entries.length,
+        1,
+        reason: 'Committed entry is retained in staging for History.',
+      );
+      expect(entries[0]['committed'], isTrue);
     });
 
     // N11
-    test('N11: commitEntries succeeds and returns hash prefix',
-        () async {
+    test('N11: commitEntries succeeds and returns hash prefix', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Hash Retain');
       await svc.end('Hash Retain', 5000);
@@ -1568,11 +1995,14 @@ void main() {
       final hash = await svc.commitEntries();
       // The commit must return a hash prefix from LedgerEngine.
       // Committed entries are deleted from staging — hash is in the ledger.
-      expect(hash, isNotNull,
-          reason: 'commitEntries must return the block hash prefix '
-              'from LedgerEngine.commit');
-      expect(hash!.length, 10,
-          reason: 'Hash prefix must be 10 characters');
+      expect(
+        hash,
+        isNotNull,
+        reason:
+            'commitEntries must return the block hash prefix '
+            'from LedgerEngine.commit',
+      );
+      expect(hash!.length, 10, reason: 'Hash prefix must be 10 characters');
     });
 
     // N12
@@ -1592,8 +2022,11 @@ void main() {
 
       final hash = await svc.commitEntries();
       // Both entries committed successfully
-      expect(hash, isNotNull,
-          reason: 'Multi-date entries must commit successfully');
+      expect(
+        hash,
+        isNotNull,
+        reason: 'Multi-date entries must commit successfully',
+      );
     });
 
     // N13
@@ -1605,31 +2038,47 @@ void main() {
 
       final hash = await svc.commitEntries();
       // Commit must succeed — provenance fields travel through engine.
-      // Committed entries are deleted from staging; provenance is in ledger.
-      expect(hash, isNotNull,
-          reason: 'commitEntries must succeed — entry_id and device_uuid '
-              'are preserved in the ledger block, not staging');
-      // Staging must be clean after commit
+      expect(
+        hash,
+        isNotNull,
+        reason:
+            'commitEntries must succeed — entry_id and device_uuid '
+            'are preserved in the ledger block',
+      );
+      // Row-level retention: provenance entry kept, flagged committed=true
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'Committed entries must be removed from staging');
+      expect(
+        entries.length,
+        1,
+        reason: 'Committed provenance entry is retained in staging.',
+      );
+      expect(entries[0]['committed'], isTrue);
     });
 
     // N14
-    test('N14: commitEntries available as public method on SyncService',
-        () async {
-      final svc = await _makeSync();
-      // Verify the method exists on the public interface
-      // (compile-time check: this test won't compile if method is private)
-      expect(svc.commitEntries, isA<Function>(),
-          reason: 'commitEntries must be a public method on SyncService '
-              'per SESSION_HANDOFF T8 contract');
+    test(
+      'N14: commitEntries available as public method on SyncService',
+      () async {
+        final svc = await _makeSync();
+        // Verify the method exists on the public interface
+        // (compile-time check: this test won't compile if method is private)
+        expect(
+          svc.commitEntries,
+          isA<Function>(),
+          reason:
+              'commitEntries must be a public method on SyncService '
+              'per SESSION_HANDOFF T8 contract',
+        );
 
-      // Empty staging returns null (no-op)
-      final result = await svc.commitEntries();
-      expect(result, isNull,
-          reason: 'Empty staging returns null — nothing to commit');
-    });
+        // Empty staging returns null (no-op)
+        final result = await svc.commitEntries();
+        expect(
+          result,
+          isNull,
+          reason: 'Empty staging returns null — nothing to commit',
+        );
+      },
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -1638,8 +2087,8 @@ void main() {
 
   group('N\': commitEntries — committed entry cleanup', () {
     // N15
-    test('N15: commitEntries deletes committed entries from staging '
-        '(they no longer appear in getEntries)', () async {
+    test('N15: commitEntries marks ended entries committed and retains them '
+        '(row-level retention)', () async {
       final svc = await _makeSyncWithEngine();
       await svc.capture(title: 'Task A');
       await svc.end('Task A', 5000);
@@ -1649,35 +2098,50 @@ void main() {
       await svc.commitEntries();
 
       final entries = await svc.getEntries();
+      final committedA = entries.where((e) => e['title'] == 'Task A').toList();
+      final committedB = entries.where((e) => e['title'] == 'Task B').toList();
       expect(
-          entries.where((e) => e['title'] == 'Task A' || e['title'] == 'Task B'),
-          isEmpty,
-          reason: 'Committed entries must be removed from staging after '
-              'commitEntries completes — they already live in the ledger.');
+        committedA,
+        isNotEmpty,
+        reason: 'Committed entry A is retained in staging (marked ',
+      );
+      expect(committedA[0]['committed'], isTrue);
+      expect(committedB, isNotEmpty);
+      expect(committedB[0]['committed'], isTrue);
     });
 
     // N16
-    test('N16: commitEntries does not remove active entries from staging',
-        () async {
-      final svc = await _makeSyncWithEngine();
-      await svc.capture(title: 'Active Task');
-      await svc.capture(title: 'Done Task');
-      await svc.end('Done Task', 5000);
+    test(
+      'N16: commitEntries does not remove active entries from staging',
+      () async {
+        final svc = await _makeSyncWithEngine();
+        await svc.capture(title: 'Active Task');
+        await svc.capture(title: 'Done Task');
+        await svc.end('Done Task', 5000);
 
-      await svc.commitEntries();
+        await svc.commitEntries();
 
-      final entries = await svc.getEntries();
-      expect(entries.length, 1,
-          reason: 'Only committed entries must be removed; active entries '
-              'must stay in staging for later commit.');
-      expect(entries[0]['title'], 'Active Task');
-      expect(entries[0]['is_active'], true);
-    });
+        final entries = await svc.getEntries();
+        final activeEntry = entries.firstWhere(
+          (e) => e['title'] == 'Active Task',
+          orElse: () => {},
+        );
+        expect(
+          activeEntry['is_active'],
+          true,
+          reason: 'Active entry must stay in staging — it is not committed.',
+        );
+        expect(
+          activeEntry['committed'],
+          isNot(true),
+          reason: 'Active entry must not be marked committed.',
+        );
+      },
+    );
 
     // N17
-    test('N17: commitEntries removes committed entries even when staging '
-        'already contains previously-committed entries (idempotent cleanup)',
-        () async {
+    test('N17: commitEntries is idempotent — committed entries stay '
+        'committed across calls (no redundant cleanup)', () async {
       final svc = await _makeSyncWithEngine();
 
       // First commit
@@ -1685,45 +2149,58 @@ void main() {
       await svc.end('First Batch', 5000);
       await svc.commitEntries();
 
-      // Second commit — staging must be clean from first batch
+      // Second commit — already-committed entries are not re-committed
       await svc.capture(title: 'Second Batch');
       await svc.end('Second Batch', 6000);
       await svc.commitEntries();
 
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'After two commitEntries calls, staging must be empty — '
-              'no stale committed entries leak across commits.');
+      final first = entries.where((e) => e['title'] == 'First Batch');
+      final second = entries.where((e) => e['title'] == 'Second Batch');
+      expect(
+        first,
+        isNotEmpty,
+        reason: 'First-batch committed entry is retained.',
+      );
+      expect(first.first['committed'], isTrue);
+      expect(second, isNotEmpty);
+      expect(second.first['committed'], isTrue);
     });
 
-    // N18 — TODO(remove after 2026-08-01): temporary stale-entry cleanup
-    test('N18: commitEntries cleans up pre-existing stale committed '
-        'entries (temporary — remove after 2026-08-01)', () async {
+    // N18 — row-level: committed entries are retained (no delete-after-commit)
+    test('N18: commitEntries retains pre-committed and freshly committed '
+        'entries (row-level retention)', () async {
       final svc = await _makeSyncWithEngine();
 
-      // Simulate pre-existing committed entries that accumulated
-      // before the deletion fix (BUG-2026-07-30).
       await svc.capture(title: 'Old Stale A');
       await svc.end('Old Stale A', 1000);
       await svc.capture(title: 'Old Stale B');
       await svc.end('Old Stale B', 2000);
-      // Mark them as committed without deleting (old broken behavior)
+      // Mark as committed (previous commit)
       await svc.modify(0, {'committed': true});
       await svc.modify(1, {'committed': true});
 
-      // Now create a new entry to trigger commitEntries
+      // Fresh entry triggers commitEntries
       await svc.capture(title: 'Fresh Entry');
       await svc.end('Fresh Entry', 3000);
 
       await svc.commitEntries();
 
-      // Fresh Entry was committed + deleted.
-      // Old Stale A and B must also be cleaned up by the temporary gate.
+      // All ended entries are retained and marked committed (row-level
+      // keeps committed rows so History/Dashboard can display them).
       final entries = await svc.getEntries();
-      expect(entries, isEmpty,
-          reason: 'Temporary cleanup must remove all stale committed '
-              'entries, not just the ones committed in this call. '
-              '(Remove this test after 2026-08-01.)');
+      expect(
+        entries.length,
+        3,
+        reason: 'All three ended entries remain in staging.',
+      );
+      for (final e in entries) {
+        expect(
+          e['committed'],
+          isTrue,
+          reason: 'Each ended entry is flagged committed after commit.',
+        );
+      }
     });
   });
 
@@ -1733,51 +2210,84 @@ void main() {
 
   group('Q: SyncService — StagingPaths usage', () {
     // Q1
-    test('Q1: _pushBlobOnly pushes to StagingPaths.remoteStagingBlob', () async {
-      final spy = _SpyTransport();
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto, transport: spy);
+    test(
+      'Q1: _pushBlobOnly pushes to StagingPaths.remoteRowLevelBlob',
+      () async {
+        final spy = _SpyTransport();
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      await svc.capture(title: 'Blob Push Test');
-      await svc.pushToRemote();
+        await svc.capture(title: 'Blob Push Test');
+        await svc.pushToRemote();
 
-      // The blob push path must be the canonical staging blobs path
-      expect(spy.pushPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: '_pushBlobOnly must push to the canonical staging blob path '
-              'so CLI/web can read it.');
-    });
+        // The blob push path must be the canonical staging blobs path
+        expect(
+          spy.pushPaths,
+          contains(StagingPaths.remoteRowLevelBlob),
+          reason:
+              '_pushBlobOnly must push to the canonical staging blob path '
+              'so CLI/web can read it.',
+        );
+      },
+    );
 
     // Q2
-    test('Q2: _pullRemoteBlob pulls from StagingPaths.remoteStagingBlob', () async {
-      final spy = _SpyTransport();
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto, transport: spy);
+    test(
+      'Q2: _pullRemoteBlob pulls from StagingPaths.remoteRowLevelBlob',
+      () async {
+        final spy = _SpyTransport();
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final svc = SyncService(
+          storage: storage,
+          crypto: crypto,
+          transport: spy,
+          stagingStore: StagingStore(AppDatabase.inMemory()),
+        );
 
-      // Exercise the pull pathway via checkAndSync
-      await svc.checkAndSync();
+        // Exercise the pull pathway via checkAndSync
+        await svc.checkAndSync();
 
-      // The blob pull path must be the canonical staging blobs path
-      expect(spy.pullPaths, contains(StagingPaths.remoteStagingBlob),
-          reason: '_pullRemoteBlob must pull from the canonical staging blob path '
-              'so it reads what CLI/web wrote.');
-    });
+        // The blob pull path must be the canonical staging blobs path
+        expect(
+          spy.pullPaths,
+          contains(StagingPaths.remoteRowLevelBlob),
+          reason:
+              '_pullRemoteBlob must pull from the canonical staging blob path '
+              'so it reads what CLI/web wrote.',
+        );
+      },
+    );
 
     // Q3
     test('Q3: _pushCookie pushes to StagingPaths.remoteDeviceCookie', () async {
       final spy = _SpyTransport();
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto, transport: spy);
+      final svc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        transport: spy,
+        stagingStore: StagingStore(AppDatabase.inMemory()),
+      );
 
       await svc.capture(title: 'Cookie Push Test');
       await svc.pushToRemote();
 
       // The cookie push path must be the canonical device cookie path
-      expect(spy.pushPaths, contains(StagingPaths.remoteDeviceCookie),
-          reason: '_pushCookie must push to the canonical device cookie path '
-              'so other devices can detect cookie presence.');
+      expect(
+        spy.pushPaths,
+        contains(StagingPaths.remoteDeviceCookie),
+        reason:
+            '_pushCookie must push to the canonical device cookie path '
+            'so other devices can detect cookie presence.',
+      );
     });
   });
 
@@ -1788,7 +2298,7 @@ void main() {
   group('S: SyncService ↔ LedgerPushService Integration', () {
     /// Create a LedgerPushService backed by an in-memory DB with a seeded
     /// block, a CryptoService with MK, and a spy transport.
-    Future<(LedgerPushService, _SpyTransport, AppDatabase)> _makePushService({
+    Future<(LedgerPushService, _SpyTransport, AppDatabase)> makePushService({
       bool withMk = true,
       _SpyTransport? transport,
     }) async {
@@ -1803,44 +2313,51 @@ void main() {
     }
 
     /// Insert a single day block into the DB for push tests.
-    Future<void> _seedBlock(AppDatabase db, {int index = 1}) async {
-      await db.blockDao.insertBlock(Block(
-        blockId: 'test-block-00$index',
-        blockType: BlockType.day,
-        blockIndex: index,
-        dataEnc: 'eyJ0ZXN0IjogdHJ1ZX0=', // base64({"test": true})
-        prevHash: Block.genesisPrevHash,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-      ));
+    Future<void> seedBlock(AppDatabase db, {int index = 1}) async {
+      await db.blockDao.insertBlock(
+        Block(
+          blockId: 'test-block-00$index',
+          blockType: BlockType.day,
+          blockIndex: index,
+          dataEnc: 'eyJ0ZXN0IjogdHJ1ZX0=', // base64({"test": true})
+          prevHash: Block.genesisPrevHash,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
     }
 
     // K1 (mapped from blueprint K1): commitEntries → pushAll end-to-end
     test('K1: commitEntries() followed by pushAll() — committed block '
         'appears at ledger/blocks/NNNNNN.json on fake transport', () async {
-      final (pushSvc, spy, db) = await _makePushService();
+      final (pushSvc, spy, db) = await makePushService();
 
       // Seed a block (simulating what commitEntries() writes to DB).
       // In Phase 3, commitEntries() will write blocks to the same
       // AppDatabase that LedgerPushService reads from.
-      await _seedBlock(db, index: 1);
+      await seedBlock(db, index: 1);
 
       final result = await pushSvc.pushAll();
 
-      expect(result.success, isTrue,
-          reason: 'Push must succeed with seeded block');
-      expect(result.blocksPushed, 1,
-          reason: 'One block pushed to remote');
-      expect(spy.pushPaths,
-          contains('ledger/blocks/000001.json'),
-          reason: 'Block file must be at canonical path — '
-              'blockIndex 1 → 000001.json');
+      expect(
+        result.success,
+        isTrue,
+        reason: 'Push must succeed with seeded block',
+      );
+      expect(result.blocksPushed, 1, reason: 'One block pushed to remote');
+      expect(
+        spy.pushPaths,
+        contains('ledger/blocks/000001.json'),
+        reason:
+            'Block file must be at canonical path — '
+            'blockIndex 1 → 000001.json',
+      );
     });
 
     // K2: push idempotency
     test('K2: pushAll() with no new commits is idempotent — second push '
         'overwrites same blocks, remote state unchanged', () async {
-      final (pushSvc, spy, db) = await _makePushService();
-      await _seedBlock(db);
+      final (pushSvc, spy, db) = await makePushService();
+      await seedBlock(db);
 
       // First push
       final r1 = await pushSvc.pushAll();
@@ -1849,17 +2366,28 @@ void main() {
 
       // Second push (no new blocks)
       final r2 = await pushSvc.pushAll();
-      expect(r2.success, isTrue,
-          reason: 'Re-push must succeed — idempotent design');
-      expect(r2.blocksPushed, 1,
-          reason: 'Same block count on re-push — no duplication');
+      expect(
+        r2.success,
+        isTrue,
+        reason: 'Re-push must succeed — idempotent design',
+      );
+      expect(
+        r2.blocksPushed,
+        1,
+        reason: 'Same block count on re-push — no duplication',
+      );
 
       // Both pushes go to the same paths
-      final blockPaths =
-          spy.pushPaths.where((p) => p.startsWith('ledger/blocks/')).toList();
-      expect(blockPaths.length, 2,
-          reason: 'Both pushes write to the same block path — '
-              'idempotent overwrite, not new files');
+      final blockPaths = spy.pushPaths
+          .where((p) => p.startsWith('ledger/blocks/'))
+          .toList();
+      expect(
+        blockPaths.length,
+        2,
+        reason:
+            'Both pushes write to the same block path — '
+            'idempotent overwrite, not new files',
+      );
     });
 
     // K3: offline / transport failure
@@ -1869,20 +2397,33 @@ void main() {
       final failingTransport = _FailingTransport();
       final crypto = await _makeCrypto();
       final db = AppDatabase.inMemory();
-      final pushSvc =
-          LedgerPushService(db: db, crypto: crypto, transport: failingTransport);
-      await _seedBlock(db);
+      final pushSvc = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: failingTransport,
+      );
+      await seedBlock(db);
 
       // Must not throw — returns structured failure
       final result = await pushSvc.pushAll();
 
-      expect(result.success, isFalse,
-          reason: 'Network failures must produce PushResult.failure, '
-              'not crashes — the UI catches PushResult');
-      expect(result.failedBlocks, isNotEmpty,
-          reason: 'Failed block indices must be reported');
-      expect(result.errors, isNotEmpty,
-          reason: 'Error messages must be surfaced for debugging');
+      expect(
+        result.success,
+        isFalse,
+        reason:
+            'Network failures must produce PushResult.failure, '
+            'not crashes — the UI catches PushResult',
+      );
+      expect(
+        result.failedBlocks,
+        isNotEmpty,
+        reason: 'Failed block indices must be reported',
+      );
+      expect(
+        result.errors,
+        isNotEmpty,
+        reason: 'Error messages must be surfaced for debugging',
+      );
     });
 
     // K4: no MK guard
@@ -1891,14 +2432,18 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = await _makeCrypto();
       crypto.clearMasterKey();
-      final pushSvc =
-          LedgerPushService(db: db, crypto: crypto, transport: _SpyTransport());
-      await _seedBlock(db);
+      final pushSvc = LedgerPushService(
+        db: db,
+        crypto: crypto,
+        transport: _SpyTransport(),
+      );
+      await seedBlock(db);
 
       expect(
         () => pushSvc.pushAll(),
         throwsA(isA<StateError>()),
-        reason: 'Must refuse to push without master key — '
+        reason:
+            'Must refuse to push without master key — '
             'user must authenticate before pushing ledger blocks',
       );
     });
@@ -1910,29 +2455,45 @@ void main() {
 
   group('S: SyncService — Multi-Active', () {
     // S1 — getActive() returns list when multiple active entries exist
-    test('S1: getActive() returns list of 2 when 2 active entries exist',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Task A');
-      await svc.capture(title: 'Task B');
+    test(
+      'S1: getActive() returns list of 2 when 2 active entries exist',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Task A');
+        await svc.capture(title: 'Task B');
 
-      final active = await svc.getActive();
-      expect(active, isA<List>(),
-          reason: 'getActive() must return List<Map> for multi-active support');
-      expect(active.length, 2,
-          reason: 'Both captured tasks should remain active');
-      expect(active[0]['title'], 'Task A');
-      expect(active[1]['title'], 'Task B');
-    });
+        final active = await svc.getActive();
+        expect(
+          active,
+          isA<List>(),
+          reason: 'getActive() must return List<Map> for multi-active support',
+        );
+        expect(
+          active.length,
+          2,
+          reason: 'Both captured tasks should remain active',
+        );
+        final titles = active.map((e) => e['title']).toSet();
+        expect(
+          titles,
+          containsAll(<String>['Task A', 'Task B']),
+          reason:
+              'Both active tasks must be present (row-level order is by '
+              'activity_id, not insertion order).',
+        );
+      },
+    );
 
     // S2 — getActive() returns empty list when no active entries
     test('S2: getActive() returns empty list when no active entries', () async {
       final svc = await _makeSync();
       final active = await svc.getActive();
-      expect(active, isA<List>(),
-          reason: 'getActive() must return List, not null');
-      expect(active, isEmpty,
-          reason: 'Empty list indicates no active tasks');
+      expect(
+        active,
+        isA<List>(),
+        reason: 'getActive() must return List, not null',
+      );
+      expect(active, isEmpty, reason: 'Empty list indicates no active tasks');
     });
 
     // S3 — capture() does not deactivate existing active entries
@@ -1943,91 +2504,128 @@ void main() {
 
       final entries = await svc.getEntries();
       final activeCount = entries.where((e) => e['is_active'] == true).length;
-      expect(activeCount, 2,
-          reason: 'capture() must not set is_active=false on existing entries');
+      expect(
+        activeCount,
+        2,
+        reason: 'capture() must not set is_active=false on existing entries',
+      );
     });
 
     // S4 — capture() appends new active entry while existing stays active
     test(
-        'S4: capture() appends entry alongside existing active, both stay active',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'First');
-      await svc.capture(title: 'Second');
+      'S4: capture() appends entry alongside existing active, both stay active',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'First');
+        await svc.capture(title: 'Second');
 
-      final entries = await svc.getEntries();
-      expect(entries.length, 2);
-      expect(entries[0]['is_active'], true,
-          reason: 'First entry must still be active after second capture');
-      expect(entries[1]['is_active'], true,
-          reason: 'Second entry must be created as active');
-    });
+        final entries = await svc.getEntries();
+        expect(entries.length, 2);
+        expect(
+          entries[0]['is_active'],
+          true,
+          reason: 'First entry must still be active after second capture',
+        );
+        expect(
+          entries[1]['is_active'],
+          true,
+          reason: 'Second entry must be created as active',
+        );
+      },
+    );
 
     // S5 — endByEntryId(entryId, endEpoch) ends correct entry among 2 active
-    test('S5: endByEntryId() ends correct entry among 2 active tasks', () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Task A');
-      await svc.capture(title: 'Task B');
+    test(
+      'S5: endByEntryId() ends correct entry among 2 active tasks',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Task A');
+        await svc.capture(title: 'Task B');
 
-      final active = await svc.getActive();
-      final targetId = active[1]['entry_id'] as String;
+        final active = await svc.getActive();
+        final targetId = active[1]['entry_id'] as String;
 
-      await svc.endByEntryId(targetId, 5000);
+        await svc.endByEntryId(targetId, 5000);
 
-      final afterEnd = await svc.getActive();
-      expect(afterEnd.length, 1,
-          reason: 'Only the targeted entry should be ended');
-      expect(afterEnd[0]['entry_id'], active[0]['entry_id'],
-          reason: 'Untargeted entry must remain active');
+        final afterEnd = await svc.getActive();
+        expect(
+          afterEnd.length,
+          1,
+          reason: 'Only the targeted entry should be ended',
+        );
+        expect(
+          afterEnd[0]['entry_id'],
+          active[0]['entry_id'],
+          reason: 'Untargeted entry must remain active',
+        );
 
-      final entries = await svc.getEntries();
-      final ended = entries.firstWhere((e) => e['entry_id'] == targetId);
-      expect(ended['is_active'], false,
-          reason: 'Targeted entry must have is_active=false');
-      expect(ended['end_epoch'], 5000);
-    });
+        final entries = await svc.getEntries();
+        final ended = entries.firstWhere((e) => e['entry_id'] == targetId);
+        expect(
+          ended['is_active'],
+          false,
+          reason: 'Targeted entry must have is_active=false',
+        );
+        expect(ended['end_epoch'], 5000);
+      },
+    );
 
     // S6 — pauseByEntryId(entryId, epoch) pauses correct entry among 2 active
-    test('S6: pauseByEntryId() pauses correct entry among 2 active tasks',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Task A');
-      await svc.capture(title: 'Task B');
+    test(
+      'S6: pauseByEntryId() pauses correct entry among 2 active tasks',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Task A');
+        await svc.capture(title: 'Task B');
 
-      final active = await svc.getActive();
-      final targetId = active[0]['entry_id'] as String;
+        final active = await svc.getActive();
+        final targetId = active[0]['entry_id'] as String;
 
-      await svc.pauseByEntryId(targetId, 3000);
+        await svc.pauseByEntryId(targetId, 3000);
 
-      // Read fresh state
-      final entries = await svc.getEntries();
-      final paused = entries.firstWhere((e) => e['entry_id'] == targetId);
-      final unpaused = entries.firstWhere((e) => e['entry_id'] != targetId && e['is_active'] == true);
+        // Read fresh state
+        final entries = await svc.getEntries();
+        final paused = entries.firstWhere((e) => e['entry_id'] == targetId);
+        final unpaused = entries.firstWhere(
+          (e) => e['entry_id'] != targetId && e['is_active'] == true,
+        );
 
-      expect(paused['is_paused'], true,
-          reason: 'Targeted entry must be paused');
-      expect(unpaused['is_paused'], false,
-          reason: 'Untargeted entry must remain unpaused');
-    });
+        expect(
+          paused['is_paused'],
+          true,
+          reason: 'Targeted entry must be paused',
+        );
+        expect(
+          unpaused['is_paused'],
+          false,
+          reason: 'Untargeted entry must remain unpaused',
+        );
+      },
+    );
 
     // S7 — unpauseByEntryId(entryId, epoch) unpauses correct entry
-    test('S7: unpauseByEntryId() unpauses correct entry among 2 active',
-        () async {
-      final svc = await _makeSync();
-      await svc.capture(title: 'Task A');
-      await svc.capture(title: 'Task B');
+    test(
+      'S7: unpauseByEntryId() unpauses correct entry among 2 active',
+      () async {
+        final svc = await _makeSync();
+        await svc.capture(title: 'Task A');
+        await svc.capture(title: 'Task B');
 
-      final active = await svc.getActive();
-      final targetId = active[0]['entry_id'] as String;
+        final active = await svc.getActive();
+        final targetId = active[0]['entry_id'] as String;
 
-      await svc.pauseByEntryId(targetId, 3000);
-      await svc.unpauseByEntryId(targetId, 5000);
+        await svc.pauseByEntryId(targetId, 3000);
+        await svc.unpauseByEntryId(targetId, 5000);
 
-      final entries = await svc.getEntries();
-      final task = entries.firstWhere((e) => e['entry_id'] == targetId);
-      expect(task['is_paused'], false,
-          reason: 'Entry must be unpaused after unpauseByEntryId()');
-    });
+        final entries = await svc.getEntries();
+        final task = entries.firstWhere((e) => e['entry_id'] == targetId);
+        expect(
+          task['is_paused'],
+          false,
+          reason: 'Entry must be unpaused after unpauseByEntryId()',
+        );
+      },
+    );
 
     // S8 — Existing end(title) still works (backward compat)
     test('S8: end(title) still works with single active entry', () async {
@@ -2036,8 +2634,11 @@ void main() {
       await svc.end('Old Style', 3000);
 
       final entries = await svc.getEntries();
-      expect(entries[0]['is_active'], false,
-          reason: 'end(title) must still work for backward compatibility');
+      expect(
+        entries[0]['is_active'],
+        false,
+        reason: 'end(title) must still work for backward compatibility',
+      );
       expect(entries[0]['end_epoch'], 3000);
     });
   });
@@ -2046,15 +2647,17 @@ void main() {
 /// Transport that throws on push/pull for failure-path tests.
 class _FailingTransport extends HttpTransport {
   _FailingTransport()
-      : super(baseUrl: 'https://fail.example.com', apiKey: 'fail-key');
+    : super(baseUrl: 'https://fail.example.com', apiKey: 'fail-key');
   @override
   Future<Uint8List?> pull(String path) async {
     throw Exception('Simulated network failure');
   }
+
   @override
   Future<void> push(String path, Uint8List data) async {
     throw Exception('Simulated network failure on push');
   }
+
   @override
   Future<List<String>> listFiles(String prefix) async => [];
   @override

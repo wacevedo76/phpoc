@@ -8,6 +8,7 @@ import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart'
     show onboardingServiceProvider;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/features/onboarding/onboarding_screen.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
@@ -325,12 +326,17 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeSyncStorage();
+      final db = AppDatabase.inMemory();
       final svc = OnboardingService(
         crypto: crypto,
-        db: AppDatabase.inMemory(),
+        db: db,
         preferences: AppPreferences.testInstance(),
         securePreferences: SecurePreferences.testInstance(),
-        syncService: SyncService(storage: storage, crypto: crypto),
+        syncService: SyncService(
+          storage: storage,
+          crypto: crypto,
+          stagingStore: StagingStore(db),
+        ),
       );
       svc.ledgerPullService = _FakeLedgerPull(pullResult);
       return svc;

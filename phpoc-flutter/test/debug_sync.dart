@@ -7,6 +7,7 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as p;
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/features/sync/sync_screen.dart';
@@ -44,7 +45,12 @@ void main() {
       createdAt: DateTime.now().millisecondsSinceEpoch,
       identitySeal: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
     ));
-    final sync = SyncService(storage: _Storage(), crypto: c, transport: t);
+    final sync = SyncService(
+      storage: _Storage(),
+      crypto: c,
+      transport: t,
+      stagingStore: StagingStore(db),
+    );
     final push = LedgerPushService(db: db, crypto: c, transport: t);
 
     await tester.pumpWidget(ProviderScope(
@@ -54,7 +60,7 @@ void main() {
         p.appPreferencesProvider.overrideWith((ref) => AppPreferences.testInstance()),
         p.securePreferencesProvider.overrideWith((ref) => SecurePreferences.testInstance()),
         p.syncServiceProvider.overrideWith((ref) => sync),
-        p.authServiceProvider.overrideWith((ref) => AuthService(crypto: c, db: db, preferences: AppPreferences.testInstance())),
+        p.authServiceProvider.overrideWith((ref) => AuthService(crypto: c, db: db, preferences: AppPreferences.testInstance(), securePreferences: SecurePreferences.testInstance())),
         p.onboardingServiceProvider.overrideWith((ref) => OnboardingService(crypto: c, db: db, preferences: AppPreferences.testInstance(), securePreferences: SecurePreferences.testInstance(), syncService: sync)),
         p.ledgerPushServiceProvider.overrideWith((ref) => push),
         appLifecycleProvider.overrideWith((ref) => AppLifecycleNotifier()..goToReady()),

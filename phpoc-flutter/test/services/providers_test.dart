@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
@@ -47,7 +48,12 @@ final _authServiceProvider = Provider<AuthService>((ref) {
   final crypto = ref.watch(_cryptoServiceProvider);
   final db = ref.watch(data_providers.databaseProvider);
   final prefs = ref.watch(_appPreferencesProvider);
-  return AuthService(crypto: crypto, db: db, preferences: prefs);
+  final securePrefs = ref.watch(_securePreferencesProvider);
+  return AuthService(
+      crypto: crypto,
+      db: db,
+      preferences: prefs,
+      securePreferences: securePrefs);
 });
 
 /// Sync service provider — injects crypto, db, prefs, securePrefs.
@@ -55,11 +61,11 @@ final _authServiceProvider = Provider<AuthService>((ref) {
 /// Returns a [SyncService] configured with in-memory storage.
 final _syncServiceProvider = Provider<SyncService>((ref) {
   final crypto = ref.watch(_cryptoServiceProvider);
-  // ignore: unused_local_variable
-  final _ = ref.watch(data_providers.databaseProvider);
+  final db = ref.watch(data_providers.databaseProvider);
   // In-memory storage for staging (no remote transport by default).
   final storage = _InMemoryStorage();
-  return SyncService(storage: storage, crypto: crypto);
+  return SyncService(
+      storage: storage, crypto: crypto, stagingStore: StagingStore(db));
 });
 
 /// Onboarding service provider — injects all deps.
@@ -408,9 +414,13 @@ void main() {
           _syncServiceProvider.overrideWithProvider(
             Provider<SyncService>((ref) {
               final crypto = ref.watch(_cryptoServiceProvider);
+              final db = ref.watch(data_providers.databaseProvider);
               final storage = _InMemoryStorage();
               return SyncService(
-                  storage: storage, crypto: crypto, transport: transport);
+                  storage: storage,
+                  crypto: crypto,
+                  transport: transport,
+                  stagingStore: StagingStore(db));
             }),
           ),
         ],
@@ -442,9 +452,13 @@ void main() {
           _syncServiceProvider.overrideWithProvider(
             Provider<SyncService>((ref) {
               final crypto = ref.watch(_cryptoServiceProvider);
+              final db = ref.watch(data_providers.databaseProvider);
               final storage = _InMemoryStorage();
               return SyncService(
-                  storage: storage, crypto: crypto, transport: transport);
+                  storage: storage,
+                  crypto: crypto,
+                  transport: transport,
+                  stagingStore: StagingStore(db));
             }),
           ),
         ],
@@ -474,9 +488,13 @@ void main() {
           _syncServiceProvider.overrideWithProvider(
             Provider<SyncService>((ref) {
               final crypto = ref.watch(_cryptoServiceProvider);
+              final db = ref.watch(data_providers.databaseProvider);
               final storage = _InMemoryStorage();
               return SyncService(
-                  storage: storage, crypto: crypto, transport: transport);
+                  storage: storage,
+                  crypto: crypto,
+                  transport: transport,
+                  stagingStore: StagingStore(db));
             }),
           ),
         ],

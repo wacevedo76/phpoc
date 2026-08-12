@@ -6,6 +6,7 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
@@ -52,8 +53,13 @@ List<Override> defaultScreenOverrides() {
     }),
     data_providers.syncServiceProvider.overrideWith((ref) {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);
+      final db = ref.watch(data_providers.databaseProvider);
       final storage = _InMemoryStorage();
-      return SyncService(storage: storage, crypto: crypto);
+      return SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: StagingStore(db),
+      );
     }),
     data_providers.authServiceProvider.overrideWith((ref) {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);

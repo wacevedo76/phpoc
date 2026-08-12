@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/sync_result.dart';
+import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 
 /// Sync Integration tests — Group J (10 assertions).
@@ -34,6 +36,15 @@ Future<CryptoService> _makeCrypto() async {
   return crypto;
 }
 
+/// Create a SyncService wired with a row-level StagingStore.
+SyncService _mk(dynamic storage, CryptoService crypto) {
+  return SyncService(
+    storage: storage,
+    crypto: crypto,
+    stagingStore: StagingStore(AppDatabase.inMemory()),
+  );
+}
+
 void main() {
   group('J: Sync Integration', () {
     // J1
@@ -44,8 +55,8 @@ void main() {
       final storageA = _FakeStorage();
       final storageB = _FakeStorage();
 
-      final deviceA = SyncService(storage: storageA, crypto: crypto);
-      final deviceB = SyncService(storage: storageB, crypto: crypto);
+      final deviceA = _mk(storageA, crypto);
+      final deviceB = _mk(storageB, crypto);
 
       // Device A captures
       await deviceA.capture(title: 'Cross-device Task');
@@ -67,8 +78,8 @@ void main() {
       final storageA = _FakeStorage();
       final storageB = _FakeStorage();
 
-      final deviceA = SyncService(storage: storageA, crypto: crypto);
-      final deviceB = SyncService(storage: storageB, crypto: crypto);
+      final deviceA = _mk(storageA, crypto);
+      final deviceB = _mk(storageB, crypto);
 
       await deviceA.capture(title: 'Device A Task');
       await deviceB.capture(title: 'Device B Task');
@@ -87,8 +98,8 @@ void main() {
       final storageA = _FakeStorage();
       final storageB = _FakeStorage();
 
-      final deviceA = SyncService(storage: storageA, crypto: crypto);
-      final deviceB = SyncService(storage: storageB, crypto: crypto);
+      final deviceA = _mk(storageA, crypto);
+      final deviceB = _mk(storageB, crypto);
 
       // This test defines the conflict resolution contract
       // RED: conflict resolution not yet implemented
@@ -109,7 +120,7 @@ void main() {
       final crypto = await _makeCrypto();
 
       // Start offline (no transport)
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Capture offline
       await svc.capture(title: 'Offline Capture');
@@ -124,6 +135,7 @@ void main() {
     test('J5: checkAndSync() returns OFFLINE when transport unreachable', () async {
       final svc = SyncService(
         storage: _FakeStorage(),
+        stagingStore: StagingStore(AppDatabase.inMemory()),
         crypto: await _makeCrypto(),
         // RED: transport with unreachable URL should produce OFFLINE
       );
@@ -139,7 +151,7 @@ void main() {
       await crypto.initialize();
       // No MK set
 
-      final svc = SyncService(storage: _FakeStorage(), crypto: crypto);
+      final svc = _mk(_FakeStorage(), crypto);
 
       // No transport = local-only mode → READY
       final result = await svc.checkAndSync();
@@ -152,8 +164,8 @@ void main() {
       final storageA = _FakeStorage();
       final storageB = _FakeStorage();
 
-      final deviceA = SyncService(storage: storageA, crypto: crypto);
-      final deviceB = SyncService(storage: storageB, crypto: crypto);
+      final deviceA = _mk(storageA, crypto);
+      final deviceB = _mk(storageB, crypto);
 
       // Full lifecycle
       await deviceA.capture(title: 'Full Cycle');
@@ -179,7 +191,7 @@ void main() {
         'creation_time': 1000, // Expired
       });
 
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // RED: TTL cycle not yet implemented
       final result = await svc.checkAndSync();
@@ -191,7 +203,7 @@ void main() {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
 
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       // Initially no remote
       expect(svc.isRemoteAvailable, false);
@@ -205,7 +217,7 @@ void main() {
     test('J10: isRemoteAvailable returns false when transport is null', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
-      final svc = SyncService(storage: storage, crypto: crypto);
+      final svc = _mk(storage, crypto);
 
       expect(svc.isRemoteAvailable, false);
     });

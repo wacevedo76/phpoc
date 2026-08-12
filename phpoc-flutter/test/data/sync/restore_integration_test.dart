@@ -6,6 +6,7 @@ import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/services/onboarding_service.dart';
@@ -94,7 +95,7 @@ Future<OnboardingService> _makeOnboarding({
   final p = prefs ?? AppPreferences.testInstance();
   final s = SecurePreferences.testInstance();
   final storage = _FakeStorage();
-  final sync = SyncService(storage: storage, crypto: c);
+  final sync = _mkSync(storage, c);
 
   if (crypto == null) await c.initialize();
 
@@ -104,6 +105,15 @@ Future<OnboardingService> _makeOnboarding({
     preferences: p,
     securePreferences: s,
     syncService: sync,
+  );
+}
+
+/** Create a row-level SyncService backed by its own StagingStore. */
+SyncService _mkSync(dynamic storage, CryptoService crypto) {
+  return SyncService(
+    storage: storage,
+    crypto: crypto,
+    stagingStore: StagingStore(AppDatabase.inMemory()),
   );
 }
 
@@ -127,7 +137,7 @@ void main() {
       cryptoA.setMasterKey(mkA);
 
       final storageA = _FakeStorage();
-      final syncA = SyncService(storage: storageA, crypto: cryptoA);
+      final syncA = _mkSync(storageA, cryptoA);
       (syncA as dynamic).transport = sharedTransport;
 
       final onboardingA = OnboardingService(
@@ -153,7 +163,7 @@ void main() {
       cryptoB.setMasterKey(cryptoB.deriveMasterKey(validSeedB64));
 
       final storageB = _FakeStorage();
-      final syncB = SyncService(storage: storageB, crypto: cryptoB);
+      final syncB = _mkSync(storageB, cryptoB);
       (syncB as dynamic).transport = sharedTransport;
 
       // Simulate what restoreFromCloud does: build genesis, set identity,
@@ -236,7 +246,7 @@ void main() {
       crypto.setMasterKey(mk);
 
       final storage = _FakeStorage();
-      final sync = SyncService(storage: storage, crypto: crypto);
+      final sync = _mkSync(storage, crypto);
 
       final onboarding = OnboardingService(
         crypto: crypto,
@@ -272,7 +282,7 @@ void main() {
       await cryptoA.initialize();
       cryptoA.setMasterKey(cryptoA.deriveMasterKey(validSeedB64));
       final storageA = _FakeStorage();
-      final syncA = SyncService(storage: storageA, crypto: cryptoA);
+      final syncA = _mkSync(storageA, cryptoA);
       (syncA as dynamic).transport = sharedTransport;
 
       final onboardingA = OnboardingService(
@@ -292,7 +302,7 @@ void main() {
       await cryptoB.initialize();
       cryptoB.setMasterKey(cryptoB.deriveMasterKey(validSeedB64));
       final storageB = _FakeStorage();
-      final syncB = SyncService(storage: storageB, crypto: cryptoB);
+      final syncB = _mkSync(storageB, cryptoB);
       (syncB as dynamic).transport = sharedTransport;
 
       final onboardingB = OnboardingService(
@@ -324,7 +334,7 @@ void main() {
       await cryptoA.initialize();
       cryptoA.setMasterKey(cryptoA.deriveMasterKey(validSeedB64));
       final storageA = _FakeStorage();
-      final syncA = SyncService(storage: storageA, crypto: cryptoA);
+      final syncA = _mkSync(storageA, cryptoA);
       (syncA as dynamic).transport = sharedTransport;
 
       final onboardingA = OnboardingService(
@@ -344,7 +354,7 @@ void main() {
       await cryptoB.initialize();
       cryptoB.setMasterKey(cryptoB.deriveMasterKey(validSeedB64));
       final storageB = _FakeStorage();
-      final syncB = SyncService(storage: storageB, crypto: cryptoB);
+      final syncB = _mkSync(storageB, cryptoB);
       (syncB as dynamic).transport = sharedTransport;
 
       await OnboardingService(
@@ -380,7 +390,7 @@ void main() {
       await crypto.initialize();
       crypto.setMasterKey(crypto.deriveMasterKey(validSeedB64));
       final storage = _FakeStorage();
-      final sync = SyncService(storage: storage, crypto: crypto);
+      final sync = _mkSync(storage, crypto);
 
       // checkAndSync without transport returns ready (local-only)
       final result = await sync.checkAndSync();

@@ -1449,9 +1449,11 @@ void main() {
         'READY immediately', () async {
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
+      final db = AppDatabase.inMemory();
       final svc = SyncService(
         storage: storage,
         crypto: crypto,
+        stagingStore: StagingStore(db),
         // No transport
       );
 

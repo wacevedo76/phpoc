@@ -6,8 +6,18 @@ class FormatUtils {
 
   /// Three-letter month abbreviations (Jan–Dec).
   static const monthAbbr = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   /// Parse a YYYY-MM-DD date string into (year, month, day).
@@ -34,8 +44,7 @@ class FormatUtils {
       '${monthAbbr[dt.month - 1]} ${dt.day}, ${dt.year}';
 
   /// Short numeric date: "7/21/2026"
-  static String dateShort(DateTime dt) =>
-      '${dt.month}/${dt.day}/${dt.year}';
+  static String dateShort(DateTime dt) => '${dt.month}/${dt.day}/${dt.year}';
 
   /// Time only: "15:37"
   static String time(DateTime dt) =>
@@ -48,6 +57,28 @@ class FormatUtils {
     final minutes = d.inMinutes.remainder(60);
     if (hours > 0) return '${hours}h ${minutes}m';
     return '${minutes}m';
+  }
+
+  /// Compute active wall-time (ms) minus all completed pause intervals.
+  ///
+  /// Returns 0 when [endEpoch] or [startEpoch] is null, and floors a
+  /// negative result (pauses exceeding wall time) to 0. Open pauses
+  /// (with a null stop) are ignored. Pure helper extracted from the retired
+  /// legacy `LocalCache` class; used by row-level staging duration math.
+  static int computeDurationMsec(int? startEpoch, int? endEpoch, List pauses) {
+    if (endEpoch == null || startEpoch == null) return 0;
+    int totalPauseMs = 0;
+    for (final p in pauses) {
+      if (p is Map) {
+        final stop = p['pause_stop'];
+        final start = p['pause_start'];
+        if (stop != null && start != null) {
+          totalPauseMs += (stop as int) - (start as int);
+        }
+      }
+    }
+    final result = endEpoch - startEpoch - totalPauseMs;
+    return result < 0 ? 0 : result;
   }
 
   /// Convert epoch seconds to ISO date string (YYYY-MM-DD).

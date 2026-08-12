@@ -9,6 +9,7 @@ import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/core/models/push_result.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/features/sync/sync_screen.dart';
@@ -30,10 +31,24 @@ class _TestStorage {
 Future<SyncService> _seededSyncService(String title) async {
   final crypto = CryptoService();
   await crypto.initialize();
-  final syncSvc = SyncService(storage: _TestStorage(), crypto: crypto);
-  await syncSvc.capture(title: title);
-  await syncSvc.end(title, 5000);
-  return syncSvc;
+  final storage = _TestStorage();
+  final db = AppDatabase.inMemory();
+  final stagingStore = StagingStore(db);
+  final seeded = SyncService(
+    storage: storage,
+    crypto: crypto,
+    stagingStore: stagingStore,
+  );
+  final id = await seeded.capture(title: title);
+  await seeded.end(id, 5000);
+  // Cancel the debounced auto-push timer so it doesn't leak past teardown;
+  // return a fresh SyncService sharing the same stores.
+  seeded.dispose();
+  return SyncService(
+    storage: storage,
+    crypto: crypto,
+    stagingStore: stagingStore,
+  );
 }
 
 /// Minimal transport for push button tests (no real HTTP).
@@ -340,7 +355,10 @@ void main() {
 
       final storage = _TestStorage();
       final syncSvc = SyncService(
-          storage: storage, crypto: crypto, transport: transport);
+          storage: storage,
+          crypto: crypto,
+          transport: transport,
+          stagingStore: StagingStore(db));
 
       return (syncSvc, transport, db, crypto);
     }
@@ -470,7 +488,10 @@ void main() {
           db: db, crypto: crypto, transport: failingTransport);
       final storage = _TestStorage();
       final syncSvc = SyncService(
-          storage: storage, crypto: crypto, transport: failingTransport);
+          storage: storage,
+          crypto: crypto,
+          transport: failingTransport,
+          stagingStore: StagingStore(db));
 
       await pumpScreenWidget(tester, const SyncScreen(),
           initialPhase: AppPhase.ready,
@@ -514,7 +535,9 @@ void main() {
       final storage = _TestStorage();
       final crypto = CryptoService();
       await crypto.initialize();
-      final syncSvc = SyncService(storage: storage, crypto: crypto);
+      final db = AppDatabase.inMemory();
+      final syncSvc = SyncService(
+          storage: storage, crypto: crypto, stagingStore: StagingStore(db));
       // No transport set → transport is null
 
       await pumpScreenWidget(tester, const SyncScreen(),

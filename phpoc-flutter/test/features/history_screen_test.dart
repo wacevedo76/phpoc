@@ -11,6 +11,7 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/features/history/calendar_month_grid.dart';
 import 'package:phpoc_flutter/features/history/history_screen.dart';
@@ -137,11 +138,11 @@ List<Map<String, dynamic>> _buildRawStagingEntries(List<dynamic> ledger) {
 
 /// Seed the test ledger: import blocks + populate staging entries.
 ///
-/// Uses [backupService] to import blocks and writes raw staging entries
-/// to [syncStorage] so the HistoryScreen can display them.
+/// Uses [backupService] to import blocks and writes row-level staging
+/// rows to [stagingStore] so the HistoryScreen can display them.
 Future<void> seedTestLedger({
   required LedgerBackupService backupService,
-  required dynamic syncStorage,
+  required StagingStore stagingStore,
 }) async {
   final ledger = _loadTestLedger();
 
@@ -149,9 +150,39 @@ Future<void> seedTestLedger({
   final ledgerJson = jsonEncode(ledger);
   await backupService.importFromJson(ledgerJson);
 
-  // 2. Build raw staging entries and write to sync storage
+  // 2. Build raw staging entries and write as row-level staging rows
   final rawEntries = _buildRawStagingEntries(ledger);
-  await syncStorage.set('entries', rawEntries);
+  for (final e in rawEntries) {
+    final data = Map<String, dynamic>.from(e['data'] as Map? ?? {});
+    final startEpoch = _epochFromStamp(data['startTime_enc']);
+    final status = (data['is_active'] == false) ? 'ended' : 'active';
+    await stagingStore.putRow({
+      'activity_id': (e['hash'] as String? ?? '') +
+          (data['title'] as String? ?? ''),
+      'activity_status': status,
+      'activity': json.encode({
+        'title': data['title'] ?? 'Untitled',
+        'start_epoch': startEpoch,
+        'end_epoch': _epochFromStamp(data['endTime_enc']),
+        'duration': data['duration'] ?? 0,
+        'is_active': data['is_active'] ?? false,
+        'is_paused': data['is_paused'] ?? false,
+        'pauses': [],
+        'tags': data['tags'] ?? [],
+        'committed': e['committed'] == true,
+      }),
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+}
+
+/// Decode a `plain:123` encrypted stamp into an epoch ms int.
+int _epochFromStamp(dynamic stamp) {
+  if (stamp is String && stamp.startsWith('plain:')) {
+    return int.tryParse(stamp.substring(6)) ?? 0;
+  }
+  if (stamp is int) return stamp;
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -305,13 +336,14 @@ void main() {
       final prefs = AppPreferences.testInstance();
       final securePrefs = SecurePreferences.testInstance();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       // Seed the test ledger (blocks + staging entries)
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       // Build ProviderScope with seeded services
@@ -357,12 +389,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -402,12 +435,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -446,12 +480,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -535,12 +570,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       final entries = await syncService.getEntries();
@@ -557,12 +593,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       final entries = await syncService.getEntries();
@@ -598,12 +635,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -638,12 +676,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -679,12 +718,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -728,12 +768,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -828,12 +869,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -882,12 +924,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(
@@ -923,12 +966,13 @@ void main() {
       final db = AppDatabase.inMemory();
       final crypto = CryptoService();
       final storage = _InMemoryStorage();
-      final syncService = SyncService(storage: storage, crypto: crypto);
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(storage: storage, crypto: crypto, stagingStore: stagingStore);
       final backupService = LedgerBackupService(db: db);
 
       await seedTestLedger(
         backupService: backupService,
-        syncStorage: storage,
+        stagingStore: stagingStore,
       );
 
       await tester.pumpWidget(

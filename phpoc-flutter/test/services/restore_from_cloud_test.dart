@@ -7,6 +7,7 @@ import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
@@ -93,7 +94,7 @@ class _SpySyncService extends SyncService {
   int initialPullCallCount = 0;
   bool throwOnInitialPull = false;
 
-  _SpySyncService({required super.storage, required super.crypto});
+  _SpySyncService({required super.storage, required super.crypto, required super.stagingStore});
 
   @override
   Future<void> initialPull() async {
@@ -116,7 +117,7 @@ Future<OnboardingService> _makeOnboarding({
   final p = prefs ?? AppPreferences.testInstance();
   final s = securePrefs ?? SecurePreferences.testInstance();
   final storage = _FakeStorage();
-  final svc = sync ?? SyncService(storage: storage, crypto: c);
+  final svc = sync ?? SyncService(storage: storage, crypto: c, stagingStore: StagingStore(AppDatabase.inMemory()));
 
   if (crypto == null) await c.initialize();
 
@@ -205,7 +206,8 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeStorage();
-      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      final spy = _SpySyncService(storage: storage, crypto: crypto,
+          stagingStore: StagingStore(AppDatabase.inMemory()));
 
       final onboarding = OnboardingService(
         crypto: crypto,
@@ -321,7 +323,8 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeStorage();
-      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      final spy = _SpySyncService(storage: storage, crypto: crypto,
+          stagingStore: StagingStore(AppDatabase.inMemory()));
 
       final onboarding = OnboardingService(
         crypto: crypto,
@@ -352,7 +355,8 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeStorage();
-      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      final spy = _SpySyncService(storage: storage, crypto: crypto,
+          stagingStore: StagingStore(AppDatabase.inMemory()));
       spy.throwOnInitialPull = true;
 
       final db = AppDatabase.inMemory();
@@ -388,7 +392,8 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeStorage();
-      final spy = _SpySyncService(storage: storage, crypto: crypto);
+      final spy = _SpySyncService(storage: storage, crypto: crypto,
+          stagingStore: StagingStore(AppDatabase.inMemory()));
       spy.throwOnInitialPull = true;
 
       final db = AppDatabase.inMemory();
@@ -421,7 +426,7 @@ void main() {
       final crypto = CryptoService();
       await crypto.initialize();
       final storage = _FakeStorage();
-      final sync = SyncService(storage: storage, crypto: crypto);
+      final sync = SyncService(storage: storage, crypto: crypto, stagingStore: StagingStore(AppDatabase.inMemory()));
 
       final onboarding = OnboardingService(
         crypto: crypto,
@@ -455,7 +460,7 @@ void main() {
 
       // ── First restore: set up identity, push initial staging ──
       final storage1 = _FakeStorage();
-      final sync1 = SyncService(storage: storage1, crypto: crypto);
+      final sync1 = SyncService(storage: storage1, crypto: crypto, stagingStore: StagingStore(AppDatabase.inMemory()));
       final transport1 = _MockHttpTransport();
       sync1.transport = transport1;
 
@@ -484,7 +489,7 @@ void main() {
       crypto2.setMasterKey(crypto2.deriveMasterKey(validSeedB64));
 
       final storage2 = _FakeStorage();
-      final sync2 = SyncService(storage: storage2, crypto: crypto2);
+      final sync2 = SyncService(storage: storage2, crypto: crypto2, stagingStore: StagingStore(AppDatabase.inMemory()));
       sync2.transport = transport1; // same transport = same remote data
 
       final onboarding2 = OnboardingService(
@@ -689,6 +694,7 @@ void main() {
       final syncService = SyncService(
         storage: stagingStorage,
         crypto: crypto,
+        stagingStore: StagingStore(db),
       );
       final pullService = LedgerPullService(
         db: db,
@@ -696,6 +702,7 @@ void main() {
         transport: null,
         backupService: LedgerBackupService(db: db),
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       final onboarding = OnboardingService(
         crypto: crypto,
@@ -709,6 +716,7 @@ void main() {
         crypto: crypto,
         db: db,
         preferences: prefs,
+        securePreferences: SecurePreferences.testInstance(),
       );
 
       final pullResult = await onboarding.restoreFromCloud(
@@ -766,6 +774,7 @@ void main() {
       final syncService = SyncService(
         storage: stagingStorage,
         crypto: crypto,
+        stagingStore: StagingStore(db),
       );
       final pullService = LedgerPullService(
         db: db,
@@ -773,6 +782,7 @@ void main() {
         transport: null,
         backupService: LedgerBackupService(db: db),
         stagingStorage: stagingStorage,
+        stagingStore: StagingStore(db),
       );
       final onboarding = OnboardingService(
         crypto: crypto,

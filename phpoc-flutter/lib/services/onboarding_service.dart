@@ -30,6 +30,7 @@ class OnboardingService with DecryptHelpers {
   final AppPreferences preferences;
   final SecurePreferences securePreferences;
   final SyncService syncService;
+
   /// Ledger pull service for restore-from-cloud. Set by provider injection.
   ///
   /// Typed as dynamic because test mocks substitute non-LedgerPullService
@@ -57,13 +58,17 @@ class OnboardingService with DecryptHelpers {
   /// Throws [LedgerExistsException] if a ledger already exists and
   /// [wipeExisting] is false.
   /// Throws validation error if [passphrase] is fewer than 8 characters.
-  Future<String> createNewLedger(String passphrase, {bool wipeExisting = false}) async {
+  Future<String> createNewLedger(
+    String passphrase, {
+    bool wipeExisting = false,
+  }) async {
     await _ensureNoLedger(wipeExisting);
 
     // 2. Validate passphrase length (≥8)
     if (passphrase.length < CryptoService.minPassphraseLength) {
       throw FormatException(
-          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
+        'Passphrase must be at least ${CryptoService.minPassphraseLength} characters',
+      );
     }
 
     // 3. Generate random 32-byte seed
@@ -84,7 +89,11 @@ class OnboardingService with DecryptHelpers {
   /// Throws [LedgerExistsException] if data already exists and
   /// [wipeExisting] is false.
   /// Throws format/validation error if [seedB64] is not valid base64.
-  Future<void> importFromSeed(String seedB64, String passphrase, {bool wipeExisting = false}) async {
+  Future<void> importFromSeed(
+    String seedB64,
+    String passphrase, {
+    bool wipeExisting = false,
+  }) async {
     await _ensureNoLedger(wipeExisting);
     _validateSeedAndPassphrase(seedB64, passphrase);
 
@@ -115,7 +124,15 @@ class OnboardingService with DecryptHelpers {
     String apiKey, {
     bool wipeExisting = false,
   }) async {
-    await _ensureNoLedger(wipeExisting);
+    // Restore ADOPTS a compatible existing chain rather than throwing
+    // (V4): cloud restore may run into an R2-seeded chain and must not be
+    // blocked merely because blocks already exist. Only wipe when the
+    // user explicitly requests it. Creation flows (createNewLedger /
+    // importFromSeed / importFromFile) keep the strict LedgerExistsException
+    // guard via _ensureNoLedger (B4).
+    if (wipeExisting) {
+      await clearAllData();
+    }
     _validateSeedAndPassphrase(seedB64, passphrase);
 
     // 4. Validate Worker URL for injection characters — must throw BEFORE
@@ -303,7 +320,8 @@ class OnboardingService with DecryptHelpers {
     }
     if (await _hasGenesisBlock()) {
       throw LedgerExistsException(
-          'A ledger already exists. Clear existing data first.');
+        'A ledger already exists. Clear existing data first.',
+      );
     }
   }
 
@@ -315,7 +333,8 @@ class OnboardingService with DecryptHelpers {
     CryptoService.validateSeedBase64(seedB64);
     if (passphrase.length < CryptoService.minPassphraseLength) {
       throw FormatException(
-          'Passphrase must be at least ${CryptoService.minPassphraseLength} characters');
+        'Passphrase must be at least ${CryptoService.minPassphraseLength} characters',
+      );
     }
   }
 
@@ -324,17 +343,23 @@ class OnboardingService with DecryptHelpers {
   /// Connection and pull errors are surfaced via [PullResult.failure].
   /// When [ledgerPullService] is absent, returns [PullResult.ok] with zeros.
   Future<PullResult> _pullFromCloud(
-    String workerUrl, String apiKey, String passphrase, String seedB64,
+    String workerUrl,
+    String apiKey,
+    String passphrase,
+    String seedB64,
   ) async {
     String? connectError;
     bool connected = false;
     try {
-      await connectWorker(workerUrl, apiKey)
-          .timeout(const Duration(seconds: 20));
+      await connectWorker(
+        workerUrl,
+        apiKey,
+      ).timeout(const Duration(seconds: 20));
       connected = true;
     } catch (e) {
       if (e is HttpTransportException && e.statusCode == 403) {
-        connectError = 'Invalid API key — the Worker at $workerUrl '
+        connectError =
+            'Invalid API key — the Worker at $workerUrl '
             'rejected the connection. Check the API key and try again.';
       } else {
         connectError = 'Cannot reach Worker at $workerUrl: $e';
@@ -346,11 +371,13 @@ class OnboardingService with DecryptHelpers {
 
     if (connected && ledgerPullService != null) {
       try {
-        pullResult = await ledgerPullService!.pullAll()
-            .timeout(const Duration(seconds: 120));
+        pullResult = await ledgerPullService!.pullAll().timeout(
+          const Duration(seconds: 120),
+        );
       } catch (e) {
         if (e is TimeoutException) {
-          pullError = 'Connection timed out while pulling blocks. '
+          pullError =
+              'Connection timed out while pulling blocks. '
               'Check the Worker URL and try again.';
         } else {
           pullError = 'Pull failed: $e';
@@ -365,8 +392,7 @@ class OnboardingService with DecryptHelpers {
     // different activity_id values than the block-seeded entries.
     if (connected && pullError == null && pullResult == null) {
       try {
-        await syncService.initialPull()
-            .timeout(const Duration(seconds: 60));
+        await syncService.initialPull().timeout(const Duration(seconds: 60));
       } catch (_) {
         // Degraded mode: staging pull failure does not block restore.
       }
@@ -395,8 +421,12 @@ class OnboardingService with DecryptHelpers {
   ///
   /// Contains both ledger blocks and staging entries with a top-level
   /// cryptographic seal over {ledger, staging}.
-  Future<void> _importV2(Map<String, dynamic> parsed, String mk,
-      String passphrase, String seedB64) async {
+  Future<void> _importV2(
+    Map<String, dynamic> parsed,
+    String mk,
+    String passphrase,
+    String seedB64,
+  ) async {
     final ledger = parsed['ledger'];
     final staging = parsed['staging'];
     final seal = parsed['seal'] as String?;
@@ -415,7 +445,8 @@ class OnboardingService with DecryptHelpers {
     final payload = jsonEncode({'ledger': ledger, 'staging': staging});
     if (!crypto.verifySeal(payload, seal, mk)) {
       throw const FormatException(
-          'Seal verification failed: wrong recovery seed or tampered file');
+        'Seal verification failed: wrong recovery seed or tampered file',
+      );
     }
 
     // Import ledger blocks via LedgerBackupService
@@ -441,8 +472,12 @@ class OnboardingService with DecryptHelpers {
   ///
   /// Contains only staging entries with a top-level seal over {entries}.
   /// No ledger blocks are imported.
-  Future<void> _importV1(Map<String, dynamic> parsed, String mk,
-      String passphrase, String seedB64) async {
+  Future<void> _importV1(
+    Map<String, dynamic> parsed,
+    String mk,
+    String passphrase,
+    String seedB64,
+  ) async {
     final entries = parsed['entries'];
     final seal = parsed['seal'] as String?;
 
@@ -457,7 +492,8 @@ class OnboardingService with DecryptHelpers {
     final payload = jsonEncode({'entries': entries});
     if (!crypto.verifySeal(payload, seal, mk)) {
       throw const FormatException(
-          'Seal verification failed: wrong recovery seed or tampered file');
+        'Seal verification failed: wrong recovery seed or tampered file',
+      );
     }
 
     // Write staging entries (no ledger blocks for v1)
@@ -471,7 +507,10 @@ class OnboardingService with DecryptHelpers {
   ///
   /// No envelope seal — raw blocks are imported directly.
   Future<void> _importRawChain(
-      List<dynamic> blocks, String passphrase, String seedB64) async {
+    List<dynamic> blocks,
+    String passphrase,
+    String seedB64,
+  ) async {
     final backupService = LedgerBackupService(db: db);
     await backupService.importFromJson(jsonEncode(blocks));
 
@@ -498,41 +537,35 @@ class OnboardingService with DecryptHelpers {
   Future<void> _writeStagingEntries(dynamic entries) async {
     if (entries is! List) return;
     final store = syncService.stagingStore;
-    if (store == null) return;
 
     for (final entry in entries) {
       if (entry is! Map<String, dynamic>) continue;
 
-      final activityId = (entry['entry_id'] as String?)?.isNotEmpty == true
-          ? entry['entry_id'] as String
-          : generateActivityId();
-      final isActive = entry['is_active'] as bool? ?? false;
-      final pauses = (entry['pauses'] as List<dynamic>?) ?? <dynamic>[];
-
+      final e = _ImportEntry(entry);
       final activityData = {
-        'entry_id': entry['entry_id'] ?? '',
-        'hash': entry['hash'] ?? entry['content_hash'] ?? '',
-        'title': entry['title'] ?? '',
-        'start_epoch': entry['start_epoch'] ?? 0,
-        'end_epoch': entry['end_epoch'],
-        'duration': entry['duration'] ?? 0,
-        'is_active': isActive,
-        'is_paused': entry['is_paused'] ?? false,
-        'pauses': pauses,
-        'tags': entry['tags'] ?? <dynamic>[],
-        'comment': entry['comment'] ?? '',
-        'media': entry['media'] ?? <dynamic>[],
-        'device_uuid': entry['device_uuid'] ?? '',
-        'committed': entry['committed'] ?? false,
+        'entry_id': e.rawEntryId,
+        'hash': e.hash,
+        'title': e.title,
+        'start_epoch': e.startEpoch,
+        'end_epoch': e.endEpoch,
+        'duration': e.duration,
+        'is_active': e.isActive,
+        'is_paused': e.isPaused,
+        'pauses': e.pausesRaw,
+        'tags': e.tagsRaw,
+        'comment': e.comment,
+        'media': e.mediaRaw,
+        'device_uuid': e.deviceUuid,
+        'committed': e.committed,
       };
 
       try {
         await store.putRow({
-          'activity_id': activityId,
-          'activity_status': isActive ? 'active' : 'ended',
+          'activity_id': e.entryId,
+          'activity_status': e.isActive ? 'active' : 'ended',
           'activity': jsonEncode(activityData),
           'updated_at': DateTime.now().millisecondsSinceEpoch,
-          'committed': entry['committed'] ?? false,
+          'committed': e.committed,
         });
       } catch (_) {
         // Best-effort: staging write failure does not block import
@@ -575,7 +608,6 @@ class OnboardingService with DecryptHelpers {
     if (mkHex == null) return;
 
     final store = syncService.stagingStore;
-    if (store == null) return;
 
     // Collect existing entry hashes AND entry_ids to avoid duplicates.
     // Raw chain entries use content_hash (no entry_id), while v1/v2
@@ -584,8 +616,9 @@ class OnboardingService with DecryptHelpers {
     final existingHashes = <String>{};
     for (final row in existingRows) {
       try {
-        final data = jsonDecode(row['activity'] as String? ?? '{}')
-            as Map<String, dynamic>;
+        final data =
+            jsonDecode(row['activity'] as String? ?? '{}')
+                as Map<String, dynamic>;
         final h = data['hash'] as String?;
         if (h != null && h.isNotEmpty) existingHashes.add(h);
         final eid = data['entry_id'] as String?;
@@ -638,12 +671,15 @@ class OnboardingService with DecryptHelpers {
             : generateActivityId();
 
         // Decrypt time fields (encrypted in block storage).
-        final startEpoch =
-            decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
-        final endEpoch =
-            decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
-        final pauses =
-            decryptPauses(entryData['pauses_enc'] as String?, mkHex);
+        final startEpoch = decryptEpoch(
+          entryData['startTime_enc'] as String?,
+          mkHex,
+        );
+        final endEpoch = decryptEpoch(
+          entryData['endTime_enc'] as String?,
+          mkHex,
+        );
+        final pauses = decryptPauses(entryData['pauses_enc'] as String?, mkHex);
 
         final activity = jsonEncode({
           'entry_id': eid ?? '',
@@ -677,10 +713,6 @@ class OnboardingService with DecryptHelpers {
     }
   }
 
-
-
-
-
   /// One-time repair: seed staging from ledger blocks and backfill
   /// comment/media fields into existing staging entries.
   ///
@@ -693,7 +725,6 @@ class OnboardingService with DecryptHelpers {
     if (!crypto.hasMasterKey) return 0;
 
     final store = syncService.stagingStore;
-    if (store == null) return 0;
 
     final stagingCount = await store.count();
     final blockCount = (await db.blockDao.getAllBlocks())
@@ -701,8 +732,9 @@ class OnboardingService with DecryptHelpers {
         .length;
 
     debugPrint(
-        '[OnboardingService] Repair: seeding staging from $blockCount blocks '
-        '(staging has $stagingCount entries)');
+      '[OnboardingService] Repair: seeding staging from $blockCount blocks '
+      '(staging has $stagingCount entries)',
+    );
 
     // 1. Seed any entries not yet in staging.
     await _seedStagingFromImportedBlocks();
@@ -724,7 +756,6 @@ class OnboardingService with DecryptHelpers {
     if (mkHex == null) return;
 
     final store = syncService.stagingStore;
-    if (store == null) return;
 
     // Build a map of hash → block entry data for quick lookup.
     final blockEntriesByHash = <String, Map<String, dynamic>>{};
@@ -752,7 +783,8 @@ class OnboardingService with DecryptHelpers {
     for (final row in rows) {
       try {
         final activityData =
-            jsonDecode(row['activity'] as String? ?? '{}') as Map<String, dynamic>;
+            jsonDecode(row['activity'] as String? ?? '{}')
+                as Map<String, dynamic>;
         final hash = activityData['hash'] as String? ?? '';
 
         // Skip entries that already have a comment.
@@ -794,29 +826,37 @@ class OnboardingService with DecryptHelpers {
     }
 
     debugPrint(
-        '[OnboardingService] Backfill: updated $updated staging entries '
-        'with comment/media from block data');
+      '[OnboardingService] Backfill: updated $updated staging entries '
+      'with comment/media from block data',
+    );
   }
 
   /// Common post-import setup: seed vault, Flutter-format genesis (optional),
   /// device identity, and hasExistingData flag.
   ///
-  /// When [keepExistingGenesis] is true (cloud restore), the R2 genesis
-  /// block is preserved and only the seed is stored in the vault. When
-  /// false (local creation, seed/file import), a new Flutter-format genesis
-  /// block is built and persisted alongside vault storage.
-  Future<void> _postImportSetup(String passphrase, String seedB64,
-      {bool keepExistingGenesis = false}) async {
+  /// When [keepExistingGenesis] is true (cloud restore, raw-chain/v2 import),
+  /// a canonical/R2 genesis MAY already be present. It is preserved whenever
+  /// it exists (D9); a Flutter-format genesis is built ONLY if none is present
+  /// (e.g. an empty cloud pull) so every final ledger state still has a D8
+  /// cryptographic root (A1). When false (local creation, seed/v1 import), a
+  /// new Flutter-format genesis block is always built.
+  Future<void> _postImportSetup(
+    String passphrase,
+    String seedB64, {
+    bool keepExistingGenesis = false,
+  }) async {
     // Store seed in vault (always — primary seed storage)
     await _storeSeedInVault(passphrase, seedB64);
 
-    if (keepExistingGenesis) {
-      // Cloud restore: R2 genesis exists and must be preserved.
-      // Only cache MK and set device identity — no genesis replacement.
-      final mk = crypto.deriveMasterKey(seedB64);
-      crypto.setMasterKey(mk);
+    // Keep an existing canonical/R2 genesis when one is present AND the
+    // keepExistingGenesis path is taken (D9); only cache MK to support
+    // downstream decryption — never rebuild/replace the genesis. Otherwise
+    // (local creation, or empty pull/import with no genesis) build a
+    // Flutter-format genesis so a D8 recoverable root always exists.
+    final preserveGenesis = keepExistingGenesis && await _hasGenesisBlock();
+    if (preserveGenesis) {
+      crypto.setMasterKey(crypto.deriveMasterKey(seedB64));
     } else {
-      // Local creation / import: build Flutter-format genesis block.
       await _buildAndPersistGenesis(passphrase, seedB64);
     }
 
@@ -849,7 +889,9 @@ class OnboardingService with DecryptHelpers {
   /// cross-client verifiability. Previously [json.encode] was used which
   /// produces non-deterministic key ordering (RC1 fix).
   Future<void> _buildAndPersistGenesis(
-      String passphrase, String seedB64) async {
+    String passphrase,
+    String seedB64,
+  ) async {
     // Derive PDK and MK
     final pdk = crypto.derivePdk(passphrase, CryptoService.pdkIterations);
     final mk = crypto.deriveMasterKey(seedB64);
@@ -884,26 +926,66 @@ class OnboardingService with DecryptHelpers {
 
     // Replace any existing genesis block(s) from R2 import with Flutter format.
     // R2 blocks may use cross-client genesis structures that AuthService can't read.
-    await db.customStatement(
-        'DELETE FROM blocks WHERE block_type = ?', ['genesis']);
-    await db.blockDao.insertBlock(Block(
-      blockId: blockId,
-      blockType: BlockType.genesis,
-      blockIndex: 0,
-      keyVersion: 1,
-      dataEnc: dataEncB64,
-      identitySeal: identitySeal,
-      prevHash: Block.genesisPrevHash,
-      createdAt: nowSeconds,
-    ));
+    await db.customStatement('DELETE FROM blocks WHERE block_type = ?', [
+      'genesis',
+    ]);
+    await db.blockDao.insertBlock(
+      Block(
+        blockId: blockId,
+        blockType: BlockType.genesis,
+        blockIndex: 0,
+        keyVersion: 1,
+        dataEnc: dataEncB64,
+        identitySeal: identitySeal,
+        prevHash: Block.genesisPrevHash,
+        createdAt: nowSeconds,
+      ),
+    );
 
     // Update block 1's prev_hash to point to the new genesis block.
     // Without this, replacing genesis creates a chain linkage break
     // because block 1 still points to the old genesis hash.
     await db.customStatement(
       'UPDATE blocks SET prev_hash = ? WHERE block_type = ? AND block_index = ?',
-      [blockId, BlockType.day.name, 1]);
+      [blockId, BlockType.day.name, 1],
+    );
   }
+}
+
+/// Normalized view of a single entry from a v1/v2 import export.
+///
+/// Centralizes the raw-field extraction shared by both staging backends
+/// (the row-level `stagingStore` blob and the legacy `entries` table) so the
+/// `entry_id`/`hash` fallbacks and field lookups stay consistent (C4).
+class _ImportEntry {
+  _ImportEntry(this._data);
+
+  final Map<String, dynamic> _data;
+
+  /// Original `entry_id` exactly as exported (may be empty).
+  String get rawEntryId => (_data['entry_id'] ?? '') as String;
+
+  /// Effective id: the exported `entry_id` when present, else a generated one.
+  String get entryId =>
+      rawEntryId.isNotEmpty ? rawEntryId : generateActivityId();
+
+  /// Content hash, accepting both Python (`hash`) and Flutter (`content_hash`) key names.
+  String get hash => (_data['hash'] ?? _data['content_hash'] ?? '') as String;
+
+  String get title => (_data['title'] ?? '') as String;
+  int get startEpoch => _data['start_epoch'] as int? ?? 0;
+  int? get endEpoch => _data['end_epoch'] as int?;
+  int get duration => _data['duration'] as int? ?? 0;
+  bool get isActive => _data['is_active'] as bool? ?? false;
+  bool get isPaused => _data['is_paused'] as bool? ?? false;
+  bool get committed => _data['committed'] as bool? ?? false;
+  List<dynamic> get pausesRaw =>
+      (_data['pauses'] as List<dynamic>?) ?? <dynamic>[];
+  List<dynamic> get tagsRaw => (_data['tags'] as List<dynamic>?) ?? <dynamic>[];
+  List<dynamic> get mediaRaw =>
+      (_data['media'] as List<dynamic>?) ?? <dynamic>[];
+  dynamic get comment => _data['comment'] ?? '';
+  String get deviceUuid => (_data['device_uuid'] ?? '') as String;
 }
 
 /// Thrown when attempting to create or import a ledger that already exists.

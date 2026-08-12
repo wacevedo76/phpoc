@@ -10,6 +10,7 @@ import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/data/sync/sync_service.dart';
 import 'package:phpoc_flutter/features/dashboard/dashboard_screen.dart';
 import 'package:phpoc_flutter/features/history/history_screen.dart';
@@ -106,7 +107,12 @@ Future<({AppDatabase db, List<Override> overrides})> _setupTestAuth() async {
       return crypto;
     }),
     data_providers.syncServiceProvider.overrideWith((ref) {
-      return SyncService(storage: _InMemoryStorage(), crypto: crypto);
+      final db = ref.watch(data_providers.databaseProvider);
+      return SyncService(
+        storage: _InMemoryStorage(),
+        crypto: crypto,
+        stagingStore: StagingStore(db),
+      );
     }),
     data_providers.authServiceProvider.overrideWith((ref) {
       final db = ref.watch(data_providers.databaseProvider);

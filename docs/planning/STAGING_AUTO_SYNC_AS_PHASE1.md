@@ -2,8 +2,8 @@
 
 > **Plan:** `docs/planning/STAGING_AUTO_SYNC_PLAN.md`
 > **Purpose:** Blueprint of all needed test assertions before writing any test code for upgrading debounced auto-push from push-only to **bidirectional** sync.
-> **Status:** 🔜 Phase 1 (test exploration) complete — **Phase 2 (RED) ✅ done** (AS1–AS6 added to `sync_service_row_level_test.dart`) — **Phase 3 (GREEN) ✅ done** (AS1–AS6 all GREEN; `_doPush()` rewired through `checkAndSync()`)
-> **Next Phase:** Phase 4 (REFACTOR)
+> **Status:** ✅ All 4 phases COMPLETE — Phase 2 (RED) AS1–AS6 added to `sync_service_row_level_test.dart`; Phase 3 (GREEN) `_doPush()` rewired through `checkAndSync()`; Phase 4 (REFACTOR) `_runAutoSyncWithRetry()` + `_settleToInSync()` extracted, `_isSyncing` reset in `finally`, pre-auth settles to `inSync`.
+> **Next Phase:** None — complete
 
 ## Background
 

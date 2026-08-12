@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/core/utils/format_utils.dart';
 import 'package:phpoc_flutter/data/sync/local_cache.dart';
 
 /// LocalCache tests — Group B (15 assertions).
@@ -39,34 +40,37 @@ Future<CryptoService> _makeCrypto() async {
 void main() {
   group('B: LocalCache — readEntries()', () {
     // B1
-    test('B1: readEntries() returns decrypted entry list from storage', () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final cache = LocalCache(storage: storage, crypto: crypto);
+    test(
+      'B1: readEntries() returns decrypted entry list from storage',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final cache = LocalCache(storage: storage, crypto: crypto);
 
-      // Append an entry via the cache
-      await cache.append(
-        title: 'Test Task',
-        startEpoch: 1000,
-      );
+        // Append an entry via the cache
+        await cache.append(title: 'Test Task', startEpoch: 1000);
 
-      final entries = await cache.readEntries();
-      expect(entries, isNotEmpty);
-      expect(entries.length, 1);
-      // Should have decrypted fields
-      expect(entries[0]['title'], 'Test Task');
-      expect(entries[0]['start_epoch'], 1000);
-    });
+        final entries = await cache.readEntries();
+        expect(entries, isNotEmpty);
+        expect(entries.length, 1);
+        // Should have decrypted fields
+        expect(entries[0]['title'], 'Test Task');
+        expect(entries[0]['start_epoch'], 1000);
+      },
+    );
 
     // B2
-    test('B2: readEntries() returns empty list when no entries exist', () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final cache = LocalCache(storage: storage, crypto: crypto);
+    test(
+      'B2: readEntries() returns empty list when no entries exist',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final cache = LocalCache(storage: storage, crypto: crypto);
 
-      final entries = await cache.readEntries();
-      expect(entries, isEmpty);
-    });
+        final entries = await cache.readEntries();
+        expect(entries, isEmpty);
+      },
+    );
   });
 
   group('B: LocalCache — append()', () {
@@ -86,8 +90,12 @@ void main() {
       // startTime should be encrypted (not starting with 'plain:')
       expect(data['startTime_enc'], isNotNull);
       // Should NOT be plain: prefix when MK is available
-      expect(data['startTime_enc'].toString().startsWith('plain:'), false,
-          reason: 'With MK available, fields must be AES-encrypted, not plain: prefixed');
+      expect(
+        data['startTime_enc'].toString().startsWith('plain:'),
+        false,
+        reason:
+            'With MK available, fields must be AES-encrypted, not plain: prefixed',
+      );
     });
 
     // B4
@@ -119,8 +127,11 @@ void main() {
       expect(entries.length, 2);
       expect(entries[0]['entry_id'], isNotEmpty);
       expect(entries[1]['entry_id'], isNotEmpty);
-      expect(entries[0]['entry_id'], isNot(entries[1]['entry_id']),
-          reason: 'Each entry must have a unique UUID');
+      expect(
+        entries[0]['entry_id'],
+        isNot(entries[1]['entry_id']),
+        reason: 'Each entry must have a unique UUID',
+      );
     });
 
     // B6
@@ -197,8 +208,11 @@ void main() {
       await cache.update(0, {'title': 'Should Not Change'});
 
       final entriesAfter = await cache.readEntries();
-      expect(entriesAfter[0]['title'], titleBefore,
-          reason: 'Committed entries must be immutable');
+      expect(
+        entriesAfter[0]['title'],
+        titleBefore,
+        reason: 'Committed entries must be immutable',
+      );
     });
 
     // A2 — per-field encryptFields: {'title'} path
@@ -209,7 +223,11 @@ void main() {
 
       await cache.append(title: 'Original', startEpoch: 1000);
 
-      await cache.update(0, {'title': 'Encrypted Title'}, encryptFields: {'title'});
+      await cache.update(
+        0,
+        {'title': 'Encrypted Title'},
+        encryptFields: {'title'},
+      );
 
       final entries = await cache.readEntries();
       expect(entries[0]['title'], 'Encrypted Title');
@@ -226,8 +244,11 @@ void main() {
       await cache.update(0, {'end_epoch': 5000});
 
       final entries = await cache.readEntries();
-      expect(entries[0]['title'], 'Original',
-          reason: 'Updating end_epoch alone must not touch title or title_enc');
+      expect(
+        entries[0]['title'],
+        'Original',
+        reason: 'Updating end_epoch alone must not touch title or title_enc',
+      );
       expect(entries[0]['end_epoch'], 5000);
     });
 
@@ -239,7 +260,10 @@ void main() {
 
       await cache.append(title: 'Original', startEpoch: 1000, tags: ['old']);
 
-      await cache.update(0, {'title': 'New Title', 'tags': ['new', 'tag']});
+      await cache.update(0, {
+        'title': 'New Title',
+        'tags': ['new', 'tag'],
+      });
 
       final entries = await cache.readEntries();
       expect(entries[0]['title'], 'New Title');
@@ -247,18 +271,21 @@ void main() {
     });
 
     // B1 — duration update (no _enc variant)
-    test('B1: update() modifies duration (no _enc variant in append)', () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final cache = LocalCache(storage: storage, crypto: crypto);
+    test(
+      'B1: update() modifies duration (no _enc variant in append)',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final cache = LocalCache(storage: storage, crypto: crypto);
 
-      await cache.append(title: 'Task', startEpoch: 1000);
+        await cache.append(title: 'Task', startEpoch: 1000);
 
-      await cache.update(0, {'duration': 99});
+        await cache.update(0, {'duration': 99});
 
-      final entries = await cache.readEntries();
-      expect(entries[0]['duration'], 99);
-    });
+        final entries = await cache.readEntries();
+        expect(entries[0]['duration'], 99);
+      },
+    );
 
     // C1 — committed guard for title update
     test('C1: update() on committed entry is no-op for title', () async {
@@ -275,8 +302,12 @@ void main() {
       await cache.update(0, {'title': 'Should Not Change'});
 
       final entriesAfter = await cache.readEntries();
-      expect(entriesAfter[0]['title'], 'Committed Title',
-          reason: 'Committed entries must be immutable — title update must be no-op');
+      expect(
+        entriesAfter[0]['title'],
+        'Committed Title',
+        reason:
+            'Committed entries must be immutable — title update must be no-op',
+      );
     });
 
     // C2 — out-of-range index is safe no-op
@@ -292,8 +323,11 @@ void main() {
 
       final entries = await cache.readEntries();
       expect(entries.length, 1);
-      expect(entries[0]['title'], 'Only Entry',
-          reason: 'Out-of-range update must not corrupt storage');
+      expect(
+        entries[0]['title'],
+        'Only Entry',
+        reason: 'Out-of-range update must not corrupt storage',
+      );
     });
   });
 
@@ -312,8 +346,12 @@ void main() {
 
       // Mark A and C as committed (simulating what commitEntries does)
       final allEntries = await cache.readEntries();
-      final aId = allEntries.firstWhere((e) => e['title'] == 'Task A')['entry_id'];
-      final cId = allEntries.firstWhere((e) => e['title'] == 'Task C')['entry_id'];
+      final aId = allEntries.firstWhere(
+        (e) => e['title'] == 'Task A',
+      )['entry_id'];
+      final cId = allEntries.firstWhere(
+        (e) => e['title'] == 'Task C',
+      )['entry_id'];
       await cache.markCommitted([aId as String, cId as String]);
 
       // Delete committed entries (highest index first to avoid shifting)
@@ -321,12 +359,18 @@ void main() {
       await cache.delete(0); // Task A
 
       final remaining = await cache.readEntries();
-      expect(remaining.length, 1,
-          reason: 'Only B should remain after deleting A and C');
+      expect(
+        remaining.length,
+        1,
+        reason: 'Only B should remain after deleting A and C',
+      );
       expect(remaining[0]['title'], 'Task B');
       // Uncommitted entry must be untouched
-      expect(remaining[0]['committed'], isFalse,
-          reason: 'Uncommitted entry must not be flagged as committed');
+      expect(
+        remaining[0]['committed'],
+        isFalse,
+        reason: 'Uncommitted entry must not be flagged as committed',
+      );
     });
 
     test('B9: delete() removes entry at index', () async {
@@ -360,8 +404,11 @@ void main() {
       final pauses = entries[0]['pauses'] as List;
       expect(pauses.length, 1);
       expect(pauses[0]['pause_start'], 1500);
-      expect(pauses[0]['pause_stop'], isNull,
-          reason: 'Open pause record should have null pause_stop');
+      expect(
+        pauses[0]['pause_stop'],
+        isNull,
+        reason: 'Open pause record should have null pause_stop',
+      );
     });
 
     // B11
@@ -383,9 +430,9 @@ void main() {
     });
   });
 
-  group('B: LocalCache — computeDuration()', () {
+  group('B: FormatUtils — computeDurationMsec()', () {
     // B12
-    test('B12: computeDuration() returns correct active time', () {
+    test('B12: computeDurationMsec() returns correct active time', () {
       // Wall time: 4000 - 1000 = 3000ms
       // Pauses: (2100-2000)=100ms + (3000-2500)=500ms = 600ms
       // Active: 3000 - 600 = 2400ms
@@ -394,28 +441,31 @@ void main() {
         {'pause_start': 2500, 'pause_stop': 3000},
       ];
 
-      final duration = LocalCache.computeDuration(1000, 4000, pauses);
+      final duration = FormatUtils.computeDurationMsec(1000, 4000, pauses);
 
       expect(duration, 2400);
     });
 
-    test('B12b: computeDuration() returns 0 when endEpoch is null', () {
-      expect(LocalCache.computeDuration(1000, null, []), 0);
+    test('B12b: computeDurationMsec() returns 0 when endEpoch is null', () {
+      expect(FormatUtils.computeDurationMsec(1000, null, []), 0);
     });
 
-    test('B12c: computeDuration() handles open pauses (ignores unclosed)', () {
-      final pauses = [
-        {'pause_start': 2000, 'pause_stop': null}, // open pause — ignored
-      ];
-      expect(LocalCache.computeDuration(1000, 4000, pauses), 3000);
-    });
+    test(
+      'B12c: computeDurationMsec() handles open pauses (ignores unclosed)',
+      () {
+        final pauses = [
+          {'pause_start': 2000, 'pause_stop': null}, // open pause — ignored
+        ];
+        expect(FormatUtils.computeDurationMsec(1000, 4000, pauses), 3000);
+      },
+    );
 
-    test('B12d: computeDuration() floors negative to 0', () {
+    test('B12d: computeDurationMsec() floors negative to 0', () {
       // Pauses exceed wall time — should return 0, not negative
       final pauses = [
         {'pause_start': 0, 'pause_stop': 9999}, // pause > wall time
       ];
-      expect(LocalCache.computeDuration(1000, 2000, pauses), 0);
+      expect(FormatUtils.computeDurationMsec(1000, 2000, pauses), 0);
     });
   });
 
@@ -476,13 +526,16 @@ void main() {
       expect(read[1]['id'], 'e2');
     });
 
-    test('B15b: readHashIndex() returns empty list when no index exists', () async {
-      final storage = _FakeStorage();
-      final crypto = await _makeCrypto();
-      final cache = LocalCache(storage: storage, crypto: crypto);
+    test(
+      'B15b: readHashIndex() returns empty list when no index exists',
+      () async {
+        final storage = _FakeStorage();
+        final crypto = await _makeCrypto();
+        final cache = LocalCache(storage: storage, crypto: crypto);
 
-      final index = await cache.readHashIndex();
-      expect(index, isEmpty);
-    });
+        final index = await cache.readHashIndex();
+        expect(index, isEmpty);
+      },
+    );
   });
 }

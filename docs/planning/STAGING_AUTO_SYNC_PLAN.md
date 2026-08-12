@@ -1,6 +1,6 @@
 # Staging Auto-Sync — Plan
 
-> **Status:** ✅ Phase 3 (GREEN) complete — `_doPush()` now routes through `checkAndSync()`. Phase 4 (REFACTOR) next.
+> **Status:** ✅ All 4 phases complete — `_doPush()` now routes through `checkAndSync()`. Phase 4 (REFACTOR) extracted `_runAutoSyncWithRetry()` + `_settleToInSync()`, wrapped `_isSyncing` reset in `finally`, and made pre-auth settle to `inSync`.
 > **Depends on:** CCS-2 (Web), CCS-3 (CLI), CCS-4 (E2E testing)
 > **Scope:** Flutter — upgrade debounced auto-push to full bidirectional staging sync
 

@@ -62,11 +62,11 @@ The `DeviceCookie.isValidLocally()` unit is already tested (D3–D6). These test
 |---|---|---|---|
 | K1 | `checkAndSync` with valid local cookie + matching remote → READY (fast path exercised) | Verify T2 gate passes to T3 | Current G3 only tests no-transport; need spy with real cookie + matching remote |
 | K2 | `checkAndSync` with expired local cookie → falls to auth gate (reconcile) | Verify TTL expiry triggers reconcile, not fast path | Expired cookies must force full auth, not silent push |
-| K3 | Expired cookie is removed from storage after `checkAndSync` detects it | Verify garbage collection on expiry path | `isValidLocally` already cleans up, but verify checkAndSync doesn't leave orphans |
+| K3 | Expired cookie (empty staging, no mutation) is removed by `checkAndSync` and it returns `reauthNeeded` (not replaced) | Verify A2 expiry cleanup + no silent re-mint | A2 policy: a stale cookie is destroyed and the caller must re-auth, never auto-replaced. Contrasts the mutation path (K2) where `_touchLocalCookie` refreshes the cookie and reconcile proceeds to READY. *(Updated to A2 contract: previously asserted an auto-replacement that the A2 redesign intentionally removed.)* |
 | K4 | `checkAndSync` with malformed cookie (null specifier) → treated as expired → reconcile | Graceful degradation for corrupt data | Corrupt local state must not crash sync |
 | K5 | `checkAndSync` with valid cookie but no MK cached → REAUTH_NEEDED | Verify MK gate takes priority over cookie validity | Cookie alone is not enough — must have crypto to push |
 | K6 | `checkAndSync` with valid cookie + no transport → READY (local-only) | Verify local-only path still works with cookie present | Regression guard: G1 tests no-cookie+no-transport; must also test with-cookie+no-transport |
-| K7 | `checkAndSync` honors configurable TTL (not hardcoded 30 min) | Verify TTL parameter propagates to isValidLocally | Must match CLI/web behavior where TTL is configurable |
+| K7 | `checkAndSync` honors configurable TTL: same 10-min cookie → READY w/ 15-min TTL, `reauthNeeded` w/ 5-min TTL | Verify TTL parameter propagates to isValidLocally | Must match CLI/web behavior where TTL is configurable. *(Updated to A2 contract: expired cookie under a short TTL returns `reauthNeeded` + is removed, not auto-replaced.)* |
 
 ### Group M: T3 — Cookie Compare (matches + push-after-match) — ~10 tests
 
@@ -78,12 +78,12 @@ These tests verify the **fast path** and **mismatch path** through spy transport
 | M2 | Spy transport confirms blob pushed to `StagingPaths.remoteStagingBlob` during fast path | Verify correct remote path on fast-path push | Regression guard: blob must go to canonical path for CLI/web interop |
 | M3 | Fast path does NOT push cookie (only blob) | Verify fast path doesn't waste a cookie round-trip | Cookie is unchanged when specs match; pushing wastes bandwidth |
 | M4 | Mismatch: valid local + different remote specifier → destroyLocal → REAUTH_NEEDED | Verify cookie rotation on device switch | Different specs = different device session → must re-auth |
-| M5 | Mismatch: verify cookie removed from storage after destroyLocal | Verify cleanup on mismatch path | Stale local cookie left behind would cause wrong device identity |
+| M5 | Mismatch: local cookie destroyed after `checkAndSync(skipReadOnlyFastPath: true)` returns `reauthNeeded` | Verify cleanup on mismatch path | Stale local cookie left behind would cause wrong device identity. *(Updated to F1 contract: the read-only fast path is bypassed so the mismatch branch actually runs to destruction; empty staging alone would otherwise short-circuit to READY.)* |
 | M6 | No remote cookie: valid local + empty remote → falls to reconcile (creates cookie) | Verify first-push-wins path | When remote has no cookie, local device claims it by pushing |
 | M7 | Network error during remote cookie pull → OFFLINE | Verify offline resilience on cookie pull | Network blip must not destroy local cookie or mislabel as REAUTH |
 | M8 | Fast path works when device_uuid in remote cookie matches local (same device) | Verify fast path for same-device reboot | After app restart, same device should hit fast path, not auth gate |
 | M9 | Fast path updates `_lastPushAt` timestamp | Verify diagnostic tracking | Downstream UI uses lastPushAt for "Last synced: X min ago" |
-| M10 | Fast path with empty staging (no entries) still pushes blob | Verify empty-push is valid | Empty blob clears remote; must not crash or skip push |
+| M10 | Default F1 read-only fast path with empty staging returns READY without network; forced (`skipReadOnlyFastPath: true`) fast path pushes the empty blob | Verify F1 idle short-circuit + empty-push validity | F1 skips network for idle local state; the forced post-mutation/explicit path pushes the empty blob to clear remote. *(Updated to F1 contract: previously asserted a push the F1 redesign deliberately skips.)* |
 
 ### Group N: T8 — Commit to Ledger (SyncService.commitEntries) — ~14 tests
 

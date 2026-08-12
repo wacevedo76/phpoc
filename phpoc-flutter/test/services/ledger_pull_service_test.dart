@@ -930,7 +930,10 @@ void main() {
         );
         backupService = LedgerBackupService(db: db);
         stagingStorage = StagingStorage(db);
-        syncService = SyncService(storage: stagingStorage, crypto: crypto);
+        syncService = SyncService(
+            storage: stagingStorage,
+            crypto: crypto,
+            stagingStore: StagingStore(db));
       });
 
       LedgerPullService _makeService() => LedgerPullService(

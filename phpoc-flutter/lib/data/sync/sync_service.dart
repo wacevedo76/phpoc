@@ -10,7 +10,6 @@ import 'activity_id.dart';
 import 'device_cookie.dart';
 import 'staging_paths.dart';
 import 'genesis_gate.dart';
-import 'local_cache.dart';
 import 'merge_engine.dart';
 import 'staging_hash_index.dart';
 import 'staging_store.dart';
@@ -20,19 +19,16 @@ import 'transport.dart';
 ///
 /// Port of web src/sync/sync.js and domain/staging/service.py.
 ///
-/// Row-level staging overhaul: [stagingStore] replaces the monolithic
-/// `entries` JSON-array blob. When provided, mutation wrappers use
-/// activity_id-based row operations with debounced auto-push to R2.
-///
-/// Backward-compatible: when [stagingStore] is null, falls back to
-/// [LocalCache]-based blob storage.
+/// Row-level staging: [stagingStore] (SQLite StagingStore) is **required** —
+/// mutation wrappers use activity_id-based row operations with debounced
+/// auto-push to R2. The legacy monolithic `LocalCache` blob path was retired
+/// (Option A).
 class SyncService {
   final dynamic storage;
   final CryptoService crypto;
   HttpTransport? transport;
-  StagingStore? stagingStore;
+  final StagingStore stagingStore;
 
-  final LocalCache _local;
   final DeviceCookie _cookie;
   final GenesisGate _genesisGate;
   LedgerEngine? ledgerEngine;
@@ -49,12 +45,11 @@ class SyncService {
   SyncService({
     required this.storage,
     required this.crypto,
+    required this.stagingStore,
     this.transport,
-    this.stagingStore,
     this.ledgerEngine,
-  })  : _local = LocalCache(storage: storage, crypto: crypto),
-        _cookie = DeviceCookie(),
-        _genesisGate = GenesisGate() {
+  }) : _cookie = DeviceCookie(),
+       _genesisGate = GenesisGate() {
     // Emit initial inSync state for status listeners (G1)
     // Schedule after microtask so listeners can subscribe first
     Future.microtask(() {
@@ -75,13 +70,8 @@ class SyncService {
   /// pushed to remote. Returns false when staging is empty or all rows
   /// are committed — used by F1 read-only fast path to skip network.
   Future<bool> hasPendingWrites() async {
-    if (stagingStore != null) {
-      final rows = await stagingStore!.getAllRows();
-      return rows.any((r) => !_rowIsCommitted(r));
-    }
-    // Legacy: check LocalCache entries for uncommitted
-    final entries = await _local.readEntries();
-    return entries.any((e) => e['committed'] != true);
+    final rows = await stagingStore.getAllRows();
+    return rows.any((r) => !_rowIsCommitted(r));
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -90,9 +80,8 @@ class SyncService {
 
   /// Capture a new task. Returns the activity_id.
   ///
-  /// When [stagingStore] is available: generates an activity_id, writes a
-  /// row with status="active", and schedules a debounced push to R2.
-  /// Falls back to [LocalCache.append] when [stagingStore] is null.
+  /// Generates an activity_id, writes a row with status="active", and
+  /// schedules a debounced push to R2.
   Future<String> capture({
     required String title,
     List<String>? tags,
@@ -101,162 +90,149 @@ class SyncService {
     int? startEpoch,
     bool isOneOff = false,
   }) async {
-    if (stagingStore != null) {
-      final activityId = ActivityIdGenerator.generateActivityId();
-      final resolvedEpoch =
-          startEpoch ?? DateTime.now().millisecondsSinceEpoch;
-
-      final activityData = _buildActivityData(
-        title: title,
-        startEpoch: resolvedEpoch,
-        tags: tags ?? [],
-        comment: comment,
-        isActive: !isOneOff,
-        endEpoch: isOneOff ? resolvedEpoch + 1000 : null,
-        duration: isOneOff ? 1000 : 0,
-        encryptFields: encryptFields,
-      );
-
-      await stagingStore!.putRow({
-        'activity_id': activityId,
-        'activity_status': isOneOff ? 'ended' : 'active',
-        'activity': json.encode(activityData),
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-        // Extra fields required by LedgerEngine.commit for F9
-        'title': title,
-        'start_epoch': resolvedEpoch,
-        'duration': isOneOff ? 1000 : 0,
-        'end_epoch': isOneOff ? resolvedEpoch + 1000 : null,
-        'tags': tags ?? [],
-        'pauses': [],
-        'one_off': isOneOff,
-        'has_encrypted_fields': encryptFields.isNotEmpty,
-      });
-
-      await _afterMutation();
-      return activityId;
-    }
-
-    // Fallback: old LocalCache path
+    final activityId = ActivityIdGenerator.generateActivityId();
     final resolvedEpoch = startEpoch ?? DateTime.now().millisecondsSinceEpoch;
-    final deviceUuid = _getDeviceUuid();
-    final hash = await _local.append(
+
+    final activityData = _buildActivityData(
       title: title,
       startEpoch: resolvedEpoch,
-      isActive: true,
-      tags: tags,
+      tags: tags ?? [],
       comment: comment,
-      deviceUuid: deviceUuid,
+      isActive: !isOneOff,
+      endEpoch: isOneOff ? resolvedEpoch + 1000 : null,
+      duration: isOneOff ? 1000 : 0,
       encryptFields: encryptFields,
     );
-    await _touchLocalCookie();
-    return hash;
+
+    await stagingStore.putRow({
+      'activity_id': activityId,
+      'activity_status': isOneOff ? 'ended' : 'active',
+      'activity': json.encode(activityData),
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+      // Extra fields required by LedgerEngine.commit for F9
+      'title': title,
+      'start_epoch': resolvedEpoch,
+      'duration': isOneOff ? 1000 : 0,
+      'end_epoch': isOneOff ? resolvedEpoch + 1000 : null,
+      'tags': tags ?? [],
+      'pauses': [],
+      'one_off': isOneOff,
+      'has_encrypted_fields': encryptFields.isNotEmpty,
+    });
+
+    await _afterMutation();
+    return activityId;
   }
 
   /// End a task by activity_id.
   Future<void> end(String activityId, int endEpoch) async {
-    if (stagingStore != null) {
-      final row = await stagingStore!.getRow(activityId);
-      if (row == null) return;
-
-      final activityData = _decodeActivityBlob(row['activity'] as String?);
-      activityData['end_epoch'] = endEpoch;
-      activityData['is_active'] = false;
-      activityData['end_device_uuid'] = _getDeviceUuid();
-      final startEpoch = activityData['start_epoch'] as int? ?? 0;
-      final pauses = (activityData['pauses'] as List?) ?? [];
-      final duration = LocalCache.computeDuration(startEpoch, endEpoch, pauses);
-      activityData['duration'] = duration;
-
-      row['activity_status'] = 'ended';
-      row['activity'] = json.encode(activityData);
-      row['end_epoch'] = endEpoch;
-      row['duration'] = duration;
-
-      await stagingStore!.putRow(row);
-      await _afterMutation();
-      return;
+    final row = await stagingStore.getRow(activityId);
+    final resolved = row ?? await _resolveRowByTitle(activityId);
+    if (resolved == null) {
+      throw Exception('No active task found for: $activityId');
     }
 
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndex(entries, activityId);
-    await endByEntryId(entries[foundIndex]['entry_id'] as String, endEpoch);
+    final activityData = _decodeActivityBlob(resolved['activity'] as String?);
+    // Close any open pause (pause_stop == null) at end time.
+    final pauses = List<Map<String, dynamic>>.from(
+      (activityData['pauses'] as List?) ?? [],
+    );
+    if (pauses.isNotEmpty && pauses.last['pause_stop'] == null) {
+      final last = Map<String, dynamic>.from(pauses.last);
+      last['pause_stop'] = endEpoch;
+      pauses[pauses.length - 1] = last;
+    }
+    activityData['end_epoch'] = endEpoch;
+    activityData['is_active'] = false;
+    activityData['end_device_uuid'] = _getDeviceUuid();
+    final startEpoch = activityData['start_epoch'] as int? ?? 0;
+    final duration = FormatUtils.computeDurationMsec(
+      startEpoch,
+      endEpoch,
+      pauses,
+    );
+    activityData['duration'] = duration;
+    activityData['pauses'] = pauses;
+
+    resolved['activity_status'] = 'ended';
+    resolved['activity'] = json.encode(activityData);
+    resolved['end_epoch'] = endEpoch;
+    resolved['duration'] = duration;
+    resolved['pauses'] = pauses;
+
+    await stagingStore.putRow(resolved);
+    await _afterMutation();
   }
 
   /// Pause a task by activity_id.
   Future<void> pause(String activityId, int pauseEpoch) async {
-    if (stagingStore != null) {
-      final row = await stagingStore!.getRow(activityId);
-      if (row == null) return;
-
-      final activityData = _decodeActivityBlob(row['activity'] as String?);
-      final pauses = List<Map<String, dynamic>>.from(
-        (activityData['pauses'] as List?) ?? [],
-      );
-      pauses.add({'pause_start': pauseEpoch, 'pause_stop': null});
-      activityData['pauses'] = pauses;
-      activityData['is_paused'] = true;
-
-      row['activity_status'] = 'paused';
-      row['activity'] = json.encode(activityData);
-      row['pauses'] = pauses;
-
-      await stagingStore!.putRow(row);
-      await _afterMutation();
-      return;
+    final row = await stagingStore.getRow(activityId);
+    final resolved = row ?? await _resolveRowByTitle(activityId);
+    if (resolved == null) {
+      throw Exception('No active task found for: $activityId');
     }
 
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndex(entries, activityId);
-    await pauseByEntryId(entries[foundIndex]['entry_id'] as String, pauseEpoch);
+    final activityData = _decodeActivityBlob(resolved['activity'] as String?);
+    final pauses = List<Map<String, dynamic>>.from(
+      (activityData['pauses'] as List?) ?? [],
+    );
+    pauses.add({'pause_start': pauseEpoch, 'pause_stop': null});
+    activityData['pauses'] = pauses;
+    activityData['is_paused'] = true;
+
+    resolved['activity_status'] = 'paused';
+    resolved['activity'] = json.encode(activityData);
+    resolved['pauses'] = pauses;
+
+    await stagingStore.putRow(resolved);
+    await _afterMutation();
   }
 
   /// Unpause a task by activity_id.
   Future<void> unpause(String activityId, int unpauseEpoch) async {
-    if (stagingStore != null) {
-      final row = await stagingStore!.getRow(activityId);
-      if (row == null) return;
-
-      final activityData = _decodeActivityBlob(row['activity'] as String?);
-      final pauses = List<Map<String, dynamic>>.from(
-        (activityData['pauses'] as List?) ?? [],
-      );
-      if (pauses.isNotEmpty) {
-        final last = Map<String, dynamic>.from(pauses.last);
-        if (last['pause_stop'] == null) {
-          last['pause_stop'] = unpauseEpoch;
-          pauses[pauses.length - 1] = last;
-        }
-      }
-      activityData['pauses'] = pauses;
-      activityData['is_paused'] = false;
-
-      row['activity_status'] = 'active';
-      row['activity'] = json.encode(activityData);
-      row['pauses'] = pauses;
-
-      await stagingStore!.putRow(row);
-      await _afterMutation();
-      return;
+    final row = await stagingStore.getRow(activityId);
+    final resolved = row ?? await _resolveRowByTitle(activityId);
+    if (resolved == null) {
+      throw Exception('No active task found for: $activityId');
     }
 
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndex(entries, activityId);
-    await unpauseByEntryId(
-        entries[foundIndex]['entry_id'] as String, unpauseEpoch);
+    final activityData = _decodeActivityBlob(resolved['activity'] as String?);
+    final pauses = List<Map<String, dynamic>>.from(
+      (activityData['pauses'] as List?) ?? [],
+    );
+    if (pauses.isNotEmpty) {
+      final last = Map<String, dynamic>.from(pauses.last);
+      if (last['pause_stop'] == null) {
+        last['pause_stop'] = unpauseEpoch;
+        pauses[pauses.length - 1] = last;
+      }
+    }
+    activityData['pauses'] = pauses;
+    activityData['is_paused'] = false;
+
+    resolved['activity_status'] = 'active';
+    resolved['activity'] = json.encode(activityData);
+    resolved['pauses'] = pauses;
+
+    await stagingStore.putRow(resolved);
+    await _afterMutation();
   }
 
   /// Modify a staged entry's fields.
   ///
   /// When [activityIdOrIndex] is [int], maps to legacy index-based modify
   /// (adapter for K4). When [String], uses as activity_id directly.
-  Future<void> modify(dynamic activityIdOrIndex, Map<String, dynamic> fields,
-      {Set<String> encryptFields = const {}}) async {
-    if (stagingStore != null && activityIdOrIndex is String) {
-      final row = await stagingStore!.getRow(activityIdOrIndex);
-      if (row == null) return;
+  Future<void> modify(
+    dynamic activityIdOrIndex,
+    Map<String, dynamic> fields, {
+    Set<String> encryptFields = const {},
+  }) async {
+    if (activityIdOrIndex is String) {
+      final row = await stagingStore.getRow(activityIdOrIndex);
+      final resolved = row ?? await _resolveRowByTitle(activityIdOrIndex);
+      if (resolved == null) return;
 
-      final activityData = _decodeActivityBlob(row['activity'] as String?);
+      final activityData = _decodeActivityBlob(resolved['activity'] as String?);
 
       // Merge fields into activity data
       for (final key in fields.keys) {
@@ -266,60 +242,46 @@ class SyncService {
       // Update has_encrypted_fields based on encryptFields (non-empty = true)
       if (encryptFields.isNotEmpty) {
         activityData['has_encrypted_fields'] = true;
-        row['has_encrypted_fields'] = true;
+        resolved['has_encrypted_fields'] = true;
       }
 
-      row['activity'] = json.encode(activityData);
+      resolved['activity'] = json.encode(activityData);
       // Also update top-level fields for LedgerEngine.commit
       for (final key in fields.keys) {
-        row[key] = fields[key];
+        resolved[key] = fields[key];
       }
 
-      await stagingStore!.putRow(row);
+      await stagingStore.putRow(resolved);
       await _afterMutation();
       return;
     }
 
-    if (stagingStore != null && activityIdOrIndex is int) {
+    if (activityIdOrIndex is int) {
       // K4: index-based adapter → map to activity_id
-      final all = await stagingStore!.getAllRows();
-      final index = activityIdOrIndex as int;
+      final all = await stagingStore.getAllRows();
+      final index = activityIdOrIndex;
       if (index < 0 || index >= all.length) return;
       final activityId = all[index]['activity_id'] as String;
       await modify(activityId, fields, encryptFields: encryptFields);
-      return;
-    }
-
-    // Fallback: old index-based path
-    if (activityIdOrIndex is int) {
-      await _local.update(activityIdOrIndex, fields,
-          encryptFields: encryptFields);
-      await _touchLocalCookie();
     }
   }
 
   /// Remove a staged entry by activity_id (or index for legacy compat).
   Future<void> remove(dynamic activityIdOrIndex) async {
-    if (stagingStore != null && activityIdOrIndex is String) {
-      await stagingStore!.deleteRow(activityIdOrIndex);
+    if (activityIdOrIndex is String) {
+      await stagingStore.deleteRow(activityIdOrIndex);
       await _afterMutation();
       return;
     }
 
-    // Fallback: old index-based path
     if (activityIdOrIndex is int) {
-      await _local.delete(activityIdOrIndex);
-      await _touchLocalCookie();
+      // Index-based adapter → map to activity_id (legacy compat for K5).
+      final all = await stagingStore.getAllRows();
+      final index = activityIdOrIndex;
+      if (index < 0 || index >= all.length) return;
+      await stagingStore.deleteRow(all[index]['activity_id'] as String);
+      await _afterMutation();
       return;
-    }
-
-    // Try parsing as int for string index
-    if (activityIdOrIndex is String) {
-      final idx = int.tryParse(activityIdOrIndex);
-      if (idx != null) {
-        await _local.delete(idx);
-        await _touchLocalCookie();
-      }
     }
   }
 
@@ -329,23 +291,16 @@ class SyncService {
 
   /// Read all staging entries as flat DTO list (K1).
   Future<List<Map<String, dynamic>>> readEntries() async {
-    if (stagingStore != null) {
-      final rows = await stagingStore!.getAllRows();
-      return rows.map(_stagingRowToDto).toList();
-    }
-    return _local.readEntries();
+    final rows = await stagingStore.getAllRows();
+    return rows.map(_stagingRowToDto).toList();
   }
 
   /// Get active entries (status="active" or "paused") — K2.
   Future<List<Map<String, dynamic>>> getActive() async {
-    if (stagingStore != null) {
-      final activeRows = await stagingStore!.getRowsByStatus('active');
-      final pausedRows = await stagingStore!.getRowsByStatus('paused');
-      final rows = [...activeRows, ...pausedRows];
-      return rows.map(_stagingRowToDto).toList();
-    }
-    final entries = await _local.readEntries();
-    return entries.where((e) => e['is_active'] == true).toList();
+    final activeRows = await stagingStore.getRowsByStatus('active');
+    final pausedRows = await stagingStore.getRowsByStatus('paused');
+    final rows = [...activeRows, ...pausedRows];
+    return rows.map(_stagingRowToDto).toList();
   }
 
   /// Get all staging entries, optionally filtered by date range.
@@ -353,9 +308,9 @@ class SyncService {
     DateTime? from,
     DateTime? to,
   }) async {
-    final dtos = stagingStore != null
-        ? (await stagingStore!.getAllRows()).map(_stagingRowToDto).toList()
-        : await _local.readEntries();
+    final dtos = (await stagingStore.getAllRows())
+        .map(_stagingRowToDto)
+        .toList();
 
     if (from == null && to == null) return dtos;
 
@@ -363,15 +318,23 @@ class SyncService {
   }
 
   /// True when entry's start_epoch falls within [from]–[to] (inclusive).
-  bool _inDateRange(
-      Map<String, dynamic> entry, DateTime? from, DateTime? to) {
+  bool _inDateRange(Map<String, dynamic> entry, DateTime? from, DateTime? to) {
     final startEpoch = entry['start_epoch'] as int? ?? 0;
-    final startDt =
-        DateTime.fromMillisecondsSinceEpoch(startEpoch, isUtc: true);
+    final startDt = DateTime.fromMillisecondsSinceEpoch(
+      startEpoch,
+      isUtc: true,
+    );
     if (from != null && startDt.isBefore(from)) return false;
     if (to != null) {
-      final toEndOfDay =
-          DateTime.utc(to.year, to.month, to.day, 23, 59, 59, 999);
+      final toEndOfDay = DateTime.utc(
+        to.year,
+        to.month,
+        to.day,
+        23,
+        59,
+        59,
+        999,
+      );
       if (startDt.isAfter(toEndOfDay)) return false;
     }
     return true;
@@ -379,41 +342,20 @@ class SyncService {
 
   /// Get completed entries (status="ended") with normalized date — K3.
   Future<List<Map<String, dynamic>>> getCompleted() async {
-    if (stagingStore != null) {
-      final rows = await stagingStore!.getRowsByStatus('ended');
-      return rows.map((row) {
-        final dto = _stagingRowToDto(row);
-        final startEpoch = dto['start_epoch'] as int?;
-        final dateStr = (startEpoch != null && startEpoch > 0)
-            ? FormatUtils.epochToDateStr(startEpoch)
-            : 'unknown';
-        dto['date'] = dateStr;
-        return dto;
-      }).toList()
-        ..sort((a, b) {
-          final aEpoch = a['start_epoch'] as int? ?? 0;
-          final bEpoch = b['start_epoch'] as int? ?? 0;
-          return bEpoch.compareTo(aEpoch);
-        });
-    }
-    // Fallback: old LocalCache path
-    final entries = await _local.readEntries();
-    final completed = entries.where((e) => e['is_active'] != true).map((e) {
-      final startEpoch = e['start_epoch'] as int?;
+    final rows = await stagingStore.getRowsByStatus('ended');
+    return rows.map((row) {
+      final dto = _stagingRowToDto(row);
+      final startEpoch = dto['start_epoch'] as int?;
       final dateStr = (startEpoch != null && startEpoch > 0)
           ? FormatUtils.epochToDateStr(startEpoch)
           : 'unknown';
-      return {
-        ...e,
-        'date': dateStr,
-      };
-    }).toList();
-    completed.sort((a, b) {
+      dto['date'] = dateStr;
+      return dto;
+    }).toList()..sort((a, b) {
       final aEpoch = a['start_epoch'] as int? ?? 0;
       final bEpoch = b['start_epoch'] as int? ?? 0;
       return bEpoch.compareTo(aEpoch);
     });
-    return completed;
   }
 
   /// Convert a staging row to a flat DTO compatible with old consumers.
@@ -425,12 +367,14 @@ class SyncService {
     final titleEnc = activityData['title_enc'] as String?;
     final tagsEnc = activityData['tags_enc'] as String?;
     final commentEnc = activityData['comment_enc'] as String?;
-    final isEncrypted = (titleEnc != null && titleEnc.isNotEmpty) ||
+    final isEncrypted =
+        (titleEnc != null && titleEnc.isNotEmpty) ||
         (tagsEnc != null && tagsEnc.isNotEmpty) ||
         (commentEnc != null && commentEnc.isNotEmpty);
 
     // A8: when encrypted and no plaintext title, show [Encrypted]
-    final plainTitle = activityData['title'] as String? ?? row['title'] as String? ?? '';
+    final plainTitle =
+        activityData['title'] as String? ?? row['title'] as String? ?? '';
     final displayTitle = (isEncrypted && plainTitle.isEmpty)
         ? '[Encrypted]'
         : plainTitle;
@@ -478,8 +422,10 @@ class SyncService {
 
     if (!crypto.hasMasterKey) return SyncCheckResult.reauthNeeded;
 
-    final localCookie =
-        await _cookie.isValidLocally(storage, ttlMinutes: cookieTtlMinutes);
+    final localCookie = await _cookie.isValidLocally(
+      storage,
+      ttlMinutes: cookieTtlMinutes,
+    );
 
     if (localCookie != null) {
       // F1: Read-only fast path — skip network when no pending writes.
@@ -492,18 +438,15 @@ class SyncService {
       }
 
       try {
-        final remoteCookieBytes =
-            await transport!.pull(StagingPaths.remoteDeviceCookie);
+        final remoteCookieBytes = await transport!.pull(
+          StagingPaths.remoteDeviceCookie,
+        );
         final remoteCookie = _cookie.parseRemote(remoteCookieBytes);
 
         if (remoteCookie != null) {
           if (_cookie.matches(localCookie, remoteCookie)) {
-            // Cookie match → fast path
-            if (stagingStore != null) {
-              await _fastPathRowLevel();
-            } else {
-              await _pushBlobOnly();
-            }
+            // Cookie match → fast path (row-level hash-index comparison).
+            await _fastPathRowLevel();
             _lastPushAt = DateTime.now().millisecondsSinceEpoch;
             return SyncCheckResult.ready;
           } else {
@@ -527,7 +470,7 @@ class SyncService {
     }
 
     try {
-      await _reconcileAndClaim();
+      await _reconcileAndClaimRowLevel();
       return SyncCheckResult.ready;
     } catch (_) {
       return SyncCheckResult.offline;
@@ -535,21 +478,15 @@ class SyncService {
   }
 
   Future<void> initialPull() async {
-    await _reconcileAndClaim();
+    await _reconcileAndClaimRowLevel();
   }
 
-  /// Pull remote staging entries from the appropriate blob path.
+  /// Pull remote staging rows from the row-level blob path.
   ///
-  /// When [stagingStore] is available, pulls from the row-level blob path
-  /// ([StagingPaths.remoteRowLevelBlob]). Otherwise falls back to the legacy
-  /// monolithic blob path ([StagingPaths.remoteStagingBlob]).
+  /// Reads [StagingPaths.remoteRowLevelBlob] and deobfuscates rows.
   Future<List<Map<String, dynamic>>> _pullRemoteBlob() async {
-    final path = stagingStore != null
-        ? StagingPaths.remoteRowLevelBlob
-        : StagingPaths.remoteStagingBlob;
-
     try {
-      final blob = await transport!.pull(path);
+      final blob = await transport!.pull(StagingPaths.remoteRowLevelBlob);
       if (blob == null || !crypto.hasMasterKey) return [];
 
       final jsonStr = crypto.deobfuscateBlob(blob, crypto.getMasterKey()!);
@@ -562,8 +499,6 @@ class SyncService {
     } catch (_) {}
     return [];
   }
-
-
 
   Future<void> _pushCookie(String deviceId) async {
     // Preserve existing specifier when one exists (R8: only extend TTL).
@@ -593,34 +528,6 @@ class SyncService {
     }
   }
 
-  Future<void> _reconcileAndClaim() async {
-    if (transport == null) return;
-
-    // Row-level staging: use StagingStore + MergeEngine.mergeEntries()
-    if (stagingStore != null) {
-      await _reconcileAndClaimRowLevel();
-      return;
-    }
-
-    // Legacy: use LocalCache + mergeMaps()
-    final remoteEntries = await _pullRemoteBlob();
-    final localEntries = await _local.readEntries();
-
-    final activeLocal =
-        localEntries.where((e) => e['committed'] != true).toList();
-    final activeRemote =
-        remoteEntries.where((e) => e['committed'] != true).toList();
-
-    await _local.writeEntries(
-      MergeEngine.mergeMaps(activeLocal, activeRemote),
-    );
-
-    await _pushBlobOnly();
-    await _pushCookie(_getDeviceUuid());
-
-    _lastPushAt = DateTime.now().millisecondsSinceEpoch;
-  }
-
   /// Filter remote rows for merge: keep uncommitted rows always;
   /// keep committed rows only when they also exist locally (so the
   /// committed flag propagates from remote to local).
@@ -638,9 +545,13 @@ class SyncService {
 
   /// Row-level reconcile: pull staging/blob, merge with mergeEntries(),
   /// write to StagingStore, push via _pushStagingRowsToRemote().
+  ///
+  /// No-op when no transport is configured.
   Future<void> _reconcileAndClaimRowLevel() async {
+    if (transport == null) return;
+
     final remoteRows = await _pullRemoteBlob();
-    final localRows = await stagingStore!.getAllRows();
+    final localRows = await stagingStore.getAllRows();
 
     // R4: filter remote committed rows that don't exist locally
     final activeRemoteRows = _filterRemoteRowsForMerge(remoteRows, localRows);
@@ -658,7 +569,7 @@ class SyncService {
     // Committed entries stay in staging for History/Dashboard display;
     // the Sync tab filters them out via the committed flag.
     for (final row in merged) {
-      await stagingStore!.putRow(row, preserveUpdatedAt: true);
+      await stagingStore.putRow(row, preserveUpdatedAt: true);
     }
 
     // Remove local-only rows that were filtered out by mergeEntries.
@@ -667,7 +578,7 @@ class SyncService {
     for (final localRow in localRows) {
       final id = localRow['activity_id'] as String?;
       if (id != null && !mergedIds.contains(id)) {
-        await stagingStore!.deleteRow(id);
+        await stagingStore.deleteRow(id);
       }
     }
 
@@ -683,8 +594,9 @@ class SyncService {
   Future<void> _fastPathRowLevel() async {
     try {
       // Pull remote hash index
-      final remoteHashBytes =
-          await transport!.pull(StagingPaths.remoteStagingHashIndex);
+      final remoteHashBytes = await transport!.pull(
+        StagingPaths.remoteStagingHashIndex,
+      );
       List<Map<String, dynamic>> remoteIndex = [];
       if (remoteHashBytes != null) {
         try {
@@ -698,7 +610,7 @@ class SyncService {
       }
 
       // Build local hash index
-      final localIndex = await StagingHashIndex.build(stagingStore!);
+      final localIndex = await StagingHashIndex.build(stagingStore);
 
       // Compare
       final diff = StagingHashIndex.compare(localIndex, remoteIndex);
@@ -722,57 +634,15 @@ class SyncService {
   // ═════════════════════════════════════════════════════════════
 
   Future<void> endByEntryId(String entryId, int endEpoch) async {
-    if (stagingStore != null) {
-      await end(entryId, endEpoch);
-      return;
-    }
-
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndexById(entries, entryId);
-    final entry = entries[foundIndex];
-
-    if (entry['is_paused'] == true) {
-      await _local.closePause(foundIndex, endEpoch);
-    }
-
-    final endDeviceUuid = _getDeviceUuid();
-    await _local.update(foundIndex, {
-      'end_epoch': endEpoch,
-      'is_active': false,
-      'end_device_uuid': endDeviceUuid,
-    });
-
-    final updated = await _local.readEntries();
-    final e = updated[foundIndex];
-    final duration = LocalCache.computeDuration(
-      e['start_epoch'], endEpoch, e['pauses'] as List,
-    );
-    await _local.update(foundIndex, {'duration': duration});
-    await _touchLocalCookie();
+    await end(entryId, endEpoch);
   }
 
   Future<void> pauseByEntryId(String entryId, int pauseEpoch) async {
-    if (stagingStore != null) {
-      await pause(entryId, pauseEpoch);
-      return;
-    }
-
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndexById(entries, entryId);
-    await _local.addPause(foundIndex, pauseEpoch);
-    await _touchLocalCookie();
+    await pause(entryId, pauseEpoch);
   }
 
   Future<void> unpauseByEntryId(String entryId, int unpauseEpoch) async {
-    if (stagingStore != null) {
-      await unpause(entryId, unpauseEpoch);
-      return;
-    }
-
-    final entries = await _local.readEntries();
-    final foundIndex = _findActiveEntryIndexById(entries, entryId);
-    await _local.closePause(foundIndex, unpauseEpoch);
-    await _touchLocalCookie();
+    await unpause(entryId, unpauseEpoch);
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -782,34 +652,8 @@ class SyncService {
   Future<void> pushToRemote() async {
     if (transport == null) return;
 
-    // Row-level staging: use StagingStore hash index (R7, A8)
-    if (stagingStore != null) {
-      await _pushStagingRowsToRemote();
-      await _pushCookie(_getDeviceUuid());
-      return;
-    }
-
-    // Legacy: LocalCache path
-    await _pushBlobOnly();
+    await _pushStagingRowsToRemote();
     await _pushCookie(_getDeviceUuid());
-    try {
-      final hashIndex = await _local.readHashIndex();
-      if (hashIndex.isNotEmpty) {
-        final indexJson = json.encode(hashIndex);
-        await transport!.push(
-          StagingPaths.remoteStagingHashIndex,
-          Uint8List.fromList(indexJson.codeUnits),
-        );
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _pushBlobOnly() async {
-    final blobBytes = await _buildBlobBytes();
-    if (blobBytes == null) return;
-
-    await transport!.push(StagingPaths.remoteStagingBlob, blobBytes);
-    _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -855,26 +699,51 @@ class SyncService {
     }
   }
 
-  /// Execute the debounced auto-sync (bidirectional pull + merge + push) with
-  /// one automatic retry on failure.
+  /// Settle a no-op auto-sync back to [SyncingStatus.inSync] so the status
+  /// stream isn't left stuck on `pendingPush` (AS3).
+  ///
+  /// Used for the no-transport (D15) local-only path and the pre-auth (D14)
+  /// guard: neither performs network work, so they should not report an
+  /// error, but they must not strand the UI on `pendingPush` either.
+  void _settleToInSync() {
+    _syncStatusController.add(SyncingStatus.inSync);
+  }
+
+  /// Run auto-sync with a single automatic retry on the first failure (G8).
+  ///
+  /// Returns true if either attempt settled cleanly. Extracted so the debounce
+  /// handler ([_doPush]) owns the status lifecycle and this helper owns only
+  /// the retry policy.
+  Future<bool> _runAutoSyncWithRetry() async {
+    if (await _runAutoSync()) return true;
+    return _runAutoSync(); // single retry per G8
+  }
+
+  /// Execute the debounced auto-sync (bidirectional pull + merge + push).
+  ///
+  /// Guards transport (D15) and pre-auth (D14) first, then runs the
+  /// bidirectional reconcile with one retry, always settling the status to a
+  /// terminal state and clearing [_isSyncing] via `finally`.
   Future<void> _doPush() async {
     if (transport == null) {
-      // D15: local-only — no network, settle back to inSync so the status
-      // stream isn't left stuck on pendingPush (AS3).
-      _syncStatusController.add(SyncingStatus.inSync);
+      _settleToInSync(); // D15 local-only (AS3)
       return;
     }
-    if (!crypto.hasMasterKey) return; // D14: pre-auth
+    if (!crypto.hasMasterKey) {
+      _settleToInSync(); // D14 pre-auth — not an error, just nothing to sync
+      return;
+    }
 
     _isSyncing = true;
     _syncStatusController.add(SyncingStatus.pendingPush);
-
-    bool ok = await _runAutoSync();
-    if (!ok) ok = await _runAutoSync(); // single retry per G8
-
-    _isSyncing = false;
-    _syncStatusController
-        .add(ok ? SyncingStatus.inSync : SyncingStatus.error);
+    try {
+      final ok = await _runAutoSyncWithRetry();
+      _syncStatusController.add(
+        ok ? SyncingStatus.inSync : SyncingStatus.error,
+      );
+    } finally {
+      _isSyncing = false;
+    }
   }
 
   /// Push current staging rows to remote as an obfuscated blob.
@@ -882,9 +751,7 @@ class SyncService {
     if (transport == null) return;
     if (!crypto.hasMasterKey) return;
 
-    final rows = stagingStore != null
-        ? await stagingStore!.getAllRows()
-        : <Map<String, dynamic>>[];
+    final rows = await stagingStore.getAllRows();
 
     // R4: filter committed rows before push
     final activeRows = rows.where((r) => !_rowIsCommitted(r)).toList();
@@ -901,16 +768,14 @@ class SyncService {
     await transport!.push(StagingPaths.remoteRowLevelBlob, blob);
 
     // R7: push hash index after blob
-    if (stagingStore != null) {
-      try {
-        final hashIndex = await StagingHashIndex.build(stagingStore!);
-        final indexJson = json.encode(hashIndex);
-        await transport!.push(
-          StagingPaths.remoteStagingHashIndex,
-          Uint8List.fromList(indexJson.codeUnits),
-        );
-      } catch (_) {}
-    }
+    try {
+      final hashIndex = await StagingHashIndex.build(stagingStore);
+      final indexJson = json.encode(hashIndex);
+      await transport!.push(
+        StagingPaths.remoteStagingHashIndex,
+        Uint8List.fromList(indexJson.codeUnits),
+      );
+    } catch (_) {}
 
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
   }
@@ -1007,38 +872,20 @@ class SyncService {
     return _cachedDeviceUuid!;
   }
 
-  int _findActiveEntryIndex(
-      List<Map<String, dynamic>> entries, String title) {
-    final idx = entries.indexWhere(
-      (e) => e['title'] == title && e['is_active'] == true,
-    );
-    if (idx == -1) throw Exception('No active task found for: $title');
-    return idx;
-  }
-
-  int _findActiveEntryIndexById(
-      List<Map<String, dynamic>> entries, String entryId) {
-    final idx = entries.indexWhere(
-      (e) => e['entry_id'] == entryId && e['is_active'] == true,
-    );
-    if (idx == -1) throw Exception('No active task found for id: $entryId');
-    return idx;
-  }
-
-  Future<Uint8List?> _buildBlobBytes() async {
-    if (transport == null) return null;
-
-    final entries = await _local.readEntries();
-    final deviceId = _getDeviceUuid();
-
-    final blobData = {
-      'entries': entries,
-      'device_id': deviceId,
-      'device_proof': _makeDeviceProof(deviceId),
-    };
-
-    final jsonStr = json.encode(blobData);
-    return crypto.obfuscateBlob(jsonStr, crypto.getMasterKey()!);
+  /// Row-level backward-compat: resolve an activity_id argument that may
+  /// actually be a display title to the matching active staging row. The
+  /// legacy API accepted a title for [end]/[pause]/[unpause]; row-level mode
+  /// takes activity_ids but must keep resolving titles so old callers and
+  /// legacy-compat tests keep working.
+  Future<Map<String, dynamic>?> _resolveRowByTitle(String idOrTitle) async {
+    final rows = await stagingStore.getAllRows();
+    for (final row in rows) {
+      final id = row['activity_id'] as String?;
+      if (id == idOrTitle) return row;
+      final act = _decodeActivityBlob(row['activity'] as String?);
+      if (act['title'] == idOrTitle) return row;
+    }
+    return null;
   }
 
   String _makeDeviceProof(String deviceId) {
@@ -1057,80 +904,29 @@ class SyncService {
   /// Returns the hash prefix (first 10 chars of last block hash), or null
   /// if no entries to commit.
   Future<String?> commitAndSync({List<String>? selectedIds}) async {
-    if (stagingStore != null) {
-      // Get all ended entries
-      final ended = await stagingStore!.getRowsByStatus('ended');
+    // Get all ended entries
+    final ended = await stagingStore.getRowsByStatus('ended');
 
-      // Filter out already-committed entries (seeded by ledger pull service).
-      // An entry is committed if it has a row-level committed flag OR the
-      // activity JSON blob has committed=true.
-      final uncommitted = ended.where((r) => !_rowIsCommitted(r)).toList();
+    // Filter out already-committed entries (seeded by ledger pull service).
+    // An entry is committed if it has a row-level committed flag OR the
+    // activity JSON blob has committed=true.
+    final uncommitted = ended.where((r) => !_rowIsCommitted(r)).toList();
 
-      // Filter by selectedIds if provided (F2)
-      List<Map<String, dynamic>> toCommit;
-      if (selectedIds != null) {
-        final selectedSet = selectedIds.toSet();
-        toCommit = uncommitted.where((r) => selectedSet.contains(r['activity_id'])).toList();
-      } else {
-        toCommit = uncommitted;
-      }
-
-      // F6, F7: no-op when nothing to commit
-      if (toCommit.isEmpty) return null;
-
-      // F9: delegate to LedgerEngine
-      if (ledgerEngine == null) {
-        throw Exception(
-          'LedgerEngine not configured — complete onboarding first',
-        );
-      }
-
-      final hashPrefix = ledgerEngine!.commit(toCommit);
-
-      // F3: mark committed rows (preserve for History display;
-      //     Sync tab filters them out via the committed flag).
-      for (final row in toCommit) {
-        // Update row-level committed flag
-        row['committed'] = true;
-        // Update committed flag inside the activity JSON blob too,
-        // since _stagingRowToDto reads committed from the blob first.
-        final act = _decodeActivityBlob(row['activity'] as String?);
-        act['committed'] = true;
-        row['activity'] = json.encode(act);
-        await stagingStore!.putRow(row, preserveUpdatedAt: true);
-      }
-
-      // F4, F5: push to remote if configured
-      if (transport != null) {
-        try {
-          await _pushStagingRowsToRemote();
-        } catch (_) {}
-      }
-
-      return hashPrefix;
+    // Filter by selectedIds if provided (F2)
+    List<Map<String, dynamic>> toCommit;
+    if (selectedIds != null) {
+      final selectedSet = selectedIds.toSet();
+      toCommit = uncommitted
+          .where((r) => selectedSet.contains(r['activity_id']))
+          .toList();
+    } else {
+      toCommit = uncommitted;
     }
 
-    // Fallback: old commitEntries path
-    return commitEntries();
-  }
-
-  /// Commit completed staging entries to the ledger (legacy — K5).
-  ///
-  /// Filters to entries where is_active==false and committed!=true.
-  /// Delegates to [LedgerEngine.commit], marks entries committed,
-  /// and returns the hash prefix. Returns null if no entries.
-  Future<String?> commitEntries() async {
-    if (stagingStore != null) {
-      return commitAndSync();
-    }
-
-    final allEntries = await _local.readEntries();
-    final toCommit = allEntries
-        .where((e) => e['is_active'] != true && e['committed'] != true)
-        .toList();
-
+    // F6, F7: no-op when nothing to commit
     if (toCommit.isEmpty) return null;
 
+    // F9: delegate to LedgerEngine
     if (ledgerEngine == null) {
       throw Exception(
         'LedgerEngine not configured — complete onboarding first',
@@ -1139,47 +935,36 @@ class SyncService {
 
     final hashPrefix = ledgerEngine!.commit(toCommit);
 
-    final entryIds = toCommit
-        .map((e) => e['entry_id'] as String?)
-        .where((id) => id != null)
-        .cast<String>()
-        .toList();
-    await _local.markCommitted(entryIds);
-
-    // Delete committed entries from staging — they already live in the ledger.
-    // Sort indices descending so removal at a higher index doesn't shift
-    // earlier indices on subsequent deletes.
-    final committedIndices = toCommit
-        .map((e) => e['entry_index'] as int?)
-        .where((i) => i != null)
-        .cast<int>()
-        .toList();
-    committedIndices.sort((a, b) => b.compareTo(a));
-    for (final idx in committedIndices) {
-      await _local.delete(idx);
+    // F3: mark committed rows (preserve for History display;
+    //     Sync tab filters them out via the committed flag).
+    for (final row in toCommit) {
+      // Update row-level committed flag
+      row['committed'] = true;
+      // Update committed flag inside the activity JSON blob too,
+      // since _stagingRowToDto reads committed from the blob first.
+      final act = _decodeActivityBlob(row['activity'] as String?);
+      act['committed'] = true;
+      row['activity'] = json.encode(act);
+      await stagingStore.putRow(row, preserveUpdatedAt: true);
     }
 
-    // TODO(remove after 2026-08-01): cleanup stale committed entries
-    // that accumulated before the deletion fix (BUG-2026-07-30).
-    // This is intentionally temporary — new entries are deleted above.
-    if (DateTime.now().isBefore(DateTime.utc(2026, 8, 1))) {
-      final allAfterCommit = await _local.readEntries();
-      final staleIndices = <int>[];
-      for (var i = 0; i < allAfterCommit.length; i++) {
-        if (allAfterCommit[i]['committed'] == true) {
-          staleIndices.add(allAfterCommit[i]['entry_index'] as int);
-        }
-      }
-      staleIndices.sort((a, b) => b.compareTo(a));
-      for (final idx in staleIndices) {
-        await _local.delete(idx);
-      }
+    // F4, F5: push to remote if configured
+    if (transport != null) {
+      try {
+        await _pushStagingRowsToRemote();
+      } catch (_) {}
     }
 
     return hashPrefix;
   }
 
-
+  /// Legacy alias — delegates to [commitAndSync] with no selections.
+  ///
+  /// Retained only for backward-compat callers; row-level commit keeps
+  /// committed entries in staging (marked committed=true) for History.
+  Future<String?> commitEntries() async {
+    return commitAndSync();
+  }
 }
 
 /// Sync status for visual indicators.
