@@ -190,6 +190,27 @@
 
 ---
 
+## 🟡 Web: ADR-030 ledger-aware ownership-handoff auto-sync (parity with Flutter)
+
+**Plan:** `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md` (Phase 1 blueprint)
+**Status:** 🟡 Active — Phase 1 (blueprint) done (2026-08-11). Next Phase 2 (RED).
+
+**What:** Bring `phpoc-web` in line with Flutter's ADR-030 ownership-handoff flow so a Web device that
+re-authenticates on a device switch pulls the remote ledger (block-count-gated) before reinstating
+staging ownership, then drops UNCOMMITTED sealed staging rows (Scenario 5) while keeping committed
+display rows. Concretely:
+- **W1** — wire a block-count-freshness ledger pull into `SyncService._reconcileAndClaim()` before
+  `_reconcileDifferentDevice()` (reuse `WorkerImportSource.checkForRemoteChain`/`fetchChain`); fail-safe on error.
+- **W2** — drop UNCOMMITTED merged rows whose `activity_id` is sealed in the local ledger after the
+  canonical-row merge; keep committed rows; empty-ledger no-op.
+- **W3** — add a Web `_ledgerActivityIds()` derivation from `LOCAL_LEDGER_BLOCKS` day-block entries.
+
+**Tests:** 13 assertions (node-unit, `phpoc-web/test/web_ledger_auto_pull_test.mjs`) across groups
+W1 (5), W2 (5), W3 (3).
+
+**Effort:** Medium (~half day). **Blocks:** Nothing (proves §12 rule #11 parity for Web).
+
+---
 ## ~~🔴 B-02: Flutter — Auto-push staging blob on every mutation~~ (subsumed by B-03)
 
 B-02's scope (debounced auto-push on mutation) is folded into B-03 deliverable #4. The broader architectural changes (activity IDs, row schema, commit-and-clean) make B-03 the correct tracking unit.
@@ -672,6 +693,6 @@ their ledgers are created with canonical encryption from genesis.
 
 ## 🟡 Wire `dropLedgerCommitted` into handoff reconcile (ADR-030 Scenario-5/6 follow-on)
 
-**Plan:** `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md` (Group L3)
-**Status:** 🔜 Backlog — pure filter implemented + unit-tested (L3.1/L3.2) but NOT wired into `SyncService._reconcileAndClaimRowLevel`. Currently `_pushStagingRowsToRemote` already excludes committed rows (R4), so the practical gap is a fresh device whose local scratchpad carries an `activity_id` already sealed in the ledger (such rows would be re-pushed as scratchpad instead of dropped). To close: build `Set<String> ledgerActivityIds` from `LedgerEngine.getAllBlocks()` (entry data `entry_id`), call `MergeEngine.dropLedgerCommitted(local, ids)` before the push in the handoff reconcile, and add an integration assertion in `ledger_auto_pull_on_reauth_test.dart`.
+**Plan:** `docs/planning/SCENARIO56_WIRE_PHASE1.md` (Phase 1 blueprint); `LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md` (Group L3)
+**Status:** ✅ Complete — 4-PHASE TDD DONE (2026-08-11): **21/21 tests pass** in `ledger_auto_pull_on_reauth_test.dart`. Implemented real `LedgerEngine.ledgerActivityIds()` (day-entry `data['activity_id']` derivation); wired `_dropSealedUncommitted()` into `SyncService._reconcileAndClaimRowLevel()` after `mergeEntries` — drops UNCOMMITTED sealed rows before write/push, keeps committed display rows, empty-ledger no-op. Phase 4 refactor: `_dropSealedUncommitted` delegates the id-set drop to `MergeEngine.dropLedgerCommitted`; refreshed merge_engine doc note. No regressions. **Validated (2026-08-11):** committed day-block `data` **retains `activity_id`** (entry_id is stripped), so the id-set derives from `getAllBlocks()` — no PHPSPEC format change. **Semantic decision:** drop only **uncommitted** sealed rows.
 **Priority:** 🟡 Medium — correctness/subtlety; does not regress current behavior (rows are simply not yet deduplicated against the ledger on a fresh claim).

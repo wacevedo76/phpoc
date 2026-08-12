@@ -1,7 +1,7 @@
 # Cross-Client Staging Sync & Reconciliation — Living Reference
 
 > **Status:** Living document — the primary source of truth for staging sync across all clients.
-> **Last updated:** 2026-09-15 (CCS-3/CCS-4: CLI + Web row-level sync gate GREEN — §12.9 matrix reconciled; canonical compact cross-client formats verified)
+> **Last updated:** 2026-09-15 (CCS-3/CCS-4: CLI + Web row-level sync gate GREEN — §12.9 matrix reconciled; canonical compact cross-client formats verified) — 2026-08-11: reconciled stale §8.3 implementation-status table (all clients row-level LWW GREEN); ADR-030 ledger-aware handoff flow (Web) tracked via `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md`.
 > **Scope:** Local/Remote staging sync, reconciliation, cross-device merge, blob obfuscation, device cookie, hash index, row-level sync (ADR-025).
 
 This document is the authoritative reference for how PHPOC staging sync and reconciliation work across CLI (Python), Web (JavaScript), and Flutter (Dart) clients. It defines the protocol contracts, sync flow, resolution rules, and the relationship between current (monolithic blob) and target (row-level) architectures.
@@ -352,12 +352,17 @@ On PUT /storage/staging/rows/{activity_id}:
 
 ### Implementation Status by Client
 
+> **Updated 2026-08-11** (was stale: showed CLI/Web/Flutter row-level sync as planned/🔜/RED). All
+> row-level LWW sync is now implemented and GREEN across every client — CLI (CCS-3), Web (CCS-2 plus
+> `row_sync` 108 + `row_staging_store` 52 + `ccs2_row_level_reconcile` 41 tests), Flutter (ADR-025
+> auto-sync + ADR-030), and verified byte-consistent by CCS-4 (§12.9).
+
 | Client | Blob Sync | activity_id | Hash Index | Row-Level Store | Row Sync (LWW) |
 |--------|-----------|-------------|------------|-----------------|----------------|
-| **CLI** | ✅ | ✅ | ✅ | 🔜 Planned | 🔜 Planned |
-| **Web** | ✅ | ✅ | ✅ | 🟢 Phase 3 GREEN | 🔴 RED (Phase 2 tests) |
-| **Flutter** | ✅ | ✅ | ✅ | ✅ Active | 🔜 Planned |
-| **Worker** | ✅ | — | ✅ (sha256) | 🟢 Endpoints GREEN | 🔜 Entry-level endpoints needed |
+| **CLI** | ✅ | ✅ | ✅ | ✅ (CCS-3, `LocalStagingCache` + SQLite) | ✅ (CCS-3, `MergeEngine.merge_rows`) |
+| **Web** | ✅ | ✅ | ✅ | ✅ (`row_staging_store.js`; 52 tests GREEN) | ✅ (CCS-2, `mergeRows`; 108+41 tests GREEN) |
+| **Flutter** | ✅ | ✅ | ✅ | ✅ (StagingStore; active) | ✅ (ADR-025 auto-sync + ADR-030 `_reconcileAndClaimRowLevel`) |
+| **Worker** | ✅ | — | ✅ (sha256) | ✅ (row-level CRUD endpoints; `row_level_staging.ts`) | ✅ (per-row CRUD endpoints GREEN) |
 
 ---
 
