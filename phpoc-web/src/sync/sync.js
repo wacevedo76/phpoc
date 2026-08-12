@@ -74,6 +74,7 @@ import {
 } from './keys.js';
 import { buildHashIndex } from './hash_index.js';
 import { buildStagingHashIndex } from './staging_hash_index.js';
+import { WorkerImportSource } from './remote_import.js';
 
 /** @typedef {'READY'|'OFFLINE'|'REAUTH_NEEDED'|'GENESIS_MISMATCH'} SyncCheckResult */
 
@@ -786,11 +787,118 @@ export class SyncService {
 
     const localDeviceUuid = await this._getDeviceId() || '';
 
+    // ADR-030 §12 rule #11: on ownership-handoff, pull the remote ledger first
+    // (block-count-freshness-gated so an unchanged chain is not re-downloaded),
+    // importing missing blocks before the staging reconcile. Fail-safe.
+    await this._pullLedgerOnHandoff(masterKeyHex);
+
     // Bug 3a fix: Always pull + merge, even for same device UUID.
     // Same-device doesn't mean local-is-authoritative — the remote
     // may have entries from a different client. Client-type suffix
     // ({uuid}-cli vs {uuid}-web) guarantees distinct identities.
     return this._reconcileDifferentDevice(masterKeyHex, localDeviceUuid);
+  }
+
+  /**
+   * Pull the remote ledger onto this device on an ownership handoff.
+   *
+   * ADR-030 §12 rule #11: before the staging reconcile, bring the remote ledger
+   * in line with the local one. The pull is block-count-freshness-gated — an
+   * unchanged or shorter remote chain is never re-downloaded. On success the
+   * chain is persisted to LOCAL_LEDGER_BLOCKS (+ rebuildable LOCAL_HASH_INDEX),
+   * mirroring the import path's set sequence.
+   *
+   * Fail-safe: any check/fetch/verify/persist error is swallowed so the
+   * staging reconcile always runs afterwards. Never deletes local staging rows
+   * on unverified ledger info.
+   *
+   * @param {string} masterKeyHex - 64-char hex master key.
+   * @private
+   */
+  async _pullLedgerOnHandoff(masterKeyHex) {
+    if (!this._transport || !this._crypto || !this._crypto.getMasterKey) return;
+    try {
+      const localBlocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
+      const localCount = Array.isArray(localBlocks) ? localBlocks.length : 0;
+
+      // Freshness gate: only fetch when the remote chain is actually longer.
+      const remoteCount = await WorkerImportSource.checkForRemoteChain(this._transport);
+      if (remoteCount <= localCount) return;
+
+      const chain = await WorkerImportSource.fetchChain(
+        this._transport, this._crypto, masterKeyHex
+      );
+      if (!Array.isArray(chain) || chain.length === 0) return;
+
+      await this._storage.set(LOCAL_LEDGER_BLOCKS, chain);
+
+      // Persist the rebuildable hash index for Tier 1 fast path. The blind
+      // duration index (LOCAL_LEDGER_INDEX) is intentionally left as-is —
+      // deriving it faithfully requires per-entry decryption (see import path).
+      try {
+        const hashIndex = buildHashIndex(chain);
+        await this._storage.set(LOCAL_HASH_INDEX, hashIndex);
+      } catch {
+        // Non-critical — hash index is rebuildable from the chain
+      }
+    } catch (err) {
+      console.warn('Ledger pull on handoff failed, continuing reconcile:', err.message);
+    }
+  }
+
+  /**
+   * Derive the set of activity_ids sealed in the local ledger chain.
+   *
+   * Mirrors Flutter's LedgerEngine.ledgerActivityIds(): only day-block entries'
+   * data.activity_id are collected. Summary/genesis blocks, empty days, and
+   * malformed/missing activity_id entries contribute nothing (defensive).
+   *
+   * @returns {Promise<Set<string>>} The sealed-id set.
+   * @private
+   */
+  async _ledgerActivityIds() {
+    const sealed = new Set();
+    let blocks;
+    try {
+      blocks = (await this._storage.get(LOCAL_LEDGER_BLOCKS)) || [];
+    } catch {
+      return sealed;
+    }
+    if (!Array.isArray(blocks)) return sealed;
+    for (const block of blocks) {
+      if (!block || block.type !== 'day') continue;
+      const entries = block.entries;
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (!entry || !entry.data) continue;
+        const aid = entry.data.activity_id;
+        if (typeof aid === 'string' && aid) sealed.add(aid);
+      }
+    }
+    return sealed;
+  }
+
+  /**
+   * Drop UNCOMMITTED merged rows whose activity_id is sealed in the ledger.
+   *
+   * ADR-030 Scenario 5/6: stale scaffolding that is already committed to the
+   * ledger must not be re-pushed as scratchpad, while COMMITTED display rows
+   * are preserved (never-empty History). Mirrors Flutter's
+   * `MergeEngine.dropLedgerCommitted`: this stays a pure id-set filter — the
+   * committed-flag guard is applied here (unlike Flutter, the Web caller does
+   * not pre-filter to the uncommitted subset). An empty ledger is a strict
+   * no-op.
+   *
+   * @param {Array<{activity_id?: string, committed?: boolean}>} rows - Canonical merged rows.
+   * @param {Set<string>} sealedIds - activity_ids committed to the local ledger.
+   * @returns {Array} The filtered rows, same order as input.
+   * @private
+   */
+  static _dropSealedUncommitted(rows, sealedIds) {
+    if (sealedIds.size === 0) return rows;
+    return rows.filter(
+      (m) => !(m && !m.committed && m.activity_id && sealedIds.has(m.activity_id))
+    );
   }
 
   /**
@@ -819,7 +927,9 @@ export class SyncService {
     if (remoteBlob && Array.isArray(remoteBlob.entries)) {
       const localEntries = await this._local.readEntries();
       try {
-        this._mergeRemoteIntoLocal(remoteBlob, localEntries, localDeviceUuid);
+        // Await — the Scenario-5/6 drop (and LWW merge) must complete before
+        // pushBlobOnly reads the local staging so dropped rows never get pushed.
+        await this._mergeRemoteIntoLocal(remoteBlob, localEntries, localDeviceUuid);
       } catch (err) {
         console.warn('Merge failed, pushing local blob:', err.message);
       }
@@ -886,6 +996,13 @@ export class SyncService {
     // Merge by activity_id (LWW, local-wins-on-tie, committed-exclusion).
     const mergedRows = mergeRows(localRows, remoteRows);
 
+    // ADR-030 Scenario-5/6: after the LWW merge, DROP UNCOMMITTED merged rows
+    // whose activity_id is already sealed in the local ledger (stale scaffolding
+    // must not be re-pushed as scratchpad), while KEEPING COMMITTED display rows
+    // (never-empty History). An empty ledger is a strict no-op.
+    const sealedIds = await this._ledgerActivityIds();
+    const mergedRowsToWrite = SyncService._dropSealedUncommitted(mergedRows, sealedIds);
+
     // Pre-compute which activity_ids remote strictly won (remote.updated_at
     // newer). Only those rows are rebuilt from their canonical row; every
     // other merged row keeps the full-fidelity local DTO.
@@ -907,7 +1024,7 @@ export class SyncService {
     }
 
     const mergedDTOs = [];
-    for (const mrow of mergedRows) {
+    for (const mrow of mergedRowsToWrite) {
       const aid = mrow.activity_id;
       const localDto = localDtoById.get(aid);
       if (localDto && !remoteWonIds.has(aid)) {

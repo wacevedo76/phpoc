@@ -62,3 +62,36 @@
 - P4: `_runAutoSyncWithRetry()` + `_settleToInSync()`; robust `finally`. Analyzer clean.
 - Green: `sync_service_row_level_test.dart` 60/60; `sync_service_overhaul_test.dart` 43/43;
   `test/data/ledger/` 280/280.
+
+## ✅ Flutter: manual "Sync Staging" does not pull remote rows — 4-PHASE TDD COMPLETE
+- **Plan:** `docs/planning/flutter/MANUAL_SYNC_PULL_F1_PHASE1.md` (9 assertions S1/S2/S3)
+- **Fix:** `sync_screen.dart` `_syncNow()` → `checkAndSync(skipReadOnlyFastPath: true)` (S2.2 RED→GREEN).
+- **Verification:** S1(3)+S2(3)+S3(3) GREEN; row_level+manual_pull+merge_engine 71/71 + auto_pull 21/21.
+  E15 flaky & L2/L3/L4/L6+R5 pre-existing (baseline-identical). Analyzer clean (2 pre-existing unused-import warnings).
+
+## ✅ ADR-030 Scenario-5/6 ledger-aware handoff cleanup — 4-PHASE TDD COMPLETE
+- **Blueprint:** `docs/planning/SCENARIO56_WIRE_PHASE1.md` (L3W.1–4, L3X.1–3, L3Y.1–2)
+- **Phase 3:** real `LedgerEngine.ledgerActivityIds()`; `_dropSealedUncommitted()` wired into
+  `SyncService._reconcileAndClaimRowLevel()` after `mergeEntries`.
+- **Phase 4:** `_dropSealedUncommitted` delegates the pure id-set drop to `MergeEngine.dropLedgerCommitted`.
+- **Verification:** 147/147 (auto_pull+merge_engine+row_level+push_service); analyzer clean. No behavior change.
+
+## ✅ ADR-030 — Phase 4 (REFACTOR) COMPLETE
+- `ledger_push_service.dart`: extracted `_pushChainPayloads` loop + `_BlockPayload`; deduped block/hash_index push (~30 lines).
+- `merge_engine.dart`: `dropLedgerCommitted` doc note + removed redundant local alias.
+- **Verification:** 12/12 auto-pull + 58 push-service + providers + row_level + merge_engine GREEN. No behavior change.
+
+## ✅ Web: ADR-030 ledger-aware handoff auto-sync — 4-PHASE TDD COMPLETE
+- **Blueprint:** `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md` (W1/W2/W3)
+- **Phase 3:** `sync.js` `_pullLedgerOnHandoff()` (block-count-gated) + `_ledgerActivityIds()`; W2 drop wired into `_mergeRemoteIntoLocal`, awaited before `pushBlobOnly`.
+- **Phase 4:** extracted pure `SyncService._dropSealedUncommitted` (mirrors Flutter `MergeEngine.dropLedgerCommitted`).
+- **Verification:** 17/17 auto-pull GREEN; no regressions; `vite build` succeeds.
+
+## ✅ Trigger stage sync after re-authentication — 4-PHASE TDD COMPLETE (2026-08-11)
+- **Blueprint:** `docs/planning/flutter/REAUTH_TRIGGERS_STAGE_SYNC_PHASE1.md` (U1/U2/U3, 6 assertions).
+- **Debug-first check:** confirmed `masterKeyCached = true` yet `checkAndSyncCalls = 0` post-unlock — gap real.
+- **Phase 2 (RED):** `test/features/reauth_triggers_sync_test.dart` — 4 RED (U1.1/1.2/1.3 + U2.1) + 2 GREEN guards (U3.1/U3.2).
+- **Phase 3 (GREEN):** `unlock_screen.dart` `_triggerSyncAfterReauth()` (fire-and-forget
+  `unawaited(checkAndSync(skipReadOnlyFastPath: true))`, mounted-guarded, D15-safe) wired into `_unlock()` + `_biometricUnlock()`.
+- **Phase 4 (REFACTOR, Clarity/Conciseness):** tightened the 2 redundant call-site comments (helper doc retains ADR-030 rationale). No behavior change.
+- **Verification:** 6/6 GREEN; unlock_screen(31)+biometric_integration GREEN; regression sweep 96/96; no new failures (dashboard T7/U1/U3 & sync_screen L2/L3/L4/L6+R5 baseline-identical); analyzer clean.

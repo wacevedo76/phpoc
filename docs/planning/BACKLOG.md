@@ -193,7 +193,7 @@
 ## 🟡 Web: ADR-030 ledger-aware ownership-handoff auto-sync (parity with Flutter)
 
 **Plan:** `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md` (Phase 1 blueprint)
-**Status:** 🟡 Active — Phase 1 (blueprint) done (2026-08-11). Next Phase 2 (RED).
+**Status:** ✅ Complete (2026-08-11) — 4-Phase TDD done. Phase 3 GREEN (17/17 in `web_ledger_auto_pull_test.mjs`); Phase 4 REFACTOR extracted `SyncService._dropSealedUncommitted` (pure id-set filter replacing the inline double-negative in `_mergeRemoteIntoLocal`, mirroring Flutter `MergeEngine.dropLedgerCommitted`). No behavior change; full suite GREEN.
 
 **What:** Bring `phpoc-web` in line with Flutter's ADR-030 ownership-handoff flow so a Web device that
 re-authenticates on a device switch pulls the remote ledger (block-count-gated) before reinstating
@@ -696,3 +696,25 @@ their ledgers are created with canonical encryption from genesis.
 **Plan:** `docs/planning/SCENARIO56_WIRE_PHASE1.md` (Phase 1 blueprint); `LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md` (Group L3)
 **Status:** ✅ Complete — 4-PHASE TDD DONE (2026-08-11): **21/21 tests pass** in `ledger_auto_pull_on_reauth_test.dart`. Implemented real `LedgerEngine.ledgerActivityIds()` (day-entry `data['activity_id']` derivation); wired `_dropSealedUncommitted()` into `SyncService._reconcileAndClaimRowLevel()` after `mergeEntries` — drops UNCOMMITTED sealed rows before write/push, keeps committed display rows, empty-ledger no-op. Phase 4 refactor: `_dropSealedUncommitted` delegates the id-set drop to `MergeEngine.dropLedgerCommitted`; refreshed merge_engine doc note. No regressions. **Validated (2026-08-11):** committed day-block `data` **retains `activity_id`** (entry_id is stripped), so the id-set derives from `getAllBlocks()` — no PHPSPEC format change. **Semantic decision:** drop only **uncommitted** sealed rows.
 **Priority:** 🟡 Medium — correctness/subtlety; does not regress current behavior (rows are simply not yet deduplicated against the ledger on a fresh claim).
+
+---
+
+## ✅ Flutter: manual "Sync Staging" does not pull remote rows (F1 read-only fast-path short-circuit)
+
+**Plan:** `docs/planning/flutter/MANUAL_SYNC_PULL_F1_PHASE1.md` (Phase 1 blueprint)
+**Status:** ✅ Completed (2026-08-11) — 4-phase TDD done. `sync_screen.dart` `_syncNow()` → `checkAndSync(skipReadOnlyFastPath: true)`. S1(3/3)+S2(3/3, incl. previously-RED S2.2)+S3(3/3) GREEN; regression sweep (row_level, merge_engine, ledger_auto_pull) GREEN; E15 flaky & L2/L3/L4/L6+R5 pre-existing unchanged (verified on baseline).
+
+**What:** The Sync screen's **"Sync Staging"** button calls `sync.checkAndSync()` **without** `skipReadOnlyFastPath`, so the F1 read-only fast path returns `ready` immediately whenever the local device has **no pending uncommitted writes** — it never pulls the remote `staging/blob`. A phone's running activities pushed to the Worker are therefore never fetched by an emulator that has nothing local pending (live-reported bug). The mutation-driven auto-push already passes `skipReadOnlyFastPath: true` (`_runAutoSync`), so the fix is to make the manual trigger do the same.
+- **Concretely:** `sync_screen.dart` `_syncNow()` → `checkAndSync(skipReadOnlyFastPath: true)` so it falls through to the cookie/fast-path compare and, when the remote hash differs, to `_reconcileAndClaimRowLevel()`.
+- **Blueprinted:** 9 assertions across S1 (service pull into empty local), S2 (button forwards the flag + settled state), S3 (mutation auto-sync / reauth / offline guards).
+**Priority:** 🟠 High — breaks the "see the other device's staging" core promise on a steady-state device.
+
+## ✅ Flutter: stage syncing does not trigger after Re-authentication
+
+**Plan:** `docs/planning/flutter/REAUTH_TRIGGERS_STAGE_SYNC_PHASE1.md` (Phase 1 blueprint)
+**Status:** ✅ Completed (2026-08-11) — 4-phase TDD done, 6/6 tests in `reauth_triggers_sync_test.dart` GREEN. `unlock_screen.dart` `_triggerSyncAfterReauth()` (fire-and-forget `checkAndSync(skipReadOnlyFastPath: true)`) wired into `_unlock()`/`_biometricUnlock()`. No regressions.
+
+**What:** After a successful re-authentication via the **Unlock screen**, the stage syncing workflow does **not** trigger. `_unlock()`/`_biometricUnlock()` call `reauthenticate()`/`unlockWithBiometric()` then `goToReady()`, but never invoke `checkAndSync()` — so a freshly-unlocked device shows stale local staging until the user taps "Sync Staging" or makes a mutation. Debug-first confirmed `masterKeyCached = true` yet `checkAndSyncCalls = 0`. The CLI already re-syncs after re-auth (`_rebuild_after_reauth`).
+- **Concretely:** `unlock_screen.dart` `_unlock()` and `_biometricUnlock()` fire `unawaited(sync.checkAndSync(skipReadOnlyFastPath: true))` after auth success, before `goToReady()`. Safe on local-only (`transport == null` → `ready`); on a transport it runs the ADR-030 handoff reconcile (ledger + staging pull).
+- **Blueprinted:** 6 assertions across U1 (passphrase unlock → sync + forced flag + fire-and-forget), U2 (biometric parity), U3 (failed-auth no-sync / no-transport no-op).
+**Priority:** 🟠 High — a device that just unlocked must see the other device's staging + latest ledger immediately.

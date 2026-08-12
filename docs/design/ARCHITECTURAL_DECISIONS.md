@@ -2400,7 +2400,7 @@ json.dumps(rendered, sort_keys=True)   # or byte-equal jsonSort (Dart)
 ## ADR-030: Ledger Auto-Pull on Ownership-Handoff Reauth
 
 **Date:** 2026-08 (Phase 1 blueprint `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`)
-**Status:** ✅ Implemented (Flutter; 4-phase TDD complete 2026-08-11) — see the blueprint for details.
+**Status:** ✅ Implemented (Flutter + Web; 4-phase TDD complete 2026-08-11) — Flutter blueprint `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`; Web parity port blueprint `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md`.
 
 ### Context
 

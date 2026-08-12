@@ -11,6 +11,8 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux`
+- **Stage sync after re-auth — 4-PHASE TDD ✅ COMPLETE** (2026-08-11). `unlock_screen.dart` `_triggerSyncAfterReauth()`; 6/6 GREEN.
+- **Manual "Sync Staging" pull fix — 4-PHASE TDD ✅ COMPLETE** (2026-08-11). `_syncNow()` → `checkAndSync(skipReadOnlyFastPath: true)`; S2.2 GREEN.
 - **ADR-030 Ledger Auto-Pull on Ownership-Handoff Reauth — 4-PHASE TDD ✅ COMPLETE.** See Immediate Next Steps.
 - **ADR-030 Scenario-5/6 ledger-aware handoff cleanup — 4-PHASE TDD ✅ COMPLETE** (2026-08-11). Wired `dropLedgerCommitted` into the handoff reconcile.
 - **Flutter test suite:** `test/data/ledger/` (325/325), `ledger_push_service_test`+`engine_test` (106/106),
@@ -24,35 +26,27 @@
 
 ## Immediate Next Steps 🎯
 
-### ✅ ADR-030 Scenario-5/6 ledger-aware handoff cleanup — Phase 4 (REFACTOR) COMPLETE (2026-08-11)
-- **Blueprint:** `docs/planning/SCENARIO56_WIRE_PHASE1.md` (9 assertions: L3W.1–4, L3X.1–3, L3Y.1–2).
-- **Phase 2 (RED):** 9 tests in `ledger_auto_pull_on_reauth_test.dart`; 2 RED (L3W.1, L3X.1).
-- **Phase 3 (GREEN):** 21/21; real `LedgerEngine.ledgerActivityIds()`; `_dropSealedUncommitted()` wired into
-  `SyncService._reconcileAndClaimRowLevel()` after `mergeEntries`.
-- **Phase 4 (REFACTOR, Conciseness/DRY + Clarity):** `_dropSealedUncommitted` now delegates the pure id-set drop to
-  `MergeEngine.dropLedgerCommitted` (caller supplies only the uncommitted subset — Phase-1 decision) instead of
-  re-implementing the filter inline; refreshed the stale merge_engine doc note (it IS now wired). Analyzer clean.
-- **Verification:** 147/147 across `ledger_auto_pull_on_reauth`+`merge_engine`+`sync_service_row_level`+
-  `ledger_push_service`; `flutter analyze` clean. No behavior change.
-- **Files:** `sync_service.dart`, `merge_engine.dart` (doc-only).
+### ✅ Trigger stage sync after re-authentication — **4-PHASE TDD COMPLETE** (2026-08-11)
+- **Blueprint:** `docs/planning/flutter/REAUTH_TRIGGERS_STAGE_SYNC_PHASE1.md` (U1/U2/U3, 6 assertions).
+- **Fix:** `unlock_screen.dart` `_triggerSyncAfterReauth()` — fire-and-forget
+  `unawaited(checkAndSync(skipReadOnlyFastPath: true))` wired into `_unlock()` + `_biometricUnlock()`
+  after auth success, before `goToReady()`. **6/6 GREEN.** Analyzer clean; no regressions
+  (dashboard T7/U1/U3 & sync_screen L2/L3/L4/L6+R5 baseline-identical).
+
+### ✅ ADR-030 Scenario-5/6 ledger-aware handoff cleanup — 4-PHASE TDD COMPLETE (2026-08-11)
+_Archived detail. Wired `merge_engine` delegation + real `ledgerActivityIds()`. All GREEN._
 
 ### ✅ ADR-030 — Phase 4 (REFACTOR) COMPLETE (2026-08-11)
-- **Improvement (Conciseness/DRY):** `ledger_push_service.dart` — extracted shared `_pushChainPayloads` transport
-  loop + top-level `_BlockPayload` value type; deduped `pushBlocks`/`pushAll` block-push + hash_index push (~30 lines).
-- **Improvement (Clarity):** `merge_engine.dart` — `dropLedgerCommitted` docs note it is unit-tested only and
-  not yet wired into the handoff; removed a redundant local alias.
-- **Verification:** 12/12 auto-pull + 58 push-service + `providers` + `sync_service_row_level` + `merge_engine`
-  all GREEN; `flutter analyze` clean on all 5 files. No behavior change.
-- **Files:** `ledger_push_service.dart`, `merge_engine.dart`.
+_Archived detail. `ledger_push_service` DRY; `merge_engine` doc note. No behavior change._
 
-### 🔨 Web: ADR-030 ledger-aware handoff auto-sync — **PHASE 1 (BLUEPRINT) DONE**
-- **Plan:** `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md` — 13 assertions (W1 pull-on-handoff, W2 Scenario-5/6
-  drop, W3 Web `ledgerActivityIds`). Node-unit tests in `phpoc-web/test/`.
-- **Concurrently:** reconciled stale §8.3 implementation-status table in `CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md`
-  (all clients row-level LWW GREEN per CCS-2/3/4).
-- **Next (Phase 2 RED):** write `web_ledger_auto_pull_test.mjs` node tests against `sync.js` `_reconcileAndClaim`.
+### ✅ Web: ADR-030 ledger-aware handoff auto-sync — 4-PHASE TDD COMPLETE (2026-08-11)
+_Archived detail. `sync.js` `_pullLedgerOnHandoff` + Web `_dropSealedUncommitted`. 17/17 GREEN._
 
 ## Other In-Flight
+
+### ✅ Flutter: manual "Sync Staging" does not pull remote rows — **4-PHASE TDD COMPLETE** (2026-08-11)
+_Archived detail. `_syncNow()` → `checkAndSync(skipReadOnlyFastPath: true)`; S2.2 GREEN._
+
 
 ---
 

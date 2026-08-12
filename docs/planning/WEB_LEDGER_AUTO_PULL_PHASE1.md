@@ -7,8 +7,8 @@
 > **Purpose:** Blueprint of all needed test assertions for bringing `phpoc-web` (Web client) in line
 > with the Flutter client for Local ⇄ Remote staging/ledger auto-sync, specifically the ADR-030
 > **ownership-handoff** ledger-aware flow that Flutter already implements and Web does not.
-> **Status:** 🔜 Phase 1 (test exploration)
-> **Next Phase:** Phase 2 (RED: test definition) — `.mjs` node-unit tests in `phpoc-web/test/`.
+> **Status:** ✅ 4-Phase TDD complete (2026-08-11) — Phase 3 GREEN 17/17 in `phpoc-web/test/web_ledger_auto_pull_test.mjs`; Phase 4 REFACTOR extracted `SyncService._dropSealedUncommitted` (pure id-set filter, mirroring Flutter `MergeEngine.dropLedgerCommitted`). No behavior change; full suite GREEN.
+> **Next Phase:** None — done.
 > **Tracked:** `docs/planning/BACKLOG.md` (new); `SESSION_HANDOFF.md` Immediate Next Steps.
 
 ---

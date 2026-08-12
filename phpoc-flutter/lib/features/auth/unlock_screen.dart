@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:phpoc_flutter/data/storage/providers.dart' show authServiceProvider;
+import 'package:phpoc_flutter/data/storage/providers.dart'
+    show authServiceProvider, syncServiceProvider;
 import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 
@@ -63,6 +66,9 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       await authService.reauthenticate(passphrase);
 
       if (!mounted) return;
+      // Fire-and-forget staging sync after a successful reauth
+      // (see _triggerSyncAfterReauth).
+      _triggerSyncAfterReauth();
       final lifecycle = ref.read(appLifecycleProvider.notifier);
       lifecycle.goToReady();
     } on AuthException catch (e) {
@@ -92,6 +98,22 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     _checkBiometricState();
   }
 
+  /// Kick a fire-and-forget staging sync after a successful re-authentication.
+  ///
+  /// Re-auth restores the master key and, per ADR-030, the device is at an
+  /// ownership-handoff moment, so the staged scratchpad + remote ledger should
+  /// be pulled immediately. Not awaited: unlock navigation proceeds without
+  /// waiting on a network round-trip. Safe on a local-only device
+  /// (`checkAndSync` returns `ready` when no transport is configured).
+  void _triggerSyncAfterReauth() {
+    if (!mounted) return;
+    final sync = ref.read(syncServiceProvider);
+    // Fire-and-forget — the sync runs in the background and the store/UI
+    // reflect pulled rows on their next refresh. skipReadOnlyFastPath forces
+    // past F1 so remote rows are pulled even with empty local staging.
+    unawaited(sync.checkAndSync(skipReadOnlyFastPath: true));
+  }
+
   Future<void> _checkBiometricState() async {
     final authService = ref.read(authServiceProvider);
     final available = await authService.isBiometricsAvailable();
@@ -116,6 +138,8 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       if (!mounted) return;
 
       if (success) {
+        // Fire-and-forget staging sync after biometric reauth (U2.1).
+        _triggerSyncAfterReauth();
         final lifecycle = ref.read(appLifecycleProvider.notifier);
         lifecycle.goToReady();
       } else {

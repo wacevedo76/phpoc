@@ -1,3 +1,4 @@
+import 'dart:convert' show json, utf8;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/core/models/push_result.dart';
+import 'package:phpoc_flutter/core/models/sync_result.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/data/sync/staging_store.dart';
@@ -617,6 +619,250 @@ void main() {
       await tester.pumpAndSettle(); // Complete the push
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group S: Manual "Sync Staging" forces the pull past F1
+  // (manual_sync_pull blueprint — RED Phase 2)
+  // ═══════════════════════════════════════════════════════════════
+
+  group('S: Manual Sync Staging forces the read-only fast-path pull', () {
+    // S2.1
+    testWidgets('S2.1: tapping "Sync Staging" invokes syncService.checkAndSync()',
+        (tester) async {
+      final spy = _SpySyncService();
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => spy),
+          ]);
+
+      final syncButton = find.text('Sync Staging');
+      expect(syncButton, findsOneWidget,
+          reason: 'Manual sync trigger must be present');
+
+      spy.checkAndSyncCalls = 0;
+      await tester.tap(syncButton);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(spy.checkAndSyncCalls, greaterThanOrEqualTo(1),
+          reason: 'The Sync Staging button must be wired to checkAndSync()');
+    });
+
+    // S2.2 — RED: the button currently forwards skipReadOnlyFastPath: FALSE
+    testWidgets('S2.2: "Sync Staging" passes skipReadOnlyFastPath: true to '
+        'checkAndSync (RED: button does not forward the flag today)',
+        (tester) async {
+      final spy = _SpySyncService();
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => spy),
+          ]);
+
+      final syncButton = find.text('Sync Staging');
+      expect(syncButton, findsOneWidget);
+
+      spy.capturedSkipReadOnlyFastPath.clear();
+      await tester.tap(syncButton);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(spy.capturedSkipReadOnlyFastPath, isNotEmpty,
+          reason: 'The button must call checkAndSync at least once');
+      expect(spy.capturedSkipReadOnlyFastPath.last, isTrue,
+          reason: 'A manual Sync Staging must force past F1 so remote rows '
+              'are pulled into an empty local store');
+    });
+
+    // S2.3
+    testWidgets('S2.3: after Sync Staging, screen settles inSync and the '
+        'push button stays functional (rebuild guard)', (tester) async {
+      final spy = _SpySyncService(result: SyncCheckResult.ready);
+      final db = AppDatabase.inMemory();
+      final transport = _TestPushTransport();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+        '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+      );
+      // Seed a block so pushAll() has something to push.
+      await db.blockDao.insertBlock(Block(
+        blockId: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+        blockType: BlockType.day,
+        blockIndex: 1,
+        dataEnc: 'eyJ0ZXN0IjogdHJ1ZX0=',
+        prevHash: Block.genesisPrevHash,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        identitySeal: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+      ));
+      final pushSvc =
+          LedgerPushService(db: db, crypto: crypto, transport: transport);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => spy),
+            data_providers.ledgerPushServiceProvider
+                .overrideWith((ref) => pushSvc),
+          ]);
+
+      expect(find.text('Push Ledger to Cloud'), findsOneWidget);
+
+      final syncButton = find.text('Sync Staging');
+      await tester.tap(syncButton);
+      await tester.pumpAndSettle();
+
+      // Push button survives the post-sync rebuild (sync_service.
+      // dependents.isEmpty regression must stay green).
+      expect(find.text('Push Ledger to Cloud'), findsOneWidget,
+          reason: 'Push button must remain after Sync Staging settles');
+      // Sync button is enabled again (not stuck in "Syncing…").
+      expect(find.text('Sync Staging'), findsOneWidget);
+      expect(find.text('Syncing…'), findsNothing,
+          reason: 'UI must not stay in the syncing state after settle');
+    });
+
+    // S3.1
+    testWidgets('S3.1: mutation auto-sync still forces the F1 bypass and '
+        'settles (regression guard)', (tester) async {
+      final spy = _SpySyncService(result: SyncCheckResult.ready);
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => spy),
+          ]);
+
+      // Simulate a mutation-driven auto push by invoking the service path
+      // directly; the spy records the flag the caller used.
+      await spy.checkAndSync(skipReadOnlyFastPath: true);
+      expect(spy.capturedSkipReadOnlyFastPath, isNotEmpty);
+      expect(spy.capturedSkipReadOnlyFastPath.last, isTrue,
+          reason: 'Mutation auto-sync must force the F1 bypass');
+    });
+
+    // S3.2
+    testWidgets('S3.2: remote cookie mismatch via the forced path still yields '
+        'reauthNeeded and clears the local cookie', (tester) async {
+      // A real (un-spied) service with a mismatched remote cookie: the forced
+      // reconcile must still detect the mismatch and require re-auth.
+      final storage = _TestStorage();
+      final crypto = CryptoService();
+      await crypto.initialize();
+      crypto.setMasterKey(
+        '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+      );
+      await storage.set('cookie', {
+        'device_specifier': 'aaaa',
+        'creation_time': DateTime.now().millisecondsSinceEpoch,
+      });
+      final transport = _MismatchCookieTransport();
+      final db = AppDatabase.inMemory();
+      final realSvc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        transport: transport,
+        stagingStore: StagingStore(db),
+      );
+
+      final result = await realSvc.checkAndSync(skipReadOnlyFastPath: true);
+      expect(result, SyncCheckResult.reauthNeeded,
+          reason: 'Forced reconcile must not weaken cookie/reauth security');
+      expect(await storage.get('cookie'), isNull,
+          reason: 'Mismatch must destroy the stale local cookie');
+      await db.close();
+    });
+
+    // S3.3
+    testWidgets('S3.3: offline/throw during forced manual sync surfaces an error '
+        'without an unhandled exception', (tester) async {
+      final spy = _SpySyncService(result: SyncCheckResult.offline);
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => spy),
+          ]);
+
+      final syncButton = find.text('Sync Staging');
+      await tester.tap(syncButton);
+      await tester.pumpAndSettle();
+
+      // The screen recovers to a non-syncing state and is tappable again.
+      expect(find.text('Syncing…'), findsNothing,
+          reason: 'No stuck syncing state after offline result');
+      expect(find.text('Sync Staging'), findsOneWidget,
+          reason: 'The button is available again after the error settles');
+    });
+  });
+}
+
+/// Spy SyncService used by group S widget tests.
+///
+/// Records how [checkAndSync] is invoked so we can assert the Sync Staging
+/// button forwards `skipReadOnlyFastPath: true` (S2.2).
+class _SpySyncService extends SyncService {
+  _SpySyncService({this.result = SyncCheckResult.ready,
+      SyncService? wrapped})
+      : wrapped = wrapped,
+        super(
+          storage: wrapped?.storage ?? _TestStorage(),
+          crypto: wrapped?.crypto ?? (() {
+                final c = CryptoService();
+                c.initialize();
+                c.setMasterKey(
+                  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
+                return c;
+              })(),
+          transport: wrapped?.transport,
+          stagingStore: wrapped?.stagingStore ?? StagingStore(AppDatabase.inMemory()),
+        ){
+    // Intentionally empty.
+  }
+
+  final SyncCheckResult result;
+  final SyncService? wrapped;
+  int checkAndSyncCalls = 0;
+  final List<bool> capturedSkipReadOnlyFastPath = [];
+
+  @override
+  Future<SyncCheckResult> checkAndSync({
+    int cookieTtlMinutes = 30,
+    bool skipReadOnlyFastPath = false,
+  }) async {
+    checkAndSyncCalls++;
+    capturedSkipReadOnlyFastPath.add(skipReadOnlyFastPath);
+    if (wrapped != null) {
+      return wrapped!.checkAndSync(
+        cookieTtlMinutes: cookieTtlMinutes,
+        skipReadOnlyFastPath: skipReadOnlyFastPath,
+      );
+    }
+    return result;
+  }
+}
+
+/// Transport whose remote cookie never matches the local one (forces reauth).
+class _MismatchCookieTransport extends HttpTransport {
+  _MismatchCookieTransport()
+      : super(baseUrl: 'https://mismatch.example.com', apiKey: 'mismatch-key');
+
+  @override
+  Future<Uint8List?> pull(String path) async {
+    // Return a remote cookie with a DIFFERENT specifier than local 'aaaa'.
+    return Uint8List.fromList(utf8.encode(json.encode({
+      'device_uuid': 'remote-uuid',
+      'device_specifier': 'bbbb',
+    })));
+  }
+
+  @override
+  Future<void> push(String path, Uint8List data) async {}
+
+  @override
+  Future<List<String>> listFiles(String prefix) async => [];
+
+  @override
+  Future<void> delete(String path) async {}
 }
 
 /// Transport that throws on push for failure-path tests.

@@ -242,7 +242,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
     try {
       final sync = ref.read(syncServiceProvider);
-      final result = await sync.checkAndSync();
+      // Force past the F1 read-only fast path so a manual sync always pulls
+      // remote rows even when local staging has no pending writes (S2.2).
+      final result = await sync.checkAndSync(skipReadOnlyFastPath: true);
 
       if (!mounted) return;
 
