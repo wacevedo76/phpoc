@@ -2394,3 +2394,99 @@ json.dumps(rendered, sort_keys=True)   # or byte-equal jsonSort (Dart)
 - `docs/planning/SEAL_FIELDS_TYPE_AWARE_AMENDMENT.md` (per-type table + rationale)
 - `docs/planning/CANONICAL_SEALFIELD_PYTHON_PHASE1.md` (Phase 1 blueprint — A7/C3/C4 to update)
 - PHPSPEC `docs/spec/PHPSPEC.md` §4.1–§4.3, §4.2 (partition point) — to document the per-type set
+
+---
+
+## ADR-030: Ledger Auto-Pull on Ownership-Handoff Reauth
+
+**Date:** 2026-08 (Phase 1 blueprint `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`)
+**Status:** ✅ Implemented (Flutter; 4-phase TDD complete 2026-08-11) — see the blueprint for details.
+
+### Context
+
+A user works across devices (Flutter, Web, CLI). On picking up a device and
+re-authenticating, they expect to see **both** the ledger's last state _and_ the
+staging scratchpad's last state — running activities still running, and committed
+history reflected. The staging auto-sync path (ADR-025 / ROW_LEVEL_STAGING_SYNC_PLAN)
+already handles staging pull+merge, but the **ledger** is not refreshed as part of
+the reauth/claim handoff: committed blocks only reach a device via a separate manual
+"Push Ledger to Cloud" + `LedgerPullService` step.
+
+Two binding contracts frame the decision:
+
+- **D11 (Staging/Ledger Separation):** committing is a user-initiated **move** —
+  staged entries are sealed into a block and removed from staging. This sanctions the
+  user requirement that committed activities are wiped from staging, locally and remote.
+- **D5 (Append-Only):** blocks are appended, never edited in place. Therefore _"did the
+  ledger change?"_ reduces to _"did the block count / final hash change?"_.
+
+And an ownership-security requirement: **reauth on device switch is mandatory**
+(consented by the user) — a stale, previously-used device must not be able to modify
+staging/ledger without re-authenticating. Ledger auto-pull is therefore gated to the
+ownership-handoff moment, not every sync.
+
+### Decision
+
+1. **Refresh the remote ledger only on an ownership-handoff reauth** — i.e.,
+   `checkAndSync()` triggering REAUTH via a **cookie specifier mismatch**, or a
+   **fresh no-cookie reconcile-and-claim**. It must **NOT** run on a valid-cookie
+   fast path (same device, TTL valid) nor on a **TTL-expiry with an unchanged
+   specifier** (same device aging out) — those are not handoffs and must not incur a
+   chain re-download.
+2. **Freshness detector = plain block-count via `ledger/hash_index.json`** (plaintext
+   array of block hashes, no MK/decryption needed). `LedgerPullService` already reads
+   it. The auto-pull compares remote hash-index length to local block count:
+   - **equal** → no ledger change since last sync → skip the block download (avoids
+     the waste of re-pulling an unchanged chain).
+   - **remote greater** → pull only the missing `ledger/blocks/*.json` files.
+   - Block-count equality is sufficient for now (append-only ⇒ count is monotonic); a
+     final-hash equality check is recorded as a future hardening if needed.
+3. **Ordering for Scenario-5 cleanup:** pull+verify the ledger **first**, then
+   reconcile staging using the local ledger hash index to delete committed-in-ledger
+   rows. **Fail-safe:** if the ledger pull/verify fails, **keep** local staging rows
+   (never delete on unverified info).
+4. **Committing device cleanup:** a user-initiated "Commit to Ledger" seals the new
+   block, **auto-pushes the new ledger to Remote** (same action), and **removes the
+   committed rows from staging** (local + remote). This realizes D11's move semantics.
+5. **Cross-client gate parity (§12):** "pull remote ledger on ownership-handoff reauth"
+   is added as a protocol rule so CLI/Web/Flutter produce identical outcomes. The
+   Flutter implementation is the concrete first target; CLI/Web parity is follow-on.
+
+### Rationale
+
+- **Matches user intent (D1/D6):** a device sees the ledger's last authentic state
+after reauth without a manual/additional push step, which is the cross-device usage
+they specified.
+- **Avoids the same-device re-download** the user explicitly did not want: no ledger
+pull on TTL-expiry-with-matching-specifier, no pull on the valid-cookie fast path.
+- **D5 append-only makes block-count a sound freshness signal** — cheap (plaintext,
+O(1)) and correct, without storing a separate "last modified" timestamp.
+- **Security preserved:** pull is gated to genuine ownership handoffs (specifier
+mismatch / fresh claim); REAUTH consent stays. Wrong-MK devices still cannot decrypt
+committed blocks.
+- **D11 honored:** ledger auto-pull never promotes staging into the ledger; it only
+brings committed blocks into the local ledger. Committed-staging wipe is the
+reverse-and-sanctioned direction.
+- **D8/D9:** pulling committed blocks is backward compatible — it heals a stale device
+to the canonical chain.
+
+### Consequences
+
+- **Positive:** after reauth on a new device, the ledger reflects its last state and
+staging is reconciled against the now-current ledger (Scenario 5/6 cleanup).
+- **Effort:** new gating in `checkAndSync` (distinguish specifier-mismatch from
+TTL-expiry-with-same-specifier by preserving the prior specifier), a `LedgerPullService`
+invocation at the handoff point, a `MergeEngine` scenario-5/6 ledger-hash-index check,
+and wiring ledger auto-push + staging wipe into `commitEntries`.
+- **Divergence note (not resolved here):** ADR-022/ADR-001 describe **deterministic
+MK-derived** cookie/device identity, while the Flutter impl currently uses a **random
+`device_specifier`** (`DeviceCookie._generateSpecifier`) and `deriveMasterKey(seed)` =
+hex(seed bytes). This ADR does not change that; it only gates ledger pull on whichever
+specifier semantics are active.
+
+### Related
+
+- ADR-022 (device cookie), ADR-025 (row-level staging), ADR-024 (hash index fast path)
+- `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (identical gate across clients)
+- `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`
+- `docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md` (8-scenario LWW table; Scenario 5/6)

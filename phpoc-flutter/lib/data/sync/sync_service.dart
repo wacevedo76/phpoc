@@ -15,6 +15,9 @@ import 'staging_hash_index.dart';
 import 'staging_store.dart';
 import 'transport.dart';
 
+import '../../services/ledger_pull_service.dart';
+import '../../services/ledger_push_service.dart';
+
 /// Unified sync gate + local I/O for staging entries.
 ///
 /// Port of web src/sync/sync.js and domain/staging/service.py.
@@ -33,6 +36,17 @@ class SyncService {
   final GenesisGate _genesisGate;
   LedgerEngine? ledgerEngine;
 
+  /// Optional ledger sync delegates wired by the app layer (Phase 3/ADR-030).
+  ///
+  /// [ledgerPull] is invoked on an ownership-handoff reauth to refresh the
+  /// ledger only when the remote block-count exceeds the local count.
+  /// [ledgerPush] is invoked after [commitAndSync] seals a new block to
+  /// auto-push the updated ledger to Remote (D11 move semantics).
+  ///
+  /// Null in phase 2 until the caller supplies them.
+  final LedgerPullService? ledgerPull;
+  final LedgerPushService? ledgerPush;
+
   int _lastPushAt = 0;
   String? _cachedDeviceUuid;
 
@@ -48,6 +62,8 @@ class SyncService {
     required this.stagingStore,
     this.transport,
     this.ledgerEngine,
+    this.ledgerPull,
+    this.ledgerPush,
   }) : _cookie = DeviceCookie(),
        _genesisGate = GenesisGate() {
     // Emit initial inSync state for status listeners (G1)
@@ -470,6 +486,10 @@ class SyncService {
     }
 
     try {
+      // ADR-030: ownership handoff detected (fresh claim; no prior cookie).
+      // Refresh the ledger first (block-count gated), then reconcile staging
+      // so the device sees BOTH last ledger and last staging state.
+      await _reconcileLedgerOnHandoff();
       await _reconcileAndClaimRowLevel();
       return SyncCheckResult.ready;
     } catch (_) {
@@ -587,6 +607,29 @@ class SyncService {
     await _pushCookie(_getDeviceUuid());
 
     _lastPushAt = DateTime.now().millisecondsSinceEpoch;
+  }
+
+  /// Refesh the ledger on an ownership handoff (fresh claim), before staging
+  /// reconcile. ADR-030: gated on the ledger-pull delegate being wired.
+  ///
+  /// Uses the block-count freshness detector so an unchanged remote chain is
+  /// never re-downloaded; when the remote has grown, [LedgerPullService.pullAll]
+  /// imports and seeds the missing blocks. Best-effort: any ledger failure is
+  /// swallowed so a handoff still reconciles staging (fail-safe — local staging
+  /// rows are never deleted on unverified ledger info).
+  Future<void> _reconcileLedgerOnHandoff() async {
+    final pull = ledgerPull;
+    if (pull == null) return;
+    try {
+      final localCount = ledgerEngine?.getBlockCount() ?? 0;
+      final freshness =
+          await pull.pullIfRemoteHasMore(localBlockCount: localCount);
+      if (freshness.success && freshness.blocksPulled > 0) {
+        await pull.pullAll();
+      }
+    } catch (_) {
+      // Best-effort: a ledger refresh failure never breaks the handoff.
+    }
   }
 
   /// Row-level fast path: compare hash indexes, push if identical,
@@ -935,20 +978,42 @@ class SyncService {
 
     final hashPrefix = ledgerEngine!.commit(toCommit);
 
-    // F3: mark committed rows (preserve for History display;
-    //     Sync tab filters them out via the committed flag).
-    for (final row in toCommit) {
-      // Update row-level committed flag
-      row['committed'] = true;
-      // Update committed flag inside the activity JSON blob too,
-      // since _stagingRowToDto reads committed from the blob first.
-      final act = _decodeActivityBlob(row['activity'] as String?);
-      act['committed'] = true;
-      row['activity'] = json.encode(act);
-      await stagingStore.putRow(row, preserveUpdatedAt: true);
+    // D11 / ADR-030: when the ledger-push delegate is wired, "Commit to
+    // Ledger" is a MOVE: seal → auto-push the new ledger block(s) to Remote →
+    // wipe the committed rows from local staging. Legacy mode (delegate null)
+    // keeps committed rows in staging (marked committed) for History display.
+    final committedIds = toCommit
+        .map((r) => r['activity_id'] as String?)
+        .whereType<String>()
+        .toSet();
+
+    if (ledgerPush != null && transport != null && hashPrefix != null) {
+      // Auto-push the freshly committed blocks to Remote (D11). Failure to
+      // push is not fatal to the local commit — staging still reconciles via
+      // the auto-sync path.
+      try {
+        await ledgerPush!.pushBlocks(ledgerEngine!.getAllBlocks());
+      } catch (_) {}
+      // Wipe committed rows from local staging (moved, not kept).
+      for (final id in committedIds) {
+        await stagingStore.deleteRow(id);
+      }
+    } else {
+      // F3: mark committed rows (preserve for History display; the Sync tab
+      // filters them out via the committed flag).
+      for (final row in toCommit) {
+        // Update row-level committed flag
+        row['committed'] = true;
+        // Update committed flag inside the activity JSON blob too,
+        // since _stagingRowToDto reads committed from the blob first.
+        final act = _decodeActivityBlob(row['activity'] as String?);
+        act['committed'] = true;
+        row['activity'] = json.encode(act);
+        await stagingStore.putRow(row, preserveUpdatedAt: true);
+      }
     }
 
-    // F4, F5: push to remote if configured
+    // F4, F5: push remaining (uncommitted) staging to remote if configured
     if (transport != null) {
       try {
         await _pushStagingRowsToRemote();

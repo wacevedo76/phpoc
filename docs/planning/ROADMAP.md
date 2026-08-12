@@ -103,6 +103,7 @@ None.
 | Reputation with date range (`--from`/`--to`) | ✅ | — | Blind index filtered queries |
 | Rich date filtering (`--date`, `--week`, `--month`, `--year`) | ✅ | — | Flexible formats, chaining via intersection |
 | **Day-boundary spanning (display marker + filter peek)** | ✅ | Medium | Fix A+B implemented. ADR-020. Commit `47ea8fd` on branch `P11-Day-Boundary-Span` |
+| **Ledger auto-pull on ownership-handoff reauth (ADR-030)** | ✅ | High | After reauth on a device switch, the device sees BOTH last ledger and last staging state automatically. Implemented in Flutter (4-phase TDD, 2026-08-11). Ledger pulled only on cookie-specifier mismatch / fresh claim (block-count freshness); NOT on valid-cookie fast path or same-device TTL expiry. Commit is a D11 move: seals → auto-pushes ledger → wipes committed staging rows. `ledger_auto_pull_on_reauth_test.dart` 12/12. See `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`. CLI/Web parity tracked as protocol rule §12 of CROSS_CLIENT_STAGE_SYNCING_REFERENCE. |
 | **Tab-completion / auto-suggest** | 🔮 | Low | Shell completions for titles |
 | **Export to CSV/JSON (decrypted)** | 🔮 | Low | For interoperability |
 

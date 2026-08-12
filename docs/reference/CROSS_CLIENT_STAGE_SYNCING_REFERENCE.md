@@ -431,6 +431,7 @@ _sync_ledger_blocks():
 8. **Row-level `updated_at` is LWW**: No content hash comparison — `updated_at` alone determines winner.
 9. **Worker is blind**: Worker never decrypts blob or hash index. SHA-256 is computed over raw encrypted bytes.
 10. **Per-row obfuscation keys**: `per_row_key = HMAC(master_key, "phpoc:staging-row-key:" + activity_id)`
+11. **Pull ledger on ownership-handoff reauth (ADR-030)**: when a device triggers REAUTH via a **cookie specifier mismatch** or a **fresh no-cookie reconcile-and-claim**, it MUST pull the remote ledger (freshness = `ledger/hash_index.json` block-count vs local; pull only if remote count > local) **before** reinstating staging ownership, then reconcile staging with the ledger hash index (Scenario 5/6). It must NOT pull the ledger on a valid-cookie fast path nor on TTL-expiry with an unchanged specifier (same device). Commit is user-initiated and moves committed rows out of staging; the committing device auto-pushes the new ledger block(s).
 
 ---
 

@@ -41,6 +41,9 @@ class LedgerPullService with DecryptHelpers {
   /// Guard against concurrent [pullAll] calls.
   Future<PullResult>? _inFlightPull;
 
+  /// Guard against concurrent [pullIfRemoteHasMore] calls.
+  Future<PullResult>? _inFlightFreshness;
+
   LedgerPullService({
     required this.db,
     required this.crypto,
@@ -206,6 +209,78 @@ class LedgerPullService with DecryptHelpers {
       failedBlocks: failedBlocks,
       errors: errors,
     );
+  }
+
+  /// Pull the remote ledger only when it has grown past the local chain.
+  ///
+  /// ADR-030 freshness rule (D5 append-only): compares the plaintext remote
+  /// block count (`ledger/hash_index.json` length) against [localBlockCount].
+  ///   - equal (or remote absent/empty) → no change → returns 0 fresh blocks;
+  ///   - remote greater → reports the number of new blocks available
+  ///     (returned as [PullResult.blocksPulled] for callers to react to).
+  ///
+  /// This is the *freshness detector*: it never re-downloads an unchanged
+  /// chain. When the remote has grown the caller (e.g. the ownership-handoff
+  /// flow in [SyncService]) invokes [pullAll] to actually import + seed.
+  ///
+  /// Requires [CryptoService.hasMasterKey] to be true — throws [StateError]
+  /// if no master key is cached. Concurrent calls are serialized.
+  Future<PullResult> pullIfRemoteHasMore({
+    required int localBlockCount,
+  }) async {
+    if (!crypto.hasMasterKey) {
+      throw StateError(
+        'No master key cached. Call setMasterKey() first.',
+      );
+    }
+    final t = transport;
+    if (t == null) {
+      return PullResult.ok(blocksPulled: 0);
+    }
+
+    if (_inFlightFreshness != null) {
+      return _inFlightFreshness!;
+    }
+    _inFlightFreshness = _doPullIfRemoteHasMore(t, localBlockCount);
+    try {
+      return await _inFlightFreshness!;
+    } finally {
+      _inFlightFreshness = null;
+    }
+  }
+
+  /// Core freshness check: fetch the plaintext `ledger/hash_index.json` and
+  /// compare its length against [localBlockCount]. Network/auth failures and
+  /// a missing/empty hash_index are treated as "no change" (fail-safe) so a
+  /// freshness hiccup never fails an ownership handoff.
+  Future<PullResult> _doPullIfRemoteHasMore(
+    HttpTransport t,
+    int localBlockCount,
+  ) async {
+    // L2.3: remote hash_index absent/empty → treat as no change.
+    List<dynamic> hashIndex;
+    try {
+      final raw = await t.pull('ledger/hash_index.json');
+      if (raw == null) {
+        return PullResult.ok(blocksPulled: 0);
+      }
+      hashIndex = jsonDecode(utf8.decode(raw)) as List<dynamic>;
+    } catch (_) {
+      // Network or auth failure: don't fail the handoff; report no change.
+      return PullResult.ok(blocksPulled: 0);
+    }
+    if (hashIndex.isEmpty) {
+      return PullResult.ok(blocksPulled: 0);
+    }
+
+    final remoteCount = hashIndex.length;
+    // L2.1: remote not greater than local → no new blocks to pull.
+    final freshCount = remoteCount - localBlockCount;
+    if (freshCount <= 0) {
+      return PullResult.ok(blocksPulled: 0);
+    }
+    // L2.2: remote greater → report the missing block count.
+    return PullResult.ok(blocksPulled: freshCount);
   }
 
   /// Produce a human-readable error for pull failures, detecting HTTP 403

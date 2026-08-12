@@ -256,6 +256,16 @@ class LedgerEngine {
     return chain.getBlockCount();
   }
 
+  /// Return all blocks in chain order (genesis first).
+  ///
+  /// Exposed for ADR-030 commit auto-push: [SyncService.commitAndSync]
+  /// reads the freshly committed blocks from the engine to push them to
+  /// Remote, and [LedgerPullService] can consult the local count for the
+  /// block-count freshness check.
+  List<Map<String, dynamic>> getAllBlocks() {
+    return chain.readAll();
+  }
+
   /// Return only day-type blocks.
   List<Map<String, dynamic>> getDayBlocks() {
     return chain.getDayBlocks();

@@ -657,3 +657,21 @@ their ledgers are created with canonical encryption from genesis.
 
 **Effort:** ~10 min. **Trigger:** Before public launch.
 **Priority:** 🟢 Low — harmless if left, but clutters the codebase.
+
+---
+
+## ✅ Ledger Auto-Pull on Ownership-Handoff Reauth (ADR-030)
+
+**Plan:** `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`
+**Status:** ✅ Done — 4-phase TDD complete (2026-08-11).
+
+**Summary:** `test/data/sync/ledger_auto_pull_on_reauth_test.dart` (12 tests: L1–L4) GREEN. Implemented: `pullIfRemoteHasMore` block-count freshness detector; `_reconcileLedgerOnHandoff()` in `checkAndSync` fresh-claim branch (ledger first, best-effort, gated on `ledgerPull`); `commitAndSync` auto-push (`ledgerPush.pushBlocks`) + wipe committed staging rows when `ledgerPush` wired (D11 move; legacy mode keeps rows); `MergeEngine.dropLedgerCommitted` Scenario-5/6 filter; `LedgerEngine.getAllBlocks()`. Phase 4 REFACTOR: extracted shared `ledger_push_service._pushChainPayloads` transport loop (deduped `pushBlocks`/`pushAll`), clarified `dropLedgerCommitted` docs. No new regressions.
+**Priority:** 🟠 High — completes the cross-device "see ledger + staging last state after reauth" goal. 🏁 Closed.
+
+---
+
+## 🟡 Wire `dropLedgerCommitted` into handoff reconcile (ADR-030 Scenario-5/6 follow-on)
+
+**Plan:** `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md` (Group L3)
+**Status:** 🔜 Backlog — pure filter implemented + unit-tested (L3.1/L3.2) but NOT wired into `SyncService._reconcileAndClaimRowLevel`. Currently `_pushStagingRowsToRemote` already excludes committed rows (R4), so the practical gap is a fresh device whose local scratchpad carries an `activity_id` already sealed in the ledger (such rows would be re-pushed as scratchpad instead of dropped). To close: build `Set<String> ledgerActivityIds` from `LedgerEngine.getAllBlocks()` (entry data `entry_id`), call `MergeEngine.dropLedgerCommitted(local, ids)` before the push in the handoff reconcile, and add an integration assertion in `ledger_auto_pull_on_reauth_test.dart`.
+**Priority:** 🟡 Medium — correctness/subtlety; does not regress current behavior (rows are simply not yet deduplicated against the ledger on a fresh claim).

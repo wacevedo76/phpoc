@@ -168,6 +168,30 @@ class MergeEngine {
     return result.values.toList();
   }
 
+  /// Drop local-only staging rows that are already committed in the local
+  /// ledger (ADR-030 Scenario-5/6 cleanup).
+  ///
+  /// A row is removed from the result only when its [activity_id] is present
+  /// in [ledgerActivityIds] (i.e. the activity was sealed into a ledger block).
+  /// Rows not recorded in the ledger are kept so they can be pushed as
+  /// scratchpad. This is the "ledger-aware" counterpart to [mergeEntries].
+  ///
+  /// NOTE: this is currently exercised only at the unit level (L3 tests). It
+  /// is NOT yet wired into [SyncService]'s handoff reconcile — the caller must
+  /// supply [ledgerActivityIds] built from the local ledger (e.g.
+  /// `LedgerEngine.getAllBlocks()`).
+  static List<Map<String, dynamic>> dropLedgerCommitted(
+    List<Map<String, dynamic>> local,
+    Set<String> ledgerActivityIds,
+  ) {
+    if (ledgerActivityIds.isEmpty) {
+      return List<Map<String, dynamic>>.from(local);
+    }
+    return local
+        .where((r) => !ledgerActivityIds.contains(r['activity_id']))
+        .toList();
+  }
+
   /// Check whether a staging row is committed.
   ///
   /// Checks the row-level `committed` field first, then falls back to
