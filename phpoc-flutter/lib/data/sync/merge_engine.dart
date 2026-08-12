@@ -176,10 +176,11 @@ class MergeEngine {
   /// Rows not recorded in the ledger are kept so they can be pushed as
   /// scratchpad. This is the "ledger-aware" counterpart to [mergeEntries].
   ///
-  /// NOTE: this is currently exercised only at the unit level (L3 tests). It
-  /// is NOT yet wired into [SyncService]'s handoff reconcile — the caller must
-  /// supply [ledgerActivityIds] built from the local ledger (e.g.
-  /// `LedgerEngine.getAllBlocks()`).
+  /// NOTE: wired into [SyncService]'s handoff reconcile via
+  /// `_dropSealedUncommitted` (SCENARIO56_WIRE_PHASE1.md): the caller filters
+  /// committed rows out first, then supplies only the UNCOMMITTED subset so
+  /// committed display rows always survive. This method stays a pure id-set
+  /// filter; the committed-flag guard lives in the caller.
   static List<Map<String, dynamic>> dropLedgerCommitted(
     List<Map<String, dynamic>> local,
     Set<String> ledgerActivityIds,

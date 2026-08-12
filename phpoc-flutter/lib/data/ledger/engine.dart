@@ -271,6 +271,30 @@ class LedgerEngine {
     return chain.getDayBlocks();
   }
 
+  /// Set of `activity_id`s sealed into the local ledger (ADR-030 Scenario-5/6).
+  ///
+  /// Derives from every day-type block entry's `data['activity_id']` — committed
+  /// day-block entries retain `activity_id` even though `entry_id` is stripped
+  /// before sealing (`buildDayBlock`/`_prepareEntries`). Genesis/summary blocks
+  /// carry no entries and contribute nothing. Malformed/missing `activity_id`
+  /// entries are skipped safely.
+  Set<String> ledgerActivityIds() {
+    final ids = <String>{};
+    for (final block in getAllBlocks()) {
+      if (block['type'] != 'day') continue;
+      final entries = block['entries'] as List<dynamic>? ?? const [];
+      for (final entry in entries) {
+        if (entry is! Map) continue;
+        final m = Map<Object?, Object?>.from(entry);
+        final data = m['data'];
+        if (data is! Map) continue;
+        final id = data['activity_id'];
+        if (id is String && id.isNotEmpty) ids.add(id);
+      }
+    }
+    return ids;
+  }
+
   /// Return the last block, or null.
   Map<String, dynamic>? getLastBlock() {
     return chain.getLastBlock();

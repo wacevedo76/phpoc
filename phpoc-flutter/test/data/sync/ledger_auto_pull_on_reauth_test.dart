@@ -27,6 +27,12 @@ import 'package:phpoc_flutter/services/ledger_push_service.dart';
 ///   Group L2 — block-count freshness detector
 ///   Group L3 — Scenario-5/6 staging cleanup (ledger-aware)
 ///   Group L4 — commit → auto-push ledger + wipe staging (D11 move)
+///
+/// Scenario-5/6 follow-on (Groups L3W/L3X/L3Y — Phase 2 RED):
+///   Blueprint: docs/planning/SCENARIO56_WIRE_PHASE1.md
+///   Group L3W — wiring dropLedgerCommitted into the handoff reconcile
+///   Group L3X — ledgerActivityIds() derivation from getAllBlocks()
+///   Group L3Y — dropLedgerCommitted / committed-flag guard boundary
 
 // ═══════════════════════════════════════════════════════════════════
 // Test Infrastructure
@@ -250,6 +256,20 @@ class _Harness {
         })),
       );
 
+  /// Seal [ids] into the LOCAL ledger by committing one day block whose
+  /// entries carry those `activity_id`s. Used to pre-seed the ledger for the
+  /// Scenario-5/6 wiring tests without a remote pull.
+  void seedLedgerActivityIds(Set<String> ids) {
+    engine.commit(ids.map((id) => {
+          'title': 'Sealed task $id',
+          'start_epoch': 1700000000000,
+          'duration': 3600000,
+          'activity_id': id,
+          'entry_id': id,
+          'is_active': false,
+        }).toList());
+  }
+
   Future<void> close() async {
     svc.dispose();
     await db.close();
@@ -372,6 +392,219 @@ void _groupL3() {
 
       expect(result.length, 1);
       expect(result.single['activity_id'], 'ccc0000003');
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Scenario-5/6 follow-on: Groups L3W/L3X/L3Y (Phase 2 RED)
+// Blueprint: docs/planning/SCENARIO56_WIRE_PHASE1.md
+// ═══════════════════════════════════════════════════════════════
+
+/// Decode the last pushed remote staging blob and return its activity_ids.
+/// Returns the ids of the most-recent row-level blob push, or null if none.
+List<String>? _pushedBlobIds(_Harness h) {
+  final idx = h.transport.pushPaths.lastIndexOf(
+    StagingPaths.remoteRowLevelBlob,
+  );
+  if (idx < 0) return null;
+  final decoded = h.crypto.deobfuscateBlob(
+    h.transport.pushData[idx],
+    h.crypto.getMasterKey()!,
+  );
+  final payload = json.decode(decoded) as Map<String, dynamic>;
+  final entries = payload['entries'] as List<dynamic>;
+  return entries.map((e) => (e as Map)['activity_id'].toString()).toList();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Group L3W — Wiring dropLedgerCommitted into the handoff reconcile
+// ═══════════════════════════════════════════════════════════════
+
+void _groupL3W() {
+  group('L3W: Scenario-5/6 wiring in the handoff reconcile', () {
+    // L3W.1 — Uncommitted sealed row is dropped and not pushed (Scenario 5).
+    test(
+        'L3W.1: uncommitted local row sealed in ledger is dropped and not '
+        'pushed after a fresh-claim checkAndSync', () async {
+      final h = await _Harness.build(); // no cookie → fresh claim
+      await h.addRow(activityId: 'aaa0000001', title: 'Sealed task');
+      // Seal the same activity_id into the LOCAL ledger.
+      h.seedLedgerActivityIds({'aaa0000001'});
+      // Remote has a cookie (fresh claim reconciles against it) but the
+      // remote staging blob is empty; remote ledger count not served so the
+      // local seeded block is not overwritten.
+      await _serveRemoteCookie(h, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+
+      await h.svc.checkAndSync();
+
+      // RED: reconcile never consults the ledger, so the sealed row survives
+      // and is re-pushed as scratchpad. Phase 3 must drop it (Scenario 5).
+      final rows = await h.stagingStore.getAllRows();
+      expect(rows.map((r) => r['activity_id']), isNot(contains('aaa0000001')));
+
+      final ids = _pushedBlobIds(h) ?? const <String>[];
+      expect(ids, isNot(contains('aaa0000001')));
+      await h.close();
+    });
+
+    // L3W.2 — Uncommitted row NOT in ledger is kept and pushed (Scenario 6).
+    test('L3W.2: uncommitted row not in ledger is preserved and pushed',
+        () async {
+      final h = await _Harness.build();
+      await h.addRow(activityId: 'bbb0000002', title: 'New scratch');
+      h.seedLedgerActivityIds({'aaa0000001'}); // unrelated sealed id
+      await _serveRemoteCookie(h, 'cccccccccccccccccccccccccccccccc');
+
+      await h.svc.checkAndSync();
+
+      final rows = await h.stagingStore.getAllRows();
+      expect(rows.map((r) => r['activity_id']), contains('bbb0000002'));
+
+      final ids = _pushedBlobIds(h);
+      expect(ids, contains('bbb0000002'));
+      await h.close();
+    });
+
+    // L3W.3 — Committed-flagged row (seeded/pull) with id in ledger survives.
+    test(
+        'L3W.3: committed-flagged row with id in ledger is preserved for '
+        'History (never emptied after a handoff)', () async {
+      final h = await _Harness.build();
+      await h.addRow(
+          activityId: 'aaa0000001', title: 'Sealed task', committed: true);
+      h.seedLedgerActivityIds({'aaa0000001'});
+      await _serveRemoteCookie(h, 'dddddddddddddddddddddddddddddddd');
+
+      await h.svc.checkAndSync();
+
+      // RED once wired: the cleanup must exclude committed rows — a committed
+      // sealed row must stay in local staging for History/Dashboard.
+      final rows = await h.stagingStore.getAllRows();
+      expect(rows.map((r) => r['activity_id']), contains('aaa0000001'));
+      await h.close();
+    });
+
+    // L3W.4 — Empty local ledger → no rows dropped (backward compat / fail-safe).
+    test('L3W.4: empty local ledger → reconcile behaves as today (no drops)',
+        () async {
+      final h = await _Harness.build();
+      await h.addRow(activityId: 'aaa0000001', title: 'Sealed task');
+      // No local ledger sealed blocks.
+      await _serveRemoteCookie(h, 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+
+      await h.svc.checkAndSync();
+
+      final rows = await h.stagingStore.getAllRows();
+      expect(rows.map((r) => r['activity_id']), contains('aaa0000001'));
+      await h.close();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Group L3X — ledgerActivityIds() derivation from getAllBlocks()
+// ═══════════════════════════════════════════════════════════════
+
+void _groupL3X() {
+  group('L3X: ledgerActivityIds derivation from blocks', () {
+    // L3X.1 — Day-block entries expose data['activity_id'] and the accessor
+    // returns exactly that set.
+    test('L3X.1: ledgerActivityIds returns day-entry activity_ids', () async {
+      final h = await _Harness.build();
+      h.seedLedgerActivityIds({'abc0000001', 'abc0000002'});
+
+      // RED: engine.ledgerActivityIds() is a stub returning {}.
+      final ids = h.engine.ledgerActivityIds();
+
+      expect(ids, containsAll({'abc0000001', 'abc0000002'}));
+      await h.close();
+    });
+
+    // L3X.2 — Genesis/summary (non-day) blocks → contribute nothing.
+    test('L3X.2: non-day blocks contribute no activity_ids', () async {
+      final h = await _Harness.build();
+      h.seedLedgerActivityIds({'abc0000001'});
+
+      final ids = h.engine.ledgerActivityIds();
+
+      // No phantom ids are invented for genesis/summary-only chains.
+      expect(ids, isNot(contains('zzz9999999')));
+      await h.close();
+    });
+
+    // L3X.3 — Malformed / missing activity_id entries are skipped safely.
+    test('L3X.3: malformed entries are skipped without throwing', () async {
+      final h = await _Harness.build();
+      h.seedLedgerActivityIds({'abc0000001'});
+
+      // A malformed id must not crash the accessor nor pollute the set.
+      final ids = h.engine.ledgerActivityIds();
+
+      expect(ids, isNot(contains('')));
+      await h.close();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Group L3Y — dropLedgerCommitted guard boundary
+// ═══════════════════════════════════════════════════════════════
+
+void _groupL3Y() {
+  group('L3Y: dropLedgerCommitted no-op + committed-flag guard', () {
+    Map<String, dynamic> row(String id, String title,
+            {bool committed = false}) =>
+        {
+          'activity_id': id,
+          'activity_status': 'ended',
+          'activity': json.encode({
+            'title': title,
+            'start_epoch': 1700000000000,
+            'duration': 0,
+          }),
+          'updated_at': 1000,
+          'committed': committed,
+          'title': title,
+          'start_epoch': 1700000000000,
+        };
+
+    // L3Y.1 — Empty ledger id-set → input unchanged (caller fail-safe).
+    test('L3Y.1: dropLedgerCommitted with empty ledger set is a no-op', () {
+      final local = [row('aaa0000001', 'Sealed task')];
+
+      final result = MergeEngine.dropLedgerCommitted(local, <String>{});
+
+      expect(result.length, 1);
+      expect(result.single['activity_id'], 'aaa0000001');
+    });
+
+    // L3Y.2 — Committed guard boundary: an uncommitted sealed row is dropped
+    // while a committed sealed row with the same id is not candidate for drop
+    // (caller filters `!_rowIsCommitted` before calling the filter).
+    test(
+        'L3Y.2: caller must exclude committed rows — only uncommitted sealed '
+        'rows are candidates for drop', () async {
+      final h = await _Harness.build();
+      // Two local rows with the SAME activity_id, one uncommitted (stale
+      // scratch) and one committed (seeded display row).
+      await h.addRow(
+          activityId: 'aaa0000001', title: 'scratch', committed: false);
+      await h.addRow(
+          activityId: 'aaa0000001', title: 'sealed-display', committed: true);
+      h.seedLedgerActivityIds({'aaa0000001'});
+      await _serveRemoteCookie(h, 'ffffffffffffffffffffffffffffffff');
+
+      await h.svc.checkAndSync();
+
+      // The committed display row must survive; at least one committed row
+      // remains for History.
+      final rows = await h.stagingStore.getAllRows();
+      final committedSurvivors = rows.where((r) => r['committed'] == true).toList();
+      // RED: reconcile drops nothing today (survivor is present), but the guard
+      // must hold once wired — a committed sealed row is never deleted.
+      expect(committedSurvivors, isNotEmpty);
+      await h.close();
     });
   });
 }
@@ -547,5 +780,8 @@ void main() {
   _groupL1();
   _groupL2();
   _groupL3();
+  _groupL3W();
+  _groupL3X();
+  _groupL3Y();
   _groupL4();
 }

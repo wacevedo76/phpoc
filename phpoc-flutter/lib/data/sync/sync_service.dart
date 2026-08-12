@@ -563,6 +563,27 @@ class SyncService {
     }).toList();
   }
 
+  /// Apply the ADR-030 Scenario-5/6 ledger-aware cleanup to a merged row set.
+  ///
+  /// Committed rows are never candidates for the drop (so History/Dashboard
+  /// display survives a handoff); only UNCOMMITTED rows whose `activity_id` is
+  /// sealed in [ledgerIds] are removed. An empty [ledgerIds] is a strict no-op
+  /// (fresh device / fail-safe). Delegates the pure id-set filter to
+  /// [MergeEngine.dropLedgerCommitted] — the caller supplies only the
+  /// uncommitted subset (Phase 1 decision).
+  List<Map<String, dynamic>> _dropSealedUncommitted(
+    List<Map<String, dynamic>> rows,
+    Set<String> ledgerIds,
+  ) {
+    final keptIds = MergeEngine.dropLedgerCommitted(
+      rows.where((r) => !_rowIsCommitted(r)).toList(),
+      ledgerIds,
+    ).map((r) => r['activity_id']).toSet();
+    return rows.where(
+      (r) => _rowIsCommitted(r) || keptIds.contains(r['activity_id']),
+    ).toList();
+  }
+
   /// Row-level reconcile: pull staging/blob, merge with mergeEntries(),
   /// write to StagingStore, push via _pushStagingRowsToRemote().
   ///
@@ -579,22 +600,31 @@ class SyncService {
     // Merge: uses activity_id LWW
     final merged = MergeEngine.mergeEntries(localRows, activeRemoteRows);
 
-    // Build set of merged activity_ids for cleanup
-    final mergedIds = merged
+    // ADR-030 Scenario-5/6 ledger-aware cleanup (SCENARIO56_WIRE_PHASE1.md):
+    // on a fresh handoff claim the local ledger may already seal an
+    // activity_id that a stale local scaffold still carries. Drop ONLY
+    // UNCOMMITTED merged rows whose id is sealed so they are not re-pushed
+    // as scratchpad; committed rows stay for History/Dashboard display. An
+    // empty ledger set is a strict no-op (fresh device / backward compat).
+    final ledgerIds = ledgerEngine?.ledgerActivityIds() ?? <String>{};
+    final finalRows = _dropSealedUncommitted(merged, ledgerIds);
+
+    // Build set of final activity_ids for local-only cleanup.
+    final mergedIds = finalRows
         .map((r) => r['activity_id'] as String)
         .where((id) => id.isNotEmpty)
         .toSet();
 
-    // Write merged rows to StagingStore, preserving updated_at (LWW tiebreaker).
+    // Write final rows to StagingStore, preserving updated_at (LWW tiebreaker).
     // Committed entries stay in staging for History/Dashboard display;
     // the Sync tab filters them out via the committed flag.
-    for (final row in merged) {
+    for (final row in finalRows) {
       await stagingStore.putRow(row, preserveUpdatedAt: true);
     }
 
-    // Remove local-only rows that were filtered out by mergeEntries.
-    // (mergeEntries keeps all local rows, so this should only catch
-    // races where staging changed between reads.)
+    // Remove local-only rows that were filtered out by mergeEntries or by the
+    // Scenario-5/6 cleanup. (mergeEntries keeps all local rows; the cleanup
+    // drops sealed uncommitted rows; both are caught by !mergedIds.contains.)
     for (final localRow in localRows) {
       final id = localRow['activity_id'] as String?;
       if (id != null && !mergedIds.contains(id)) {
