@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required for all Dart HTTP / socket operations (staging sync, worker
+         pulls, cloud restore). Without it, release builds fail every network
+         call with 'Failed host lookup ... No address associated with hostname'.
+         Debug/profile variants already merge this in, so only release broke. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <application
         android:label="phpoc_flutter"

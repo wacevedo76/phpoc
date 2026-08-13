@@ -6,6 +6,8 @@ import '../../data/ledger/store_adapters.dart';
 import '../../data/sync/staging_storage.dart';
 import '../../data/sync/staging_store.dart';
 import '../../data/sync/sync_service.dart';
+import '../../features/sync/periodic_sync_coordinator.dart';
+import '../../routing/app_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
 import '../../services/ledger_migration_service.dart';
@@ -84,6 +86,23 @@ final syncServiceProvider = Provider<SyncService>((ref) {
     stagingStore: stagingStore,
     ledgerEngine: engine,
   );
+});
+
+/// Periodic staging drift coordinator — wires the app lifecycle to the
+/// SyncService periodic timer so polling runs exactly while the app is in the
+/// `ready` phase. Watched (kept alive) by the app root; on entering `ready` it
+/// calls [SyncService.startPeriodicSync], on leaving `ready` it stops it, and
+/// on provider disposal it detaches from the lifecycle and stops the timer.
+/// Never started until this provider is first read.
+final periodicSyncCoordinatorProvider =
+    Provider<PeriodicSyncCoordinator>((ref) {
+  final sync = ref.watch(syncServiceProvider);
+  // Observe the phase ValueNotifier kept in sync by AppLifecycleNotifier on
+  // every transition, so the coordinator latches onto the live app phase.
+  final coordinator =
+      PeriodicSyncCoordinator(sync: sync, phase: appPhaseNotifier);
+  ref.onDispose(coordinator.dispose);
+  return coordinator;
 });
 
 /// Auth service provider — injects crypto, db, preferences, securePrefs.

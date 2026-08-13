@@ -50,10 +50,23 @@ class SyncService {
   int _lastPushAt = 0;
   String? _cachedDeviceUuid;
 
-  // ── Debounce + status (row-level overhaul) ──────────────────
+  // ── Debounce + periodic timer + status (row-level overhaul) ─
 
   Timer? _debounceTimer;
+
+  /// Recurring drift-detection timer started via [startPeriodicSync].
+  /// Each tick runs a guarded, fire-and-forget [checkAndSync] that forces
+  /// past the F1 read-only fast path so remote staging drift is detected
+  /// even when the local store has no pending writes. See
+  /// docs/planning/flutter/PERIODIC_AUTO_SYNC_TIMER_PHASE1.md (Group P).
+  Timer? _periodicTimer;
   bool _isSyncing = false;
+
+  /// Set by [dispose] so a fire-and-forget periodic tick scheduled around
+  /// teardown short-circuits instead of touching a closed DB / performing
+  /// network after dispose (P7). [checkAndSync] returns `ready` once set, in
+  /// line with the D15 no-op semantics.
+  bool _disposed = false;
   final _syncStatusController = StreamController<SyncingStatus>.broadcast();
 
   SyncService({
@@ -427,6 +440,7 @@ class SyncService {
     int cookieTtlMinutes = 30,
     bool skipReadOnlyFastPath = false,
   }) async {
+    if (_disposed) return SyncCheckResult.ready; // no post-dispose state access (P7)
     if (transport == null) return SyncCheckResult.ready;
 
     try {
@@ -861,10 +875,52 @@ class SyncService {
     await _doPush();
   }
 
+  // ═════════════════════════════════════════════════════════════
+  // Periodic drift-detection timer
+  // (PERIODIC_AUTO_SYNC_TIMER_PHASE1.md)
+  // ═════════════════════════════════════════════════════════════
+
+  /// Default interval between periodic sync ticks. Kept short for drift
+  /// latency while staying cheap per tick (cookie ETag + hash-index compare).
+  static const Duration defaultPeriodicSyncInterval = Duration(seconds: 5);
+
+  /// Start a recurring drift-detection timer. Each tick runs a guarded,
+  /// fire-and-forget [checkAndSync] that forces `skipReadOnlyFastPath: true`
+  /// so remote staging drift is detected even with no local pending writes.
+  ///
+  /// **Idempotent:** calling again (without [stopPeriodicSync]) restarts the
+  /// single timer rather than stacking a second one (P8). A tick is skipped
+  /// while [_isSyncing] is true to preserve the single-reconcile invariant
+  /// (P5). The D15 (no transport) and D14 (no master key) guards already live
+  /// inside [checkAndSync], making local-only / pre-auth ticks safe no-ops
+  /// (P3/P4).
+  void startPeriodicSync(Duration interval) {
+    _periodicTimer?.cancel();
+    _periodicTimer = Timer.periodic(interval, (_) => _onPeriodicTick());
+  }
+
+  /// Cancel the periodic timer so no further [checkAndSync] calls fire.
+  void stopPeriodicSync() {
+    _periodicTimer?.cancel();
+    _periodicTimer = null;
+  }
+
+  /// One tick: skip when a mutation-driven [_doPush] is in flight, otherwise
+  /// fire-and-forget a full drift check. Never touches the status stream
+  /// (fire-and-forget) and never overlaps a [_doPush] (single-reconcile).
+  void _onPeriodicTick() {
+    if (_disposed) return; // no tick after teardown (P7)
+    if (_isSyncing) return; // single-reconcile invariant (P5)
+    unawaited(checkAndSync(skipReadOnlyFastPath: true));
+  }
+
   /// Cancel pending debounce timer and cleanup. No push after dispose.
   void dispose() {
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    _periodicTimer?.cancel();
+    _periodicTimer = null;
+    _disposed = true;
     _syncStatusController.close();
   }
 

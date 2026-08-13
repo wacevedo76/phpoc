@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'data/storage/preferences.dart';
+import 'data/storage/providers.dart' show periodicSyncCoordinatorProvider;
 import 'routing/app_router.dart';
 import 'theme/app_theme.dart';
 
@@ -44,6 +45,11 @@ class PhpocApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
     final variant = ref.watch(themeProvider);
+    // Keep the periodic sync coordinator alive for the app lifetime. Watching
+    // it here (while it self-observes the app lifecycle) means exactly one
+    // coordinator exists, started/stopped by the AppPhase `ready` transitions
+    // triggered in unlock/import (via AppLifecycleNotifier.goToReady).
+    ref.watch(periodicSyncCoordinatorProvider);
 
     return MaterialApp.router(
       title: 'PH Ledger',

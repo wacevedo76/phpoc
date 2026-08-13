@@ -718,3 +718,22 @@ their ledgers are created with canonical encryption from genesis.
 - **Concretely:** `unlock_screen.dart` `_unlock()` and `_biometricUnlock()` fire `unawaited(sync.checkAndSync(skipReadOnlyFastPath: true))` after auth success, before `goToReady()`. Safe on local-only (`transport == null` → `ready`); on a transport it runs the ADR-030 handoff reconcile (ledger + staging pull).
 - **Blueprinted:** 6 assertions across U1 (passphrase unlock → sync + forced flag + fire-and-forget), U2 (biometric parity), U3 (failed-auth no-sync / no-transport no-op).
 **Priority:** 🟠 High — a device that just unlocked must see the other device's staging + latest ledger immediately.
+
+## 🟡 Flutter: periodic staging auto-sync timer (time-based drift detection)
+
+**Plan:** `docs/planning/flutter/PERIODIC_AUTO_SYNC_TIMER_PHASE1.md` (Phase 1 blueprint)
+**Status:** ✅ 4-Phase TDD COMPLETE + LIVE WIRED (2026-08-19) — 11/11 GREEN; Phase 4 REFACTOR done; new `PeriodicSyncCoordinator` + `periodicSyncCoordinatorProvider` wired into `PhpocApp` (18/18 GREEN incl. C=6, C-IT=1).
+
+**What:** Live-verified gap (2026-08-13) — a device sitting idle on the Dashboard performs **no**
+time-based poll, so remote staging drift is only noticed on a manual Sync/Commit, a local mutation, or
+a remount/unlock. The phone's running activity reached the emulator DB via the Worker only after the
+emulator app was remounted; while idle the Dashboard kept showing "No activities yet".
+- **Concretely:** (A) `SyncService.startPeriodicSync(interval)` / `stopPeriodicSync()` — recurring
+  `Timer` whose tick runs fire-and-forget `checkAndSync(skipReadOnlyFastPath: true)` (forces F1 so the
+  cheap cookie/hash-index compare detects drift; D15 no-transport & D14 pre-auth are safe no-ops);
+  `_isSyncing` guard prevents overlap with the mutation-driven `_doPush`; cancel in `dispose`;
+  idempotent start. (B) `PeriodicSyncOrchestrator` + app-root coordinator that starts on AppPhase
+  `ready` entry and stops on leaving `ready`.
+- **Blueprinted:** 11 assertions across P (8 timer-core) and W (3 phase-wiring).
+**Priority:** 🟡 Medium — cross-device freshness while idle (the "other device's activity appears"
+promise on a steady-state device).
