@@ -29,8 +29,16 @@ class _LoadingScreenState extends ConsumerState<LoadingScreen> {
 
       if (!mounted) return;
 
-      // Check for existing data and route accordingly
+      // Restore the previously-persisted Worker configuration (URL + API key)
+      // so remote sync works immediately after a relaunch — without the user
+      // reopening Settings. Best-effort: a local-only install (no saved creds)
+      // is a no-op here (OnboardingService.restoreConfiguredWorker).
       final onboarding = ref.read(providers.onboardingServiceProvider);
+      await onboarding.restoreConfiguredWorker();
+
+      if (!mounted) return;
+
+      // Check for existing data and route accordingly
       final hasData = await onboarding.hasExistingData();
 
       if (!mounted) return;

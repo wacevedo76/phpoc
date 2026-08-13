@@ -486,11 +486,12 @@ void main() {
     });
 
     // B3
-    test('B3: local row with newer updated_at wins over remote row '
-        'with same activity_id', () async {
+    test('B3: remote ended wins over local active with newer updated_at '
+        '(terminal-state rule)', () async {
       final h = await _makeRowSync();
 
-      // Same activity_id, local has newer updated_at
+      // Same activity_id: local is ACTIVE with newer updated_at, remote is
+      // ENDED (older updated_at). The ended transition must win regardless.
       await h.addRow(
         activityId: 'conf002',
         status: 'active',
@@ -512,10 +513,12 @@ void main() {
       final rows = await h.stagingStore.getAllRows();
       expect(rows.length, 1);
       final row = rows[0];
-      expect(row['activity_status'], 'active',
-          reason: 'Local (newer updated_at) must win LWW');
+      expect(row['activity_status'], 'ended',
+          reason: 'Remote ended must win over a newer local active copy '
+              '(cross-device end-propagation, Group K)');
       final activity = json.decode(row['activity'] as String);
-      expect(activity['title'], 'NEW Local Title');
+      expect(activity['title'], 'OLD Remote Title',
+          reason: 'The ended row\'s data is adopted');
 
       await h.close();
     });
@@ -602,22 +605,23 @@ void main() {
     });
 
     // B7
-    test('B7: same updated_at on both sides, local wins (tie-break)',
-        () async {
+    test('B7: remote ended wins over local active on updated_at tie '
+        '(terminal-state rule)', () async {
       final h = await _makeRowSync();
 
-      // Same updated_at on both sides
+      // Same updated_at on both sides, but local is ACTIVE and remote is ENDED
+      // → ended transition wins on the tie (cross-device end, Group K).
       await h.addRow(
         activityId: 'tie001',
         status: 'active',
         updatedAt: 3000,
-        title: 'Local Wins Tie',
+        title: 'Local Active',
       );
       final remoteRows = [
         {
           'activity_id': 'tie001',
           'activity_status': 'ended',
-          'activity': '{"title":"Remote Loses Tie"}',
+          'activity': '{"title":"Remote Ended"}',
           'updated_at': 3000, // same timestamp
         },
       ];
@@ -628,8 +632,10 @@ void main() {
       final rows = await h.stagingStore.getAllRows();
       expect(rows.length, 1);
       final activity = json.decode(rows[0]['activity'] as String);
-      expect(activity['title'], 'Local Wins Tie',
-          reason: 'Local must win tie-break when updated_at is equal');
+      expect(rows[0]['activity_status'], 'ended',
+          reason: 'Ended must beat local active even on an updated_at tie');
+      expect(activity['title'], 'Remote Ended',
+          reason: 'The ended row\'s data is adopted on the tie');
 
       await h.close();
     });

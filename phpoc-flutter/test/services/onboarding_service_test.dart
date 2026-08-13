@@ -2032,4 +2032,101 @@ void main() {
       expect(seedBytes.length, 32, reason: 'Decrypted seed must be 32 bytes');
     });
   });
+
+  // Group H: OnboardingService — restoreConfiguredWorker (4 tests)
+  // Restores the persisted Worker transport on app startup so remote sync
+  // (periodic, reauth, manual) works after a relaunch without reopening
+  // Settings. This closes the gap where a fresh app restart had transport==null
+  // and every checkAndSync was a silent no-op.
+  group('H: OnboardingService — restoreConfiguredWorker', () {
+    // H1
+    test(
+        'H1: restoreConfiguredWorker wires the persisted Worker into '
+        'SyncService after an app restart', () async {
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+      final url = 'https://worker.example.com';
+
+      // Simulate a prior onboarding that persisted credentials.
+      await prefs.setWorkerUrl(url);
+      await securePrefs.setApiKey('persisted-api-key');
+
+      // Fresh app launch: brand-new SyncService (transport == null).
+      final onboarding = await _makeOnboarding(
+        prefs: prefs,
+        securePrefs: securePrefs,
+      );
+      final sync = onboarding.syncService;
+      expect(sync.isRemoteAvailable, isFalse,
+          reason: 'Precondition: transport is null on a fresh launch');
+
+      await onboarding.restoreConfiguredWorker();
+
+      expect(sync.isRemoteAvailable, isTrue,
+          reason: 'Restore must wire the persisted transport into SyncService');
+      expect(sync.transport?.baseUrl, url,
+          reason: 'Restored transport must use the persisted Worker URL');
+      expect(sync.transport?.apiKey, 'persisted-api-key',
+          reason: 'Restored transport must carry the persisted API key');
+    });
+
+    // H2
+    test(
+        'H2: no persisted Worker credentials → restore is a safe no-op '
+        '(transport stays null, no throw)', () async {
+      final onboarding = await _makeOnboarding(); // no creds saved
+      final sync = onboarding.syncService;
+
+      await onboarding.restoreConfiguredWorker();
+
+      expect(sync.isRemoteAvailable, isFalse,
+          reason: 'No creds → transport must remain null');
+    });
+
+    // H3
+    test(
+        'H3: already-wired transport → restore is idempotent (returns early)',
+        () async {
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+      await prefs.setWorkerUrl('https://worker.example.com');
+      await securePrefs.setApiKey('persisted-api-key');
+      final onboarding = await _makeOnboarding(
+        prefs: prefs,
+        securePrefs: securePrefs,
+      );
+      await onboarding.connectWorker('https://other.example.com', 'new-key');
+      final sync = onboarding.syncService;
+      final originalTransport = sync.transport;
+      expect(sync.isRemoteAvailable, isTrue,
+          reason: 'Precondition: already connected');
+
+      await onboarding.restoreConfiguredWorker();
+
+      expect(identical(sync.transport, originalTransport), isTrue,
+          reason: 'Restore must not clobber an already-wired transport');
+    });
+
+    // H4
+    test(
+        'H4: restore is fail-safe on missing API key (url only) — no-throw',
+        () async {
+      final prefs = AppPreferences.testInstance();
+      final securePrefs = SecurePreferences.testInstance();
+      await prefs.setWorkerUrl('https://worker.example.com');
+      // Explicitly remove any API key so this test is robust to the shared
+      // static test store leaking a key set by an earlier group-H test.
+      await securePrefs.deleteApiKey();
+      final onboarding = await _makeOnboarding(
+        prefs: prefs,
+        securePrefs: securePrefs,
+      );
+      final sync = onboarding.syncService;
+
+      // Must not throw and must not wire a transport with incomplete creds.
+      await onboarding.restoreConfiguredWorker();
+      expect(sync.isRemoteAvailable, isFalse,
+          reason: 'Incomplete creds → transport stays null');
+    });
+  });
 }

@@ -185,6 +185,50 @@ class OnboardingService with DecryptHelpers {
 
     // 5. Create HttpTransport and wire into SyncService + LedgerPullService
     final transport = HttpTransport(baseUrl: url, apiKey: apiKey);
+    _wireTransport(transport);
+
+    // 6. Verify connectivity (best-effort health check)
+    // In MVP, connectivity check is non-blocking — configuration is
+    // persisted regardless. Connectivity errors are surfaced via
+    // SyncService when actual push/pull operations fail.
+    try {
+      await transport.healthCheck();
+    } catch (_) {
+      // Best-effort: connectivity will be verified on first sync operation.
+      // We don't throw here — the config is already persisted.
+    }
+  }
+
+  /// Restore a previously-persisted Worker configuration on app startup.
+  ///
+  /// Reads the saved `worker_url` ([AppPreferences]) and `api_key`
+  /// ([SecurePreferences]) and wires them into the [SyncService] so that
+  /// remote sync (including the periodic auto-sync timer) works immediately
+  /// after a relaunch — without the user re-entering credentials or opening
+  /// Settings.
+  ///
+  /// **Idempotent & fail-safe:** a no-op when no credentials are persisted or
+  /// when the transport is already wired; silently swallows any I/O/parse
+  /// error so a missing credential never blocks boot or throws.
+  Future<void> restoreConfiguredWorker() async {
+    if (syncService.transport != null) return; // already wired
+    try {
+      final url = await preferences.getWorkerUrl();
+      final apiKey = await securePreferences.getApiKey();
+      if (url == null || url.isEmpty || apiKey == null || apiKey.isEmpty) {
+        return; // no saved Worker config
+      }
+      final transport = HttpTransport(baseUrl: url, apiKey: apiKey);
+      _wireTransport(transport);
+    } catch (_) {
+      // Best-effort: a failed restore must never break app boot. Sync simply
+      // stays a no-op until the user reconnects from Settings.
+    }
+  }
+
+  /// Wire a [HttpTransport] into the [SyncService] and (if present) rebuild
+  /// the [LedgerPullService] with it, mirroring [`connectWorker`].
+  void _wireTransport(HttpTransport transport) {
     syncService.transport = transport;
     final pull = ledgerPullService;
     if (pull != null && pull is LedgerPullService) {
@@ -196,17 +240,6 @@ class OnboardingService with DecryptHelpers {
         stagingStorage: pull.stagingStorage,
         stagingStore: pull.stagingStore,
       );
-    }
-
-    // 6. Verify connectivity (best-effort health check)
-    // In MVP, connectivity check is non-blocking — configuration is
-    // persisted regardless. Connectivity errors are surfaced via
-    // SyncService when actual push/pull operations fail.
-    try {
-      await transport.healthCheck();
-    } catch (_) {
-      // Best-effort: connectivity will be verified on first sync operation.
-      // We don't throw here — the config is already persisted.
     }
   }
 

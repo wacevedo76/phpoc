@@ -16,6 +16,8 @@
 - **ADR-030 Ledger Auto-Pull on Ownership-Handoff Reauth — 4-PHASE TDD ✅ COMPLETE.** See Immediate Next Steps.
 - **Flutter periodic staging auto-sync timer — 4-PHASE TDD ✅ COMPLETE + LIVE WIRED (2026-08-19).** `startPeriodicSync`/`stopPeriodicSync`/`_onPeriodicTick` in `sync_service.dart` + `PeriodicSyncOrchestrator` (pure, phase-gated; P4: callbacks `final`). **Wired into app:** new `PeriodicSyncCoordinator` (lib/features/sync/periodic_sync_coordinator.dart) observes `appPhaseNotifier` → starts timer on `ready`, stops on leaving, detaches+stops on dispose; exposed via `periodicSyncCoordinatorProvider` (watched by `PhpocApp`). Tests: P=8, W=3, C=6, C-IT=1 = **18/18 GREEN** (coordinator wiring covered in `periodic_sync_coordinator_wiring_test.dart`). Analyzer clean; no NEW regressions (baseline 8 pre-existing failures identical).
 - **ADR-030 Scenario-5/6 ledger-aware handoff cleanup — 4-PHASE TDD ✅ COMPLETE** (2026-08-11). Wired `dropLedgerCommitted` into the handoff reconcile.
+- **App-startup Worker transport restore — FIXED (2026-08-19).** `OnboardingService.restoreConfiguredWorker()` + call from `LoadingScreen._initialize()`; H1–H4 GREEN (65 onboarding). Verified live: emulator auto-restores transport at boot and pushes ended↠remote.
+- **Cross-device activity-end propagation — 4-PHASE TDD ✅ COMPLETE (2026-08-19).** `MergeEngine.mergeEntries` now prefers `ended` over `active`/`paused` regardless of `updated_at` (K1–K6 + K-INT1, see `docs/planning/flutter/CROSS_DEVICE_END_PROPAGATION_PHASE1.md`). Baseline-isolated: 17 e2e fails identical before/after.
 - **Flutter test suite:** `test/data/ledger/` (325/325), `ledger_push_service_test`+`engine_test` (106/106),
   new `ledger_auto_pull_on_reauth_test.dart` (12/12) GREEN. Pre-existing failures unchanged:
   `ledger_backup` B1/B4/E6, `ledger_pull` B4/B6/C3/C4/F3, `sync_screen` L2/L3/L4/L6+R5, `restore_integration`
@@ -57,16 +59,7 @@ landed on UnlockScreen. NOT on master; local-only test. Restore used personal cr
 `TEST_CREDENTIALS.md` (per user instruction).
 
 ### ✅ Local/Remote staging auto-sync verified (emulator ↔ phone via remote) — 2026-08-13
-Phone's running activity **"Working on phpoc"** (device_uuid `c3548973-ad39-4b0a-ad0f-0a1069c16c0a`,
-start 14:36:40 UTC) reached the emulator via the DEV Worker (`staging/blob`, ~64KB, ETag `bec9ba1b...`).
-Emulator DB: 272 staging rows (1 active + 271 ended); Dashboard showed it as **Running / 33m elapsed**. Key:
-- Emulator's own device_uuid is `b65fe769-cc19-4175-8945-123ab2e42774` (in `shared_prefs/FlutterSharedPreferences.xml`),
-  so the active stage's `c3548973...` is the PHONE's UUID → confirms remote pull worked.
-- **Stale-UI caveat:** Dashboard showed "No activities yet" when it loaded before the background auto-sync
-  finished; a fresh mount (relaunch/unlock) displayed the running activity. No auto-refresh after auto-sync.
-- Emulator SQLite is WAL mode: copy BOTH `phpoc.db` + `phpoc.db-wal` for a consistent read.
-- Unlock passphrase entry on emulator needs ADBKeyBoard (`com.android.adbkeyboard`, `ime set` +
-  `am broadcast -a ADB_INPUT_TEXT --es msg '<text>'`); `input text` mangles the leading `!`.
+_Archived detail (WAL read method + ADBKeyBoard unlock tip). Emulator DB: 272 staging rows; phone's `c3548973...`/`b65fe769...` UUIDs confirmed remote pull.
 
 ---
 
@@ -76,15 +69,13 @@ Emulator DB: 272 staging rows (1 active + 271 ended); Dashboard showed it as **R
 - **Test creds:** `TEST_CREDENTIALS.md` (gitignored)
 
 ## Immediate Next Steps
-- **✅ Flutter periodic staging auto-sync timer — 4-PHASE TDD DONE + LIVE WIRED (2026-08-19).**
-  11/11 GREEN + coordinator wiring (new `PeriodicSyncCoordinator` + `periodicSyncCoordinatorProvider`
-  in `app.dart`) → **18/18 GREEN** (see Current State). Next on-device: rebuild debug APK on emulator
-  and verify the idle Dashboard auto-polls remote drift.**
-- **Live debug visibility:** debug build is running on `emulator-5554`. Read UI state via
-  my DM service (dynamic): `flutter.debugDumpApp/debugDumpRenderTree` (get VM port+auth from
-  logcat `Dart VM service is listening`, `adb forward tcp:<port> tcp:<port>`) and SQLite via
-  `adb -s emulator-5554 shell run-as com.phpoc.phpoc_flutter cat app_flutter/phpoc.db`.
-  Phone (`RFCW50FZQPJ`) is a release build → not observable via run-as/uiautomator/OCR.
+- **🎯 LIVE: rebuild + reinstall BOTH to apply transport-restore + end-propagation fixes (2026-08-19).**
+  `restoreConfiguredWorker` (transport auto-restore at boot) + `mergeEntries` ended-wins rule fix the
+  "stopped on emulator but still running on phone" bug. Emulator debug APK already rebuilt+verified (pushes
+  ended↠remote). **Pending:** rebuild debug (emulator) + release (phone) APKs with the merge fix, `install -r`,
+  unlock phone → it should show the activity ended within ~5s. Commit nothing yet (await user git approval).
+- **Live debug visibility:** debug build on `emulator-5554`. Dump UI via VM service + SQLite via
+  `run-as ... cat app_flutter/phpoc.db`. Phone (`RFCW50FZQPJ`) release → not observable via run-as/uiautomator/OCR.
 
 ## Known Issues
 - Pre-existing Web red (unchanged): `ledger_merge_test` (block-1 entry-hash), `import_entries_test`,

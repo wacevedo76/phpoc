@@ -100,7 +100,14 @@ class MergeEngine {
   /// Merge local and remote staging rows by activity_id with LWW on updated_at.
   ///
   /// Rules:
-  ///   - Same activity_id in both → newer `updated_at` wins (local on tie)
+  ///   - Same activity_id in both → newer `updated_at` wins (local on tie),
+  ///     EXCEPT the terminal-state rule (below)
+  ///   - **Terminal-state rule:** if exactly one side is `ended` while the
+  ///     other is `active`/`paused`, the `ended` side wins regardless of
+  ///     `updated_at`. An activity cannot un-end, so a peer that has ENDED the
+  ///     activity must have its ended transition adopted even when this
+  ///     device's local copy is `updated_at`-newer (fixes cross-device
+  ///     end-propagation; see Group K).
   ///   - Committed flag is irreversible: if either side is committed,
   ///     the merged entry stays committed
   ///   - Remote-only → added to result
@@ -126,26 +133,40 @@ class MergeEngine {
 
       final localEntry = localById[id];
       if (localEntry != null) {
-        // Both have it — LWW on updated_at.
+        // Both have it — resolve LWW + terminal-state preference.
         // Committed flag is irreversible: if either side is committed,
         // the merged entry must stay committed (ledger-aware cleanup).
         final localCommitted = _isCommitted(localEntry);
         final remoteCommitted = _isCommitted(entry);
-        final localTs = localEntry['updated_at'] as int? ?? 0;
-        final remoteTs = entry['updated_at'] as int? ?? 0;
-        if (remoteTs > localTs) {
-          final winner = Map<String, dynamic>.from(entry);
-          if (localCommitted || remoteCommitted) {
-            winner['committed'] = true;
-          }
-          result[id] = winner;
+
+        // Terminal-state preference: `ended` beats `active`/`paused` on the
+        // other side regardless of updated_at — a peer that ended the activity
+        // must have its end adopted even over a newer local active copy.
+        final localEnded = _isEnded(localEntry);
+        final remoteEnded = _isEnded(entry);
+
+        final Map<String, dynamic> winner;
+        if (!localEnded && remoteEnded) {
+          // Remote ended it → adopt the ended state (even if local active copy
+          // is updated_at-newer). Cross-device end-propagation (Group K).
+          winner = Map<String, dynamic>.from(entry);
+        } else if (localEnded && !remoteEnded) {
+          // Local ended it → keep local ended (a peer's active copy must not
+          // re-open an activity this device has already ended).
+          winner = Map<String, dynamic>.from(localEntry);
         } else {
-          final winner = Map<String, dynamic>.from(localEntry);
-          if (localCommitted || remoteCommitted) {
-            winner['committed'] = true;
-          }
-          result[id] = winner;
+          // Same terminal classification → LWW on updated_at (local on tie).
+          final localTs = localEntry['updated_at'] as int? ?? 0;
+          final remoteTs = entry['updated_at'] as int? ?? 0;
+          winner = (remoteTs > localTs)
+              ? Map<String, dynamic>.from(entry)
+              : Map<String, dynamic>.from(localEntry);
         }
+
+        if (localCommitted || remoteCommitted) {
+          winner['committed'] = true;
+        }
+        result[id] = winner;
       } else {
         // Remote-only row → include in result
         result[id] = Map<String, dynamic>.from(entry);
@@ -213,6 +234,31 @@ class MergeEngine {
       }
     } catch (_) {}
 
+    return false;
+  }
+
+  /// Whether a staging row reflects an ended activity.
+  ///
+  /// Checks the row-level `activity_status` (canonical) first, then falls
+  /// back to the `is_active` flag inside the `activity` JSON blob for rows
+  /// that predate row-level status or carry a mismatch. Used by the terminal-
+  /// state rule in [mergeEntries] (Group K).
+  static bool _isEnded(Map<String, dynamic> row) {
+    final status = row['activity_status'] as String?;
+    if (status == 'ended') return true;
+    if (status != null && status.isNotEmpty) return false; // active/paused
+
+    // Fallback: activity blob `is_active` flag (false ⇒ ended)
+    try {
+      final activityStr = row['activity'] as String?;
+      if (activityStr != null) {
+        final activity = jsonDecode(activityStr);
+        if (activity is Map && activity['is_active'] == false) return true;
+      }
+    } catch (_) {}
+
+    // Unknown status without a false is_active → treat as not-ended so LWW
+    // still resolves it (fail-safe: never force a row to end on bad data).
     return false;
   }
 }

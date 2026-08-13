@@ -204,8 +204,14 @@ void main() {
     // J9
     test('J9: committed flag irreversible — remote committed + local '
         'newer updated_at → winner stays committed', () {
-      // Remote entry was committed, local has newer updated_at.
-      // Local wins LWW but gets promoted to committed.
+      // Same-terminal (active/active) conflict: local has newer updated_at,
+      // so LWW keeps local; but remote is committed → the merged winner must
+      // still carry committed=true (irreversible).
+      //
+      // NOTE: this deliberately uses an active/active conflict. The previous
+      // vehicle (remote 'ended' + local 'active', local newer) now falls under
+      // Group K's terminal-state rule, where the ENDED remote wins regardless
+      // of updated_at — so it is no longer a valid committed-propagation test.
       final local = [
         _entry(
           activityId: 'remoteCommitted',
@@ -217,7 +223,7 @@ void main() {
       final remote = [
         {
           'activity_id': 'remoteCommitted',
-          'activity_status': 'ended',
+          'activity_status': 'active',
           'activity': '{"title":"Remote Committed","committed":true}',
           'updated_at': 1000,
           // Committed only in activity blob (simulates cross-device propagation)
@@ -227,12 +233,219 @@ void main() {
       final result = MergeEngine.mergeEntries(local, remote);
 
       expect(result.length, 1);
+      // Local wins LWW (same-terminal, newer updated_at)
       expect(result[0]['title'], 'Local Newer');
       expect(result[0]['updated_at'], 9000);
       // Committed must be true — remote's committed flag is irreversible
       expect(result[0]['committed'], true,
           reason: 'Remote committed entry must propagate committed flag '
               'even when local data wins');
+    });
+  });
+
+  // ──── Group K: terminal-state preference (cross-device end) ──
+  // A device that still treats an activity as active/paused must adopt the
+  // remote ENDED state even when its local copy is `updated_at`-newer.
+  // Phase 1: docs/planning/flutter/CROSS_DEVICE_END_PROPAGATION_PHASE1.md
+  group('K: MergeEngine — ended adopt-over-active/paused (cross-device end)', () {
+    // K1
+    test('K1: local active + remote ended, remote OLDER → merged ended', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k1', title: 'Task'),
+          'activity_status': 'active',
+          'updated_at': 5000,
+        },
+      ];
+      // Remote ended it, but remote's row updated_at is older than the
+      // local active copy (exactly the failing on-device scenario).
+      final remote = [
+        {
+          ..._entry(activityId: 'k1', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 3000,
+          'end_epoch': 4000,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      expect(result[0]['activity_status'], 'ended',
+          reason: 'A remote ended transition must be adopted even when the '
+              'local active copy has a newer updated_at (cross-device end)');
+    });
+
+    // K2
+    test('K2: local active + remote ended, remote NEWER → merged ended', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k2', title: 'Task'),
+          'activity_status': 'active',
+          'updated_at': 1000,
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'k2', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 9000,
+          'end_epoch': 8000,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      expect(result[0]['activity_status'], 'ended');
+      expect(result[0]['updated_at'], 9000);
+    });
+
+    // K3
+    test('K3: local paused + remote ended, local NEWER → merged ended', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k3', title: 'Task'),
+          'activity_status': 'paused',
+          'updated_at': 5000,
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'k3', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 2000,
+          'end_epoch': 3000,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      expect(result[0]['activity_status'], 'ended',
+          reason: 'paused (non-terminal) must yield to a peer ended state');
+    });
+
+    // K4
+    test('K4: both ended → newest updated_at wins (LWW unchanged)', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k4', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 1000,
+          'end_epoch': 900,
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'k4', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 3000,
+          'end_epoch': 2900,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      // latest updated_at wins when both are ended
+      expect(result[0]['updated_at'], 3000);
+      expect(result[0]['activity_status'], 'ended');
+    });
+
+    // K5
+    test('K5: both active → newest updated_at wins (LWW unchanged)', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k5', title: 'Task'),
+          'activity_status': 'active',
+          'updated_at': 1000,
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'k5', title: 'Task'),
+          'activity_status': 'active',
+          'updated_at': 3000,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      expect(result[0]['activity_status'], 'active');
+      expect(result[0]['updated_at'], 3000);
+    });
+
+    // K6
+    test('K6: active/ended conflict → winner carries ended end_epoch', () {
+      final local = [
+        {
+          ..._entry(activityId: 'k6', title: 'Task'),
+          'activity_status': 'active',
+          'updated_at': 5000,
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'k6', title: 'Task'),
+          'activity_status': 'ended',
+          'updated_at': 2000,
+          'end_epoch': 4000,
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+
+      expect(result.length, 1);
+      expect(result[0]['activity_status'], 'ended');
+      expect(result[0]['end_epoch'], 4000,
+          reason: 'The peer must end up with the ended row end_epoch, not '
+              'just a status flag flip');
+    });
+
+    // K-INT1
+    test('K-INT1: mixed row set resolves each conflict independently', () {
+      // active-only (must stay active, newer local wins LWW)
+      final local = [
+        _entry(activityId: 'onlyActive', title: 'Only Active', updatedAt: 1000),
+        {
+          ..._entry(activityId: 'conflict', title: 'Conflict', updatedAt: 9999),
+          'activity_status': 'active',
+        },
+        {
+          ..._entry(activityId: 'doneBoth', title: 'Both Ended',
+              updatedAt: 1000),
+          'activity_status': 'ended',
+        },
+      ];
+      final remote = [
+        {
+          ..._entry(activityId: 'onlyActive', title: 'Only Active',
+              updatedAt: 500),
+          'activity_status': 'active',
+        },
+        {
+          ..._entry(activityId: 'conflict', title: 'Conflict', updatedAt: 500),
+          'activity_status': 'ended',
+          'end_epoch': 6000,
+        },
+        {
+          ..._entry(activityId: 'doneBoth', title: 'Both Ended',
+              updatedAt: 3000),
+          'activity_status': 'ended',
+        },
+      ];
+
+      final result = MergeEngine.mergeEntries(local, remote);
+      final byId = {for (final r in result) r['activity_id'] as String: r};
+
+      expect(byId['onlyActive']!['activity_status'], 'active',
+          reason: 'active/active stays LWW (no ended involved) → local newer wins');
+      expect(byId['conflict']!['activity_status'], 'ended',
+          reason: 'active/ended conflict adopts ended (K rule)');
+      expect(byId['doneBoth']!['updated_at'], 3000,
+          reason: 'ended/ended keeps LWW → newest wins');
     });
   });
 }
