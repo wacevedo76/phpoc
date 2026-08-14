@@ -18,6 +18,7 @@ import '../../data/sync/sync_service.dart';
 import '../../data/sync/transport.dart';
 import 'ledger_backup_service.dart';
 import 'ledger_pull_service.dart';
+import 'staging_seed_helpers.dart';
 
 /// Onboarding service — genesis creation, import, and Worker connection.
 ///
@@ -642,22 +643,13 @@ class OnboardingService with DecryptHelpers {
 
     final store = syncService.stagingStore;
 
-    // Collect existing entry hashes AND entry_ids to avoid duplicates.
-    // Raw chain entries use content_hash (no entry_id), while v1/v2
-    // staging exports have entry_id. We track both to deduplicate either.
+    // Dedup against existing staging rows by activity_id/entry_id/hash (P1).
+    // Raw-chain entries use content_hash (no entry_id), while v1/v2 staging
+    // exports have entry_id; committed blocks retain activity_id. Deduping by
+    // activity_id prevents the re-seed copy on the import path (mirrors
+    // LedgerPullService).
     final existingRows = await store.getAllRows();
-    final existingHashes = <String>{};
-    for (final row in existingRows) {
-      try {
-        final data =
-            jsonDecode(row['activity'] as String? ?? '{}')
-                as Map<String, dynamic>;
-        final h = data['hash'] as String?;
-        if (h != null && h.isNotEmpty) existingHashes.add(h);
-        final eid = data['entry_id'] as String?;
-        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
-      } catch (_) {}
-    }
+    final deduper = StagingSeedDeduper(existingRows);
 
     // Read all blocks from the database.
     final blocks = await db.blockDao.getAllBlocks();
@@ -683,25 +675,33 @@ class OnboardingService with DecryptHelpers {
         final entryData = raw['data'] as Map<String, dynamic>? ?? raw;
         final entryHash = raw['hash'] as String? ?? '';
         final eid = entryData['entry_id'] as String?;
+        final entryActivityId = entryData['activity_id'] as String?;
 
-        // Dedup: skip if this entry (by hash or entry_id) is already in staging.
-        if (entryHash.isNotEmpty && existingHashes.contains(entryHash)) {
+        // Skip if this entry is already in staging (by hash, entry_id, or
+        // activity_id). `_prepareEntries` strips entry_id/hash at seal but
+        // retains activity_id, so deduping by it prevents the re-seed copy on
+        // the import path (P1 — mirrors LedgerPullService). Honors EITHER
+        // identifier when both are present so mixed seeds never duplicate.
+        if (deduper.skipDuplicate(
+          entryHash: entryHash,
+          entryId: eid,
+          activityId: entryActivityId,
+        )) {
           continue;
         }
-        if (eid != null && eid.isNotEmpty && existingHashes.contains(eid)) {
-          continue;
-        }
-        if (entryHash.isNotEmpty) existingHashes.add(entryHash);
-        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
 
         // Only seed completed entries.
         final isActive = entryData['is_active'] as bool? ?? false;
         if (isActive) continue;
         if (entryData['is_paused'] == true) continue;
 
-        final activityId = (eid != null && eid.length == 10)
-            ? eid
-            : generateActivityId();
+        // Reuse the block's original activity_id (P2) rather than minting a
+        // fresh generateActivityId(), so an imported committed activity keeps
+        // its identity. Falls back to entry_id (10-char) or a generated id.
+        final activityId = resolveSeedActivityId(
+          blockActivityId: entryActivityId,
+          entryId: eid,
+        );
 
         // Decrypt time fields (encrypted in block storage).
         final startEpoch = decryptEpoch(

@@ -4,13 +4,13 @@ import 'dart:typed_data';
 import '../core/crypto/crypto_service.dart';
 import '../core/models/pull_result.dart';
 import '../core/utils/decrypt_helpers.dart';
-import '../core/utils/id_utils.dart';
 import '../data/storage/database.dart';
 import '../data/sync/staging_storage.dart';
 import '../data/sync/staging_store.dart';
 import '../data/sync/transport.dart';
 import '../data/ledger/helpers.dart' show getBlockHash, verifyEntryHashTwoWay;
 import 'ledger_backup_service.dart';
+import 'staging_seed_helpers.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
 ///
@@ -362,19 +362,12 @@ class LedgerPullService with DecryptHelpers {
   /// never block the pull result.
   Future<void> _seedStagingFromBlocks(
       List<Map<String, dynamic>> blocks) async {
-    // Collect existing entry hashes AND entry_ids to avoid duplicates.
+    // Dedup against existing staging rows by activity_id/entry_id/hash (P1).
+    // `_prepareEntries` strips entry_id/hash before sealing but retains
+    // data['activity_id'], so the row-level activity_id column is the only
+    // stable key for a committed block entry.
     final existingRows = await stagingStore.getAllRows();
-    final existingHashes = <String>{};
-    for (final row in existingRows) {
-      try {
-        final activityData =
-            jsonDecode(row['activity'] as String? ?? '{}') as Map<String, dynamic>;
-        final h = activityData['hash'] as String?;
-        if (h != null && h.isNotEmpty) existingHashes.add(h);
-        final eid = activityData['entry_id'] as String?;
-        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
-      } catch (_) {}
-    }
+    final deduper = StagingSeedDeduper(existingRows);
 
     for (final block in blocks) {
       final blockEntries = block['entries'] as List<dynamic>?;
@@ -386,22 +379,33 @@ class LedgerPullService with DecryptHelpers {
         final entryData = raw['data'] as Map<String, dynamic>? ?? raw;
         final entryHash = raw['hash'] as String? ?? '';
         final eid = entryData['entry_id'] as String?;
+        final entryActivityId = entryData['activity_id'] as String?;
 
-        // Dedup: skip if this entry (by hash or entry_id) is already in staging
-        if (entryHash.isNotEmpty && existingHashes.contains(entryHash)) continue;
-        if (eid != null && eid.isNotEmpty && existingHashes.contains(eid)) continue;
-        if (entryHash.isNotEmpty) existingHashes.add(entryHash);
-        if (eid != null && eid.isNotEmpty) existingHashes.add(eid);
+        // Skip if this entry is already in staging (by hash, entry_id, or
+        // activity_id). `_prepareEntries` strips entry_id/hash before sealing
+        // but retains activity_id, so deduping by it prevents the re-seed copy
+        // (P1) — the latent bug that created duplicate rows on the phone.
+        if (deduper.skipDuplicate(
+          entryHash: entryHash,
+          entryId: eid,
+          activityId: entryActivityId,
+        )) {
+          continue;
+        }
 
         // Skip active / paused entries — only completed entries go to staging
         final isActive = entryData['is_active'] as bool? ?? false;
         if (isActive) continue;
         if (entryData['is_paused'] == true) continue;
 
-        // Generate an activity_id (10-char alphanumeric) if entry_id is missing
-        final activityId = (eid != null && eid.length == 10)
-            ? eid
-            : generateActivityId();
+        // Reuse the block's original activity_id when present (P2) instead of
+        // minting a fresh generateActivityId() — otherwise the same committed
+        // activity gets a second row under a different id. Falls back to the
+        // entry_id (when 10-char) or a generated id for legacy/foreign blocks.
+        final activityId = resolveSeedActivityId(
+          blockActivityId: entryActivityId,
+          entryId: eid,
+        );
 
         // Build the activity JSON blob with plaintext field names that
         // match what _stagingRowToDto expects. Block entries use encrypted
