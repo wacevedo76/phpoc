@@ -10,7 +10,9 @@
 > **Completed milestones (archived):** `docs/planning/archive/SESSION_HISTORY_2026-08-11.md`, `docs/planning/archive/SESSION_HISTORY_2026-08-19.md`
 
 ## Current State
-- **Branch:** `Flutter-features_and_ux` (clean, committed `d9e769d`)
+- **Branch:** `Flutter-features_and_ux` (clean, committed `2d05aff` — staging-seed dedup fix)
+- **Phone `RFCW50FZQPJ`:** fix deployed (debug 0.1.0) + local ledger repaired (132 blocks == remote,
+  280 staging rows, no dups) — verified working.
 - **Flutter test suite:** `test/data/ledger/` 325/325, `ledger_push_service`+`engine` 106/106,
   `ledger_auto_pull_on_reauth` 12/12, periodic 18/18, onboarding 65, merge 25 — GREEN.
 - **Remote sync E2E:** 8/8 GREEN (`--timeout 180s`) | **Python suite:** 2614 pass / 1 skip / 0 fail.
@@ -27,19 +29,27 @@
   9 new dedup tests GREEN, **zero new failures**). Pre-existing baselines unchanged
   (`ledger_pull` B4/B6/C3/C4/F3, `ledger_backup` B1/B4/E6, `auth_service` V9, `restore_*`, E2E Worker tests,
   compile-error `wipe_cloud_onboard_e2e`/`restore_mk_caching`).
-- **After fix → repair phone local ledger (future, separate task):** dedup the 8 duplicate staging
-  rows + drop the 3 extra day blocks (132–134) on `RFCW50FZQPJ` so it matches the clean 132 chain.
-  Phone is now a **debug** build (`run-as` + DB access working) after `install -r` kept its data.
+- **🎯 LIVE: Phone ledger repair — ✅ DONE (2026-08-21).** Deployed fixed debug build to `RFCW50FZQPJ`
+  (`install -r`, debug preserved) + repaired live DB: dropped 4 local-only blocks (132–135; 132–134 were
+  re-seed dup copies, 135 `Gave Gabriel a shower` kept safe via staging `I4FjqLRKT3`) and deleted the 8
+  re-seed staging rows. Verified: phone chain now == clean remote 132 (0–131, prev_hash intact),
+  staging 288→280, no duplicate (title,start,end) groups, app launches clean (MainActivity top,
+  integrity ok). Backups on-host `/tmp/phpoc_phone_backup/pre_repair_20260814_124924/` + on-device
+  `app_flutter/repair_backup_pre/`.
+  **Post-repair sync verified CLOSED OUT (2026-08-21):** observed stable for ~15s+ — remote ledger 132
+  (unchanged), remote staging hash_index 280/unique (== phone local, no growth, no dup re-seed on the
+  5s periodic sync, fix held); `I4FjqLRKT3` present local+remote. Note: committed staging rows are a
+  denormalized display cache kept with `committed=true` (none reference the ledger's 50 sealed
+  activity_ids; the ledger append flow only processes UNCOMMITTED ended rows), so removing block 135
+  orphaned `I4FjqLRKT3` from the ledger but it survives in staging — expected app behavior.
 
 ## Known Issues
-- **🟢 LIVE root cause: ledger/staging duplication.** Phone `phpoc.db`: **287 staging rows, ALL
-  `committed=true`** (→ no orange border); **8 exact `(title,start_epoch,duration)` duplicate pairs** —
-  each real row (`end_device_uuid` set) + one re-seeded copy (`end_device_uuid=None`,
-  `generateActivityId()` style id like `tuttsrrqpp`), `updated_at` batch 14:28:03 ×6 + 18:19:38 ×2.
-  Phone ledger **135 blocks** vs clean shared **132** → 3 extra local-only day blocks never pushed.
-  Shared/remote chain CLEAN (132, no dups). Root cause: `_prepareEntries` strips `entry_id`/`hash` but
-  **retains `activity_id`**; seed functions dedup only by `entry_id`/`hash`, so committed entries
-  without `entry_id` get re-seeded as new rows via `generateActivityId()`.
+- **✅ RESOLVED: ledger/staging duplication.** Root cause was `_prepareEntries` stripping `entry_id`/`hash`
+  but **retaining `activity_id`**; seed functions deduped only by `entry_id`/`hash`, so committed entries
+  without `entry_id` got re-seeded as new rows via `generateActivityId()`. Fixed in 4-phase TDD
+  (`commit 2d05aff`). Phone `RFCW50FZQPJ` **repaired**: DB deduped (8 dup staging rows removed,
+  4 extra blocks dropped), chain now matches clean remote 132. If a fresh re-seed duplicates reappear
+  after a cloud pull on a non-fixed build, the dedup-by-`activity_id` logic (P1) skips them.
 - **Live debug visibility:** phone `RFCW50FZQPJ` now **debuggable** (rebuild 2026-08-19, data preserved
   via `install -r`). DB dump: `run-as com.phpoc.phpoc_flutter cat app_flutter/phpoc.db`. Emulator
   `emulator-5554` also debug.
