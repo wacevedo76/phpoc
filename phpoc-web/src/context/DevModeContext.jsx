@@ -19,7 +19,8 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport } from '@sync/index.js';
+import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport, LocalCache } from '@sync/index.js';
+import { canonicalRowToDTO } from '../sync/entry_dto.js';
 import { createAutoSync } from '../hooks/useAutoSync.js';
 import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
 import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
@@ -877,29 +878,23 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       apiKey: apiKey || null,
     });
 
-    // ── Fetch genesis block for identity verification ──────────
-    let genesisBlock;
-    {
-      let genesisRaw;
-      try {
-        genesisRaw = await transport.pull('ledger/blocks/000000.json');
-      } catch (err) {
-        setLoading(false);
-        throw new Error(`Failed to fetch genesis block: ${err.message}`);
-      }
-      if (!genesisRaw) {
-        setLoading(false);
-        throw new Error('Genesis block not found on remote.');
-      }
-      try {
-        const b64 = bytesToBase64(genesisRaw);
-        const plaintext = crypto.deobfuscateBlob(b64, masterKey);
-        genesisBlock = JSON.parse(plaintext);
-      } catch (err) {
-        setLoading(false);
-        throw new Error('Failed to deobfuscate genesis block. Wrong passphrase or seed.');
-      }
+    // ── Fetch the full remote ledger chain (canonical blocks format) ──
+    // The remote authoritatively stores the committed chain as individual
+    // obfuscated files under ledger/blocks/. Pull + deobfuscate every block
+    // so the full committed history loads into History. The genesis block
+    // (chain[0]) is used for identity + seal verification.
+    let chain;
+    try {
+      chain = await WorkerImportSource.fetchChain(transport, crypto, masterKey);
+    } catch (err) {
+      setLoading(false);
+      throw new Error(`Failed to fetch ledger chain: ${err.message}`);
     }
+    if (!Array.isArray(chain) || chain.length === 0) {
+      setLoading(false);
+      throw new Error('No ledger blocks found on remote.');
+    }
+    const genesisBlock = chain[0];
 
     // Validate genesis block
     if (!genesisBlock || genesisBlock.type !== 'genesis') {
@@ -949,60 +944,18 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       throw new Error('Wrong passphrase for this ledger.');
     }
 
-    console.log('[connectToWorker] genesis verified, pulling staging blob...');
+    console.log('[connectToWorker] genesis verified, chain blocks:', chain.length);
 
-    // ── Pull staging blob and build chain locally ──────────────
-    // Staging is the shared cross-device truth. Each device builds its
-    // own chain from the same staging data — no chain push needed.
-    //
-    // Rows come in two formats:
-    //   - Flutter: {activity_id, activity_status, activity: "{...json...}", committed}
-    //   - Web:     {start_epoch, title, duration, ...}
-    // We normalize both to the engine's expected entry format.
-    let stagingEntries = [];
-    try {
-      const stagingRaw = await transport.pull('staging/blob');
-      console.log('[connectToWorker] staging pulled, size:', stagingRaw?.length);
-      if (stagingRaw) {
-        const stagingB64 = bytesToBase64(stagingRaw);
-        const stagingJson = crypto.deobfuscateBlob(stagingB64, masterKey);
-        const stagingData = JSON.parse(stagingJson);
-        const rawRows = stagingData.entries || [];
-
-        // Normalize both Flutter and web formats to engine-compatible entries
-        for (const row of rawRows) {
-          // Skip active (in-progress) entries
-          const status = row.activity_status || row.is_active;
-          if (status === 'active' || row.is_active === true) continue;
-
-          // Flutter format: parse the activity JSON blob
-          if (row.activity && typeof row.activity === 'string') {
-            try {
-              const parsed = JSON.parse(row.activity);
-              if (parsed.start_epoch && parsed.title) {
-                stagingEntries.push({
-                  ...parsed,
-                  committed: row.committed || parsed.committed || false,
-                });
-              }
-            } catch (_) { /* skip unparseable */ }
-          } else if (row.start_epoch && row.title) {
-            // Web format: use directly
-            stagingEntries.push(row);
-          }
-        }
-        console.log('[connectToWorker] pulled', stagingEntries.length, 'staging entries');
-      }
-    } catch (err) {
-      console.warn('[connectToWorker] staging pull failed, building from genesis only:', err.message);
-    }
-
-    // ── Write genesis + build chain via engine ─────────────────
+    // ── Write the full committed chain to local storage ────────
+    // The committed ledger chain (ledger/blocks/*.json) is the authoritative
+    // record of history. D11: staging stays separate — we do NOT auto-commit
+    // any staging rows into the ledger. History is populated from the pulled
+    // chain (via getCompleted(), which reads committed entries from
+    // ledger:blocks) plus the genuinely-uncommitted staging rows below.
     const storage = await createStorage();
     await storage.clear();
 
-    // Store genesis first so the engine chains off it
-    await storage.set('ledger:blocks', [genesisBlock]);
+    await storage.set('ledger:blocks', chain);
 
     await storage.set(STORED_SEED_KEY, userSeed);
 
@@ -1015,48 +968,78 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       }
     }
 
-    // Commit staging entries to build day/summary blocks
-    if (stagingEntries.length > 0) {
-      try {
-        console.log('[connectToWorker] committing', stagingEntries.length, 'entries...');
-        const { LedgerEngine } = await import('../ledger/engine.js');
-        const engine = new LedgerEngine(crypto, storage, masterKey);
-        console.log('[connectToWorker] engine created, calling commit...');
-        await engine.commit(stagingEntries);
-        console.log('[connectToWorker] chain built from', stagingEntries.length, 'staging entries');
-      } catch (err) {
-        console.error('[connectToWorker] engine commit failed:', err.message);
+    // ── Pull remote staging blob: keep only UNCOMMITTED rows ──
+    // Rows already sealed in the ledger (committed display cache) are dropped
+    // here — History sources committed entries from ledger:blocks directly.
+    // Rows still awaiting commit stay uncommitted so they appear on the
+    // History staging list (not green). This respects D11: staging is a
+    // scratchpad; only explicit user commit promotes rows to the ledger.
+    const pendingRows = [];
+    try {
+      const stagingRaw = await transport.pull('staging/blob');
+      if (stagingRaw) {
+        const stagingB64 = bytesToBase64(stagingRaw);
+        const stagingJson = crypto.deobfuscateBlob(stagingB64, masterKey);
+        const stagingData = JSON.parse(stagingJson);
+        const rawRows = stagingData.entries || [];
+        for (const row of rawRows) {
+          // Skip active (in-progress) entries
+          const status = row.activity_status || row.is_active;
+          if (status === 'active' || row.is_active === true) continue;
+          // Skip rows already sealed into the ledger (committed display cache)
+          if (row.committed === true) continue;
+
+          // Normalize to a canonical staging row ({activity_id, activity, ...}).
+          // Flutter rows store the fields in an `activity` JSON string; web rows
+          // carry them flat. Both convert to a proper DTO via canonicalRowToDTO,
+          // which LocalCache.writeEntries persists in spec format ({hash, data}).
+          const canonical = {
+            activity_id: row.activity_id,
+            activity_status: row.activity_status,
+            updated_at: row.updated_at,
+            committed: row.committed || false,
+          };
+          if (row.activity && typeof row.activity === 'string') {
+            canonical.activity = row.activity;
+          } else {
+            // Web flat row → synthesize an activity JSON blob for canonicalRowToDTO
+            canonical.activity = JSON.stringify({
+              entry_id: row.entry_id || row.activity_id,
+              title: row.title,
+              start_epoch: row.start_epoch,
+              end_epoch: row.end_epoch,
+              duration: row.duration,
+              is_active: row.is_active ?? false,
+              is_paused: row.is_paused ?? false,
+              pauses: row.pauses || [],
+              tags: row.tags || [],
+              comment: row.comment || null,
+              media: row.media || [],
+              device_uuid: row.device_uuid || '',
+              end_device_uuid: row.end_device_uuid || '',
+              metadata: row.metadata || {},
+            });
+          }
+          const dto = canonicalRowToDTO(canonical);
+          if (dto) pendingRows.push(dto);
+        }
+        console.log('[connectToWorker] kept', pendingRows.length, 'uncommitted staging entries');
       }
+    } catch (err) {
+      console.warn('[connectToWorker] staging pull failed:', err.message);
     }
 
-    // Read the full chain (genesis + day/summary blocks)
-    const chain = await storage.get('ledger:blocks') || [];
-    console.log('[connectToWorker] chain:', chain.length, 'blocks');
-
-    // ── Extract entries from day blocks into staging ────────────
-    try {
-      let allEntries = [];
-      for (let i = 0; i < chain.length; i++) {
-        const block = chain[i];
-        if (block.type === 'genesis' || block.type === 'year_summary' || block.type === 'month_summary') {
-          continue;
-        }
-        const blockEntries = block.entries || [];
-        const blockIndex = block.day_index ?? i;
-        for (const raw of blockEntries) {
-          allEntries.push({
-            ...raw,
-            committed: true,
-            block_index: blockIndex,
-          });
-        }
+    // Write uncommitted staging rows via LocalCache (proper spec format) so the
+    // Sync/History screens render them with full field data — and so they stay
+    // uncommitted (staging scratchpad, per D11).
+    if (pendingRows.length > 0) {
+      try {
+        const local = new LocalCache(storage, crypto);
+        await local.writeEntries(pendingRows);
+        console.log('[connectToWorker] wrote', pendingRows.length, 'uncommitted staging entries');
+      } catch (e) {
+        console.error('[connectToWorker] writing staging entries failed:', e.message);
       }
-      if (allEntries.length > 0) {
-        await storage.set(ENTRIES_KEY, allEntries);
-        console.log('[connectToWorker] stored', allEntries.length, 'committed entries from', chain.length, 'blocks');
-      }
-    } catch (e) {
-      console.error('[connectToWorker] entry extraction failed:', e.message);
     }
 
     // ── Save remote config ─────────────────────────────────────

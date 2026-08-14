@@ -42,9 +42,30 @@
   denormalized display cache kept with `committed=true` (none reference the ledger's 50 sealed
   activity_ids; the ledger append flow only processes UNCOMMITTED ended rows), so removing block 135
   orphaned `I4FjqLRKT3` from the ledger but it survives in staging — expected app behavior.
+- **🎯 LIVE: WEB connectToWorker full-chain fix — ✅ DONE (2026-08-21).** Regression from commit
+  `588b034` made Web `connectToWorker` pull only genesis + rebuild the chain by re-committing the
+  staging blob. Fixed to fetch the full `ledger/blocks/` chain via `WorkerImportSource.fetchChain`,
+  write it to `ledger:blocks`, and keep only genuinely-uncommitted staging rows (D11: no auto-commit).
+  Restored canonical blocks-format behavior (matches `f1b466c` + `worker_connect_blocks_format.test.mjs`).
+  New regression test `worker_connect_fullchain_regression.test.mjs` 23/23 GREEN. Verified on the
+  personal ledger R2 (132 blocks). Zero new test failures.
+  **BLANK-CARD fix (follow-up, same session):** the 2 pending Sync cards rendered blank at first —
+  `connectToWorker` wrote flat `{title,start_epoch,...}` objects to `entries`, but `LocalCache.readEntries`
+  expects the `{hash, data:{..._enc}}` spec format. Fixed: convert each uncommitted staging row via
+  `canonicalRowToDTO(row)` and persist through `LocalCache.writeEntries()` so cards render full fields.
+  Group C6/C7 assert title + start_epoch survive the write→read round-trip (no blank card).
 
 ## Known Issues
-- **✅ RESOLVED: ledger/staging duplication.** Root cause was `_prepareEntries` stripping `entry_id`/`hash`
+- **OPEN: Aug 13–14 2026 activities missing from remote ledger + web History.** The R2 ledger chain ends
+  at block 131 (`2026-08-10`) — there are NO day blocks for Aug 11–14. The 9 committed Aug 13–14 activities
+  (`2G5vLNJPxV` Laundy, `YU6ZwwvcK5` Gave Gabriel his medicine, `yRrbjBkyGD` Tidying kitchen, `QX8sJvoLJG`
+  Laundry, `47WmPrty8L` Store run, `koA2Hl5WRa` Working on Phpos, `GXmRySa0EE` Working on phpoc,
+  `9w4hbVynWR` Tidying the kitchen, `I4FjqLRKT3` Gave Gabriel a shower) were in phone blocks 132–135 that
+  were DROPPED during the earlier phone repair, and they are NOT re-pushed to R2 (no `backups/` exports,
+  remote staging blob holds only the 2 uncommitted rows). They survive only in the offline phone DB backup
+  `/tmp/phpoc_phone_backup/pre_repair_20260814_124924/phpoc.db` (staging table, `committed=1`). Recovery
+  would require re-committing them from that backup or another device — not fixable in web History.
+  Web correctly shows only what the remote ledger + remote staging contain. Root cause was `_prepareEntries` stripping `entry_id`/`hash`
   but **retaining `activity_id`**; seed functions deduped only by `entry_id`/`hash`, so committed entries
   without `entry_id` got re-seeded as new rows via `generateActivityId()`. Fixed in 4-phase TDD
   (`commit 2d05aff`). Phone `RFCW50FZQPJ` **repaired**: DB deduped (8 dup staging rows removed,
