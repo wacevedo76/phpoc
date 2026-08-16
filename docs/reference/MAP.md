@@ -68,11 +68,15 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `lib/core/utils/id_utils.dart` | HOT | **NEW (Phase 4 REFACTOR)** — generateActivityId() — 10-char alphanumeric ID generator shared by LedgerPullService and OnboardingService |
 | `lib/core/models/import_result.dart` | HOT | **NEW (B-02 Phase 3)** — ImportPreview, ImportResult, DateRange, ImportException |
 | `lib/data/ledger/helpers.dart` | HOT | **NEW** — getBlockHash, computeEntryHash, verifyEntryHashTwoWay, computeContentHash, verifyContentHash |
-| `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain: buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, computeSeal, verifySeal, identity MAC |
+| `lib/data/ledger/chain.dart` | HOT | **NEW** — LedgerChain (with `SealableChain` mixin, Phase 4): buildGenesisBlock, buildDayBlock, append, appendBlocks, truncate, verify, verifyBlock |
+| `lib/data/ledger/sealable_chain.dart` | HOT | **NEW (Phase 4, 2026-08-21)** — `SealableChain` mixin (ADR-029/029a): shared HMAC seal compute/verify, identity MAC, `prev_hash` linkage, day-block count, `sealBlock`/`verifyBlockSeal`; deduped from LedgerChain + CommonplaceChain |
 | `lib/data/ledger/engine.dart` | HOT | **NEW** — LedgerEngine: commit, verify, revert, queryIndex, rebuildIndex (coordinates chain + index + staging) |
 | `lib/data/ledger/index_manager.dart` | HOT | **NEW** — IndexManager: blind index (date→title→duration), encrypted at rest, plaintext fallback |
 | `lib/data/ledger/summary_policy.dart` | HOT | **NEW** — SummaryPolicy hierarchy: YearMonthSummaryPolicy, YearOnlySummaryPolicy, NoSummaryPolicy |
 | `lib/data/ledger/merge.dart` | HOT | **NEW** — Chain merge: fork detection, content-hash dedup, chain rebuild with summaries |
+| `lib/data/commonplace/commonplace_chain.dart` | HOT | **NEW (Phase 3, 2026-08-21)** — CommonplaceChain (`with` SealableChain, Phase 4): separate sealed `commonplace.json` chain. buildGenesis/buildDayBlock (encrypt-at-rest title/entry/tags/ad_hoc→`_enc`), append/appendBlocks/truncate/verify, per-type `commonplace`/`commonplace_genesis` seal (ADR-029a mirror), content-hash + identity MAC
+| `lib/data/commonplace/commonplace_engine.dart` | HOT | **NEW (Phase 3, 2026-08-21)** — CommonplaceEngine: commit (date-grouped sealed day blocks), verify, readEntries (decrypt to public shape), exposes chain/store |
+| `lib/data/commonplace/commonplace_storage.dart` | HOT | **NEW (Phase 3, 2026-08-21)** — CommonplaceStorage: separate-file `commonplace.json` save/load; block-store contract; no staging rows; path decoupled from MK |
 | `lib/services/import_service.dart` | HOT | **NEW (B-02 Phase 3)** — ImportService: dryRun, import, importFromFile, rollback |
 | `lib/features/landing/landing_screen.dart` | HOT | Landing screen — Log In / New Ledger routing |
 | `lib/features/auth/unlock_screen.dart` | HOT | Unlock screen — passphrase entry, validation, auth flow |
@@ -231,10 +235,11 @@ Key test files:
 | `../planning/CLI_COMMAND_TIMING_F2_PHASE1.md` | 🔜 **NEW** — F2 Phase 1 blueprint: persistent cache for remote ledger blocks. 23 assertions across 6 groups (A–F). (2026-07-14) |
 | `../planning/VERIFY_RESTORE_FIX_PLAN_B.md` | 🔜 **ACTIVE** — Approach B: fix `verify()` after cloud restore by making verification tolerant of 3 JSON serialization formats, separating seed storage from genesis block. 6 files, ~120 lines. (2026-08-08) |
 | `../planning/VERIFY_RESTORE_FIX_PLAN_B_PHASE1.md` | 🔜 **ACTIVE** — Phase 1 test exploration for Plan B: 65 assertions across 12 groups (A–L). Phase 2 RED pending. (2026-08-08) |
+| `../planning/flutter/COMMONPLACE_BOOK_PHASE1.md` | 🟢 **PHASE 3 GREEN DONE** (2026-08-21)** — Commonplace Book chain engine blueprint (ADR-031): separate sealed `commonplace.json` chain, shared seed→MK, 55 assertions A–F. Phase 2 RED: all 55 written in `phpoc-flutter/test/data/commonplace/` (A–C/31 chain, D/10 engine, E/9 storage, F/5 ad-hoc). **Phase 3 GREEN: 55/55 pass** — implemented `lib/data/commonplace/` (chain/engine/storage). Phase 4 REFACTOR next. |
 | `../VISION.md` | Protocol philosophy, use cases |
 | `../design/DESIGN_GOALS.md` | Architectural mandates |
 | `../design/SYSTEM_ARCHITECTURE.md` | 🟢 **NEW** — Comprehensive system architecture document: key hierarchy, chain, staging, transport, multi-device sync, cross-platform, crypto core, web, CLI, invariants |
-| `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-026) |
+| `../design/ARCHITECTURAL_DECISIONS.md` | ADR log (ADR-001 through ADR-031) |
 | `../design/PH-VIEW-Workflow.md` | Auth gate workflow (moved to archive — superseded) |
 | `../design/workflows/phpoc_cli/ph-view-workflow-updated.md` | Auth gate workflow (test scenarios) |
 | `../design/workflows/phpoc_cli/onboarding-workflow.md` | CLI onboarding: remote + file import flows |

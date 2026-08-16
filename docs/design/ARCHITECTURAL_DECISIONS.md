@@ -2490,3 +2490,128 @@ specifier semantics are active.
 - `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (identical gate across clients)
 - `docs/planning/LEDGER_AUTO_PULL_ON_REAUTH_PLAN.md`
 - `docs/planning/ROW_LEVEL_STAGING_SYNC_PLAN.md` (8-scenario LWW table; Scenario 5/6)
+
+---
+
+## ADR-031: Commonplace Book — Separate Sealed Chain, Shared Master Key
+
+**Date:** 2026-08 (Phase 1 blueprint `docs/planning/flutter/COMMONPLACE_BOOK_PHASE1.md`)
+**Status:** ✅ Adopted (Flutter chain-engine slice 4-phase TDD complete 2026-08-21; Web/CLI/UI/sync/rotation follow)
+
+### Context
+
+The user wants a **Commonplace Book** — a personal, thematic library of passages,
+quotes, facts, and observations organized by topic — built on top of phpoc. It must be
+distinct from the main activity ledger in several deliberate ways:
+
+- **Separate storage file** — a standalone, exportable `commonplace.json`, not merged
+  into the existing `ledger.json` chain or its staging.
+- **No `comment` field** — a Commonplace Book collects *entries* (title, tags, a single
+  text entry, plus optional ad-hoc key/value pairs), unlike activity entries.
+- **Chain security** — the Commonplace Book is nonetheless a **sealed, verified,
+  append-only block ledger** of its own (not a plain JSON store). Every committed entry
+  is sealed and day-grouped.
+- **Shared crypto root** — it uses the **same recovery seed → same Master Key** as the
+  main ledger, so it participates in the same key-rotation/re-encryption workflow and is
+  fully encrypted at rest.
+- **Staging → commit workflow** — the same D11 separation contract that governs the
+  activity ledger (uncommitted staging rows → explicit user commit → sealed day block).
+- **Full-field encryption** — all content (title, tags, entry, k/v) encrypted at rest.
+  Tag-search blind index is deferred for now.
+- **Multi-client eventually** — Flutter first, then Web, then CLI.
+
+Binding directives engaged:
+
+- **D2 (Zero-Knowledge):** all Commonplace content is encrypted at rest with the
+  passphrase-derived key hierarchy. The user's passphrase never leaves the device.
+- **D4 (Chain of Trust):** the Commonplace chain is a real sealed/verified link chain with
+  advisory HMAC seals and content hashes. Tampering is detectable.
+- **D5 (Append-Only):** Commonplace entries, once committed, are **never edited in place**.
+  Refinements are new entries. Re-hashing the chain to edit a block is explicitly rejected.
+- **D7 (Compartmentalization):** same-seed derivation must not mix data sets by accident;
+  the Commonplace chain is a separate file with its own genesis/block sequence even though
+  it shares the MK.
+- **D8 (Recoverability):** with the same seed, a user reconstructs both the ledger and the
+  Commonplace chain from their genesis blocks.
+- **D11 (Staging/Ledger Separation):** staging and the Commonplace ledger stay fully
+  separate. No staging rows appear in sealed Commonplace blocks.
+
+### Decision
+
+1. **Separate sealed chain file.** A new `commonplace.json` holds its own chain:
+   `Genesis → (optional summaries) → commonplace day blocks`. It is structurally
+   independent of the activity `ledger.json`. Export output is `commonplace.json`.
+
+2. **Same seed → same Master Key, separate genesis block.** The Commonplace chain derives
+   its keys from the **same recovery seed** as the main ledger (same MK, same encryption /
+   integrity / identity sub-keys), but seals a **distinct genesis block** as the root of its
+   own chain. This gives one MK + one crypto domain + two independent sealed files.
+
+3. **Reuse `chain.py` (Python) machinery, parameterized.** A new **`commonplace` block
+   type** is added to the ADR-029a per-type seal whitelist (`SEAL_FIELDS` / `select_seal_fields`),
+   which already rejects unknown types. Block building, sealing, signing, append, truncate,
+   and `verify()` are reused; only the entry schema and block-type mapping differ. This is
+   additive and backward-compatible (D9).
+
+4. **Entry schema: `title`, `tags`, `entry`, plus optional ad-hoc k/v.** No `comment`.
+   Each committed entry carries a content hash, its saved timestamp/date, and topic tags.
+   Entries merge into **day-grouped sealed blocks**, mirroring the activity ledger.
+
+5. **Append-only.** After commit, a Commonplace entry is immutable. Editing a Commonplace
+   entry would require re-hashing every downstream block — rejected under D5. The supported
+   pattern is: commit a (possibly corrected/referencing) entry as a new row.
+
+6. **Staging → commit, D11.** Uncommitted Commonplace entries live in a staging area (sealed
+   `plain:`-style / unsealed rows). Committing seals them into a new day block and removes
+   them from staging — a move, never a copy, exactly as D11 requires.
+
+7. **Key rotation shared.** Because the Commonplace chain shares the MK and carries
+   per-block `key_version` (ADR-026), the existing rotation / re-encryption workflow is
+   extended to also re-encrypt the Commonplace chain(s). No separate Commonplace passphrase
+   is introduced.
+
+8. **Remote sync, separate R2 path.** Reuses the same Worker transport but under a distinct
+   R2 key space (e.g. `commonplace/...`) so Commonplace blobs/hash-index never collide with
+   the activity staging `staging/...` path. Device cookie identity is shared (same MK).
+
+9. **Tag-search blind index deferred.** Initial implementation reads the chain and
+   decrypts content to scan by tag. An encrypted, MK-derived blind index (mirroring the
+   activity ledger's encrypted `index.json`) is a future refinement.
+
+10. **Client rollout: Flutter first.** The initial deliverable is the Flutter Commonplace
+    chain engine (genesis sealing, add-entry, day-block sealing, verify, separate-file
+    persistence). UI, sync, and rotation wiring are follow-on slices. Web and CLI are later.
+
+### Rationale
+
+- **Matches user intent:** one passphrase unlocks both books; both are zero-knowledge and
+  chain-protected; the Commonplace Book stays a distinct, exportable artifact.
+- **D7 compartmentalization is preserved despite a shared MK:** sub-keys are purpose-derived
+  and the two chains are separate files with separate genesis, so datasets cannot mix by
+  accident — but the user keeps the convenience of a single seed to recover everything.
+- **Reusing `chain.py` honors the user's explicit preference** and avoids a parallel
+  security-critical crypto implementation (the highest-risk duplication in the system).
+- **Same-seed key rotation reuse (D8):** rotating keys once re-encrypts both books, so a
+  compromised MK is recoverable for both without a separate workflow.
+- **The shared-MK compromise is a conscious, accepted tradeoff:** the same seed protects
+  both books; the blast radius on seed loss is identical, so there is no added exposure.
+
+### Consequences
+
+- **Positive:** a single seed recovers the entire user estate; one passphrase; one rotation
+  workflow; a genuinely chain-secured Commonplace Book that is independently exportable.
+- **Crypto-domain coupling:** compromising the seed/MK exposes both books (there is no
+  separate Commonplace passphrase). This is accepted — keeping separate seeds would weaken
+  the single-seed recovery UX the user asked for.
+- **Seal whitelist grows by one block type** (`commonplace`). ADR-029a per-type tables
+  already anticipate this; unknown-type rejection still guards the activity ledger.
+- **Effort:** new Dart Commonplace chain engine (Flutter), `commonplace` block type in
+  `chain.py`/`SEAL_FIELDS` (CLI/Python), same-Worker sync under a new R2 namespace, and
+  extending the ADR-026 rotation to cover Commonplace chain(s).
+
+### Related
+
+- ADR-001 (seed → MK → sub-keys), ADR-026 (key rotation, versioned MKs), ADR-029/029a
+  (canonical per-type block seal), ADR-011 (backward compat), ADR-030 (ledger auto-pull)
+- `docs/planning/flutter/COMMONPLACE_BOOK_PHASE1.md` (Phase 1 blueprint)
+- `docs/spec/PHPSPEC.md` (format spec; Commonplace type is a proposed extension)

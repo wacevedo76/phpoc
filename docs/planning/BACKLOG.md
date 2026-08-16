@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-08-10
+> **Last updated:** 2026-08-21
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -13,7 +13,48 @@
 
 ---
 
-## ✅ B-03: Flutter — Staging Schema Overhaul ✅
+## 🟠 Commonplace Book — Separate Sealed Chain (Flutter-first)
+
+**Plan:** `docs/planning/flutter/COMMONPLACE_BOOK_PHASE1.md` (Phase 1 blueprint, 55 assertions across groups A–F)
+**ADR:** ADR-031 (Commonplace Book — separate sealed chain, shared master key)
+**Status:** ✅ **4-PHASE TDD COMPLETE (2026-08-21)** — Phase 3 GREEN 55/55; Phase 4 REFACTOR done (shared `SealableChain` mixin, dedup with ledger layer, 349/349 GREEN).
+
+**What:** A personal thematic library of passages (title, `tags`, `entry`, optional ad-hoc k/v — **no**
+`comment` field) stored as a **separate, exportable `commonplace.json`** sealed chain. Reuses the activity
+ledger's chain/crypto machinery under a **new `commonplace` block type** in the ADR-029a per-type seal
+whitelist, but is a structurally independent chain file with its own genesis. Shares the **same seed → same
+MK** as the main ledger so it participates in the shared passphrase + key-rotation (ADR-026) workflow.
+
+**Key decisions (ADR-031):**
+- Separate sealed `commonplace.json`, not integrated with the activity `ledger.json` (D1, D7, D11)
+- Same seed → same Master Key; **separate genesis block** + separate sealed chain file (ADR-031 §2)
+- Reuse `chain.py`/`chain.dart` machinery, parameterized; add a `commonplace` block type (D4, D9)
+- Entry schema: `title`, `tags`, `entry` + optional ad-hoc k/v; **no `comment`**
+- Commit into **ledger-style sealed day-grouped blocks**, **append-only** (D5 — no in-place edits)
+- **All content encrypted at rest** (D2 — title/tags/entry/k/v all AES-CTR encrypted)
+- Same-passphrase unlock; shared key rotation re-encrypts both books
+- Staging → commit workflow (D11: staging rows never reach sealed blocks)
+- Same Worker transport, **separate R2 path** (`commonplace/...`)
+- Tag-search blind index **deferred** for now (decrypt-and-scan initially)
+- **Clients:** Flutter first → then Web → then CLI
+
+**Phase 1 (blueprint):** Flutter Commonplace chain engine only — `lib/data/commonplace/`
+(`commonplace_chain.dart`, `commonplace_engine.dart`, `commonplace_storage.dart`). 55 assertions across
+A (genesis, 11), B (day-block, 12), C (append/truncate/verify, 8), D (engine commit/verify/read, 10),
+E (separate-file storage, 9), F (ad-hoc k/v, 5). No UI, no sync, no blind index, no rotation wiring yet.
+
+**Chain-engine slice (Phases 1–4):** ✅ complete — `lib/data/commonplace/` (chain/engine/storage) + shared
+`lib/data/ledger/sealable_chain.dart` mixin. 55/55 phase tests GREEN, full Flutter data/services 349/349
+(ledger layer) GREEN, no new failures. Next actions are the follow-on slices below.
+
+**Follow-on slices (separate BACKLOG items as they're planned):**
+- UI wiring (Commonplace Book screen, add/edit-not-in-place entry, topic/tag index)
+- Remote sync via same Worker under a new R2 path + MK-derived device cookie
+- Shared key-rotation extension so ADR-026 also re-encrypts Commonplace chain(s)
+- Tag-search blind index (encrypted, MK-derived) — deferred
+- Web + CLI parity ports
+
+---
 
 **Plan:** `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups)
 **Completed:** 2026-07-28 — Full 4-Phase TDD. Phase 4: 6 improvements across 3 files.

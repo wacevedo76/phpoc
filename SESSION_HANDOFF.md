@@ -7,53 +7,30 @@
 > **⚠️ Git operations require user approval.** Never run `git commit` or `git push` automatically. Ask first.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
-> **Completed milestones (archived):** `docs/planning/archive/SESSION_HISTORY_2026-08-11.md`, `docs/planning/archive/SESSION_HISTORY_2026-08-19.md`
+> **Completed milestones (archived):** `docs/planning/archive/` 2026-08-11, 2026-08-19, 2026-08-21
 
 ## Current State
-- **Branch:** `Flutter-features_and_ux` (clean, committed `2d05aff` — staging-seed dedup fix)
+- **Branch:** `Flutter-features_and_ux` (committed `5463e21`; **uncommitted** Commonplace Book 4-phase work — chain/engine/storage + `sealable_chain.dart` mixin refactor + docs)
 - **Phone `RFCW50FZQPJ`:** fix deployed (debug 0.1.0) + local ledger repaired (132 blocks == remote,
   280 staging rows, no dups) — verified working.
-- **Flutter test suite:** `test/data/ledger/` 325/325, `ledger_push_service`+`engine` 106/106,
-  `ledger_auto_pull_on_reauth` 12/12, periodic 18/18, onboarding 65, merge 25 — GREEN.
+- **Flutter test suite:** `test/data/ledger/` + `test/data/commonplace/` GREEN (chain-engine refactor: 349/349).
+  `ledger_push_service`+`engine` 106/106, periodic 18/18, onboarding 65, merge 25 — GREEN.
 - **Remote sync E2E:** 8/8 GREEN (`--timeout 180s`) | **Python suite:** 2614 pass / 1 skip / 0 fail.
 
 ## Immediate Next Steps 🎯
-- **🎯 LIVE: Staging-seed dedup fix — ✅ 4-PHASE TDD COMPLETE (2026-08-21).**
-  Blueprint: `docs/planning/flutter/STAGING_SEED_DEDUP_FIX_PHASE1.md` (S:6, I:5, U:3 = 14).
-  **Phase 3 (GREEN) done:** P1 (dedup by `activity_id`) + P2 (reuse `data['activity_id']` instead
-  of `generateActivityId()`) implemented in `_seedStagingFromBlocks` (ledger_pull_service.dart) + `_seedStagingFromImportedBlocks`
-  (onboarding_service.dart). New tests 11/11 GREEN (S1–S6, I1–I5); U1 GREEN.
-  **Phase 4 (REFACTOR) done:** extracted shared `StagingSeedDeduper` + `resolveSeedActivityId()` into
-  new `lib/services/staging_seed_helpers.dart` (~20 dup lines/call-site removed); analyzer clean;
-  regression proven by baseline diff (services dir: refactor 380 pass/25 fail vs baseline 371/33 —
-  9 new dedup tests GREEN, **zero new failures**). Pre-existing baselines unchanged
-  (`ledger_pull` B4/B6/C3/C4/F3, `ledger_backup` B1/B4/E6, `auth_service` V9, `restore_*`, E2E Worker tests,
-  compile-error `wipe_cloud_onboard_e2e`/`restore_mk_caching`).
-- **🎯 LIVE: Phone ledger repair — ✅ DONE (2026-08-21).** Deployed fixed debug build to `RFCW50FZQPJ`
-  (`install -r`, debug preserved) + repaired live DB: dropped 4 local-only blocks (132–135; 132–134 were
-  re-seed dup copies, 135 `Gave Gabriel a shower` kept safe via staging `I4FjqLRKT3`) and deleted the 8
-  re-seed staging rows. Verified: phone chain now == clean remote 132 (0–131, prev_hash intact),
-  staging 288→280, no duplicate (title,start,end) groups, app launches clean (MainActivity top,
-  integrity ok). Backups on-host `/tmp/phpoc_phone_backup/pre_repair_20260814_124924/` + on-device
-  `app_flutter/repair_backup_pre/`.
-  **Post-repair sync verified CLOSED OUT (2026-08-21):** observed stable for ~15s+ — remote ledger 132
-  (unchanged), remote staging hash_index 280/unique (== phone local, no growth, no dup re-seed on the
-  5s periodic sync, fix held); `I4FjqLRKT3` present local+remote. Note: committed staging rows are a
-  denormalized display cache kept with `committed=true` (none reference the ledger's 50 sealed
-  activity_ids; the ledger append flow only processes UNCOMMITTED ended rows), so removing block 135
-  orphaned `I4FjqLRKT3` from the ledger but it survives in staging — expected app behavior.
-- **🎯 LIVE: WEB connectToWorker full-chain fix — ✅ DONE (2026-08-21).** Regression from commit
-  `588b034` made Web `connectToWorker` pull only genesis + rebuild the chain by re-committing the
-  staging blob. Fixed to fetch the full `ledger/blocks/` chain via `WorkerImportSource.fetchChain`,
-  write it to `ledger:blocks`, and keep only genuinely-uncommitted staging rows (D11: no auto-commit).
-  Restored canonical blocks-format behavior (matches `f1b466c` + `worker_connect_blocks_format.test.mjs`).
-  New regression test `worker_connect_fullchain_regression.test.mjs` 23/23 GREEN. Verified on the
-  personal ledger R2 (132 blocks). Zero new test failures.
-  **BLANK-CARD fix (follow-up, same session):** the 2 pending Sync cards rendered blank at first —
-  `connectToWorker` wrote flat `{title,start_epoch,...}` objects to `entries`, but `LocalCache.readEntries`
-  expects the `{hash, data:{..._enc}}` spec format. Fixed: convert each uncommitted staging row via
-  `canonicalRowToDTO(row)` and persist through `LocalCache.writeEntries()` so cards render full fields.
-  Group C6/C7 assert title + start_epoch survive the write→read round-trip (no blank card).
+- **✅ Commonplace Book — 4-PHASE TDD COMPLETE (2026-08-21).** ADR-031 separate sealed `commonplace.json`
+  chain (same seed→same MK, own genesis; `title`/`tags`/`entry` + optional ad-hoc k/v, no `comment`).
+  Phase 3 GREEN 55/55 in `lib/data/commonplace/` (chain/engine/storage). **Phase 4 REFACTOR:** shared
+  `SealableChain` mixin (`lib/data/ledger/sealable_chain.dart`) deduped seal/verify/identity-MAC/linkage
+  across both chains → `chain.dart` 476→371, `commonplace_chain.dart` 521→456; merged dup verify gate,
+  removed dead engine marker. **349/349 tests GREEN**, analyzer clean; 29 pre-existing failures unchanged.
+  Full details archived: `docs/planning/archive/SESSION_HISTORY_2026-08-21.md`.
+- ✅ Staging-seed dedup fix — 4-PHASE TDD COMPLETE (2026-08-21). Dedup by `activity_id` + shared
+  `StagingSeedDeduper` helper; zero new failures (baseline-verified). See `SESSION_HISTORY_2026-08-21.md`.
+- ✅ Phone ledger repair — DONE (2026-08-21). Phone `RFCW50FZQPJ` chain == remote 132, staging 288→280,
+  sync stable ~15s+. See `SESSION_HISTORY_2026-08-21.md`.
+- ✅ WEB connectToWorker full-chain + blank-card fix — DONE (2026-08-21). 23/23 regression GREEN.
+  See `SESSION_HISTORY_2026-08-21.md`.
 
 ## Known Issues
 - **OPEN: Aug 13–14 2026 activities missing from remote ledger + web History.** The R2 ledger chain ends

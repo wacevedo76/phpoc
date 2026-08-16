@@ -1,15 +1,20 @@
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
-import 'package:phpoc_flutter/core/utils/json_utils.dart';
 import 'package:phpoc_flutter/data/ledger/helpers.dart'
-    show getBlockHash, computeEntryHash, verifyEntryHashTwoWay, verifyContentHash, compareVersions, secretToHex;
-import 'package:phpoc_flutter/data/ledger/helpers.dart'
-    as helpers show jsonEncodeSortedNoSpaces;
+    show
+        getBlockHash,
+        computeEntryHash,
+        verifyEntryHashTwoWay,
+        verifyContentHash,
+        compareVersions,
+        secretToHex;
+import 'package:phpoc_flutter/data/ledger/sealable_chain.dart';
 
 /// The append-only cryptographic chain — the heart of the PH ledger.
 ///
 /// Builds, seals, signs, appends, truncates, and verifies ledger blocks.
 /// Must produce byte-identical output to Python `domain/ledger/chain.py`.
-class LedgerChain {
+class LedgerChain with SealableChain {
+  @override
   final CryptoService crypto;
   final dynamic store;
   final String? identitySecret;
@@ -20,6 +25,46 @@ class LedgerChain {
     required this.store,
     this.identitySecret,
   }) : _identitySecretHex = secretToHex(identitySecret);
+
+  /// Hex identity secret for SealableChain / identity-signing parity.
+  @override
+  String? get identitySecretHex => _identitySecretHex;
+
+  /// Canonical per-type seal-field whitelist (ADR-029/029a).
+  @override
+  final Map<String, List<String>> sealFieldsByType = {
+    'genesis': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'day': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'month_summary': ['type', 'month', 'date', 'prev_hash', 'original_hash'],
+    'year_summary': ['type', 'year', 'date', 'prev_hash', 'original_hash'],
+  };
+
+  /// The value key that holds a block's own seal.
+  @override
+  String? hashKeyFor(String? type) {
+    switch (type) {
+      case 'genesis':
+        return 'block_hash';
+      case 'day':
+        return 'day_hash';
+      case 'month_summary':
+        return 'month_hash';
+      case 'year_summary':
+        return 'year_hash';
+      default:
+        return null;
+    }
+  }
+
+  /// Resolve a block's linkage hash for prev_hash validation.
+  @override
+  String getBlockHashFor(Map<String, dynamic> block) => getBlockHash(block);
+
+  /// Day-type blocks (excludes genesis and summaries).
+  @override
+  List<Map<String, dynamic>> getDayBlocks() {
+    return readAll().where((b) => b['type'] == 'day').toList();
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // Block Building
@@ -55,7 +100,7 @@ class LedgerChain {
     };
 
     // Compute block_hash: seal over the genesis content
-    final blockHash = _sealBlock(gen);
+    final blockHash = sealBlock(gen);
     gen['block_hash'] = blockHash;
 
     // Identity seal over block_hash
@@ -77,7 +122,7 @@ class LedgerChain {
     int? keyVersion,
   }) {
     // Determine day_index
-    final existingDays = _countDayBlocks();
+    final existingDays = countDayBlocks();
     final dayIndex = existingDays == 0 ? 1 : existingDays + 1;
     final kv = keyVersion ?? 1;
 
@@ -113,7 +158,7 @@ class LedgerChain {
     };
 
     // Compute day_hash
-    final dayHash = _sealBlock(block);
+    final dayHash = sealBlock(block);
     block['day_hash'] = dayHash;
 
     // Identity seal
@@ -217,12 +262,12 @@ class LedgerChain {
       final block = blocks[i];
 
       // Check prev_hash linkage (except first block)
-      if (!_prevHashValid(i > 0 ? blocks[i - 1] : null, block)) {
+      if (!prevHashValid(i > 0 ? blocks[i - 1] : null, block)) {
         return false;
       }
 
       // Check block seal
-      if (!_verifyBlockSeal(block)) return false;
+      if (!verifyBlockSeal(block)) return false;
 
       // Check identity_seal
       if (_identitySecretHex != null && block.containsKey('identity_seal')) {
@@ -283,12 +328,12 @@ class LedgerChain {
     final block = blocks[index];
 
     // Check prev_hash for non-zero blocks
-    if (!_prevHashValid(index > 0 ? blocks[index - 1] : null, block)) {
+    if (!prevHashValid(index > 0 ? blocks[index - 1] : null, block)) {
       return false;
     }
 
     // Check seal
-    if (!_verifyBlockSeal(block)) return false;
+    if (!verifyBlockSeal(block)) return false;
 
     // Genesis-specific
     if (index == 0 && block['type'] == 'genesis') {
@@ -305,44 +350,6 @@ class LedgerChain {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Seal & Identity
-  // ═══════════════════════════════════════════════════════════════
-
-  /// Compute a deterministic HMAC-SHA256 seal of [data].
-  String computeSeal(Map<String, dynamic> data) {
-    final json = jsonSort(data);
-    return crypto.seal(json, crypto.getMasterKey()!);
-  }
-
-  /// Verify a seal against [data], trying compact, indent2, and no-space formats.
-  bool verifySeal(Map<String, dynamic> data, String seal) {
-    if (seal.isEmpty) return false;
-    final mk = crypto.getMasterKey()!;
-
-    // Canonical compact format (sort_keys, with spaces)
-    if (crypto.verifySeal(jsonSort(data), seal, mk)) return true;
-    // Indent2 fallback
-    if (crypto.verifySeal(jsonSortIndent2(data), seal, mk)) return true;
-    // No-space compact fallback (JS-style compact)
-    final noSpaceJson = helpers.jsonEncodeSortedNoSpaces(data);
-    if (crypto.verifySeal(noSpaceJson, seal, mk)) return true;
-
-    return false;
-  }
-
-  /// Compute an identity MAC. Returns null if identitySecret is null.
-  String? computeIdentityMac(String data, String secret) {
-    final secretHex = secretToHex(secret)!;
-    return crypto.sign(data, secretHex);
-  }
-
-  /// Verify an identity MAC.
-  bool verifyIdentityMac(String data, String mac, String secret) {
-    final secretHex = secretToHex(secret)!;
-    return crypto.verifySignature(data, mac, secretHex);
-  }
-
-  // ═══════════════════════════════════════════════════════════════
   // Accessors
   // ═══════════════════════════════════════════════════════════════
 
@@ -356,121 +363,9 @@ class LedgerChain {
     return store.getBlockCount();
   }
 
-  /// Return only day-type blocks (excludes genesis and summaries).
-  List<Map<String, dynamic>> getDayBlocks() {
-    return readAll().where((b) => b['type'] == 'day').toList();
-  }
-
   /// Return the last block, or null if the chain is empty.
   Map<String, dynamic>? getLastBlock() {
     return store.getLastBlock();
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // Internal helpers
-  // ═══════════════════════════════════════════════════════════════
-
-  /// Canonical per-type block-seal fields (ADR-029/029a).
-  ///
-  /// genesis/day seal `{type, day_index, date, prev_hash, entries,
-  /// original_hash}`; month_summary seals `{type, month, date, prev_hash,
-  /// original_hash}` (carries no day_index/entries); year_summary seals
-  /// `{type, year, date, prev_hash, original_hash}`. `original_hash` is sealed
-  /// only when present (migrated / post-0.4.0 blocks); its absence must not
-  /// break verification. Extra metadata like format_version, key_version,
-  /// username, identity_seal, summary telemetry, and the hash keys are NEVER
-  /// part of the seal (matches Python `domain/ledger/chain.py` SEAL_FIELDS and
-  /// Web `seal_fields.js`).
-  static const Map<String, List<String>> _sealFieldsByType = {
-    'genesis': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
-    'day': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
-    'month_summary': ['type', 'month', 'date', 'prev_hash', 'original_hash'],
-    'year_summary': ['type', 'year', 'date', 'prev_hash', 'original_hash'],
-  };
-
-  /// Return the sealed-field names for [type], or null for an unknown type.
-  static List<String>? _sealFieldsFor(String? type) => _sealFieldsByType[type];
-
-  /// Verify prev_hash linkage between [prev] and [current] blocks.
-  bool _prevHashValid(Map<String, dynamic>? prev, Map<String, dynamic> current) {
-    if (prev == null) return true; // First block has no predecessor
-    final expected = getBlockHash(prev);
-    final actual = current['prev_hash'] as String? ?? '';
-    if (expected.isEmpty) return true; // No hash to compare
-    return actual == expected;
-  }
-
-  /// Count existing day blocks (for day_index computation).
-  int _countDayBlocks() {
-    return getDayBlocks().length;
-  }
-
-  /// Compute a seal over the canonical per-type ADR-029a seal fields of [block].
-  ///
-  /// day/genesis seal {type, day_index, date, prev_hash, entries,
-  /// original_hash}; month_summary/year_summary seal their identity field
-  /// (`month`/`year`) instead, so summaries match Python/Web byte-for-byte.
-  /// `original_hash` is sealed only when present. Unknown types throw (matches
-  /// Python `select_seal_fields` raising `ValueError` on an unknown type).
-  String _sealBlock(Map<String, dynamic> block) {
-    final type = block['type'] as String?;
-    final fields = _sealFieldsFor(type);
-    if (fields == null) {
-      throw StateError('Unknown block type for seal: $type');
-    }
-    final sealData = <String, dynamic>{};
-    for (final field in fields) {
-      if (block.containsKey(field)) {
-        sealData[field] = block[field];
-      }
-    }
-    return computeSeal(sealData);
-  }
-
-  /// Verify a block's internal seal using the 3-way fallback in [verifySeal].
-  ///
-  /// Extracts only the canonical ADR-029 closed seal fields ({type, day_index,
-  /// date, prev_hash, entries, original_hash}) and verifies the stored hash
-  /// against all three cross-client serialization formats. `original_hash` is
-  /// included only when present.
-  bool _verifyBlockSeal(Map<String, dynamic> block) {
-    final type = block['type'] as String?;
-    if (type == null) return false;
-
-    String hashKey;
-    switch (type) {
-      case 'genesis':
-        hashKey = 'block_hash';
-        break;
-      case 'day':
-        hashKey = 'day_hash';
-        break;
-      case 'month_summary':
-        hashKey = 'month_hash';
-        break;
-      case 'year_summary':
-        hashKey = 'year_hash';
-        break;
-      default:
-        return false;
-    }
-
-    final storedHash = block[hashKey] as String?;
-    if (storedHash == null || storedHash.isEmpty) return false;
-
-    // Extract the per-type ADR-029a seal fields for verification. Unknown
-    // types and summaries outside the table (no matching fields) are invalid.
-    final fields = _sealFieldsFor(type);
-    if (fields == null) return false;
-    final sealData = <String, dynamic>{};
-    for (final field in fields) {
-      if (block.containsKey(field)) {
-        sealData[field] = block[field];
-      }
-    }
-
-    // Use verifySeal's 3-way fallback (jsonSort / jsonSortIndent2 / no-space)
-    return verifySeal(sealData, storedHash);
   }
 
 }
