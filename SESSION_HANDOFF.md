@@ -10,7 +10,7 @@
 > **Completed milestones (archived):** `docs/planning/archive/` 2026-08-11, 2026-08-19, 2026-08-21
 
 ## Current State
-- **Branch:** `Flutter-features_and_ux` (committed `5463e21`; **uncommitted** Commonplace Book 4-phase work — chain/engine/storage + `sealable_chain.dart` mixin refactor + docs)
+- **Branch:** `Flutter-features_and_ux` → clean, pushed `4071f27` (Commonplace Book 4-phase TDD; sealable_chain refactor + docs)
 - **Phone `RFCW50FZQPJ`:** fix deployed (debug 0.1.0) + local ledger repaired (132 blocks == remote,
   280 staging rows, no dups) — verified working.
 - **Flutter test suite:** `test/data/ledger/` + `test/data/commonplace/` GREEN (chain-engine refactor: 349/349).
@@ -25,6 +25,13 @@
   across both chains → `chain.dart` 476→371, `commonplace_chain.dart` 521→456; merged dup verify gate,
   removed dead engine marker. **349/349 tests GREEN**, analyzer clean; 29 pre-existing failures unchanged.
   Full details archived: `docs/planning/archive/SESSION_HISTORY_2026-08-21.md`.
+  **Commonplace Book follow-on slices** (chain-engine slice done; from BACKLOG, each a separate item when
+  planned):
+  - **UI wiring** — Commonplace Book screen, add/edit-not-in-place entry, topic/tag index
+  - **Remote sync** — same Worker under a new R2 path (`commonplace/...`) + MK-derived device cookie
+  - **Shared key-rotation extension** — extend ADR-026 so it also re-encrypts Commonplace chain(s)
+  - **Tag-search blind index** (encrypted, MK-derived) — deferred for now (decrypt-and-scan initially)
+  - **Web + CLI parity ports**
 - ✅ Staging-seed dedup fix — 4-PHASE TDD COMPLETE (2026-08-21). Dedup by `activity_id` + shared
   `StagingSeedDeduper` helper; zero new failures (baseline-verified). See `SESSION_HISTORY_2026-08-21.md`.
 - ✅ Phone ledger repair — DONE (2026-08-21). Phone `RFCW50FZQPJ` chain == remote 132, staging 288→280,
