@@ -411,10 +411,13 @@ void main() {
 
       final entries = await svc.getEntries();
       expect(entries.length, 2);
-      expect(entries[0]['title'], 'Task 1');
-      expect(entries[1]['title'], 'Task 2');
-      expect(entries[0]['is_active'], false);
-      expect(entries[1]['is_active'], false);
+      // Order is NOT positional: getEntries() returns rows by activity_id ASC,
+      // and activity_ids are random (Random.secure), so finding by title is
+      // determinisic and removes the ~50/50 flake.
+      final task1 = entries.firstWhere((e) => e['title'] == 'Task 1');
+      final task2 = entries.firstWhere((e) => e['title'] == 'Task 2');
+      expect(task1['is_active'], false);
+      expect(task2['is_active'], false);
     });
 
     // E16
@@ -859,17 +862,20 @@ void main() {
       'L4: getCompleted() returns entries sorted by start_epoch descending',
       () async {
         final svc = await _makeSync();
-        // Create entries with known timestamps
+        // Create entries with known timestamps. Use title-based modify() (not
+        // positional index): getEntries()/getAllRows() order by random
+        // activity_id ASC, so index resolution would not reliably target the
+        // intended row — flaky. Title resolution is deterministic.
         await svc.capture(title: 'Oldest');
-        await svc.modify(0, {'start_epoch': 1000});
+        await svc.modify('Oldest', {'start_epoch': 1000});
         await svc.end('Oldest', 2000);
 
         await svc.capture(title: 'Middle');
-        await svc.modify(1, {'start_epoch': 2000});
+        await svc.modify('Middle', {'start_epoch': 2000});
         await svc.end('Middle', 3000);
 
         await svc.capture(title: 'Newest');
-        await svc.modify(2, {'start_epoch': 3000});
+        await svc.modify('Newest', {'start_epoch': 3000});
         await svc.end('Newest', 4000);
 
         final completed = await svc.getCompleted();
@@ -2014,10 +2020,12 @@ void main() {
       await svc.end('Today Entry', 5000);
 
       await svc.capture(title: 'Yesterday Entry');
-      // Manually set start_epoch to yesterday
+      // Manually set start_epoch to yesterday (title-based modify: index
+      // resolution is flaky because getRowsAll() is ordered by random
+      // activity_id).
       final yesterday =
           DateTime.now().millisecondsSinceEpoch - (24 * 60 * 60 * 1000);
-      await svc.modify(1, {'start_epoch': yesterday});
+      await svc.modify('Yesterday Entry', {'start_epoch': yesterday});
       await svc.end('Yesterday Entry', yesterday + 5000);
 
       final hash = await svc.commitEntries();

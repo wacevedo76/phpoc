@@ -296,21 +296,44 @@ class SyncService {
   }
 
   /// Remove a staged entry by activity_id (or index for legacy compat).
+  ///
+  /// A delete is authoritative local intent, so it must also be reflected on
+  /// the remote: simply deleting the LOCAL row lets the next
+  /// [_reconcileAndClaimRowLevel] pull the stale remote `staging/blob` and
+  /// resurrect the entry (mergeEntries treats a remote-only row as
+  /// authoritative). To converge to "deleted", push the remaining local
+  /// staging to remote (which overwrites the blob WITHOUT the deleted row)
+  /// before scheduling the debounced auto-sync — mirroring the commit-move
+  /// pattern in [commitAndSync]. Best-effort: if the push fails (offline) the
+  /// local delete still stands and the normal auto-sync retries.
   Future<void> remove(dynamic activityIdOrIndex) async {
+    String? removedId;
     if (activityIdOrIndex is String) {
       await stagingStore.deleteRow(activityIdOrIndex);
-      await _afterMutation();
-      return;
-    }
-
-    if (activityIdOrIndex is int) {
+      removedId = activityIdOrIndex;
+    } else if (activityIdOrIndex is int) {
       // Index-based adapter → map to activity_id (legacy compat for K5).
       final all = await stagingStore.getAllRows();
       final index = activityIdOrIndex;
       if (index < 0 || index >= all.length) return;
-      await stagingStore.deleteRow(all[index]['activity_id'] as String);
+      removedId = all[index]['activity_id'] as String?;
+      await stagingStore.deleteRow(removedId!);
+    }
+
+    // Tombstone propagate: drop the deleted row from the remote blob so the
+    // next reconcile does not resurrect it (delete-vs-sync race). Idempotent
+    // with the debounced auto-sync that follows in [_afterMutation].
+    if (removedId != null && transport != null && crypto.hasMasterKey) {
+      try {
+        await _pushStagingRowsToRemote();
+      } catch (_) {
+        // Best-effort: offline push leaves the deletion pending; the
+        // debounced auto-sync will retry the reconcile.
+      }
+    }
+
+    if (removedId != null) {
       await _afterMutation();
-      return;
     }
   }
 

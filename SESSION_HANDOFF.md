@@ -63,8 +63,12 @@
   via `install -r`). DB dump: `run-as com.phpoc.phpoc_flutter cat app_flutter/phpoc.db`. Emulator
   `emulator-5554` also debug.
 - Pre-existing Flutter failures (unchanged, verified on baseline): `ledger_backup` B1/B4/E6, `ledger_pull`
-  B4/B6/C3/C4/F3, `sync_screen` L2/L3/L4/L6+R5, `restore_integration` G1/G3/G5/G6, `sync_service` E15/L4
-  (flaky), `ccs1_gap_closure` load error, `widget_test.dart` (baseline, independent of sync wiring).
+  B4/B6/C3/C4/F3, `sync_screen` L2/L3/L4/L6+R5, `restore_integration` G1/G3/G5/G6, `ccs1_gap_closure`
+  load error, `widget_test.dart` (baseline, independent of sync wiring).
+- **RESOLVED: flaky ordering tests in `sync_service_test.dart` (E15/L4/N12).** `getEntries()`/`getAllRows()`
+  order by random `activity_id ASC`; tests asserting positional order (`entries[i]`) or `modify(<int>, …)`
+  failed ~50–70% of runs. Fixed by resolving by title instead of position. 105/105 pass consistently;
+  test-only change, zero new failures.
 - **FIXED + VALIDATED: `day_index` corruption on push/export breaks verify after pull (2026-08-17/18).**
   Root cause: `PhpSpecFormat.blockToMap` (shared by push + export) emitted `day_index = block.blockIndex`
   (DB array position) instead of the sealed day_index carried in data_enc. Once month/year summary blocks interleave,
@@ -76,6 +80,15 @@
   canonical day_index; hashes unchanged). **Emulator restore now verifies: `tool/diag_verify.dart` → verify(): true,
   ALL CHECKS PASSED.** Underlying cause: blocks 132/133 were built post-phone-repair against a truncated chain
   (reused day_index 122/123), then miscalized on push.
+- **RESOLVED: deleted staged entry resurrects on next sync (2026-08-18/21).** Deleting an activity
+  on the entry screen only removed the LOCAL row; `sync.remove` never removed it from the remote
+  `staging/blob`, so the next `_reconcileAndClaimRowLevel` pull+merge re-inserted it (mergeEntries
+  treats a remote-only row as authoritative). Observed live: Push-ups `xZ30dtTwvn` (ended, no
+  commit flag) kept coming back after delete ×2 while phone synced to the Worker. Fix: `sync.remove`
+  now tombstone-propagates — deletes the local row AND pushes the remaining local staging to remote
+  (overwriting the blob WITHOUT the deleted row) before scheduling the debounced auto-sync, mirroring
+  the commit-move pattern in `commitAndSync`. Regression test `test/data/sync/delete_resurrect_test.dart`
+  (RED→GREEN). Baseline-verified: zero new failures; `sync_service_test` delete resp. path improved.
 - `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — RETIRED ✅. `stagingStore` required/non-null.
 - `verify()` after cloud restore — FIXED (Plan B: RC1–RC3). `VERIFY_RESTORE_FIX_PLAN_B.md`.
 
