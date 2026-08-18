@@ -93,13 +93,24 @@ class PhpSpecFormat {
     final dataHash = extractHash(block.dataEnc, typeStr);
     final sealValue = dataHash ?? block.blockId;
 
+    // Prefer the sealed `day_index` carried in the full block map over the
+    // DB array-position `block.blockIndex`. They diverge for day blocks once
+    // month/year summary blocks interleave (a day's true sequence can differ
+    // from its array index). Emitting the array index would re-write a block
+    // with a day_index its `day_hash` was never sealed over, so a downstream
+    // pull -> verify() fails the block seal. Fall back to blockIndex only for
+    // legacy entries-only data_enc that carries no day_index (mirrors the
+    // `date` handling below).
+    final sealedDayIndex = encodedMap[kDayIndex];
+    final dayIndex = sealedDayIndex is int ? sealedDayIndex : block.blockIndex;
+
     // `date` is carried from the sealed map when present (genesis is sealed
     // without date on the Flutter side, so it emits none), falling back to
     // the DB createdAt for legacy entries-only data_enc. Must be placed
     // before prev_hash so key order matches the seal payload.
     final result = <String, dynamic>{
       kType: typeStr,
-      kDayIndex: block.blockIndex,
+      kDayIndex: dayIndex,
       kPrevHash: block.prevHash,
       kEntries: entries,
       sealField: sealValue,

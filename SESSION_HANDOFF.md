@@ -18,6 +18,10 @@
 - **Remote sync E2E:** 8/8 GREEN (`--timeout 180s`) | **Python suite:** 2614 pass / 1 skip / 0 fail.
 
 ## Immediate Next Steps 🎯
+- **✅ Validated:** day_index fix + remote repair verified on emulator 2026-08-18. Fresh Restore
+  from Cloud → `tool/diag_verify.dart /tmp/em_final_diag.db` → verify(): true, ALL CHECKS PASSED
+  (134 blocks; blocks 132/133 now correct day_index 122/123). Next: Commonplace Book UI wiring
+  (screen, add/edit-not-in-place entry, topic/tag index).
 - **✅ Commonplace Book — 4-PHASE TDD COMPLETE (2026-08-21).** ADR-031 separate sealed `commonplace.json`
   chain (same seed→same MK, own genesis; `title`/`tags`/`entry` + optional ad-hoc k/v, no `comment`).
   Phase 3 GREEN 55/55 in `lib/data/commonplace/` (chain/engine/storage). **Phase 4 REFACTOR:** shared
@@ -61,6 +65,17 @@
 - Pre-existing Flutter failures (unchanged, verified on baseline): `ledger_backup` B1/B4/E6, `ledger_pull`
   B4/B6/C3/C4/F3, `sync_screen` L2/L3/L4/L6+R5, `restore_integration` G1/G3/G5/G6, `sync_service` E15/L4
   (flaky), `ccs1_gap_closure` load error, `widget_test.dart` (baseline, independent of sync wiring).
+- **FIXED + VALIDATED: `day_index` corruption on push/export breaks verify after pull (2026-08-17/18).**
+  Root cause: `PhpSpecFormat.blockToMap` (shared by push + export) emitted `day_index = block.blockIndex`
+  (DB array position) instead of the sealed day_index carried in data_enc. Once month/year summary blocks interleave,
+  a day block's array index diverges from its true day sequence (blocks 132/133, dates 08-14/15, had array pos 132/133
+  but sealed day_index 122/123) → the remote R2 blobs carried a day_index the `day_hash` was never sealed over, so any
+  pull + verify() failed the block seal (emulator). Fix: prefer `encodedMap[kDayIndex]`, fall back to `blockIndex` only
+  for legacy entries-only data_enc. Regression test `ledger_day_index_roundtrip_test.dart` (RED without, GREEN with).
+  **Remote repaired 2026-08-18** via `tool/repair_remote_blocks.dart` (re-pushed 000132/000133 from phone DB with correct
+  canonical day_index; hashes unchanged). **Emulator restore now verifies: `tool/diag_verify.dart` → verify(): true,
+  ALL CHECKS PASSED.** Underlying cause: blocks 132/133 were built post-phone-repair against a truncated chain
+  (reused day_index 122/123), then miscalized on push.
 - `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — RETIRED ✅. `stagingStore` required/non-null.
 - `verify()` after cloud restore — FIXED (Plan B: RC1–RC3). `VERIFY_RESTORE_FIX_PLAN_B.md`.
 
