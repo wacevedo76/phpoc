@@ -11,6 +11,13 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux` → clean, pushed `1439fa3` (delete-tombstone + flake-fix + docs)
+- **✅ Book Switcher DONE (2026-08-21, Commonplace UI-wiring first step):** shell-level switcher bar
+  rendered above each page in `AppScaffold` (`PH Ledger` ↔ `PH Commonplace Book`), selection persisted
+  in `AppPreferences` (`book_mode`). `enum Book` + `bookProvider` in `lib/features/shared/book_switcher.dart`;
+  13/13 tests GREEN (`test/features/book_switcher_test.dart`); analyzer 0; no new `test/features/` failures.
+  `test/features/navigation_test.dart` mounts now wrap routers in a `ProviderScope` (matches prod `main.dart`).
+  Emulator `emulator-5554` running the new build (VM at :36637) but sits on the unlock screen — needs
+  the passphrase to reach the Dashboard shell before the switcher is visible. Plan: `COMMONPLACE_BOOK_SWITCHER_PHASE1.md`.
 - **Phone `RFCW50FZQPJ`:** fix deployed (debug 0.1.0) + local ledger repaired (132 blocks == remote,
   280 staging rows, no dups) — verified working.
 - **Delete-resurrection root cause FOUND + FIXED live (2026-08-19):** it was NOT the running build's
@@ -28,13 +35,11 @@
 - **Remote sync E2E:** 8/8 GREEN (`--timeout 180s`) | **Python suite:** 2614 pass / 1 skip / 0 fail.
 
 ## Immediate Next Steps 🎯
-- **✅ day_index fix + remote repair VALIDATED (2026-08-18):** emulator Restore from Cloud →
-  `tool/diag_verify.dart /tmp/em_final_diag.db` → verify(): true, ALL CHECKS PASSED (134 blocks;
-  blocks 132/133 now correct day_index 122/123). Archived: `SESSION_HISTORY_2026-08-18.md`.
 - **Commonplace Book — UI wiring (next slice after the chain-engine slice below).** Data layer done
   (ADR-031 sealed `commonplace.json` chain, 55/55 GREEN). Now build the UI surface. Other follow-on
   slices (each its own BACKLOG item when planned):
-  - **UI wiring** — Commonplace Book screen, add/edit-not-in-place entry, topic/tag index
+  - **UI wiring (in progress)** — ✅ Book Switcher (first step, done 2026-08-21); next: Commonplace
+    Book screen, add/edit-not-in-place entry, topic/tag index
   - **Remote sync** — same Worker under a new R2 path (`commonplace/...`) + MK-derived device cookie
   - **Shared key-rotation extension** — extend ADR-026 so it also re-encrypts Commonplace chain(s)
   - **Tag-search blind index** (encrypted, MK-derived) — deferred (decrypt-and-scan initially)

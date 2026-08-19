@@ -90,7 +90,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `lib/features/import/import_providers.dart` | HOT | **B-02 Phase 3** — ImportNotifier (Notifier<ImportState>) + importServiceProvider: sealed state machine (Initial→Ready→Previewing→Loaded→Running→Done/Failed) |
 | `lib/features/import/import_preview_sheet.dart` | HOT | **NEW (B-02 Phase 3)** — ImportPreviewSheet (ModalBottomSheet): entry count, date range, conflicts, Import/ImportAnyway |
 | `lib/features/import/import_progress_sheet.dart` | HOT | **NEW (B-02 Phase 3)** — ImportProgressSheet (ModalBottomSheet): .running (phase + indicator), .success (summary), .error (recovery) |
-| `lib/features/shared/app_scaffold.dart` | HOT | Bottom-nav shell (Dashboard/History/Sync/Settings) |
+| `lib/features/shared/app_scaffold.dart` | HOT | Bottom-nav shell (Dashboard/History/Sync/Settings); renders `BookSwitcher` bar above the page (Commonplace UI-wiring) |
+| `lib/features/shared/book_switcher.dart` | HOT | **NEW — Book Switcher (Commonplace UI-wiring)** — `enum Book` (ledger/commonplace) + `bookProvider` (StateNotifier) + `BookSwitcher` dropdown bar; selection persisted in `AppPreferences` (`book_mode`) |
 | `lib/features/shared/loading_indicator.dart` | HOT | Shared loading indicator widget |
 | `lib/routing/app_router.dart` | HOT | GoRouter + AppLifecycleNotifier (5-phase lifecycle), /import route (B-02) |
 

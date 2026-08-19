@@ -54,6 +54,24 @@ E (separate-file storage, 9), F (ad-hoc k/v, 5). No UI, no sync, no blind index,
 - Tag-search blind index (encrypted, MK-derived) — deferred
 - Web + CLI parity ports
 
+### ✅ Book Switcher — visible book indicator (UI wiring, first step)
+
+**Status:** ✅ **4-PHASE TDD COMPLETE (2026-08-21)** — Phase 3 GREEN 13/13; Phase 4 clean (analyzer 0, no regressions in `test/features/` baseline).
+**Plan:** `docs/planning/flutter/COMMONPLACE_BOOK_SWITCHER_PHASE1.md` (13 tests, groups A–D).
+
+**What:** A shell-level book switcher bar rendered above each page's own AppBar (Dashboard / History /
+Sync / Settings) via `AppScaffold`. Introduces the `Book` identity (`ledger` ↔ `commonplace`) + selection
+state only — no content swap yet (keep the ledger UI until the Commonplace screens are built).
+
+**Implementation:** `enum Book` + `bookProvider` (Riverpod StateNotifier) in `lib/features/shared/book_switcher.dart`;
+persistence mirrors the theme-mode pattern (`_keyBookMode` / `getBookMode` / `setBookMode` in `lib/data/storage/preferences.dart`);
+`AppScaffold` renders `BookSwitcher` above the page child.
+
+**Decisions:** selection persists across restarts in `AppPreferences`; switcher renders `BookSwitcher` bar
+(name + dropdown), not a full header. Tests: new `test/features/book_switcher_test.dart` (13); update
+`test/features/navigation_test.dart` to mount its routers under a `ProviderScope` (production `main.dart`
+always wraps in one). Dashboard content intentionally untouched (user decision).
+
 ---
 
 **Plan:** `docs/planning/flutter/STAGING_OVERHAUL_PHASE1.md` (110 assertions, 11 groups)

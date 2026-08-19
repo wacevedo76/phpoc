@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:phpoc_flutter/features/shared/app_scaffold.dart';
@@ -7,6 +8,16 @@ import 'package:phpoc_flutter/routing/app_router.dart';
 import 'test_helpers.dart';
 
 /// Navigation / AppScaffold tests — Group I (8 assertions)
+
+/// Pumps a [GoRouter] inside a [ProviderScope], mirroring production
+/// `main.dart` (which wraps the app in a `ProviderScope`).
+///
+/// `AppScaffold` now renders [BookSwitcher] (a Riverpod `ConsumerWidget`),
+/// so the shell must be built under a ProviderScope, exactly as in the app.
+Future<void> _pumpRouter(WidgetTester tester, GoRouter router) async {
+  await tester.pumpWidget(ProviderScope(child: MaterialApp.router(routerConfig: router)));
+  await tester.pump();
+}
 
 void main() {
   group('I: Navigation / AppScaffold', () {
@@ -32,8 +43,7 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-      await tester.pump();
+      await _pumpRouter(tester, router);
 
       expect(find.byType(NavigationBar), findsOneWidget,
           reason: 'Bottom navigation bar must be present');
@@ -72,8 +82,7 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-      await tester.pump();
+      await _pumpRouter(tester, router);
 
       // Default: Dashboard
       expect(router.state.matchedLocation, '/');
@@ -126,8 +135,7 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-      await tester.pump();
+      await _pumpRouter(tester, router);
 
       final navBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(navBar.destinations.length, greaterThan(0));
@@ -154,8 +162,7 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-      await tester.pump();
+      await _pumpRouter(tester, router);
 
       expect(find.byType(NavigationBar), findsOneWidget,
           reason: 'AppScaffold must render NavigationBar during ready phase');
@@ -180,8 +187,7 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: testRouter));
-      await tester.pump();
+      await _pumpRouter(tester, testRouter);
 
       expect(find.text('Initializing PH Ledger...'), findsOneWidget,
           reason: 'Boot phase must show loading screen');

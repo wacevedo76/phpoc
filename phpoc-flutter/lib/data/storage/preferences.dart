@@ -21,6 +21,7 @@ class AppPreferences {
   static const _keyHasExistingData = 'has_existing_data';
   static const _keyThemeMode = 'theme_mode';
   static const _keyBiometricEnabled = 'biometric_enabled';
+  static const _keyBookMode = 'book_mode';
 
   // ── Worker URL ───────────────────────────────────────────
 
@@ -121,6 +122,22 @@ class AppPreferences {
       return;
     }
     await _prefs!.setBool(_keyBiometricEnabled, value);
+  }
+
+  // ── Book Mode (PH Ledger / Commonplace Book) ─────────────
+
+  /// Returns the active book mode ('ledger' default, or 'commonplace').
+  Future<String> getBookMode() async {
+    if (_isTest) return _store![_keyBookMode] as String? ?? 'ledger';
+    return _prefs!.getString(_keyBookMode) ?? 'ledger';
+  }
+
+  Future<void> setBookMode(String mode) async {
+    if (_isTest) {
+      _store![_keyBookMode] = mode;
+      return;
+    }
+    await _prefs!.setString(_keyBookMode, mode);
   }
 
   // ── Clear ────────────────────────────────────────────────
