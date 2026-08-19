@@ -219,6 +219,37 @@ void main() {
 
       // Phase 3: commit-entry section shows "Coming in a future update"
     });
+
+    testWidgets('G14: one-off task shows One-time badge when card expanded',
+        (tester) async {
+      final crypto = CryptoService();
+      await crypto.initialize();
+      final storage = _TestStorage();
+      final db = AppDatabase.inMemory();
+      final stagingStore = StagingStore(db);
+      final syncSvc = SyncService(
+        storage: storage,
+        crypto: crypto,
+        stagingStore: stagingStore,
+      );
+      await syncSvc.capture(title: 'Badge Task', isOneOff: true);
+
+      await pumpScreenWidget(tester, const SyncScreen(),
+          initialPhase: AppPhase.ready,
+          overrides: [
+            data_providers.syncServiceProvider.overrideWith((ref) => syncSvc),
+          ]);
+
+      // Expanded badge is hidden until the card is expanded.
+      expect(find.text('One-time'), findsNothing,
+          reason: 'Badge must be hidden while the card is collapsed');
+
+      await tester.tap(find.text('Badge Task'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('One-time'), findsOneWidget,
+          reason: 'One-off badge must appear once the card is expanded');
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════

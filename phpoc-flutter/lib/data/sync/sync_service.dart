@@ -452,6 +452,7 @@ class SyncService {
       'activity_status': row['activity_status'],
       'updated_at': row['updated_at'],
       'committed': activityData['committed'] ?? false,
+      'one_off': row['one_off'] ?? activityData['one_off'] ?? false,
     };
   }
 

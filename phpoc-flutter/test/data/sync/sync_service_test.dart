@@ -442,6 +442,21 @@ void main() {
       final entries = await svc.getEntries();
       expect(entries, isEmpty, reason: 'All CRUD ops must work fully offline');
     });
+
+    test("E17: one-off tasks surface 'one_off' in getEntries()", () async {
+      final svc = await _makeSync();
+
+      await svc.capture(title: 'One-time Task', isOneOff: true);
+      await svc.capture(title: 'Recurring Task');
+
+      final entries = await svc.getEntries();
+      final oneOff = entries.firstWhere((e) => e['title'] == 'One-time Task');
+      final recurring = entries.firstWhere((e) => e['title'] == 'Recurring Task');
+      expect(oneOff['one_off'], isTrue,
+          reason: 'One-off task must carry the one_off badge flag');
+      expect(recurring['one_off'], isNot(true),
+          reason: 'Recurring task must NOT be flagged one-off');
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════

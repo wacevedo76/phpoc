@@ -653,6 +653,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     final comment = entry['comment'] as String?;
     final pauses =
         (entry['pauses'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final isOneOff = entry['one_off'] == true;
     final startDt = DateTime.fromMillisecondsSinceEpoch(startEpoch);
 
     final displayDurationMs = isExpanded && es != null
@@ -725,7 +726,11 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                   ),
-                  const SizedBox(width: 4),
+                  if (isExpanded && isOneOff) ...[
+                    const SizedBox(width: 6),
+                    _OneOffBadge(),
+                    const SizedBox(width: 4),
+                  ],
                   Icon(
                     isExpanded ? Icons.expand_less : Icons.expand_more,
                     size: 20,
@@ -1371,6 +1376,39 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 }
 
 // ── Per-card editing state ──────────────────────────────────
+
+/// One-time-task badge shown on an expanded uncommitted card.
+class _OneOffBadge extends StatelessWidget {
+  const _OneOffBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.tertiary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.adjust, size: 12, color: color),
+          const SizedBox(width: 3),
+          Text(
+            'One-time',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _CardEditState {
   final TextEditingController titleController;

@@ -7,41 +7,41 @@
 > **⚠️ Git operations require user approval.** Never run `git commit` or `git push` automatically. Ask first.
 >
 > **Full issue queue:** `docs/planning/BACKLOG.md`
-> **Completed milestones (archived):** `docs/planning/archive/` 2026-08-11, 2026-08-19, 2026-08-21
+> **Completed milestones (archived):** `docs/planning/archive/` 2026-08-11, 2026-08-18, 2026-08-19, 2026-08-21
 
 ## Current State
-- **Branch:** `Flutter-features_and_ux` → clean, pushed `4071f27` (Commonplace Book 4-phase TDD; sealable_chain refactor + docs)
+- **Branch:** `Flutter-features_and_ux` → clean, pushed `1439fa3` (delete-tombstone + flake-fix + docs)
 - **Phone `RFCW50FZQPJ`:** fix deployed (debug 0.1.0) + local ledger repaired (132 blocks == remote,
   280 staging rows, no dups) — verified working.
+- **Delete-resurrection root cause FOUND + FIXED live (2026-08-19):** it was NOT the running build's
+  delete logic — that was fixed in `1439fa3` (tombstone-propagate). The live blocker was a *second*
+  device: the emulator (`947e264d`) was actively re-claiming the remote staging cookie/ownership
+  (specifier mismatch → `reauthNeeded` gate → phone's pruned blob never landed → rows resurrected).
+  Fix: stopped emulator app, deleted `tM0S9eZaKX` from phone local DB (276→275), rewrote remote
+  blob+hash_index to orphan-free (0 uncommitted / 275), cookie spec `c89f2389` matches → confirmed
+  stable over 3 periodic ticks: blob stays 0 entries, deleted Push-ups does NOT resurrect, Sync shows
+  "0 entrys pending sync" + "Ready". LEAK: `_getDeviceUuid()` regenerates a fresh random UUID per
+  session (never persisted/cache-consistent), so device attribution churns across restarts — latent
+  product issue; cookie *specifier* is the stable identity.
 - **Flutter test suite:** `test/data/ledger/` + `test/data/commonplace/` GREEN (chain-engine refactor: 349/349).
-  `ledger_push_service`+`engine` 106/106, periodic 18/18, onboarding 65, merge 25 — GREEN.
+  `ledger_push_service`+`engine` 106/106, periodic 18/18, onboarding 65, merge 25, `sync_service` 105/105 — GREEN.
 - **Remote sync E2E:** 8/8 GREEN (`--timeout 180s`) | **Python suite:** 2614 pass / 1 skip / 0 fail.
 
 ## Immediate Next Steps 🎯
-- **✅ Validated:** day_index fix + remote repair verified on emulator 2026-08-18. Fresh Restore
-  from Cloud → `tool/diag_verify.dart /tmp/em_final_diag.db` → verify(): true, ALL CHECKS PASSED
-  (134 blocks; blocks 132/133 now correct day_index 122/123). Next: Commonplace Book UI wiring
-  (screen, add/edit-not-in-place entry, topic/tag index).
-- **✅ Commonplace Book — 4-PHASE TDD COMPLETE (2026-08-21).** ADR-031 separate sealed `commonplace.json`
-  chain (same seed→same MK, own genesis; `title`/`tags`/`entry` + optional ad-hoc k/v, no `comment`).
-  Phase 3 GREEN 55/55 in `lib/data/commonplace/` (chain/engine/storage). **Phase 4 REFACTOR:** shared
-  `SealableChain` mixin (`lib/data/ledger/sealable_chain.dart`) deduped seal/verify/identity-MAC/linkage
-  across both chains → `chain.dart` 476→371, `commonplace_chain.dart` 521→456; merged dup verify gate,
-  removed dead engine marker. **349/349 tests GREEN**, analyzer clean; 29 pre-existing failures unchanged.
-  Full details archived: `docs/planning/archive/SESSION_HISTORY_2026-08-21.md`.
-  **Commonplace Book follow-on slices** (chain-engine slice done; from BACKLOG, each a separate item when
-  planned):
+- **✅ day_index fix + remote repair VALIDATED (2026-08-18):** emulator Restore from Cloud →
+  `tool/diag_verify.dart /tmp/em_final_diag.db` → verify(): true, ALL CHECKS PASSED (134 blocks;
+  blocks 132/133 now correct day_index 122/123). Archived: `SESSION_HISTORY_2026-08-18.md`.
+- **Commonplace Book — UI wiring (next slice after the chain-engine slice below).** Data layer done
+  (ADR-031 sealed `commonplace.json` chain, 55/55 GREEN). Now build the UI surface. Other follow-on
+  slices (each its own BACKLOG item when planned):
   - **UI wiring** — Commonplace Book screen, add/edit-not-in-place entry, topic/tag index
   - **Remote sync** — same Worker under a new R2 path (`commonplace/...`) + MK-derived device cookie
   - **Shared key-rotation extension** — extend ADR-026 so it also re-encrypts Commonplace chain(s)
-  - **Tag-search blind index** (encrypted, MK-derived) — deferred for now (decrypt-and-scan initially)
+  - **Tag-search blind index** (encrypted, MK-derived) — deferred (decrypt-and-scan initially)
   - **Web + CLI parity ports**
-- ✅ Staging-seed dedup fix — 4-PHASE TDD COMPLETE (2026-08-21). Dedup by `activity_id` + shared
-  `StagingSeedDeduper` helper; zero new failures (baseline-verified). See `SESSION_HISTORY_2026-08-21.md`.
-- ✅ Phone ledger repair — DONE (2026-08-21). Phone `RFCW50FZQPJ` chain == remote 132, staging 288→280,
-  sync stable ~15s+. See `SESSION_HISTORY_2026-08-21.md`.
-- ✅ WEB connectToWorker full-chain + blank-card fix — DONE (2026-08-21). 23/23 regression GREEN.
-  See `SESSION_HISTORY_2026-08-21.md`.
+- ✅ Archived (2026-08-21): Commonplace 4-phase TDD + SealableChain refactor; staging-seed dedup fix;
+  phone ledger repair; WEB connectToWorker full-chain + blank-card fix. See
+  `docs/planning/archive/SESSION_HISTORY_2026-08-21.md` for full detail.
 
 ## Known Issues
 - **OPEN: Aug 13–14 2026 activities missing from remote ledger + web History.** The R2 ledger chain ends
@@ -57,38 +57,15 @@
   but **retaining `activity_id`**; seed functions deduped only by `entry_id`/`hash`, so committed entries
   without `entry_id` got re-seeded as new rows via `generateActivityId()`. Fixed in 4-phase TDD
   (`commit 2d05aff`). Phone `RFCW50FZQPJ` **repaired**: DB deduped (8 dup staging rows removed,
-  4 extra blocks dropped), chain now matches clean remote 132. If a fresh re-seed duplicates reappear
-  after a cloud pull on a non-fixed build, the dedup-by-`activity_id` logic (P1) skips them.
+  4 extra blocks dropped), chain now matches clean remote 132.
 - **Live debug visibility:** phone `RFCW50FZQPJ` now **debuggable** (rebuild 2026-08-19, data preserved
   via `install -r`). DB dump: `run-as com.phpoc.phpoc_flutter cat app_flutter/phpoc.db`. Emulator
   `emulator-5554` also debug.
 - Pre-existing Flutter failures (unchanged, verified on baseline): `ledger_backup` B1/B4/E6, `ledger_pull`
   B4/B6/C3/C4/F3, `sync_screen` L2/L3/L4/L6+R5, `restore_integration` G1/G3/G5/G6, `ccs1_gap_closure`
   load error, `widget_test.dart` (baseline, independent of sync wiring).
-- **RESOLVED: flaky ordering tests in `sync_service_test.dart` (E15/L4/N12).** `getEntries()`/`getAllRows()`
-  order by random `activity_id ASC`; tests asserting positional order (`entries[i]`) or `modify(<int>, …)`
-  failed ~50–70% of runs. Fixed by resolving by title instead of position. 105/105 pass consistently;
-  test-only change, zero new failures.
-- **FIXED + VALIDATED: `day_index` corruption on push/export breaks verify after pull (2026-08-17/18).**
-  Root cause: `PhpSpecFormat.blockToMap` (shared by push + export) emitted `day_index = block.blockIndex`
-  (DB array position) instead of the sealed day_index carried in data_enc. Once month/year summary blocks interleave,
-  a day block's array index diverges from its true day sequence (blocks 132/133, dates 08-14/15, had array pos 132/133
-  but sealed day_index 122/123) → the remote R2 blobs carried a day_index the `day_hash` was never sealed over, so any
-  pull + verify() failed the block seal (emulator). Fix: prefer `encodedMap[kDayIndex]`, fall back to `blockIndex` only
-  for legacy entries-only data_enc. Regression test `ledger_day_index_roundtrip_test.dart` (RED without, GREEN with).
-  **Remote repaired 2026-08-18** via `tool/repair_remote_blocks.dart` (re-pushed 000132/000133 from phone DB with correct
-  canonical day_index; hashes unchanged). **Emulator restore now verifies: `tool/diag_verify.dart` → verify(): true,
-  ALL CHECKS PASSED.** Underlying cause: blocks 132/133 were built post-phone-repair against a truncated chain
-  (reused day_index 122/123), then miscalized on push.
-- **RESOLVED: deleted staged entry resurrects on next sync (2026-08-18/21).** Deleting an activity
-  on the entry screen only removed the LOCAL row; `sync.remove` never removed it from the remote
-  `staging/blob`, so the next `_reconcileAndClaimRowLevel` pull+merge re-inserted it (mergeEntries
-  treats a remote-only row as authoritative). Observed live: Push-ups `xZ30dtTwvn` (ended, no
-  commit flag) kept coming back after delete ×2 while phone synced to the Worker. Fix: `sync.remove`
-  now tombstone-propagates — deletes the local row AND pushes the remaining local staging to remote
-  (overwriting the blob WITHOUT the deleted row) before scheduling the debounced auto-sync, mirroring
-  the commit-move pattern in `commitAndSync`. Regression test `test/data/sync/delete_resurrect_test.dart`
-  (RED→GREEN). Baseline-verified: zero new failures; `sync_service_test` delete resp. path improved.
+- **RESOLVED (archived `SESSION_HISTORY_2026-08-18.md`):** day_index corruption on push/export;
+  deleted staged entry resurrects on next sync; flaky ordering tests in `sync_service_test` (E15/L4/N12).
 - `_pushBlobOnly()` + `StagingPaths.remoteStagingBlob` — RETIRED ✅. `stagingStore` required/non-null.
 - `verify()` after cloud restore — FIXED (Plan B: RC1–RC3). `VERIFY_RESTORE_FIX_PLAN_B.md`.
 
