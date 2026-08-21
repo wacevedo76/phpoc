@@ -6,6 +6,7 @@ import '../../core/crypto/crypto_service.dart';
 import '../../core/models/sync_result.dart';
 import '../../core/utils/format_utils.dart';
 import '../ledger/engine.dart';
+import '../ledger/helpers.dart' show getBlockHash;
 import 'activity_id.dart';
 import 'device_cookie.dart';
 import 'staging_paths.dart';
@@ -1056,7 +1057,16 @@ class SyncService {
   ///
   /// Returns the hash prefix (first 10 chars of last block hash), or null
   /// if no entries to commit.
-  Future<String?> commitAndSync({List<String>? selectedIds}) async {
+  ///
+  /// [forceLocal] switches off the ADR-030 D11 MOVE: when true the new day
+  /// block is sealed locally but the committed rows are marked `committed`
+  /// (kept for History/Dashboard) instead of being MOVE-deleted, and no
+  /// ledger auto-push happens. The [smartSync] remote-catchup path uses
+  /// `forceLocal: true` then pushes the merged chain itself.
+  Future<String?> commitAndSync({
+    List<String>? selectedIds,
+    bool forceLocal = false,
+  }) async {
     // Get all ended entries
     final ended = await stagingStore.getRowsByStatus('ended');
 
@@ -1088,16 +1098,18 @@ class SyncService {
 
     final hashPrefix = ledgerEngine!.commit(toCommit);
 
-    // D11 / ADR-030: when the ledger-push delegate is wired, "Commit to
-    // Ledger" is a MOVE: seal → auto-push the new ledger block(s) to Remote →
-    // wipe the committed rows from local staging. Legacy mode (delegate null)
-    // keeps committed rows in staging (marked committed) for History display.
+    // D11 / ADR-030: default (forceLocal=false) turn "Commit to Ledger" into
+    // a MOVE only when the ledger-push delegate is wired: seal → auto-push the
+    // new ledger block(s) to Remote → wipe the committed rows from local
+    // staging. `forceLocal` (smartSync) and legacy mode (delegate null) keep
+    // committed rows in staging (marked committed) for History display.
     final committedIds = toCommit
         .map((r) => r['activity_id'] as String?)
         .whereType<String>()
         .toSet();
 
-    if (ledgerPush != null && transport != null && hashPrefix != null) {
+    final moveRows = !forceLocal && ledgerPush != null && transport != null;
+    if (moveRows && hashPrefix != null) {
       // Auto-push the freshly committed blocks to Remote (D11). Failure to
       // push is not fatal to the local commit — staging still reconciles via
       // the auto-sync path.
@@ -1111,16 +1123,7 @@ class SyncService {
     } else {
       // F3: mark committed rows (preserve for History display; the Sync tab
       // filters them out via the committed flag).
-      for (final row in toCommit) {
-        // Update row-level committed flag
-        row['committed'] = true;
-        // Update committed flag inside the activity JSON blob too,
-        // since _stagingRowToDto reads committed from the blob first.
-        final act = _decodeActivityBlob(row['activity'] as String?);
-        act['committed'] = true;
-        row['activity'] = json.encode(act);
-        await stagingStore.putRow(row, preserveUpdatedAt: true);
-      }
+      await _markCommittedRows(toCommit);
     }
 
     // F4, F5: push remaining (uncommitted) staging to remote if configured
@@ -1133,12 +1136,243 @@ class SyncService {
     return hashPrefix;
   }
 
+  /// Mark ended staging rows committed in place (row-level flag + the
+  /// `committed` field inside the activity JSON blob), preserving them for
+  /// History/Dashboard display. Shared by the [commitAndSync] F3 branch and
+  /// the no-engine local fallback in [smartSync].
+  Future<void> _markCommittedRows(List<Map<String, dynamic>> rows) async {
+    for (final row in rows) {
+      row['committed'] = true;
+      final act = _decodeActivityBlob(row['activity'] as String?);
+      act['committed'] = true;
+      row['activity'] = json.encode(act);
+      await stagingStore.putRow(row, preserveUpdatedAt: true);
+    }
+  }
+
   /// Legacy alias — delegates to [commitAndSync] with no selections.
   ///
   /// Retained only for backward-compat callers; row-level commit keeps
   /// committed entries in staging (marked committed=true) for History.
   Future<String?> commitEntries() async {
     return commitAndSync();
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // Smart Sync (unified Sync action) — SMART_SYNC_BUTTON_PHASE1
+  // ═════════════════════════════════════════════════════════════
+
+  /// Unified "Sync" action.
+  ///
+  /// Route the button through a decide-then-act flow (option (b),
+  /// reconcile-then-push):
+  ///   - **not configured** (no transport) or **offline** (health check
+  ///     fails) → local-only commit (mark ended entries committed,
+  ///     never push): [SmartSyncOutcome.committedLocal] (or
+  ///     [SmartSyncOutcome.nothingToCommit] when empty).
+  ///   - **configured + online** → pull the remote ledger blocks, merge any
+  ///     missing sealed blocks into the local chain (`reconcileRemoteLedger`,
+  ///     preserving the local unsealed tail), commit ended entries in place,
+  ///     then push the merged chain to Remote. Reports remoteSynced when
+  ///     something changed, remoteDry when already in sync, pushFailed when
+  ///     R2 cannot be reached.
+  Future<SmartSyncOutcome> smartSync({List<String>? selectedIds}) async {
+    final engine = ledgerEngine;
+
+    // No ledger engine → none of the remote reconcile/push work is possible,
+    // so the only path is a local-only mark of ended rows (never crashes on
+    // an unconfigured device; mirrors the unconfigured/unwired legacy flow).
+    if (engine == null) {
+      final marked = await _markEndedCommitted(selectedIds);
+      return marked
+          ? SmartSyncOutcome.committedLocal
+          : SmartSyncOutcome.nothingToCommit;
+    }
+
+    // Not configured OR health check fails → local-only commit (mark ended
+    // entries committed, never pull or push).
+    if (transport == null || !await _isRemoteOnline()) {
+      final hash = await commitAndSync(
+        selectedIds: selectedIds,
+        forceLocal: true,
+      );
+      return hash != null
+          ? SmartSyncOutcome.committedLocal
+          : SmartSyncOutcome.nothingToCommit;
+    }
+
+    // Configured + online.
+    var changed = false;
+
+    // 1. Pull + merge the remote ledger onto the local chain (append-only;
+    // never truncates the local unsealed tail, never clobbers a fork).
+    final remoteBlocks = await _readRemoteBlocks();
+    if (remoteBlocks.isNotEmpty) {
+      final reconcile = await reconcileRemoteLedger(remoteBlocks);
+      changed = reconcile.appended > 0;
+    }
+
+    // 2. Commit ended entries in place (mark committed, keep for History;
+    // the merge/push below pushes the sealed block(s)).
+    final hash = await commitAndSync(
+      selectedIds: selectedIds,
+      forceLocal: true,
+    );
+    changed = changed || hash != null;
+
+    // 3. Push the full merged chain to Remote. Always attempted on the online
+    // path so a push failure (even with nothing new) surfaces as pushFailed
+    // instead of a false "in sync" (A8).
+    final pushSvc = ledgerPush;
+    if (pushSvc != null) {
+      try {
+        final result = await pushSvc.pushBlocks(engine.getAllBlocks());
+        if (!result.success) return SmartSyncOutcome.pushFailed;
+      } catch (_) {
+        return SmartSyncOutcome.pushFailed;
+      }
+    } else {
+      // No push delegate wired: fall back to a local-only success so the UI
+      // degrades instead of erroring.
+      return hash != null
+          ? SmartSyncOutcome.committedLocal
+          : SmartSyncOutcome.nothingToCommit;
+    }
+
+    return changed
+        ? SmartSyncOutcome.remoteSynced
+        : SmartSyncOutcome.remoteDry;
+  }
+
+  /// Mark ended (optionally [selectedIds]) staging rows committed without a
+  /// ledger engine — the no-engine local-only fallback for [smartSync].
+  Future<bool> _markEndedCommitted(List<String>? selectedIds) async {
+    final ended = await stagingStore.getRowsByStatus('ended');
+    final uncommitted = ended.where((r) => !_rowIsCommitted(r)).toList();
+    List<Map<String, dynamic>> toMark = uncommitted;
+    if (selectedIds != null) {
+      final set = selectedIds.toSet();
+      toMark = uncommitted
+          .where((r) => set.contains(r['activity_id']))
+          .toList();
+    }
+    if (toMark.isEmpty) return false;
+    await _markCommittedRows(toMark);
+    return true;
+  }
+
+  /// Probe the transport health so smartSync can decide online vs offline.
+  Future<bool> _isRemoteOnline() async {
+    final t = transport;
+    if (t == null) return false;
+    try {
+      await t.healthCheck();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Read the remote ledger blocks from R2 as chain maps (deobfuscated).
+  ///
+  /// Uses `ledger/hash_index.json` (plaintext) to discover block count, then
+  /// pulls and deobfuscates each `ledger/blocks/NNNNNN.json`. Returns an empty
+  /// list when there is nothing remote, no master key, or a pull/parse error
+  /// (fail-safe).
+  Future<List<Map<String, dynamic>>> _readRemoteBlocks() async {
+    final t = transport;
+    if (t == null || !crypto.hasMasterKey) return const [];
+    try {
+      final indexBytes = await t.pull('ledger/hash_index.json');
+      if (indexBytes == null) return const [];
+      final hashes = json.decode(utf8.decode(indexBytes));
+      if (hashes is! List) return const [];
+      final mk = crypto.getMasterKey()!;
+      final blocks = <Map<String, dynamic>>[];
+      for (var i = 0; i < hashes.length; i++) {
+        final path = 'ledger/blocks/${i.toString().padLeft(6, '0')}.json';
+        final raw = await t.pull(path);
+        if (raw == null) continue;
+        final jsonStr = crypto.deobfuscateBlob(raw, mk);
+        blocks.add(json.decode(jsonStr) as Map<String, dynamic>);
+      }
+      return blocks;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Merge a remote ledger (chain maps) onto the local chain, append-only.
+  ///
+  /// For each position, a remote block identical (same hash) to the local one
+  /// is skipped. A remote block whose chain diverges from the local sealed
+  /// chain — same index, different hash, or whose `prev_hash` does not bridge
+  /// to the last local block — is **reported as a conflict and never written**, so
+  /// a stale device never clobbers remote canonical blocks (D3/D4). Missing
+  /// remote blocks that bridge the local tail are appended in order (D1/D2),
+  /// so a behind-device catches up instead of overwriting.
+  ///
+  /// Returns a [ReconcileResult] listing conflicted block ordinals and the
+  /// count appended.
+  Future<ReconcileResult> reconcileRemoteLedger(
+    List<Map<String, dynamic>> remoteBlocks,
+  ) async {
+    final engine = ledgerEngine;
+    if (engine == null) return const ReconcileResult();
+    final chain = engine.chain;
+    final local = chain.readAll();
+
+    final conflicted = <int>[];
+    var appended = 0;
+
+    for (var i = 0; i < remoteBlocks.length; i++) {
+      final remote = remoteBlocks[i];
+      if (i < local.length) {
+        // Same ordinal exists locally: skip if identical, else conflict.
+        if (getBlockHash(local[i]) == getBlockHash(remote)) continue;
+        conflicted.add(i);
+        return ReconcileResult(
+          conflictedIndices: conflicted,
+          appended: appended,
+        );
+      }
+
+      // Remote block extends beyond the local tail.
+      final toAppend = remoteBlocks.sublist(i);
+      if (i == 0) {
+        // No local blocks at all — only a genesis can start a chain.
+        if (toAppend.first['type'] != 'genesis') {
+          conflicted.add(0);
+          return ReconcileResult(
+            conflictedIndices: conflicted,
+            appended: appended,
+          );
+        }
+        chain.appendBlocks(toAppend);
+        appended = toAppend.length;
+        break;
+      }
+
+      // The introduced remote block must bridge to the last local block;
+      // otherwise the remote fork diverged earlier → conflict, no write.
+      final expectedPrev = getBlockHash(local[i - 1]);
+      final actualPrev = remote['prev_hash'] as String? ?? '';
+      if (expectedPrev.isNotEmpty && actualPrev != expectedPrev) {
+        conflicted.add(i);
+        return ReconcileResult(
+          conflictedIndices: conflicted,
+          appended: appended,
+        );
+      }
+      chain.appendBlocks(toAppend);
+      appended = toAppend.length;
+      break;
+    }
+
+    return ReconcileResult(
+      conflictedIndices: conflicted,
+      appended: appended,
+    );
   }
 }
 
@@ -1152,4 +1386,45 @@ enum SyncingStatus {
 
   /// Persistent push failure — network or server error.
   error,
+}
+
+/// Outcome of a [SyncService.smartSync] call — drives the unified Sync button's
+/// result reporting (SMART_SYNC_BUTTON_PHASE1).
+enum SmartSyncOutcome {
+  /// Configured + online: reconciled missing blocks and/or pushed the merged
+  /// chain to Remote.
+  remoteSynced,
+
+  /// Committed ended entries to the local ledger only (unconfigured, offline,
+  /// or no push delegate) — no remote push.
+  committedLocal,
+
+  /// Nothing to commit and nothing to reconcile.
+  nothingToCommit,
+
+  /// Configured + online but the ledger push to Remote failed.
+  pushFailed,
+
+  /// Configured + online and already in sync — no redundant push reported.
+  remoteDry,
+}
+
+/// Result of a [SyncService.reconcileRemoteLedger] merge: which remote block
+/// ordinals diverged from the local sealed chain (never written), and how many
+/// missing blocks were appended (behind-device catch-up).
+class ReconcileResult {
+  /// Block ordinals where the remote chain conflicted with the local chain and
+  /// was NOT written (fork / same-index-different-hash / non-bridging tip).
+  final List<int> conflictedIndices;
+
+  /// Number of missing remote blocks appended to the local chain.
+  final int appended;
+
+  const ReconcileResult({
+    this.conflictedIndices = const [],
+    this.appended = 0,
+  });
+
+  /// Whether the merge surfaced any divergent/cannot-merge remote block.
+  bool get hasConflicts => conflictedIndices.isNotEmpty;
 }

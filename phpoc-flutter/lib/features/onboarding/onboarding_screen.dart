@@ -201,11 +201,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Future<void> _startRestoreCloudFlow() async {
     final confirmed = await _confirmWipeExistingData();
     if (!mounted) return;
-    // Pre-fill personal ledger credentials for dev testing
-    _seedController.text = 'APuJ75EWteCJm9ix0/xHY+/JojRehcXwZR5XiQWmeU0=';
-    _passphraseController.text = '!n00n3kn0wsth1sb0tm3';
-    _workerUrlController.text = 'https://phpoc-staging.wacevedo.workers.dev';
-    _workerApiKeyController.text = '78hX3rbf/m/iuoVV1bIFCEDqsqQW+csp';
+    // Credentials are intentionally NOT hardcoded here (no secrets in repo).
+    // TEST_CREDENTIALS.md (gitignored) is the canonical source for the
+    // personal-worker URL/API key and recovery seed/passphrase used for
+    // dev restore-from-cloud testing; they are entered at runtime.
+    _seedController.clear();
+    _passphraseController.clear();
+    _workerUrlController.clear();
+    _workerApiKeyController.clear();
     if (confirmed) {
       setState(() {
         _step = _OnboardingStep.restoreCloud;

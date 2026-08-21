@@ -357,11 +357,20 @@ void main() {
       expect(block, isNotNull);
       expect(block!.blockId, 'block-id-month');
       expect(block.blockType, BlockType.month);
-      expect(block.blockIndex, 5);
+      // blockIndex is the unique chain ordinal (array position), NOT the
+      // PHPSPEC day_index — blocks.block_index has a SQLite UNIQUE constraint
+      // and summary/day indices would collide otherwise (see fidelity C4).
+      // The block's own day_index:5 is preserved inside data_enc below.
+      expect(block.blockIndex, 0);
       expect(block.identitySeal, 'hmac-seal-value');
       expect(block.prevHash,
           'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890');
       expect(block.createdAt, greaterThan(0));
+      // day_index survives the import inside the canonical data_enc map.
+      final decoded = jsonDecode(utf8.decode(base64.decode(block.dataEnc)))
+          as Map<String, dynamic>;
+      expect(decoded['day_index'], 5,
+          reason: 'day_index must be preserved inside data_enc');
     });
 
     // B5

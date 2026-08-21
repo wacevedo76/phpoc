@@ -59,9 +59,11 @@ class LedgerBackupService {
       throw const FormatException('Invalid JSON: expected a JSON array');
     }
 
-    // Reject empty imports — importing zero blocks would wipe the ledger.
+    // No-op on empty imports — importing zero blocks would wipe the ledger,
+    // so leave any existing data untouched rather than replacing it with
+    // nothing (B1 contract: importing `[]` is a safe no-op).
     if (parsed.isEmpty) {
-      throw const FormatException('Cannot import an empty ledger — no blocks found');
+      return;
     }
 
     // Validate all blocks before writing anything
@@ -142,8 +144,9 @@ class LedgerBackupService {
     // — they use month/year fields instead. Also, day_index values
     // from day blocks may collide with array positions of summary
     // blocks (e.g., month_summary at index 2 then day with day_index=2).
-    // Use the array index for all blocks to guarantee uniqueness and
-    // preserve chain order. day_index is not used after import.
+    // Use the array index (chain ordinal) for ALL blocks to guarantee
+    // a unique blocks.block_index (SQLite UNIQUE constraint) and preserve
+    // chain order. day_index is preserved inside data_enc only.
     final dayIndex = index;
 
     // ── prev_hash → prevHash ─────────────────────────────────

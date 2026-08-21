@@ -72,8 +72,15 @@ class _MockHttpTransport extends HttpTransport {
     _store[path] = data;
   }
 
+  /// When true, [healthCheck] throws immediately — simulating an
+  /// unreachable/failing Worker without any real network I/O.
+  bool throwOnHealthCheck = false;
+
   @override
   Future<void> healthCheck() async {
+    if (throwOnHealthCheck) {
+      throw Exception('Mock healthCheck failure (Worker down)');
+    }
     // No-op: mock always succeeds
   }
 
@@ -232,7 +239,19 @@ void main() {
         '(identity + local genesis)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
-      final onboarding = await _makeOnboarding(db: db, prefs: prefs);
+      // Fast-failing transport simulates an unreachable Worker without
+      // blocking on real network I/O (which would blow past the test
+      // timeout). connectWorker reuses this transport and its healthCheck
+      // throws immediately, so restore fail-opens within milliseconds.
+      final mock = _MockHttpTransport()..throwOnHealthCheck = true;
+      final crypto = CryptoService()..initialize();
+      final sync = SyncService(
+        storage: _FakeStorage(),
+        crypto: crypto,
+        stagingStore: StagingStore(db),
+      )..transport = mock;
+      final onboarding =
+          await _makeOnboarding(db: db, prefs: prefs, sync: sync);
 
       // Invalid URL simulates unreachable Worker — restore must not fail
       await onboarding.restoreFromCloud(
@@ -252,23 +271,36 @@ void main() {
           reason: 'Device UUID must be set');
     });
 
-    // A7
-    test('A7: restoreFromCloud with existing data throws LedgerExistsException',
-        () async {
+    // A7 — ADOPT contract (V4/B4): restore does NOT throw on an existing
+    // ledger. Unlike the strict creation flows (createNewLedger / importFromSeed
+    // / importFromFile), which throw LedgerExistsException via _ensureNoLedger,
+    // restore adopts a compatible existing chain. So a restore over an existing
+    // ledger must complete without throwing and preserve the on-device state.
+    test('A7: restoreFromCloud over an existing ledger adopts it without '
+        'throwing (ADOPT)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
 
       // First, create a ledger
       await onboarding.createNewLedger(validPassphrase);
+      final genesisBefore =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisBefore, isNotEmpty);
 
-      // Restore should throw
-      expect(
-        () => onboarding.restoreFromCloud(
-          validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
-        ),
-        throwsA(isA<LedgerExistsException>()),
+      // Restore over existing data must NOT throw (ADOPT); it keeps the
+      // device onboarded and preserves the adopted genesis.
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
+
+      // Existing ledger is intact and device remains onboarded.
+      final genesisAfter =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisAfter, isNotEmpty,
+          reason: 'ADOPT must not wipe the existing genesis');
+      expect(await onboarding.hasExistingData(), isTrue,
+          reason: 'Device must remain onboarded after adopt-restore');
     });
 
     // A8
@@ -538,9 +570,12 @@ void main() {
           reason: 'Restore must handle large blobs without OOM');
     });
 
-    // H2
-    test('H2: concurrent restore calls — second call detects existing '
-        'data and throws', () async {
+    // H2 — ADOPT contract (V4/B4): restore is idempotent over existing data.
+    // A second restore does NOT throw LedgerExistsException (that guard is
+    // scoped to creation flows); it adopts the existing chain and keeps the
+    // device onboarded, leaving identity intact.
+    test('H2: concurrent restore calls — second call adopts existing data '
+        'and stays intact (idempotent)', () async {
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
       final onboarding = await _makeOnboarding(db: db, prefs: prefs);
@@ -550,17 +585,23 @@ void main() {
         validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
-      // Second call without wipeExisting should fail — genesis already exists
-      expect(
-        () => onboarding.restoreFromCloud(
-          validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
-        ),
-        throwsA(isA<LedgerExistsException>()),
-        reason: 'Second restore without wipeExisting must detect existing data',
+      final genesisAfterFirst =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisAfterFirst, isNotEmpty,
+          reason: 'First restore must establish a local genesis');
+
+      // Second call without wipeExisting must NOT throw — it adopts the
+      // existing chain rather than throwing LedgerExistsException.
+      await onboarding.restoreFromCloud(
+        validSeedB64, validPassphrase, validWorkerUrl, validApiKey,
       );
 
       // Identity is still intact after both calls
       expect(await prefs.hasExistingData(), isTrue);
+      final genesisAfterSecond =
+          await db.blockDao.getBlocksByType(BlockType.genesis);
+      expect(genesisAfterSecond, isNotEmpty,
+          reason: 'Second restore must not wipe the adopted genesis');
     });
 
     // H3
@@ -727,21 +768,23 @@ void main() {
       crypto.clearMasterKey();
       await auth.reauthenticate('123456789');
 
-      // Read entries from Flutter's history view
+      // Read entries from Flutter's history view. The live R2 staging worker
+      // is a moving target (count drifts as test data lands/expires), so we
+      // assert resilient data-integrity invariants rather than an exact count
+      // that would flake between runs.
       final entries = await syncService.getEntries();
-      expect(entries.length, 146,
-          reason: 'Must pull all 146 entries from R2');
+      expect(entries.length, greaterThan(0),
+          reason: 'Must pull a non-empty set from the live R2 staging worker');
+      expect(entries.length, greaterThan(100),
+          reason: 'R2 ledger anchors ~130 entries; got ${entries.length}');
 
-      // Build expected dates from testdata/ledger.json
-      // Each entry has title + plain:-formatted startTime_enc
-      // We'll build an index: title → expected epoch (ms)
-      // But titles may repeat, so we check: every epoch is non-zero
-      // and at least one entry has a known date from the ledger.
+      // Every entry must carry a non-zero start_epoch.
       final nonZero = entries
           .where((e) => (e['start_epoch'] as int?) != null &&
               (e['start_epoch'] as int) > 0);
-      expect(nonZero.length, 146,
-          reason: 'All 146 entries must have non-zero start_epoch');
+      expect(nonZero.length, entries.length,
+          reason: 'All ${entries.length} entries must have non-zero '
+              'start_epoch');
 
       // Verify at least two different dates (not all same)
       final dates = entries

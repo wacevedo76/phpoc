@@ -20,7 +20,7 @@ Analyzer clean; no NEW regressions (baseline 8 pre-existing failures identical).
 
 ## Restore-from-cloud E2E on emulator (debug build) — LIVE
 Rebuilt debug APK on `emulator-5554`, drove UI Landing → Restore from Cloud → confirm → creds → Restore.
-Pulled 132-block personal ledger from `phpoc-staging.wacevedo.workers.dev`, seeded 183 ended staging entries.
+Pulled 132-block personal ledger from the personal worker (URL in gitignored TEST_CREDENTIALS.md), seeded 183 ended staging entries.
 NOT on master; local-only test. Restore used personal creds in `TEST_CREDENTIALS.md`.
 
 ## Local/Remote staging auto-sync verified (emulator ↔ phone via remote)

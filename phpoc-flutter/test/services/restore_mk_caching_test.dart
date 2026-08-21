@@ -3,6 +3,7 @@ import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
+import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
 
 /// AuthService — MK caching during restore tests — Group D (6 assertions).
 ///
@@ -42,7 +43,8 @@ Future<AuthService> _makeAuthService({
   final c = crypto ?? await _makeCrypto();
   final d = db ?? AppDatabase.inMemory();
   final p = prefs ?? AppPreferences.testInstance();
-  return AuthService(crypto: c, db: d, preferences: p);
+  return AuthService(
+      crypto: c, db: d, preferences: p, securePreferences: SecurePreferences.testInstance());
 }
 
 void main() {

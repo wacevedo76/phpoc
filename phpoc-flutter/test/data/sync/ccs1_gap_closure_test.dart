@@ -1126,10 +1126,11 @@ void main() {
     });
 
     // D7
-    test('D7 F1 fast path works when stagingStore is null '
-        '(old LocalCache path)', () async {
+    test('D7 F1 fast path works when stagingStore is present '
+        '(read-only fast path)', () async {
       final crypto = await _makeCrypto();
       final storage = _FakeStorage();
+      final db = AppDatabase.inMemory();
 
       // Seed valid cookie
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -1144,20 +1145,21 @@ void main() {
         storage: storage,
         crypto: crypto,
         transport: transport,
-        stagingStore: null, // legacy: no stagingStore
+        stagingStore: StagingStore(db),
       );
 
-      // No entries in LocalCache → no pending writes
+      // No entries in staging → no pending writes
       final result = await svc.checkAndSync();
       expect(result, SyncCheckResult.ready,
-          reason: 'D7: legacy path with no stagingStore must also '
-              'support read-only fast path');
+          reason: 'D7: no pending writes must still support '
+              'read-only fast path');
 
       // No network calls with zero pending writes
       expect(transport.pullPaths, isEmpty,
           reason: 'D7: no remote cookie pull when no writes exist');
 
       svc.dispose();
+      await db.close();
     });
   });
 }

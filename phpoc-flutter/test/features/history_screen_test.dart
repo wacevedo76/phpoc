@@ -185,6 +185,20 @@ int _epochFromStamp(dynamic stamp) {
   return 0;
 }
 
+/// Clear the HistoryScreen's default today-date calendar filter so that the
+/// June test-ledger entries are visible (the screen boots selecting "today",
+/// which hides past entries). Dismisses the deleteable filter Chip.
+Future<void> _clearCalendarFilter(WidgetTester tester) async {
+  final chip = find.byType(Chip);
+  if (chip.evaluate().isEmpty) return;
+  await tester.tap(find.descendant(
+    of: chip,
+    matching: find.byTooltip('Delete'),
+  ));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════
@@ -420,6 +434,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
+      // HistoryScreen defaults to selecting "today"; the June test-ledger
+      // entries are in the past, so clear the calendar filter chip first.
+      await _clearCalendarFilter(tester);
+
       // HistoryScreen filters to is_active != true only.
       // All test ledger entries have is_active: false → all 146 shown.
       // We verify entry cards render by checking for Card widgets.
@@ -467,6 +485,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
+      // Clear the default today-date filter so the June ledger shows.
+      await _clearCalendarFilter(tester);
+
       // Verify known entry titles from the test ledger
       // Block 1 entries: "Working on Project Alpha" appears multiple times
       expect(find.text('Working on Project Alpha'), findsWidgets,
@@ -510,6 +531,9 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
+
+      // Clear the default today-date filter so the June ledger shows.
+      await _clearCalendarFilter(tester);
 
       // Block 1 first entry has tags: ["coding", "work"]
       expect(find.text('coding'), findsWidgets,
@@ -555,9 +579,9 @@ void main() {
       final genesisBlocks = await db.blockDao.getBlocksByType(BlockType.genesis);
       final genesis = genesisBlocks.first;
 
-      // Genesis hash from TEST_CREDENTIALS.md
+      // Genesis identity_seal from the current canonical testdata/ledger.json
       expect(genesis.identitySeal,
-          '9dbf0a3940fe5ce80c9a194043a3da30ad7082ad8edff38160fecda704231b18');
+          'f33ef7bfcaf3023d52be04b8ba224f5aa0f020beba7ac8cc0ec91ddbb0c5d641');
       expect(genesis.prevHash, Block.genesisPrevHash);
       expect(genesis.blockIndex, 0);
       expect(genesis.blockType, BlockType.genesis);

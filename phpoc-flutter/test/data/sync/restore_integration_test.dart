@@ -70,8 +70,15 @@ class _MockHttpTransport extends HttpTransport {
     _store[path] = data;
   }
 
+  /// When true, [healthCheck] throws immediately — simulating an
+  /// unreachable/failing Worker without real network I/O.
+  bool throwOnHealthCheck = false;
+
   @override
   Future<void> healthCheck() async {
+    if (throwOnHealthCheck) {
+      throw Exception('Mock healthCheck failure (Worker down)');
+    }
     // No-op: mock always succeeds
   }
 
@@ -148,7 +155,12 @@ void main() {
         syncService: syncA,
       );
 
-      await onboardingA.createNewLedger(validPassphrase);
+      // Device A imports the SAME shared seed Device B will use. This makes
+      // both devices derive the SAME master key from validSeedB64, so the
+      // row-level blob A obfuscates can be deobfuscated by B. (A fresh
+      // createNewLedger would generate a random seed → different MK → B's
+      // deobfuscation would fail the integrity check.)
+      await onboardingA.importFromSeed(validSeedB64, validPassphrase);
       final hashA = await syncA.capture(title: 'Device A Task',
           tags: ['shared'], startEpoch: 1700000000000);
       expect(hashA, isNotEmpty);
@@ -214,7 +226,20 @@ void main() {
       // RED: Offline resilience — Worker down must not block onboarding.
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
-      final onboarding = await _makeOnboarding(db: db, prefs: prefs);
+      // Fast-failing transport simulates the Worker being down without
+      // blocking on real network I/O (which would exceed the test timeout).
+      // connectWorker reuses this transport; its healthCheck throws
+      // immediately, so restore fail-opens in milliseconds.
+      final c = CryptoService()..initialize();
+      final failing = _MockHttpTransport()..throwOnHealthCheck = true;
+      final sync = _mkSync(_FakeStorage(), c)..transport = failing;
+      final onboarding = OnboardingService(
+        crypto: c,
+        db: db,
+        preferences: prefs,
+        securePreferences: SecurePreferences.testInstance(),
+        syncService: sync,
+      );
 
       // Unroutable address simulates Worker being down
       await onboarding.restoreFromCloud(
@@ -292,7 +317,8 @@ void main() {
         securePreferences: SecurePreferences.testInstance(),
         syncService: syncA,
       );
-      await onboardingA.createNewLedger(validPassphrase);
+      // Device A imports the SHARED seed so B can decrypt A's blob (same MK).
+      await onboardingA.importFromSeed(validSeedB64, validPassphrase);
       await syncA.capture(title: 'Cross-Device Roundtrip',
           tags: ['cross', 'device'], startEpoch: 1700000000000);
       await syncA.pushToRemote();
@@ -344,7 +370,8 @@ void main() {
         securePreferences: SecurePreferences.testInstance(),
         syncService: syncA,
       );
-      await onboardingA.createNewLedger(validPassphrase);
+      // Device A imports the SHARED seed so B can decrypt A's blob (same MK).
+      await onboardingA.importFromSeed(validSeedB64, validPassphrase);
       await syncA.capture(title: 'Hash Index Test',
           tags: ['hash'], startEpoch: 1700000000000);
       await syncA.pushToRemote();

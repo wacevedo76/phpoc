@@ -348,7 +348,7 @@ void main() {
       final commitFinder = find.text('Commit to Local Ledger');
       expect(commitFinder, findsOneWidget);
       await tester.tap(commitFinder);
-      await tester.pump();
+      await tester.pumpAndSettle();
       // After commit, user should see the block hash prefix for verification.
       // Hash format: 10 hex characters.
       expect(
@@ -441,6 +441,9 @@ void main() {
       final buttonFinder = find.text('Push Ledger to Cloud');
       if (buttonFinder.evaluate().isNotEmpty) {
         await tester.tap(buttonFinder);
+        await tester.pump(); // Open the confirmation dialog
+        // Confirm the overwrite dialog, then the push starts.
+        await tester.tap(find.text('Push'));
         await tester.pump();
 
         // During push, button should show loading indicator and be disabled
@@ -475,7 +478,8 @@ void main() {
       final buttonFinder = find.text('Push Ledger to Cloud');
       if (buttonFinder.evaluate().isNotEmpty) {
         await tester.tap(buttonFinder);
-        await tester.pump(); // Show loading spinner
+        await tester.pump(); // Open confirmation dialog
+        await tester.tap(find.text('Push')); // Confirm overwrite
         await tester.pumpAndSettle(); // Wait for push to complete
 
         // After push, SnackBar should show block count + hash prefix
@@ -538,7 +542,8 @@ void main() {
       final buttonFinder = find.text('Push Ledger to Cloud');
       if (buttonFinder.evaluate().isNotEmpty) {
         await tester.tap(buttonFinder);
-        await tester.pump(); // Show loading spinner
+        await tester.pump(); // Open confirmation dialog
+        await tester.tap(find.text('Push')); // Confirm overwrite
         await tester.pumpAndSettle(); // Wait for push to complete
 
         // Error SnackBar must appear
@@ -644,6 +649,8 @@ void main() {
       // Also verify the button still works (can be tapped after sync)
       final pushFinder = find.text('Push Ledger to Cloud');
       await tester.tap(pushFinder);
+      await tester.pump(); // Open confirmation dialog
+      await tester.tap(find.text('Push')); // Confirm overwrite
       await tester.pump(); // Show loading spinner
       expect(find.byType(CircularProgressIndicator), findsOneWidget,
           reason: 'Push button must still function after sync completes');

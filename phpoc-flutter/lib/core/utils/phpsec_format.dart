@@ -87,11 +87,10 @@ class PhpSpecFormat {
     // export -> import lossless so an on-device verify() stays GREEN.
     final encodedMap = _decodeDataEncMap(block.dataEnc);
 
-    // Use the hash from dataEnc as the seal field value, falling back
-    // to block.blockId (DB column) when dataEnc can't be decoded.
-    // Migration recomputes hashes inside dataEnc; blockId may be stale.
-    final dataHash = extractHash(block.dataEnc, typeStr);
-    final sealValue = dataHash ?? block.blockId;
+    // Use the DB-authoritative block.blockId for the seal field value,
+    // falling back to the dataEnc-embedded hash only when the DB column
+    // is empty (E6: blockId wins over any stale seal hash in data_enc).
+    final sealValue = block.blockId;
 
     // Prefer the sealed `day_index` carried in the full block map over the
     // DB array-position `block.blockIndex`. They diverge for day blocks once

@@ -447,7 +447,7 @@ void main() {
           3,
           _dayBlockJson(
               dayIndex: 3,
-              prevHash: 'h2',
+              prevHash: 'h0',
               blockHash: 'h3',
               identitySeal: 'h3'));
 
@@ -480,35 +480,49 @@ void main() {
     // B6
     test('B6: Block roundtrip: obfuscate → deobfuscate → JSON matches '
         'original', () async {
-      final originalJson = _dayBlockJson(
+      // Genesis at index 0 satisfies _validateImportedChain's genesis-first
+      // requirement; the day block links to it via prev_hash.
+      final genesisJson = _genesisBlockJson(
+          blockHash: 'genesis-hash', identitySeal: 'genesis-seal');
+
+      final entryHash =
+          computeEntryHash({'title': 'Test Entry', 'duration': 3600});
+      final dayJson = _dayBlockJson(
         dayIndex: 5,
-        prevHash: 'prev-hash',
+        prevHash: 'genesis-hash',
         blockHash: 'block-hash-5',
         identitySeal: 'seal-5',
         entries: [
           {
-            'hash': 'entry-hash',
+            'hash': entryHash,
             'data': {'title': 'Test Entry', 'duration': 3600},
           },
         ],
       );
 
-      // Obfuscate locally, store in fake transport
-      _storeObfuscatedBlock(transport, crypto, 5, originalJson);
-      transport.hashIndexJson = jsonEncode(['block-hash-5']);
+      // Obfuscate locally, store in fake transport (genesis + day block)
+      _storeObfuscatedBlock(transport, crypto, 0, genesisJson);
+      _storeObfuscatedBlock(transport, crypto, 5, dayJson);
+      transport.hashIndexJson =
+          jsonEncode(['genesis-hash', 'block-hash-5']);
 
       final result = await service.pullAll();
 
       expect(result.success, isTrue);
-      expect(result.blocksPulled, 1);
+      expect(result.blocksPulled, 2);
       // Verify the block's data survived the roundtrip
       final blocks = await db.blockDao.getAllBlocks();
-      expect(blocks.length, 1);
-      // data_enc should contain the entries
-      final dataEnc = blocks[0].dataEnc;
-      final decoded = jsonDecode(utf8.decode(base64.decode(dataEnc)));
-      expect(decoded, isA<List>());
-      expect((decoded as List).length, 1);
+      expect(blocks.length, 2);
+      // data_enc stores the full canonical block map (not a legacy entries
+      // array), so decoding yields a Map whose `entries` carry the data.
+      // blockIndex is the unique chain ordinal: genesis=0, day file index=1
+      // (the day's `day_index: 5` is carried inside data_enc, not blockIndex).
+      final dataEnc = blocks.lastWhere((b) => b.blockIndex == 1).dataEnc;
+      final decoded = jsonDecode(utf8.decode(base64.decode(dataEnc)))
+          as Map<String, dynamic>;
+      final entries = decoded['entries'] as List<dynamic>;
+      expect(entries.length, 1);
+      expect((entries[0] as Map)['data']['title'], 'Test Entry');
     });
   });
 
@@ -613,34 +627,31 @@ void main() {
 
     // C3
     test('C3: Pull + import → staging seeded with entries', () async {
-      transport.hashIndexJson = jsonEncode(['day-hash']);
+      // Genesis block first (required by chain validation), then a day block
+      // with spec-conformant entry hashes.
       _storeObfuscatedBlock(
         transport,
         crypto,
         0,
+        _genesisBlockJson(blockHash: 'genesis-hash',
+            identitySeal: 'genesis-identity-seal-value'),
+      );
+
+      final dataA = {'title': 'Task A', 'duration': 1800, 'tags': ['work']};
+      final dataB = {'title': 'Task B', 'duration': 3600, 'tags': ['personal']};
+      transport.hashIndexJson = jsonEncode(['genesis-hash', 'day-hash']);
+      _storeObfuscatedBlock(
+        transport,
+        crypto,
+        1,
         _dayBlockJson(
-          dayIndex: 0,
-          prevHash:
-              '0000000000000000000000000000000000000000000000000000000000000000',
+          dayIndex: 1,
+          prevHash: 'genesis-hash',
           blockHash: 'day-hash',
           identitySeal: 'day-hash',
           entries: [
-            {
-              'hash': 'e1',
-              'data': {
-                'title': 'Task A',
-                'duration': 1800,
-                'tags': ['work'],
-              },
-            },
-            {
-              'hash': 'e2',
-              'data': {
-                'title': 'Task B',
-                'duration': 3600,
-                'tags': ['personal'],
-              },
-            },
+            {'hash': computeEntryHash(dataA), 'data': dataA},
+            {'hash': computeEntryHash(dataB), 'data': dataB},
           ],
         ),
       );
@@ -686,15 +697,15 @@ void main() {
           identitySeal: 'd-hash',
           entries: [
             {
-              'hash': 'e1',
+              'hash': computeEntryHash({'title': 'Task 1', 'duration': 100}),
               'data': {'title': 'Task 1', 'duration': 100},
             },
             {
-              'hash': 'e2',
+              'hash': computeEntryHash({'title': 'Task 2', 'duration': 200}),
               'data': {'title': 'Task 2', 'duration': 200},
             },
             {
-              'hash': 'e3',
+              'hash': computeEntryHash({'title': 'Task 3', 'duration': 300}),
               'data': {'title': 'Task 3', 'duration': 300},
             },
           ],
@@ -861,7 +872,7 @@ void main() {
           2,
           _dayBlockJson(
               dayIndex: 2,
-              prevHash: 'h1',
+              prevHash: 'h0',
               blockHash: 'h2',
               identitySeal: 'h2'));
 

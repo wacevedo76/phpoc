@@ -15,8 +15,12 @@ import 'package:phpoc_flutter/data/ledger/chain.dart';
 import 'package:phpoc_flutter/data/ledger/helpers.dart'
     show getBlockHash, verifyEntryHashTwoWay, verifyContentHash;
 
-/// Canonical recovery seed (dev ledger). MK = base64-decode(seed).
-const _seed = 'APuJ75EWteCJm9ix0/xHY+/JojRehcXwZR5XiQWmeU0=';
+/// Canonical recovery seed. MK = base64-decode(seed).
+/// Read from the PHPOC_RECOVERY_SEED environment variable (or passed as the
+/// second CLI arg) — never hardcoded in the repo (no secrets in repo).
+const String? _seed = _envSeed;
+
+const String? _envSeed = String.fromEnvironment('PHPOC_RECOVERY_SEED');
 
 class DiagStore {
   DiagStore(String dbPath) {
@@ -130,7 +134,12 @@ Future<void> main(List<String> args) async {
 
   final crypto = CryptoService();
   await crypto.initialize();
-  final mkHex = _toHex(base64.decode(_seed));
+  final seedArg = Platform.environment['PHPOC_RECOVERY_SEED'] ?? _seed;
+  if (seedArg == null || seedArg.isEmpty) {
+    print('ERROR: set PHPOC_RECOVERY_SEED (recovery seed) to run this diagnostic.');
+    exit(2);
+  }
+  final mkHex = _toHex(base64.decode(seedArg));
   crypto.setMasterKey(mkHex);
 
   final store = DiagStore(dbPath);

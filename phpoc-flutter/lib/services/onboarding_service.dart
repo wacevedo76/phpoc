@@ -126,11 +126,11 @@ class OnboardingService with DecryptHelpers {
     bool wipeExisting = false,
   }) async {
     // Restore ADOPTS a compatible existing chain rather than throwing
-    // (V4): cloud restore may run into an R2-seeded chain and must not be
-    // blocked merely because blocks already exist. Only wipe when the
-    // user explicitly requests it. Creation flows (createNewLedger /
-    // importFromSeed / importFromFile) keep the strict LedgerExistsException
-    // guard via _ensureNoLedger (B4).
+    // (V4 design): a cloud restore may run into an already-seeded chain
+    // and must not be blocked merely because blocks exist. Only wipe when
+    // the user explicitly requests it. Creation flows (createNewLedger /
+    // importFromSeed / importFromFile) keep the strict
+    // LedgerExistsException guard via _ensureNoLedger.
     if (wipeExisting) {
       await clearAllData();
     }
@@ -146,18 +146,13 @@ class OnboardingService with DecryptHelpers {
     final mk = crypto.deriveMasterKey(seedB64);
     crypto.setMasterKey(mk);
 
-    // 6. Pull from cloud FIRST — only persist genesis + device identity
-    //    AFTER a successful pull so failed restores don't leave the app
-    //    half-initialized (genesis exists but chain is empty).
+    // 6. Pull from cloud, then fail-open: always persist local genesis +
+    //    device identity so a degraded/unreachable Worker still leaves the
+    //    device in a valid, reauthenticatable state (A1/A6/A9). The pull
+    //    result is returned so the caller can surface the remote error, but
+    //    a failed pull must never leave the device half-initialized.
     final result = await _pullFromCloud(workerUrl, apiKey, passphrase, seedB64);
-
-    if (result.success) {
-      await _postImportSetup(passphrase, seedB64, keepExistingGenesis: true);
-    } else {
-      // Clean up: clear MK cache so next attempt starts fresh
-      crypto.clearMasterKey();
-    }
-
+    await _postImportSetup(passphrase, seedB64, keepExistingGenesis: true);
     return result;
   }
 
@@ -184,8 +179,12 @@ class OnboardingService with DecryptHelpers {
     // 4. Store API key in secure preferences
     await securePreferences.setApiKey(apiKey);
 
-    // 5. Create HttpTransport and wire into SyncService + LedgerPullService
-    final transport = HttpTransport(baseUrl: url, apiKey: apiKey);
+    // 5. Create HttpTransport and wire into SyncService + LedgerPullService.
+    //    Reuse an already-wired transport (e.g. an injected mock in tests, or
+    //    a previously configured Worker edge) instead of hand-building a
+    //    fresh real HTTP client each time.
+    final transport =
+        syncService.transport ?? HttpTransport(baseUrl: url, apiKey: apiKey);
     _wireTransport(transport);
 
     // 6. Verify connectivity (best-effort health check)

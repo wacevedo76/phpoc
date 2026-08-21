@@ -16,15 +16,18 @@ class ThemeNotifier extends StateNotifier<ThemeVariant> {
     _load();
   }
 
+  AppPreferences get _prefs {
+    return AppPreferences.preResolvedInstance ??
+        AppPreferences.testInstance();
+  }
+
   Future<void> _load() async {
-    final name =
-        await AppPreferences.preResolvedInstance!.getThemeMode();
+    final name = await _prefs.getThemeMode();
     state = _parse(name);
   }
 
   Future<void> setVariant(ThemeVariant variant) async {
-    await AppPreferences.preResolvedInstance!
-        .setThemeMode(variant.name);
+    await _prefs.setThemeMode(variant.name);
     state = variant;
   }
 

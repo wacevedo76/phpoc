@@ -37,7 +37,7 @@ def main():
     if len(sys.argv) < 3:
         print(f"Usage: {sys.argv[0]} <worker_url> <recovery_seed>")
         print("Example: python3 scripts/fix_chain_genesis_link.py \\")
-        print("    https://phpoc-staging.wacevedo.workers.dev \\")
+        print("    https://<your-worker>.workers.dev \\")
         print("    Qy2OER5EbUcsL7PWp+e24hSTE/CAN/OOEF7fgDIGEsw=")
         sys.exit(1)
 

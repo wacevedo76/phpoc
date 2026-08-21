@@ -237,9 +237,12 @@ void main() {
       await tester.tap(syncButton);
       await tester.pump(const Duration(seconds: 5));
 
-      // After sync, ended entries should be committed
+      // After sync, ended entries should be committed. In legacy mode (no
+      // remote wired) commit marks the staging row committed rather than
+      // deleting it, so the ended row must now carry the committed flag.
       final remaining = await store.getRowsByStatus('ended');
-      expect(remaining, isEmpty,
+      expect(remaining, hasLength(1), reason: 'The seeded ended entry persists');
+      expect(remaining.first['committed'], isTrue,
           reason: 'Tapping Sync with no selections should commit all ended');
       await db.close();
       syncService.dispose();

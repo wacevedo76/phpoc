@@ -26,7 +26,7 @@ import 'package:phpoc_flutter/services/auth_service.dart';
 const validSeedB64 = 'QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=';
 
 /// 44-char base64, 32 bytes — a different valid seed (0x21 = '!').
-const altSeedB64 = 'ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE=';
+const altSeedB64 = 'ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE=';
 
 /// Known MK for validSeedB64: hex of raw seed bytes (32×0x42)
 const knownMK = '4242424242424242424242424242424242424242424242424242424242424242';

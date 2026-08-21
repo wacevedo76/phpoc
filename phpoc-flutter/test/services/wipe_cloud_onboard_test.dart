@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
+import 'package:phpoc_flutter/data/ledger/helpers.dart' show computeEntryHash;
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
 import 'package:phpoc_flutter/data/sync/staging_store.dart';
@@ -96,16 +97,20 @@ Map<String, dynamic> _buildMiniLedgerBlocks(
   CryptoService crypto,
   SharedFakeTransport transport,
 ) {
+  // Compute real, spec-conformant entry hashes so the pull import-chain
+  // validation (verifyEntryHashTwoWay) accepts the fixture blocks.
+  String h(Map<String, dynamic> data) => computeEntryHash(data);
+
   final genesisEntries = [
     {
-      'hash': 'entry-gen-1',
+      'hash': h({'title': 'Coffee & Morning Planning', 'tags': ['morning', 'planning']}),
       'data': {
         'title': 'Coffee & Morning Planning',
         'tags': ['morning', 'planning'],
       },
     },
     {
-      'hash': 'entry-gen-2',
+      'hash': h({'title': 'Code Review', 'tags': ['coding', 'work']}),
       'data': {
         'title': 'Code Review',
         'tags': ['coding', 'work'],
@@ -115,21 +120,21 @@ Map<String, dynamic> _buildMiniLedgerBlocks(
 
   final day1Entries = [
     {
-      'hash': 'entry-d1-1',
+      'hash': h({'title': 'Working on Project Alpha', 'tags': ['coding', 'work']}),
       'data': {
         'title': 'Working on Project Alpha',
         'tags': ['coding', 'work'],
       },
     },
     {
-      'hash': 'entry-d1-2',
+      'hash': h({'title': 'Afternoon Walk', 'tags': ['exercise', 'health']}),
       'data': {
         'title': 'Afternoon Walk',
         'tags': ['exercise', 'health'],
       },
     },
     {
-      'hash': 'entry-d1-3',
+      'hash': h({'title': 'Dinner', 'tags': ['food']}),
       'data': {
         'title': 'Dinner',
         'tags': ['food'],
@@ -139,7 +144,7 @@ Map<String, dynamic> _buildMiniLedgerBlocks(
 
   final day2Entries = [
     {
-      'hash': 'entry-d2-1',
+      'hash': h({'title': 'Evening Exercise', 'tags': ['exercise', 'health']}),
       'data': {
         'title': 'Evening Exercise',
         'tags': ['exercise', 'health'],
@@ -345,7 +350,8 @@ void main() {
       for (final block in blocks) {
         try {
           final decoded = utf8.decode(base64.decode(block.dataEnc));
-          final entries = jsonDecode(decoded) as List<dynamic>;
+          final blockMap = jsonDecode(decoded) as Map<String, dynamic>;
+          final entries = blockMap['entries'] as List<dynamic>? ?? [];
           for (final entry in entries) {
             if (entry is Map<String, dynamic>) {
               final data = entry['data'] as Map<String, dynamic>?;
@@ -378,7 +384,8 @@ void main() {
       for (final block in blocks) {
         try {
           final decoded = utf8.decode(base64.decode(block.dataEnc));
-          final entries = jsonDecode(decoded) as List<dynamic>;
+          final blockMap = jsonDecode(decoded) as Map<String, dynamic>;
+          final entries = blockMap['entries'] as List<dynamic>? ?? [];
           for (final entry in entries) {
             if (entry is Map<String, dynamic>) {
               final data = entry['data'] as Map<String, dynamic>?;

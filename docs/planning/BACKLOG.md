@@ -54,6 +54,67 @@ E (separate-file storage, 9), F (ad-hoc k/v, 5). No UI, no sync, no blind index,
 - Tag-search blind index (encrypted, MK-derived) — deferred
 - Web + CLI parity ports
 
+### 🔜 Commonplace UI wiring — screen + add-entry + tag/topic index
+
+**Status:** 🔜 Planned (next slice after the Book Switcher — Phase 1 blueprint: `docs/planning/flutter/COMMONPLACE_BOOK_UI_PHASE1.md`).
+
+**What:** The Commonplace Book's user-facing surface. When the Book Switcher is set to `commonplace`, the
+shell (`AppScaffold`) swaps its child content to Commonplace screens instead of the ledger Dashboard/History/
+Sync/Settings. Includes:
+- **Commonplace Book screen** — list the committed Commonplace entries (read via `CommonplaceEngine.readEntries()`)
+  with title, entry passage, tag chips.
+- **Add entry** — capture `title` + `tags` + `entry` (passage) + optional ad-hoc k/v; staged locally, committed
+  via `CommonplaceEngine.commit()` into day-grouped sealed blocks (D11 — staging never in `commonplace.json`).
+- **Edit is add-not-in-place** — append-only (D5): refinements are new entries, never in-place edits.
+- **Topic / tag index** — browse/group the library by tag/topic; tag-search uses decrypt-and-scan initially
+  (blind index deferred).
+
+**Needs a service layer** (not yet present): a `CommonplaceService` (mirrors `SyncService`) that owns a
+`CommonplaceStorage` + `CommonplaceEngine` over a file/SQLite-backed store, provides a staging/draft area,
+and exposes `addEntry`, `commit`, `readEntries`, `verify`, and tag/topic queries. Provider wiring needed
+(no `commonplaceServiceProvider` exists today). 4-phase TDD, starting with Phase 1 test-exploration.
+
+### ⏸️ Commonplace remote sync — same Worker, new R2 path
+
+**Status:** ⏸️ Pending (depends on UI wiring).
+
+**What:** Sync the Commonplace chain the same way the ledger syncs — same Worker transport, a **separate R2
+path** (`commonplace/...`), and an **MK-derived device cookie** (mirrors the ledger's cookie auth-gating
+model). Staging rows for the Commonplace book sync like ledger staging rows.
+
+**Unblock criteria:** Commonplace UI wiring (add/commit/read) is done so there is content to sync.
+
+### ⏸️ Commonplace shared key-rotation extension — ADR-026
+
+**Status:** ⏸️ Pending.
+
+**What:** Extend the existing key-rotation workflow (ADR-026) so a rotation **also re-encrypts the Commonplace
+chain(s)**, not just the activity ledger. The Commonplace chain already records the seed's `key_version` in its
+genesis (CP-A10), so it participates in the same rotation path.
+
+**Unblock criteria:** Commonplace chain + UI are functional; rotation code is ready to generalize from
+ledger-only to both sealed chains.
+
+### ⏸️ Commonplace tag-search blind index
+
+**Status:** ⏸️ Deferred (decrypt-and-scan initially).
+
+**What:** An encrypted, MK-derived blind index for Commonplace tag search, mirroring the ledger's blind
+index (`index.json`) design (I-02). Initially, tag/topic search decrypts-and-scans committed entries; a
+queryable blind index is a later optimization.
+
+**Unblock criteria:** Commonplace UI + sync are stable; the blind-index design (I-02) is reused/extended.
+
+### ⏸️ Commonplace parity ports — Web then CLI
+
+**Status:** ⏸️ Pending.
+
+**What:** Port the Commonplace Book (chain engine + UI + sync) to the **Web** (`phpoc-web`) then the **CLI**
+(`phpoc_cli`), matching the ledger's cross-client parity. The block format, seal (ADR-029a `commonplace` type
+whitelist), and `commonplace.json` shape must converge across clients.
+
+**Unblock criteria:** Flutter Commonplace chain + UI + sync complete and verified.
+
 ### ✅ Book Switcher — visible book indicator (UI wiring, first step)
 
 **Status:** ✅ **4-PHASE TDD COMPLETE (2026-08-21)** — Phase 3 GREEN 13/13; Phase 4 clean (analyzer 0, no regressions in `test/features/` baseline).

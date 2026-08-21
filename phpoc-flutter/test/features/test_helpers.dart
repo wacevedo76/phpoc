@@ -55,11 +55,15 @@ List<Override> defaultScreenOverrides() {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);
       final db = ref.watch(data_providers.databaseProvider);
       final storage = _InMemoryStorage();
-      return SyncService(
+      final sync = SyncService(
         storage: storage,
         crypto: crypto,
         stagingStore: StagingStore(db),
       );
+      // Dispose cancels the debounced auto-push Timer and closes the status
+      // controller, so no pending timer leaks past widget-test teardown.
+      ref.onDispose(() => sync.dispose());
+      return sync;
     }),
     data_providers.authServiceProvider.overrideWith((ref) {
       final crypto = ref.watch(data_providers.cryptoServiceProvider);

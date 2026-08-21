@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:phpoc_flutter/core/models/push_result.dart';
 import 'package:phpoc_flutter/core/models/sync_result.dart';
 import 'package:phpoc_flutter/core/utils/format_utils.dart';
+import 'package:phpoc_flutter/data/sync/sync_service.dart' show SmartSyncOutcome;
 import 'package:phpoc_flutter/data/storage/providers.dart'
     show authServiceProvider, ledgerPushServiceProvider, syncServiceProvider;
 import 'package:phpoc_flutter/services/auth_service.dart';
-import 'package:phpoc_flutter/services/ledger_push_service.dart';
 
 /// Sync — uncommitted tasks, pending count, manual sync, thin status bar.
 ///
@@ -70,7 +69,19 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     });
   }
 
-  // ── Unified Sync button (overhaul I4/I5/I6) ──────────────
+  /// Current outcome label derived from the last smartSync.
+  String _syncOutcomeMessage(SmartSyncOutcome outcome) {
+    return switch (outcome) {
+      SmartSyncOutcome.remoteSynced => 'Synced — up to date with remote',
+      SmartSyncOutcome.committedLocal => 'Synced locally',
+      SmartSyncOutcome.nothingToCommit => 'Nothing to sync',
+      SmartSyncOutcome.pushFailed =>
+        'Sync failed — could not reach the remote ledger',
+      SmartSyncOutcome.remoteDry => 'Already in sync',
+    };
+  }
+
+  // ── Unified Sync button (overhaul I4/I5/I6 + SMART_SYNC_BUTTON) ──
 
   Future<void> _unifiedSync() async {
     setState(() => _committing = true);
@@ -89,14 +100,14 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         if (selectedIds.isEmpty) selectedIds = null;
       }
 
-      final hash = await sync.commitAndSync(selectedIds: selectedIds);
+      final outcome =
+          await sync.smartSync(selectedIds: selectedIds);
 
       if (!mounted) return;
-      if (hash != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Synced — $hash')),
-        );
-      }
+      // Report the reconciled/pushed outcome to the user (B1/B2/B3).
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_syncOutcomeMessage(outcome))),
+      );
       await _refreshStatus();
       setState(() {
         _selectedIndices.clear();

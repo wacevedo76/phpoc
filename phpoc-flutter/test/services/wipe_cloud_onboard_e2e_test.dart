@@ -6,6 +6,7 @@ import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/sync/transport.dart';
 import 'package:phpoc_flutter/data/sync/staging_storage.dart';
+import 'package:phpoc_flutter/data/sync/staging_store.dart';
 import 'package:phpoc_flutter/services/ledger_pull_service.dart';
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
 import 'package:phpoc_flutter/services/ledger_backup_service.dart';
@@ -130,6 +131,7 @@ void main() {
         transport: transport,
         backupService: backupService,
         stagingStorage: StagingStorage(db),
+        stagingStore: StagingStore(db),
       );
 
       // Pre-populate DB with test ledger before pushAll/pullAll
