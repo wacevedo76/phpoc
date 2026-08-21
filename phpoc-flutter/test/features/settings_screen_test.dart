@@ -1131,4 +1131,147 @@ void main() {
       // In Phase 3, the error text will be visible in the dialog
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group S: Settings — Re-key to a new Recovery Seed (C-2)
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Phase 2 RED: asserts the Security & Recovery UI contract for the C-2
+  // seed-replacement flow. The tile/dialogs do not exist yet, so every test
+  // here fails (RED) until Phase 3 adds the UI. Design option (a): new seed
+  // becomes the new raw MK; NO new ledger-block metadata is introduced.
+  group('S: Settings — Re-key Recovery Seed', () {
+    testWidgets(
+        'S1: Security & Recovery shows both Change Passphrase and Re-key to '
+        'new Recovery Seed', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Change Passphrase'),
+        200,
+      );
+      await tester.pumpAndSettle();
+
+      // Both options must be present in the Security card.
+      expect(find.text('Change Passphrase'), findsOneWidget,
+          reason: 'Existing passphrase change must remain available');
+      expect(find.text('Re-key to new Recovery Seed'), findsOneWidget,
+          reason: 'S1: the re-key option must appear in Security & Recovery');
+    });
+
+    testWidgets(
+        'S2: tapping re-key opens a two-secret confirmation', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Re-key to new Recovery Seed'),
+        200,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Re-key to new Recovery Seed'));
+      await tester.pumpAndSettle();
+
+      // Two-secret gate: current passphrase entry + explicit acknowledge.
+      expect(find.byType(AlertDialog), findsOneWidget,
+          reason: 'S2: re-key must open a confirmation dialog');
+      expect(find.text('Current Passphrase'), findsOneWidget,
+          reason: 'S2: must ask for the current passphrase');
+      expect(find.text('Acknowledge'), findsOneWidget,
+          reason: 'S2: must require explicit acknowledge of the consequences');
+      expect(find.text('Cancel'), findsOneWidget,
+          reason: 'S2: user must be able to abort');
+    });
+
+    testWidgets(
+        'S3: re-key requires a newly generated seed saved by the user before '
+        'proceeding (reveal-gate)', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Re-key to new Recovery Seed'),
+        200,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Re-key to new Recovery Seed'));
+      await tester.pumpAndSettle();
+
+      // The dialog must surface the generated new seed for safekeeping and
+      // require the user to enter it back before re-key can proceed.
+      expect(find.byType(TextField), findsWidgets,
+          reason: 'S3: reveal-gate requires a typed seed confirmation');
+      expect(find.text('I have saved my new Recovery Seed'), findsOneWidget,
+          reason: 'S3: user must confirm they saved the new seed');
+    });
+
+    testWidgets(
+        'S4: cancel/back at any stage aborts with no chain mutation',
+        (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Re-key to new Recovery Seed'),
+        200,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Re-key to new Recovery Seed'));
+      await tester.pumpAndSettle();
+
+      // Cancel the confirmation dialog.
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      // Dialog closed; no re-key has run.
+      expect(find.byType(AlertDialog), findsNothing,
+          reason: 'S4: cancel must close the dialog');
+      expect(find.text('Re-key to new Recovery Seed'), findsOneWidget,
+          reason: 'S4: settings must remain on the re-key option after abort');
+    });
+
+    testWidgets(
+        'S5: network failure during R2 push surfaces a clear error and keeps '
+        'the local chain consistent', (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Re-key to new Recovery Seed'),
+        200,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Re-key to new Recovery Seed'));
+      await tester.pumpAndSettle();
+
+      // (Phase 3) Trigger re-key with a failing remote push and assert a clear
+      // error is shown while the local chain is left usable. Phase 2 RED
+      // anchors the failure on the missing tile.
+      expect(find.text('Re-key to new Recovery Seed'), findsOneWidget);
+    });
+
+    testWidgets(
+        'S6: new-seed reveal dialog appears once and is never auto-re-shown',
+        (tester) async {
+      await pumpScreenWidget(tester, const SettingsScreen(),
+          initialPhase: AppPhase.ready);
+      await tester.pumpAndSettle();
+
+      // (Phase 3) After a successful re-key the reveal dialog shows once and
+      // is not automatically re-shown. Phase 2 RED: re-key option not yet
+      // wired, so this anchors on the tile contract.
+      await tester.scrollUntilVisible(
+        find.text('Re-key to new Recovery Seed'),
+        200,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Re-key to new Recovery Seed'), findsOneWidget);
+    });
+  });
 }
