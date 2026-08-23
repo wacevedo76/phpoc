@@ -112,6 +112,7 @@ function AppInner() {
     exportLedger,
     exportLedgerFull,
     logout,
+    wipeLedger,
     cryptoStatus,
     storageStatus,
     ttlWarning,
@@ -225,6 +226,9 @@ function AppInner() {
           } catch (err) {
             throw err;
           }
+        }}
+        onWipe={async () => {
+          await wipeLedger();
         }}
       />
     );

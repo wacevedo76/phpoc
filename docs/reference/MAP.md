@@ -126,7 +126,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/export_passphrase_validation_test.mjs` | 🟢 GREEN | **NEW** — 40 assertions (A-E groups): cached MK bypass, seal verification, cache safety, error messaging, integration. (2026-07-04) |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core.js` | HOT | WASM glue JS — copied from `phpoc-crypto-core/pkg/` for Vite bundling. |
 | `phpoc-web/src/crypto/wasm/phpoc_crypto_core_bg.wasm` | HOT | WASM binary — 134KB, content-hashed in production build. |
-| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Chain integrity: `onboardFromRemote` verifies full prev_hash linkage (2026-07-05).
+| `phpoc-web/src/context/DevModeContext.jsx` | HOT | `connectToWorker()` + `importFromCloud()` + `effectiveServices` Proxy (auto-sync) + `ttlWarning` banner state + `handleTtlExpiry` (auto-logout on cookie expiry). Chain integrity: `onboardFromRemote` verifies full prev_hash linkage (2026-07-05). `wipeLedger()` (Flutter parity) — clears IndexedDB + localStorage worker creds + MK → fresh landing (2026-08-22). |
 | `phpoc-web/src/ledger/utils.js` | HOT | `jsonSort()`, `jsonSortIndent2()`, `computeEntryHash()` — Python-compatible JSON serialization + canonical entry hashing (2026-07-16) |
 | `phpoc-web/src/ledger/seal_fields.js` | HOT | **NEW (2026-08)** — canonical ADR-029/029a block-seal whitelist: `SEAL_FIELDS` per-type map + `selectSealFields`/`computeSeal` (mirror of Python `chain.py` `SEAL_FIELDS`/`select_seal_fields`/`compute_seal`); used by chain.js/merge.js/summary_policy.js seamers & verifiers |
 | `phpoc-web/src/ledger/chain.js` | HOT | `LedgerChain` — block storage, append/appendBlocks (prev_hash verification in `append()` added 2026-07-05); seal/verify routes through `seal_fields.js` whitelist (ADR-029a, 2026-08) |
@@ -166,7 +166,8 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/components/screens/ImportScreen.jsx` | 🟢 GREEN | **B-02 Web Phase 4 Complete** — Import entries placeholder screen. Route: /import. (2026-08-03) |
 | `phpoc-web/src/components/ui/EncryptionFlags.jsx` | HOT | **NEW** — reusable encryption checkbox group (master + per-field), extracted from Dashboard + NewTask (Phase 4 refactor) |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 20, E: 6, F: 4). All 26 pass (accessibility attributes added). |
-| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component + /import route → ImportScreen (2026-08-03) |
+| `phpoc-web/test/auth_screen_wipe.test.mjs` | 🟢 GREEN | **NEW** — 7 Vitest + RTL tests for the AuthScreen "Wipe Ledger" destructive action (Flutter parity): button gating (full-screen only / requires onWipe), confirm-dialog open/cancel/confirm, onWipe invocation + wiping state, error surfacing. (2026-08-22) |
+| `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component + /import route → ImportScreen (2026-08-03). Wires `wipeLedger` → AuthScreen `onWipe` (2026-08-22). |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
 

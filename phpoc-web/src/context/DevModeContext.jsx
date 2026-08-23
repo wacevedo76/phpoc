@@ -1385,6 +1385,61 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setLoading(false);
   }, [services.crypto, services.storage]);
 
+  // ── Wipe all local data (mirror of Flutter authService.wipeLedger) ──
+
+  /**
+   * Permanently delete all local data and reset to a fresh, unlocked state.
+   *
+   * Mirrors Flutter `AuthService.wipeLedger()`: wipes every local ledger
+   * entry, block, staging row, credential, and the master key from memory.
+   * Cloud data (R2) is NOT affected — this is strictly a local wipe.
+   *
+   * After the wipe the app returns to the landing phase as a fresh start
+   * (hasExistingData=false → LandingScreen redirects to onboarding).
+   */
+  const wipeLedger = useCallback(async () => {
+    // Stop the cookie TTL monitor (polls remote/sync state).
+    if (cookieMonitorRef.current) {
+      cookieMonitorRef.current.dispose();
+      cookieMonitorRef.current = null;
+    }
+    // Dispose the auto-sync wrapper so no mutation pushes after wipe.
+    if (autoSyncRef.current) {
+      autoSyncRef.current.dispose();
+      autoSyncRef.current = null;
+    }
+    prevRawSyncRef.current = null;
+
+    // Clear the whole local backend. The storage is a flat key-value store
+    // (IndexedDB `phpoc-sync`), so storage.clear() removes the seed, entries,
+    // blocks, staging, device cookie, passphrase hashes, and identity info.
+    const storage = services.storage || (await createStorage());
+    await storage.clear();
+
+    // Clear worker credentials that live in localStorage (mirrors Flutter
+    // deleting the API key / MK from secure storage).
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('phpoc_worker_url');
+      localStorage.removeItem('phpoc_api_key');
+      localStorage.removeItem('phpoc_deployment');
+    }
+
+    // Forget the master key from memory.
+    if (services.crypto) {
+      services.crypto.clearMasterKey();
+    }
+
+    // Reset app state to an unauthenticated fresh start.
+    setTtlWarning(false);
+    setReauthState({ active: false, reason: null });
+    setGenesisMismatch(false);
+    setIdentityInfo({ username: null, email: null });
+    setHasExistingData(false);
+    setServices({ crypto: null, sync: null, storage: null });
+    setLoading(false);
+    setPhase('landing');
+  }, [services.crypto, services.storage]);
+
   // ── Check device cookie TTL (for re-auth overlay) ────────────────
 
   const checkCookieTtl = useCallback(async () => {
@@ -1489,6 +1544,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     exportLedger: exportLedgerAction,
     exportLedgerFull: exportLedgerFullAction,
     logout,
+    wipeLedger,
 
     // Cookie TTL check
     checkCookieTtl,

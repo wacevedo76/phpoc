@@ -28,6 +28,12 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Device UUID and cookie management for cross-device session detection
 
 ## Work Guidance
+- **Wipe Ledger (unlock screen, Flutter parity):** `AuthScreen.jsx` renders a destructive
+  red `auth-btn--wipe` button (full-screen login only, never the re-auth overlay) beside/below
+  the Unlock button, gated behind a confirmation dialog. `DevModeContext.wipeLedger()` clears the
+  local IndexedDB backend + localStorage worker creds + master key, then navigates to landing as a
+  fresh start (`hasExistingData=false`). Cloud (R2) data is NOT touched. Strict mirror of Flutter
+  `AuthService.wipeLedger()`. See ROADMAP §4 + WEB_ROADMAP Build 63.
 - Component hierarchy: screens use modals + layout; layout wraps screens
 - Sync flow follows same pattern as Python: check_and_sync → merge → push
 - WASM crypto module loaded asynchronously
@@ -39,6 +45,11 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - **CCS-2 (Jul 2026):** `ccs2_row_level_reconcile_test.mjs` — 41/41 GREEN — canonical-row (activity_id LWW) reconcile layer in `sync.js` (Option B). Blueprint: `docs/planning/CCS2_PHASE1.md`
 - **Chain seal whitelist (ADR-029/029a, Web):** `chain_seal_whitelist_test.mjs` — 27 assertions (groups A–E) targeting convergence of Web seamers/verifiers (`chain.js`, `merge.js`, `summary_policy.js`) onto the closed `SEAL_FIELDS` whitelist. **GREEN 28/28 — Phases 1–4 complete.** P4 deduped the leftover open-set `checkData` builders in `sync.js`/`genesis_gate.js` through the shared whitelist; confirmed no `format_version`/`key_version` sealing. `export_auth.js`/`ledger_import.js`/`remote_import.js`/`DevModeContext.jsx` intentionally kept legacy-open-set tolerant (backward-compat multi-format verify). Blueprint: `docs/planning/CANONICAL_SEALFIELD_WEB_PHASE1.md`
 - **ADR-030 ledger-aware ownership-handoff (Web):** `web_ledger_auto_pull_test.mjs` — 17 assertions across groups W1 (ledger pull on handoff), W2 (Scenario-5/6 uncommitted-sealed-row drop), W3 (Web `_ledgerActivityIds()` derivation). **GREEN 17/17 — 4-Phase TDD complete (Phases 1–4).** `sync.js`: `_pullLedgerOnHandoff()` (block-count-gated, fail-safe) wired into `_reconcileAndClaim()`; `_ledgerActivityIds()`; Scenario-5/6 drop in `_mergeRemoteIntoLocal` via pure `SyncService._dropSealedUncommitted` (mirrors Flutter `MergeEngine.dropLedgerCommitted`); merge awaited before push. Blueprint: `docs/planning/WEB_LEDGER_AUTO_PULL_PHASE1.md`
+- **Wipe Ledger from unlock screen (Flutter parity) (2026-08-22):** `auth_screen_wipe_test.mjs` — 7/7 GREEN.
+  Verifies the `AuthScreen` destructive Wipe button gating (full-screen only, requires `onWipe`), the
+  confirm-dialog open/cancel/confirm flow, `onWipe` invocation + wiping state, and error surfacing.
+  Backing logic: `DevModeContext.wipeLedger()` clears the IndexedDB backend + localStorage worker creds
+  + master key, then → landing fresh start. See WEB_ROADMAP Build 63.
 - **connectToWorker full-chain fix (2026-08-21):** `worker_connect_fullchain_regression.test.mjs` — 23/23 GREEN. Locks in that `connectToWorker` fetches the FULL remote `ledger/blocks/` chain into `ledger:blocks` (so committed history loads), keeps only genuinely-uncommitted staging rows uncommitted (no D11 auto-commit), converts them via `canonicalRowToDTO` + `LocalCache.writeEntries` so the Sync cards render full fields (no blank cards), and never promotes staging into the ledger. Fixes the `588b034` "staging-based connectToWorker" regression.
 - Node-based tests: `node test/<name>.mjs`
 - Vitest component tests: `npx vitest run test/settings_genesis_component.test.mjs`

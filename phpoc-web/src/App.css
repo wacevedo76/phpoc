@@ -232,6 +232,18 @@ a { color: var(--accent-blue); text-decoration: none; }
   cursor: not-allowed;
 }
 
+/* Destructive "Wipe Ledger" button (outlined red, mirrors Flutter
+   error-colored OutlinedButton on the unlock screen). */
+.auth-btn--wipe {
+  margin-top: 0.75rem;
+  background: transparent;
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+}
+.auth-btn--wipe:hover:not(:disabled) {
+  background: var(--accent-red-bg);
+}
+
 .auth-spinner {
   width: 24px;
   height: 24px;

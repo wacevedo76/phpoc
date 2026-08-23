@@ -7,6 +7,34 @@
 
 ---
 
+## Build 63 — Wipe Ledger from Unlock Screen (Flutter parity) — 2026-08-22
+
+**Adds a destructive "Wipe Ledger" action to the unlock screen, mirroring
+Flutter `AuthService.wipeLedger()` (see `docs/planning/flutter/WIPE_CLOUD_ONBOARD_PHASE1.md`).**
+
+Permanently deletes ALL local data and returns to a fresh onboarding state.
+Cloud data (R2) is NOT affected — strictly a local wipe. Idempotent.
+
+**Modified files:**
+- `src/context/DevModeContext.jsx` — new `wipeLedger()`: disposes cookie monitor
+  + auto-sync, clears the local IndexedDB backend (`storage.clear()`), clears
+  localStorage worker creds (`phpoc_worker_url`/`phpoc_api_key`/`phpoc_deployment`),
+  clears master key, resets state → landing with `hasExistingData=false` (fresh start).
+- `src/App.jsx` — destructures `wipeLedger` and passes `onWipe` to `AuthScreen`.
+- `src/components/screens/AuthScreen.jsx` — red outlined `auth-btn--wipe` button
+  below Unlock (full-screen login only, never the re-auth overlay) with a
+  destructive confirmation dialog listing exactly what is deleted;
+  wipe-in-progress + error states. Mirrors Flutter `unlock_screen.dart`.
+- `src/App.css` — `.auth-btn--wipe` style (transparent red outline, hover fill).
+
+**Verification:** throwaway Vitest+RTL suite (6 tests) verified wipe-button
+visibility gating (overlay/no-prop hidden, full-screen shown), confirm-dialog
+open/cancel/confirm, `onWipe` invocation, wiping state, and error surfacing —
+all GREEN before removal. `DevModeContext.jsx`/`App.jsx` import + render smoke
+also GREEN.
+
+See `docs/planning/ROADMAP.md` §4 (Wipe local ledger data row).
+
 ## Build 54 — Settings Genesis Gate Component Tests (RED phase) — 2026-06-25
 
 **26 Vitest + RTL component tests written:**

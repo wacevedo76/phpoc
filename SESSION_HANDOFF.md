@@ -11,6 +11,10 @@
 
 ## Current State
 - **Branch:** `Flutter-features_and_ux` → clean, pushed `1439fa3` (delete-tombstone + flake-fix + docs)
+- **✅ Web Wipe Ledger parity (FLUTTER UX, 2026-08-22):** duplicated Flutter `AuthService.wipeLedger()`
+  into web — `DevModeContext.wipeLedger()` (clears IndexedDB + localStorage creds + MK → fresh landing),
+  `AuthScreen.jsx` error-colored Wipe button + confirm dialog below Unlock. 6/6 throwaway RTL GREEN;
+  smoke import GREEN. See WEB_ROADMAP Build 63 + ROADMAP §4.
 - **✅ Book Switcher DONE (2026-08-21, Commonplace UI-wiring first step):** shell-level switcher bar
   rendered in `AppScaffold` (`PH Ledger` ↔ `PH Commonplace Book`), selection persisted in `AppPreferences`
   (`book_mode`). `enum Book` + `bookProvider` in `lib/features/shared/book_switcher.dart`; 13/13 tests GREEN;
