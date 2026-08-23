@@ -8,8 +8,8 @@ import '../data/storage/database.dart';
 import '../data/sync/staging_storage.dart';
 import '../data/sync/staging_store.dart';
 import '../data/sync/transport.dart';
-import '../data/ledger/helpers.dart' show getBlockHash, verifyEntryHashTwoWay;
 import 'ledger_backup_service.dart';
+import 'pull_stage_functions.dart';
 import 'staging_seed_helpers.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
@@ -29,6 +29,13 @@ class LedgerPullService with DecryptHelpers {
   final LedgerBackupService backupService;
   final StagingStorage stagingStorage;
   final StagingStore stagingStore;
+
+  /// Execution seam for CPU-bound pull stages (deobfuscation + chain
+  /// validation). Defaults to a background-isolate runner in production;
+  /// tests inject an inline runner for hermetic coverage.
+  ///
+  /// Fix blueprint: `docs/planning/flutter/RESTORE_PULL_ISOLATE_FIX_PHASE1.md`.
+  final OffloadRunner offload;
 
   /// Regex to parse block index from filenames returned by listFiles.
   /// The Worker `?prefix=` API returns bare filenames like `000042.json`.
@@ -51,6 +58,7 @@ class LedgerPullService with DecryptHelpers {
     required this.backupService,
     required this.stagingStorage,
     required this.stagingStore,
+    this.offload = isolateOffloadRunner,
   });
 
   /// Pull all blocks + import + seed staging from the remote Worker.
@@ -102,6 +110,12 @@ class LedgerPullService with DecryptHelpers {
     final errors = <String>[];
     final failedBlocks = <int>[];
 
+    // Local capture of the execution seam so closures created below do not
+    // transitively capture `this` (unsendable) when handed to [Isolate.run].
+    // Accessing `this.offload` directly inside a closure would bind the
+    // receiver into the closure context and make it un-isolatable.
+    final offloadRunner = offload;
+
     // Step 1: Pull hash_index.json (plaintext — no MK needed)
     List<dynamic> hashIndex;
     try {
@@ -144,22 +158,20 @@ class LedgerPullService with DecryptHelpers {
       }
     }
 
-    // Pull every discovered block (sorted by index).
-    // Missing-index reporting is deferred until after pull: if fewer blocks
-    // were pulled than hash_index indicates, we report which indices in
-    // [0, hashIndex.length) are missing. If we found at least hashIndex.length
-    // blocks (possibly at different indices), no indices are reported missing.
-    final sortedIndices = discoveredIndices.toList()..sort();
-    final blocks = <Map<String, dynamic>>[];
-    var totalEntries = 0;
-
-    for (final i in sortedIndices) {
-      final blockJson = await _pullBlock(t, mkHex, i, failedBlocks, errors);
-      if (blockJson == null) continue;
-      final entries = blockJson['entries'] as List<dynamic>?;
-      totalEntries += entries?.length ?? 0;
-      blocks.add(blockJson);
-    }
+    // Pull every discovered block (sorted by index) with bounded concurrency,
+    // preserving chain order. Deobfuscation (CPU-bound AES-CTR + HMAC) runs
+    // through the `offload` seam on a background isolate so a large restore
+    // never wedges the UI thread (the ANR fix).
+    //
+    // Bounded concurrency: sliding (consecutive) batches of up to
+    // [pullConcurrencyLimit] fetches run via Future.wait; within a batch the
+    // fetches are concurrent but results are collected in index order. This
+    // keeps prev_hash linkage intact (C2) while never firing 100+ parallel
+    // requests at once (C3).
+    final fetch = await _fetchAllBlocks(discoveredIndices, t, mkHex,
+        offloadRunner, failedBlocks, errors);
+    final blocks = fetch.blocks;
+    final totalEntries = fetch.totalEntries;
 
     // B4: if fewer blocks were pulled than hash_index expects, report
     // which indices in [0, hashIndex.length) are missing. If we found
@@ -169,12 +181,14 @@ class LedgerPullService with DecryptHelpers {
       _addMissingIndices(discoveredIndices, hashIndex.length, failedBlocks);
     }
 
-    // Step 3: Validate the assembled chain before importing.
+    // Step 3: Validate the assembled chain before importing (D4).
     // Matches web's WorkerImportSource._validateRawChain: genesis type,
     // block seals, prev_hash linkage, and per-entry hash verification
     // with the 4-way fallback (sort+indent2, sort+compact, nosort+indent2).
+    // Off-loaded to the background isolate via the `offload` seam so the
+    // CPU-bound SHA-256 chain validation never blocks the UI isolate.
     if (blocks.isNotEmpty) {
-      _validateImportedChain(blocks);
+      await offloadRunner(() => validatePulledChain(blocks));
     }
 
     // Step 4: Import assembled PHPSPEC array into database
@@ -209,6 +223,47 @@ class LedgerPullService with DecryptHelpers {
       failedBlocks: failedBlocks,
       errors: errors,
     );
+  }
+
+  /// Fetch every discovered block index with bounded concurrency, decoding
+  /// and parsing each out-of-order fetch into [index]-ordered results.
+  ///
+  /// Returns a record of the ordered parsed blocks plus the total entry count
+  /// summed across all successfully fetched blocks. Failures append to
+  /// [failedBlocks]/[errors] (declared by the caller) and are skipped.
+  ///
+  /// Appending from concurrent branches to the shared [failedBlocks]/[errors]
+  /// lists is safe: every branch is awaited within this single isolate's event
+  /// loop, so the appends serialize — no lock needed.
+  Future<({List<Map<String, dynamic>> blocks, int totalEntries})>
+      _fetchAllBlocks(
+    Set<int> discoveredIndices,
+    HttpTransport t,
+    String mkHex,
+    OffloadRunner offloadRunner,
+    List<int> failedBlocks,
+    List<String> errors,
+  ) async {
+    final sortedIndices = discoveredIndices.toList()..sort();
+    final blocks = <Map<String, dynamic>>[];
+    var totalEntries = 0;
+
+    for (var start = 0; start < sortedIndices.length; start += pullConcurrencyLimit) {
+      final end =
+          (start + pullConcurrencyLimit).clamp(0, sortedIndices.length);
+      final batch = sortedIndices.sublist(start, end);
+      final results = await Future.wait(
+        batch.map((i) => _fetchDecodeParseBlock(
+            t, mkHex, i, offloadRunner, failedBlocks, errors)),
+      );
+      for (final blockJson in results) {
+        if (blockJson == null) continue;
+        final entries = blockJson['entries'] as List<dynamic>?;
+        totalEntries += entries?.length ?? 0;
+        blocks.add(blockJson);
+      }
+    }
+    return (blocks: blocks, totalEntries: totalEntries);
   }
 
   /// Pull the remote ledger only when it has grown past the local chain.
@@ -293,16 +348,32 @@ class LedgerPullService with DecryptHelpers {
     return 'Failed to pull $operation: $error';
   }
 
-  // ── Per-block pull + deobfuscate + parse ────────────────────
+  /// Maximum number of block fetches that may be in flight at once.
+  ///
+  /// Bounds the concurrent `Future.wait` so a large restore never fires one
+  /// HTTP request per block (up to 100+ for a long chain) simultaneously.
+  static const int pullConcurrencyLimit = 5;
 
-  /// Pull, deobfuscate, and parse a single block from the remote.
+  // ── Per-block fetch + offloaded deobfuscate + parse ───────
+
+  /// Fetch, offloaded-deobfuscate, and parse a single block from the remote.
   ///
   /// Returns the parsed block JSON on success, or `null` on failure
   /// (appending to [failedBlocks] and [errors]).
-  Future<Map<String, dynamic>?> _pullBlock(
+  ///
+  /// The CPU-bound [decodePullBlockBytes] runs through the [offload] seam
+  /// (background isolate) so per-block AES-CTR + HMAC deobfuscation never
+  /// blocks the UI thread during a large restore.
+  ///
+  /// **Static** so a closure around a tear-off of it (used by the bounded
+  /// concurrent fetch) captures no instance state — required for the closure
+  /// handed to [Isolate.run] to be sendable. [offload] (the execution seam)
+  /// is passed explicitly.
+  static Future<Map<String, dynamic>?> _fetchDecodeParseBlock(
     HttpTransport t,
     String mkHex,
     int index,
+    OffloadRunner offload,
     List<int> failedBlocks,
     List<String> errors,
   ) async {
@@ -325,10 +396,10 @@ class LedgerPullService with DecryptHelpers {
       return null;
     }
 
-    // Deobfuscate
+    // Deobfuscate (off-loaded to a background isolate)
     String decoded;
     try {
-      decoded = crypto.deobfuscateBlob(raw, mkHex);
+      decoded = await offload(() => decodePullBlockBytes(raw, mkHex));
     } catch (e) {
       // F2: wrong MK or tampered blob
       errors.add('Failed to deobfuscate block $index: $e');
@@ -368,6 +439,10 @@ class LedgerPullService with DecryptHelpers {
     // stable key for a committed block entry.
     final existingRows = await stagingStore.getAllRows();
     final deduper = StagingSeedDeduper(existingRows);
+
+    // MK is constant for the whole seed operation — fetch once instead of once
+    // per entry (unchanged while we decrypt every block's encrypted fields).
+    final mkHex = crypto.getMasterKey()!;
 
     for (final block in blocks) {
       final blockEntries = block['entries'] as List<dynamic>?;
@@ -411,7 +486,6 @@ class LedgerPullService with DecryptHelpers {
         // match what _stagingRowToDto expects. Block entries use encrypted
         // hex fields (startTime_enc, endTime_enc, pauses_enc, metadata_enc)
         // which must be decrypted with the MK first.
-        final mkHex = crypto.getMasterKey()!;
         final startEpoch = decryptEpoch(entryData['startTime_enc'] as String?, mkHex);
         final endEpoch = decryptEpoch(entryData['endTime_enc'] as String?, mkHex);
         final pauses = decryptPauses(entryData['pauses_enc'] as String?, mkHex);
@@ -472,69 +546,6 @@ class LedgerPullService with DecryptHelpers {
         } catch (_) {
           // Best-effort: staging seed failure does not block pull result
         }
-      }
-    }
-  }
-
-
-
-
-
-  /// Validate the assembled chain before import.
-  ///
-  /// Matches web's WorkerImportSource._validateRawChain and Python's
-  /// _verify_entry_hash_flex. Validates:
-  ///   - Genesis block type
-  ///   - Per-entry hash with 4-way fallback (via verifyEntryHashTwoWay)
-  ///   - Prev_hash chain linkage
-  ///
-  /// Throws on first validation failure; the caller catches and returns
-  /// a PullResult.failure with the error message.
-  void _validateImportedChain(List<Map<String, dynamic>> blocks) {
-    // ── Genesis check ──────────────────────────────────────
-    final genesis = blocks.first;
-    if (genesis['type'] != 'genesis') {
-      throw FormatException('Remote chain must start with a genesis block (type: "genesis")');
-    }
-
-    // ── Per-entry hash verification ────────────────────────
-    for (var i = 0; i < blocks.length; i++) {
-      final block = blocks[i];
-      final type = block['type'] as String? ?? 'day';
-      if (type == 'genesis' || type == 'year_summary' || type == 'month_summary') {
-        continue;
-      }
-      final entries = block['entries'] as List<dynamic>? ?? [];
-      for (var j = 0; j < entries.length; j++) {
-        final entry = entries[j];
-        if (entry is! Map<String, dynamic>) {
-          throw FormatException('Malformed entry at block $i, entry $j');
-        }
-        final data = entry['data'] as Map<String, dynamic>?;
-        final hash = entry['hash'] as String?;
-        if (data == null || hash == null) {
-          throw FormatException('Malformed entry at block $i, entry $j — missing hash or data');
-        }
-
-        // 4-way fallback: sort+indent2 → sort+compact → compact-nospace → nosort+indent2
-        if (!verifyEntryHashTwoWay(data, hash)) {
-          throw FormatException(
-            'Entry hash mismatch at block $i, entry $j. '
-            'Hash: $hash does not match any serialization format for data: $data'
-          );
-        }
-      }
-    }
-
-    // ── Prev_hash chain linkage ─────────────────────────────
-    for (var i = 1; i < blocks.length; i++) {
-      final prevHash = getBlockHash(blocks[i - 1]);
-      final actualPrev = blocks[i]['prev_hash'] as String? ?? '';
-      if (prevHash.isNotEmpty && actualPrev != prevHash) {
-        throw FormatException(
-          'Prev_hash linkage break at block $i: '
-          'expected $prevHash, got $actualPrev'
-        );
       }
     }
   }

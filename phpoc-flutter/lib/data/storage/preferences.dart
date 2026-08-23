@@ -22,6 +22,9 @@ class AppPreferences {
   static const _keyThemeMode = 'theme_mode';
   static const _keyBiometricEnabled = 'biometric_enabled';
   static const _keyBookMode = 'book_mode';
+  static const _keyHasRekeyed = 'has_rekeyed';
+  static const _keySeedFingerprint = 'seed_fingerprint';
+  static const _keyNewSeedRevealed = 'new_seed_revealed';
 
   // ── Worker URL ───────────────────────────────────────────
 
@@ -140,6 +143,53 @@ class AppPreferences {
     await _prefs!.setString(_keyBookMode, mode);
   }
 
+  // ── Seed re-key markers (C-2) ────────────────────────────
+
+  /// Whether a full seed re-key has already been recorded (double-run guard,
+  /// B3). Stored in preferences — never in the ledger block schema.
+  Future<bool> hasRekeyed() async {
+    if (_isTest) return _store![_keyHasRekeyed] as bool? ?? false;
+    return _prefs!.getBool(_keyHasRekeyed) ?? false;
+  }
+
+  Future<void> setHasRekeyed(bool value) async {
+    if (_isTest) {
+      _store![_keyHasRekeyed] = value;
+      return;
+    }
+    await _prefs!.setBool(_keyHasRekeyed, value);
+  }
+
+  /// The HMAC seed fingerprint recorded at re-key time, for drift detection
+  /// (B4).
+  Future<String?> getSeedFingerprint() async {
+    if (_isTest) return _store![_keySeedFingerprint] as String?;
+    return _prefs!.getString(_keySeedFingerprint);
+  }
+
+  Future<void> setSeedFingerprint(String fp) async {
+    if (_isTest) {
+      _store![_keySeedFingerprint] = fp;
+      return;
+    }
+    await _prefs!.setString(_keySeedFingerprint, fp);
+  }
+
+  /// Whether the new seed reveal dialog has already been shown (S6 — shown
+  /// once, never auto-re-shown).
+  Future<bool> hasNewSeedBeenRevealed() async {
+    if (_isTest) return _store![_keyNewSeedRevealed] as bool? ?? false;
+    return _prefs!.getBool(_keyNewSeedRevealed) ?? false;
+  }
+
+  Future<void> setNewSeedRevealed(bool value) async {
+    if (_isTest) {
+      _store![_keyNewSeedRevealed] = value;
+      return;
+    }
+    await _prefs!.setBool(_keyNewSeedRevealed, value);
+  }
+
   // ── Clear ────────────────────────────────────────────────
 
   Future<void> clearAll() async {
@@ -148,6 +198,14 @@ class AppPreferences {
       return;
     }
     await _prefs!.clear();
+  }
+
+  /// Record the completed re-key: marker + seed fingerprint. Also marks the
+  /// reveal dialog as pending (not yet shown).
+  Future<void> recordRekey(String fingerprint) async {
+    await setHasRekeyed(true);
+    await setSeedFingerprint(fingerprint);
+    await setNewSeedRevealed(false);
   }
 
   // ── API key isolation check (H5) ─────────────────────────

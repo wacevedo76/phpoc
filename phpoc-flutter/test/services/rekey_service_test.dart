@@ -499,18 +499,14 @@ void main() {
 
       final blocksBefore = await db.blockDao.getAllBlocks();
 
-      // Corrupt a block so re-seal fails mid-loop.
+      // Corrupt a block so re-seal fails mid-loop. UPDATE the existing genesis
+      // row in place (its blockId/block_index already exist, so a duplicate
+      // INSERT would hit the UNIQUE constraint — we want to corrupt, not add).
       final genesis = (await db.blockDao.getAllBlocks()).first;
-      await db.blockDao.insertBlock(Block(
-        blockId: genesis.blockId,
-        blockType: genesis.blockType,
-        blockIndex: genesis.blockIndex,
-        keyVersion: genesis.keyVersion,
-        dataEnc: 'AAAA', // cannot decode → re-key must abort
-        identitySeal: genesis.identitySeal,
-        prevHash: genesis.prevHash,
-        createdAt: genesis.createdAt,
-      ));
+      await db.customStatement(
+        'UPDATE blocks SET data_enc = ? WHERE block_id = ?',
+        ['AAAA', genesis.blockId], // cannot decode → re-key must abort
+      );
 
       await expectLater(
         stack.rekey.rekey(
@@ -566,8 +562,15 @@ void main() {
       await stack.auth.unlock(validPassphrase, validSeedB64);
 
       final fp = stack.rekey.seedFingerprint(altSeedB64);
-      expect(fp.hashCode, 0); // placeholder: real check in Phase 3
+      // Real Phase 3 check: the fingerprint is a non-empty deterministic
+      // digest that differs across distinct seeds (drift detection), and it
+      // must match what the service records at re-key time.
       expect(fp, isNotEmpty);
+      expect(fp, hasLength(64), reason: 'SHA-256 digest is 64 hex chars');
+      expect(stack.rekey.seedFingerprint(altSeedB64), fp,
+          reason: 'fingerprint must be deterministic for a given seed');
+      expect(stack.rekey.seedFingerprint(validSeedB64), isNot(fp),
+          reason: 'a different seed must yield a different fingerprint');
     });
 
     test('B5: surfaces the new seed only via a two-step reveal', () async {

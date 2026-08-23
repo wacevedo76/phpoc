@@ -2,9 +2,9 @@
 
 > **Plan:** Feature decision C-2 (user-directed) — see `ARCHITECTURAL_DECISIONS.md` gap noted under ADR-026 / ADR-001
 > **Depends on:** ADR-026 (versioned MK), ADR-001 (sovereign key), passphrase change already in Flutter (`AuthService.changePassphrase`, tests B1–B6, H6–H9)
+> **⚠️ Sequencing (2026-08-22):** this feature is **gated behind `RESTORE_PULL_ISOLATE_FIX_PHASE1`** (restore-pull isolate offload + concurrent block fetch). C-2's P4 — "after re-key, a second/other device re-pulls the re-keyed chain and verifies under the new MK" — depends on `LedgerPullService.pullAll()` working on large chains, which the pull-ANR bug currently breaks. Land the restore-pull fix to GREEN before proceeding to C-2 Phase 3.
 > **Purpose:** Blueprint of the C-2 capability — **replace the recovery seed entirely** with a fresh random seed and full re-key of the personal ledger (vault, local chain, remote/R2, device cookies) so a leaked/compromised seed is truly nullified.
-> **Status:** 🔜 Phase 1 (blueprint; awaiting user approval to proceed to Phase 2 RED)
-> **Next Phase:** Phase 2 (RED: test definition)
+> **Status:** ✅ Phase 4 (REFACTOR) — 2026-08-22. Full Flutter suite **2010/2010 pass**; `rekey_service_test.dart` **28/28** (Groups R, B, M, P), Settings Group S re-key UI **6/6**; `flutter analyze` 0 errors. Phase 4 refactoring complete (§10). CLI parity escape-hatch wired: `ph rotate-keys` (+ `--full`) now reachable from `main.py`.
 
 ---
 
@@ -158,3 +158,41 @@ NewSeedRekeyService.rekey({oldPassphrase, newPassphrase?, generatedSeed})
 - New tests: **R (11) + B (5) + M (6) + P (6) + S (6) = 34** all GREEN.
 - On a scratch copy of the personal ledger (in `/tmp`, `--output`, never the live `~/.local/share/phpoc/`): the old seed's MK **cannot** decrypt after re-key; the new seed's MK verifies and decrypts the entire vault + chain + remote export.
 - DOX pass: update `docs/planning/AGENTS.md` child index, `ROADMAP.md` status, `BACKLOG.md` (unblock), and `SESSION_HANDOFF.md` on completion.
+
+## 9. Phase-3 (GREEN) Notes — 2026-08-22
+
+### Design options resolved
+- **Option (a) selected** over the blueprint's "recommended (b)": the new seed's raw base64-decoded 32 bytes become the new Master Key; `key_version` is **not** bumped; **no** new ledger-schema fields are added. Rationale: Flutter's `deriveMasterKey(seed)` is still the raw-seed-as-MK scheme (versioned derivation is Python-only per ADR-026), so (a) pulls every client's derivation into lockstep and keeps the re-key transparent to the existing chain-seal/verify paths. Re-key metadata (`seed_fingerprint`, `rekeyed` marker, reveal gate) lives in `AppPreferences`, never in the block schema.
+
+### Implementation
+- `RekeyService` (`lib/services/rekey_service.dart`): `rekey()` performs an **ownership gate** (cached MK present + old passphrase decrypts the current seed → else `AuthException`), mints a fresh seed (R3/R4), builds **every** re-keyed block in memory first (genesis reconstructed to add `block_hash`+`identity_seal` sealed under the new MK; each day/summary block's `_enc` fields re-encrypted and seals recomputed over the sorted-key canonical JSON), writes the rebuilt chain **atomically** in one transaction (B2), re-encrypts the vault under the new PDK (R5/R6/R7), rotates the device cookie (P3), records the marker+fingerprint (B3/B4), and hands the live session to the new MK (R10).
+- `rekeyServiceProvider` added to `providers.dart` (injects auth, crypto, db, prefs, secure prefs, backup, optional `LedgerPushService?`).
+- Settings UI (`settings_screen.dart`): "Re-key to new Recovery Seed" tile (S1) → two-secret confirmation dialog with Current Passphrase + New Recovery Seed fields, "I have saved my new Recovery Seed" checkbox, explicit "Acknowledge", and Cancel (S2/S3/S4). Execution surfaces a clear error on failure (S5) and a two-step new-seed reveal gated by `confirmReveal()` + `setNewSeedRevealed(true)` (S6).
+- **Option (a) means the remote/R2 re-push is deferred to the push service**; `RekeyResult` carries `remotePushed: false` and the local recovery snapshot path for the reveal flow.
+
+### Phase 2 test defects amended (RED → meaningful GREEN)
+- **B2** — used `blockDao.insertBlock` to duplicate the genesis row with a corrupt `dataEnc`. The genesis `blockId`/`block_index` already exist, so the **INSERT violated the UNIQUE constraint** and threw a `SqliteException` during setup, never reaching `rekey`. Amended to corrupt the existing row with an in-place `UPDATE blocks SET data_enc = ?`.
+- **B4** — asserted the placeholder `expect(fp.hashCode, 0)`, which is unsatisfiable with a real non-empty SHA-256 fingerprint. Amended to assert the fingerprint is a 64-hex-char **deterministic** digest that **differs across distinct seeds** and matches what `recordRekey` stores.
+
+## 10. Phase-4 (REFACTOR) Notes — 2026-08-22
+
+### Flutter `RekeyService` — modularity / clarity / DRY
+- **Split the monolithic `rekey()` orchestration into named phase helpers**, mirroring the step structure of Python `RotateKeysCommand.hard_rotate`:
+  - `preflightSnapshotAndWrite()` — R2/B1 recovery backup (snapshot → temp file) before any write.
+  - `_buildRebuiltBlocks(...)` — the per-block re-key loop (in-memory, throws before any DB write → B2).
+  - `_replaceChainAndVault(...)` — atomic chain swap + vault re-encrypt in ONE transaction (B2/R5/R6).
+  - `_rotateDeviceCoordinates()` — P3 device-cookie rotation.
+  - `_recordRekeyMarker(...)` — B3/B4 drift-detection marker + fingerprint.
+  - `_activateNewKeySet(...)` — R10/R11 hand the live crypto session to the new MK.
+  `rekey()` is now a short, reviewable pipeline instead of ~9 inline responsibilities.
+- **DRY the per-entry `_enc` re-encryption** into `_reencryptEntryMap(...)` — the exact Flutter mirror of Python `hard_rotate`'s `if key.endswith(\"_enc\")`) loop (decrypt under old MK, re-encrypt under new MK, non-`_enc` fields untouched so content hashes are preserved R9). Removes the previously-inline nesting from `_rekeySealedBlock`.
+- **Clarity** — documented the intentional no-op of `newPdk` for non-genesis blocks directly on `_rekeyBlock` (option (a): sealed blocks re-seal under the raw new MK, not the PDK), so the parameter is self-explaining.
+- Behavior preserved: `rekey_service_test.dart` **28/28** GREEN, Settings Group S **6/6** GREEN, full Flutter suite **2010/2010**, `flutter analyze` **0 errors** on `rekey_service.dart`.
+
+### CLI parity escape-hatch — wire `ph rotate-keys` into `main.py`
+- **Precedent for C-2 parity (Blueprint §3 out-of-scope note):** the unreachable `ph rotate-keys` command is now wired into `main.py` so a trusted CLI user can rotate the key set without the app.
+  - Added `rotate-keys` subparser with `--full` (soft by default; `--full` hard-rotates the whole chain) — matches test I8's `execute(full=...)` contract.
+  - Added `"rotate-keys"` to `require_auth` (re-auth gate before any mutation).
+  - Dispatch branch constructs `RotateKeysCommand(data_dir=CONFIG_DIR, seed=auth.get_key(), identity_secret=ledger._get_identity_secret())` and calls `execute(full=args.full)`. Seed = raw 32-byte seed (auth caches `seed_to_key`); identity secret recovered via the same `LedgerDomain._get_identity_secret()` path the `recover` command uses.
+- Verified: `rotate-keys --help` renders; uninitialized dir correctly prompts for auth (gate fires); full Python suite **2614 passed / 1 skipped**, incl. all 82 I-01 rotatekeys tests.
+- Note: hard-rotation here is the **soft/hard key-rotation escape hatch** (bumps `key_version`, re-encrypts the *same* seed per ADR-026). It is NOT a seed replacement — that remains the C-2 Flutter `RekeyService`. The CLI gives operational redundancy for the *rotation* half; C-2's seed-mint remains app-only.

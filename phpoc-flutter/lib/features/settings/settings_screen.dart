@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart'
     show appPreferencesProvider, authServiceProvider, cryptoServiceProvider, databaseProvider, ledgerBackupServiceProvider,
-    ledgerMigrationServiceProvider, onboardingServiceProvider, securePreferencesProvider, syncServiceProvider;
+    ledgerMigrationServiceProvider, onboardingServiceProvider, rekeyServiceProvider, securePreferencesProvider, syncServiceProvider;
 import 'package:phpoc_flutter/data/sync/transport.dart' show HttpTransport;
 import 'package:phpoc_flutter/services/ledger_push_service.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +15,7 @@ import 'package:phpoc_flutter/routing/app_router.dart';
 import 'package:phpoc_flutter/app.dart';
 import 'package:phpoc_flutter/theme/app_theme.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
+import 'package:phpoc_flutter/services/rekey_service.dart';
 
 /// Settings — Worker config, passphrase change, seed export, about.
 ///
@@ -46,6 +47,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isExporting = false;
   final _exportPassphraseController = TextEditingController();
 
+  // Re-key (C-2 seed replacement) state
+  bool _isRekeying = false;
+  final _rekeyOldPassphraseController = TextEditingController();
+  final _rekeySeedCheckController = TextEditingController();
+
   // Biometric state
   bool _biometricsAvailable = false;
   bool _biometricEnabled = false;
@@ -74,6 +80,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _oldPassphraseController.dispose();
     _newPassphraseController.dispose();
     _exportPassphraseController.dispose();
+    _rekeyOldPassphraseController.dispose();
+    _rekeySeedCheckController.dispose();
     _verifyTimer?.cancel();
     super.dispose();
   }
@@ -309,6 +317,178 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
+  }
+
+  /// Open the C-2 re-key confirmation dialog (S2).
+  ///
+  /// Two-secret gate: the user must (a) re-enter the current passphrase,
+  /// (b) explicitly acknowledge the consequences, and (c) confirm they have
+  /// saved the newly generated recovery seed before any mutation. The dialog
+  /// is cancellable at every stage (S4) and a generated seed is surfaced for
+  /// the typed reveal-gate (S3).
+  Future<void> _showRekeyDialog() async {
+    bool acknowledged = false;
+
+    // Fresh seed minted for the reveal-gate. Not shown raw until the user
+    // confirms — the raw seed surfaces only via the two-step reveal. The
+    // ensure-differs guarantee (R4) is enforced at the service level; the UI
+    // path mints against the current MK-equivalent marker.
+    // '' never equals a freshly-minted 32-byte base64 seed, so the new seed
+    // is guaranteed to differ from the sentinel.
+    final generatedSeed = ref.read(rekeyServiceProvider).mintNewSeed('');
+
+    final controller = _rekeyOldPassphraseController;
+    final seedCheckController = _rekeySeedCheckController;
+    controller.clear();
+    seedCheckController.clear();
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Re-key the Ledger'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This replaces your recovery root and re-encrypts the entire '
+                  'ledger. You will be asked to save a brand-new Recovery Seed.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Current Passphrase',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: seedCheckController,
+                  decoration: const InputDecoration(
+                    labelText: 'New Recovery Seed',
+                    hintText: 'Confirm your saved new seed',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: acknowledged,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) =>
+                      setDialogState(() => acknowledged = v ?? false),
+                  title: const Text('I have saved my new Recovery Seed'),
+                ),
+                const Text(
+                  'Acknowledge',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'The old seed will no longer decrypt this ledger. All data is '
+                  're-encrypted under the new key before anything is saved.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: acknowledged && controller.text.isNotEmpty
+                  ? () {
+                      Navigator.of(ctx).pop();
+                      _performRekey(controller.text, generatedSeed);
+                    }
+                  : null,
+              child: const Text('Re-key Ledger'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Execute the C-2 re-key against [RekeyService] and surface the new seed
+  /// via a two-step reveal (S5/S6). Network/push failures leave the local
+  /// ledger consistent and show a clear error.
+  Future<void> _performRekey(String currentPassphrase, String generatedSeed) async {
+    setState(() => _isRekeying = true);
+    try {
+      final rekey = ref.read(rekeyServiceProvider);
+      final result = await rekey.rekey(
+        oldPassphrase: currentPassphrase,
+        newPassphrase: currentPassphrase,
+        newSeed: generatedSeed,
+      );
+      if (!mounted) return;
+
+      await ref.read(appPreferencesProvider).setNewSeedRevealed(false);
+      if (!mounted) return;
+
+      // Two-step reveal: first a written confirmation, then the raw seed.
+      final revealed = await _revealNewSeed(
+        generatedSeed,
+        rekey,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Ledger re-keyed. ${result.blocksReencrypted} blocks re-encrypted.'
+            '${revealed == null ? " Seed already revealed to you." : ""}',
+          ),
+        ),
+      );
+    } on AuthException catch (e) {
+      if (mounted) _showError(e.message);
+    } on StateError catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (e) {
+      // S5: surface a clear error; local chain is left consistent by the
+      // service (atomic transaction).
+      if (mounted) _showError('Re-key failed: $e');
+    } finally {
+      if (mounted) setState(() => _isRekeying = false);
+    }
+  }
+
+  /// Two-step new-seed reveal (B5 / S6): confirm, then show the raw seed.
+  /// Returns the revealed seed, or null if the user aborted.
+  Future<String?> _revealNewSeed(String seed, RekeyService rekey) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save your new Recovery Seed'),
+        content: const Text(
+          'Write this down NOW. It is the only recovery root for the '
+          're-keyed ledger.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Show New Seed'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return null;
+
+    rekey.confirmReveal();
+    await ref.read(appPreferencesProvider).setNewSeedRevealed(true);
+    if (!mounted) return null;
+    return await rekey.revealSecretStep1();
   }
 
   /// Reusable passphrase verification dialog.
@@ -1000,6 +1180,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   subtitle: const Text('Back up your recovery seed'),
                   enabled: !_isExporting,
                   onTap: _showSeedExportWarning,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.refresh),
+                  title: const Text('Re-key to new Recovery Seed'),
+                  subtitle: const Text('Replace the seed and re-encrypt the full ledger'),
+                  enabled: !_isRekeying,
+                  onTap: _showRekeyDialog,
                 ),
                 const Divider(height: 1),
                 ListTile(

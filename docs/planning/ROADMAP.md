@@ -123,6 +123,7 @@ None.
 | Seed → Master Key derivation | ✅ | — | Direct SHA-256 of seed bytes |
 | Passphrase-based seed unlock | ✅ | — | PBKDF2(passphrase) → AES decrypt seed |
 | `phpoc recover` command | ✅ | — | Seed → new passphrase → re-seal Genesis |
+| **Full Seed Replacement (Re-key)** | ✅ | — | **C-2** (Flutter): mint a fresh random seed, re-encrypt the entire ledger (vault, every block `_enc`, genesis seed, remote/R2, device cookie) under the new Master Key so a leaked/compromised old seed is nullified. Plan: `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md`. **4-phase TDD COMPLETE (2026-08-22):** 28/28 `rekey_service_test.dart` + 6/6 Settings Group S pass, 2010 Flutter tests total, 0 analyze errors. Phase 4 (REFACTOR) split `rekey()` into named phase helpers + DRY'd entry re-encrypt vs Python `hard_rotate`; wired `ph rotate-keys`(+`--full`) into `main.py` as CLI escape-hatch. UNCOMMITTED — user approval required before commit. |
 | Identity file (identity.json) | ✅ | — | Encrypted secret + pub key |
 | Identity fallback in genesis block | ✅ | — | Per [R2 resolution](../reference/CHANGELOG.md) |
 | **Single-file export** (`phpoc export --combined`) | 🔮 | Low | Merge identity into Genesis for portability |

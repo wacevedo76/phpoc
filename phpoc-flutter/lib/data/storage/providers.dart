@@ -10,8 +10,10 @@ import '../../features/sync/periodic_sync_coordinator.dart';
 import '../../routing/app_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/ledger_backup_service.dart';
+import '../../services/rekey_service.dart';
 import '../../services/ledger_migration_service.dart';
 import '../../services/ledger_pull_service.dart';
+import '../../services/pull_stage_functions.dart' show isolateOffloadRunner;
 import '../../services/ledger_push_service.dart';
 import '../../services/onboarding_service.dart';
 import 'database.dart';
@@ -161,6 +163,24 @@ final ledgerBackupServiceProvider = Provider<LedgerBackupService>((ref) {
   return LedgerBackupService(db: db);
 });
 
+/// Re-key (C-2 seed replacement) service provider — injects all deps.
+final rekeyServiceProvider = Provider<RekeyService>((ref) {
+  final auth = ref.watch(authServiceProvider);
+  final crypto = ref.watch(cryptoServiceProvider);
+  final db = ref.watch(databaseProvider);
+  final prefs = ref.watch(appPreferencesProvider);
+  final securePrefs = ref.watch(securePreferencesProvider);
+  return RekeyService(
+    auth: auth,
+    crypto: crypto,
+    db: db,
+    preferences: prefs,
+    securePreferences: securePrefs,
+    backupService: ref.watch(ledgerBackupServiceProvider),
+    pushService: ref.watch(ledgerPushServiceProvider),
+  );
+});
+
 /// Ledger migration service provider — injects crypto + database.
 /// Used for one-time encryption standardization (dev only, removed before
 /// public launch per BACKLOG.md).
@@ -183,6 +203,10 @@ final ledgerPullServiceProvider = Provider<LedgerPullService>((ref) {
     backupService: ref.watch(ledgerBackupServiceProvider),
     stagingStorage: StagingStorage(db),
     stagingStore: StagingStore(db),
+    // Offload CPU-bound deobfuscation + chain validation to a background
+    // isolate so a large cloud restore never wedges the UI thread (the ANR
+    // fix). Tests inject an inline runner; production uses Isolate.run.
+    offload: isolateOffloadRunner,
   );
 });
 

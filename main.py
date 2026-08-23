@@ -176,6 +176,15 @@ def main():
     # Verify command
     subparsers.add_parser("verify", help="Verify ledger integrity")
 
+    # Rotate-keys command (I-01) — soft by default, --full for hard rotation
+    rotate_p = subparsers.add_parser(
+        "rotate-keys",
+        help="Rotate the Master Key (soft: genesis+state; --full: full chain rewrite)",
+    )
+    rotate_p.add_argument("--full", action="store_true",
+                          help="Full (hard) rotation — re-encrypt the entire chain, "
+                               "re-seal every block, recompute hashes/MACs and prev_hash links")
+
     # Rep/List commands...
     rep_parser = subparsers.add_parser("rep", help="Show reputation summary")
     rep_parser.add_argument("days", type=int, nargs="?", help="Limit to last N days")
@@ -618,7 +627,7 @@ def main():
     
     # Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
     # These modify the ledger or perform irreversible operations.
-    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert", "migrate-format"]
+    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert", "migrate-format", "rotate-keys"]
     
     # Read-only commands that SHOULD use a cached session if available
     # but can proceed without one (cookie-based auth handles remote access).
@@ -776,6 +785,29 @@ def main():
     elif args.command == "verify":
         result = ledger.verify()
         print(result)
+    elif args.command == "rotate-keys":
+        # I-01 Master Key rotation — escape-hatch parity with the Flutter C-2
+        # re-key, driven from the trusted CLI so a user can rotate the key set
+        # without the app. Soft (default) or full (--full, re-encrypt chain).
+        from phpoc_cli.rotate_keys import RotateKeysCommand
+        raw_seed = auth.get_key()  # 32-byte raw seed (base64-decoded recovery seed)
+        if raw_seed is None:
+            print("No master key available — authenticate first.")
+            exit(1)
+        # Recover the identity secret for MAC re-signing (same path as 'recover').
+        identity_secret = ledger._get_identity_secret()
+        rotator = RotateKeysCommand(
+            data_dir=CONFIG_DIR,
+            seed=raw_seed,
+            identity_secret=identity_secret,
+        )
+        ok = rotator.execute(full=args.full)
+        mode = "hard (full chain rewrite)" if args.full else "soft"
+        if ok:
+            print(f"\u2713 {mode.capitalize()} rotation successful.")
+        else:
+            print(f"\u26a0 {mode.capitalize()} rotation failed — ledger left unchanged.")
+            exit(1)
     elif args.command == "migrate-format":
         print("[migrate-format] Starting format migration to 0.4.0…")
         print()
