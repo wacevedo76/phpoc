@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-08-21
+> **Last updated:** 2026-08-22
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -10,6 +10,27 @@
 > **Rule:** Every item here has a concrete next action. No "someday" items.
 > Phases are ordered — each phase unblocks the next.
 > Within each phase, items are ordered by severity (Critical → High → Medium → Low).
+
+---
+
+## 🟠 HIGH: C-2 Seed Re-Key — Web + CLI parity (cross-client seed replacement)
+
+**Plan (roadmap):** `docs/planning/C2_SEED_REKEY_WEB_CLI_ROADMAP.md`
+**Reference:** Flutter `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — `rekey_service_test.dart` 28/28, Settings Group S 6/6, suite 2010/2010)
+**ADR:** ADR-026 (versioned MK), ADR-001 (sovereign key)
+**Status:** 🔜 **PLANNED — HIGH PRIORITY** — C-2 in Flutter is complete; the **web + CLI** port is missing. This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
+
+**What:** Bring the C-2 **seed replacement** (mint a FRESH random seed → full re-key of vault + chain + staging + blind index + device cookie under the new Master Key → push to R2 → rotate cookie specifier) to `phpoc-web` and `phpoc-cli`. After re-key, the **old seed no longer decrypts** any data — a leaked/compromised seed is nullified.
+
+**Gap today:** CLI `ph rotate-keys`/`--full` only bumps `key_version` under the **SAME** seed (ADR-026 rotation) — it does **NOT** replace the seed. Web has `deriveMk(seed,version)` + `generateSeed()` primitives but no `RekeyService`/UI. Flutter is the only client with true seed-replacement.
+
+**Phases (4-phase TDD per client, reference-mirrored):**
+- **Phase A (CLI):** extend `RotateKeysCommand` with `--renew-seed` (mint new seed → `derive_mk(new_seed,new_version)` → re-key via `hard_rotate` core → rewrite seed vault/`recovery_seed_enc` → staging+index+cookie → push R2 → cookie rotation); wire `ph rekey-seed` into `main.py`. Test port R/B/M/P.
+- **Phase B (Web engine):** `src/services/rekey_service.js` mirroring Flutter `rekey()` — gate, backup, mint, per-block `_enc` re-key (`deriveMk`+re-seal via `chain.js`/ADR-029a), genesis+PDK rewrite, staging/cookie, IndexedDB persist + migration marker; push to R2; rotate cookie. Test port R/B/M/P.
+- **Phase C (Web UI):** Settings **Security & Recovery** "Re-key to a new Recovery Seed", mirroring Flutter Group S (6/6). Vitest+RTL.
+- **Phase D:** cross-client verify (re-keyed chain pulls + verifies under new MK on all clients; old-seed device can't decrypt), spec/format doc pass, ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates.
+
+**Prerequisites:** chain must be a valid canonical 0.4.0+ chain (re-key presumes valid seals/content hashes — see `LEDGER_VALIDITY_WORKFLOW_PHASE1.md`). Web `deriveMk(seed,version)`/`generateSeed()` need a green baseline before the re-key path relies on them.
 
 ---
 

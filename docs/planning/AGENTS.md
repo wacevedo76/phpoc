@@ -7,6 +7,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `ROADMAP.md` — Planned features organized by protocol layer
 - `BACKLOG.md` — Paused issues awaiting future attention
 - `WEB_ROADMAP.md` — Web/mobile build log (completed steps, bugs found, test plans)
+- `C2_SEED_REKEY_WEB_CLI_ROADMAP.md` — **C-2 seed re-key, Web + CLI rollout roadmap** (HIGH backlog): portfolios the Flutter `RekeyService.rekey()` reference to `phpoc-web` (engine + Settings UI) and `phpoc-cli` (`ph rekey-seed`/`--renew-seed`), fixing the leaked-seed nullification gap on non-Flutter clients. Phases A–D, test groups R/B/M/P/S port.
 - `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` — React web UI design decisions and multi-deployment architecture
 - `ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` — Plan to align web staging sharing behavior with CLI multi-machine pattern
 - `STABLE_DEVICE_SPECIFIER_ON_WRITES.md` — Plan: stop re-rolling device cookie specifier on same-device writes (fixes cross-client spurious REAUTH_NEEDED)
