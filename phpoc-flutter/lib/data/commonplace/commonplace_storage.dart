@@ -36,9 +36,9 @@ class CommonplaceStorage {
       if (_genesis != null) 'genesis': _genesis,
       'blocks': _blocks,
     };
-    await File(filePath)
-        .create(recursive: true)
-        .then((f) => f.writeAsString(jsonEncode(out)));
+    await File(
+      filePath,
+    ).create(recursive: true).then((f) => f.writeAsString(jsonEncode(out)));
   }
 
   /// Load a `commonplace.json` into this store.
@@ -112,6 +112,22 @@ class CommonplaceStorage {
   }
 
   int getBlockCount() => _blocks.length;
+
+  /// Replace the ENTIRE chain (genesis slot + block list) from [rebuilt].
+  ///
+  /// Used by RekeyService to persist a re-encrypted Commonplace chain in place
+  /// while keeping the on-disk `genesis`/`blocks` split consistent (a stale
+  /// [genesis] would otherwise shadow the rebuilt genesis on [load]) (CPS-R).
+  void replaceAll(List<Map<String, dynamic>> rebuilt) {
+    _genesis = null;
+    _blocks.clear();
+    for (final b in rebuilt) {
+      if (b['type'] == 'commonplace_genesis' && _genesis == null) {
+        _genesis = b;
+      }
+      _blocks.add(b);
+    }
+  }
 
   Map<String, dynamic>? getLastBlock() =>
       _blocks.isEmpty ? null : Map<String, dynamic>.from(_blocks.last);

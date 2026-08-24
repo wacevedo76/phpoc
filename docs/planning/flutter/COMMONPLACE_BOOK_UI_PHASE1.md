@@ -5,8 +5,8 @@
 > **Purpose:** Blueprint of all needed test assertions for the Commonplace Book **screen**, the
 > **add-entry** flow, and the **tag/topic index** — plus the `CommonplaceService` layer that wires the
 > already-complete chain engine (`lib/data/commonplace/`) to the UI. No test/implementation code yet.
-> **Status:** 🔜 Phase 1 (test exploration)
-> **Next Phase:** Phase 2 (RED: test definition)
+> **Status:** ✅ Phase 4 (REFACTOR: code review) complete
+> **Next Phase:** none — full 4-phase task complete.
 >
 > **Prerequisite (complete):** `COMMONPLACE_BOOK_PHASE1.md` — the chain/engine/storage slice (55/55 GREEN,
 > shared `SealableChain` mixin, 349/349 ledger-layer GREEN). `COMMONPLACE_BOOK_SWITCHER_PHASE1.md` — the
@@ -149,10 +149,17 @@ using the overridable provider, plus a provider-wiring group (V). No HTTP/remote
 
 ## Next Steps
 
-- **Phase 2 (RED):** write the 40 assertions as unit/widget tests —
-  `test/services/commonplace_service_test.dart` (S, V), `test/features/commonplace_screen_test.dart`
-  (L, A, T), `test/features/commonplace_swap_test.dart` (R) — and watch them fail (no implementation).
-- **Phase 3 (GREEN):** implement `commonplace_service.dart`, the Commonplace screen + add sheet +
-  topic index, and the AppScaffold content-swap + router additions to satisfy them.
-- **Phase 4 (REFACTOR):** review modularity/clarity/security/conciseness; update ROADMAP/BACKLOG/
-  SESSION_HANDOFF per the Documentation Impact Contract.
+- **✅ Phase 2 (RED) done (2026-08-23):** 40 tests written and CONFIRMED RED (compile-blocking on the not-yet-implemented API modules only — no unrelated errors). Files:
+  - `test/services/commonplace_service_test.dart` — Groups S (12) + V (3)
+  - `test/features/commonplace_screen_test.dart` — Groups L (6) + A (8) + T (5)
+  - `test/features/commonplace_swap_test.dart` — Group R (6)
+  All target the expected `CommonplaceService` API (`readEntries`/`addEntry`/`verify`/`getLastHash`/`getEntryCount`/`buildTagIndex`/`ensureGenesis`), `commonplaceServiceProvider`, and the `CommonplaceScreen`/`AddEntryBottomSheet`/`TopicIndex` widget surfaces — none of which exist yet, so failures are genuine RED.
+- **✅ Phase 3 (GREEN) done (2026-08-23):** all 40 assertions GREEN + full Flutter suite `+2050` / 0 failures (no regressions). Implemented:
+  - `lib/data/commonplace/commonplace_service.dart` — the `CommonplaceService` application layer (`readEntries`/`addEntry`/`verify`/`getLastHash`/`getEntryCount`/`buildTagIndex`/`ensureGenesis`, tag normalization, `ad_hoc` passthrough, `_persist` to the file store when present).
+  - `lib/data/storage/providers.dart` — `commonplaceServiceProvider` (shared MK via `cryptoServiceProvider`, `CommonplaceStorage` file store when `preResolvedPath` set, else in-memory). `lib/main.dart` pre-resolves `commonplace.json`.
+  - `lib/features/commonplace/commonplace_screen.dart` + `add_entry_bottom_sheet.dart` + `topic_index.dart` — the dashboard surface, add-not-in-place entry sheet (title/passage/tags/ad-hoc, validation), and tag filter chips.
+  - `lib/features/shared/app_scaffold.dart` — content swap by book via a new reactive `AppPreferences.bookMode` `ValueNotifier` (so both `BookSwitcher.select()` and direct `setBookMode` re-render the body); 7 source files added/modified.
+- **✅ Phase 4 (REFACTOR) done (2026-08-23):** 3 behavior-neutral improvements, all 40/40 remaining GREEN + full suite `+2050`/0 fails, analyze 0 on changed files:
+  1. **Clarity (C1):** removed a dead empty `if` block in `CommonplaceScreen._refresh()` (computed `service.crypto.hasMasterKey && getEntryCount()==0` then did nothing).
+  2. **Security/Clarity (C2):** extracted `_ensureBookBootstrap()` in the screen and documented that the genesis is bootstrapped **identityless** (empty username/email/pubkey are intentional placeholders; chain integrity comes from the shared MK, ADR-031).
+  3. **Modularity/Conciseness (M1/NC1):** consolidated `_persist()`'s double `dynamic` cast into a single null-aware `fileStore?.save()` in `CommonplaceService`, and removed the duplicated two-branch `as dynamic` store construction in `commonplaceServiceProvider` (providers.dart), switching on `filePath` only.

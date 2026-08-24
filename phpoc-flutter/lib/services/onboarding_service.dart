@@ -11,6 +11,7 @@ import '../../core/utils/decrypt_helpers.dart';
 import '../../core/utils/id_utils.dart';
 import '../../core/utils/format_utils.dart';
 import '../../core/utils/json_utils.dart';
+import '../../data/commonplace/commonplace_service.dart';
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
@@ -32,6 +33,11 @@ class OnboardingService with DecryptHelpers {
   final SecurePreferences securePreferences;
   final SyncService syncService;
 
+  /// Commonplace Book service (ADR-031). Optional — when present,
+  /// [clearAllData] also resets the Commonplace chain (CPS-C1/C2: wipe BOTH
+  /// books). Null-safe: Ledger-only flows leave the Commonplace chain intact.
+  final CommonplaceService? commonplaceService;
+
   /// Ledger pull service for restore-from-cloud. Set by provider injection.
   ///
   /// Typed as dynamic because test mocks substitute non-LedgerPullService
@@ -47,6 +53,7 @@ class OnboardingService with DecryptHelpers {
     required this.securePreferences,
     required this.syncService,
     this.ledgerPullService,
+    this.commonplaceService,
   });
 
   /// Create a new ledger with a fresh genesis block.
@@ -334,6 +341,10 @@ class OnboardingService with DecryptHelpers {
       await db.customStatement('DELETE FROM entries');
       await db.customStatement('DELETE FROM blocks');
     });
+    // Widen to BOTH books (CPS-C1/C2): also reset the Commonplace chain when a
+    // service is wired. Idempotent — a missing/empty `commonplace.json` is
+    // handled by `clearAll()` (truncate of an empty store is a no-op).
+    await commonplaceService?.clearAll();
     await preferences.setHasExistingData(false);
     await preferences.setDeviceUuid('');
     crypto.clearMasterKey();

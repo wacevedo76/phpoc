@@ -3,6 +3,9 @@ import 'dart:io';
 
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
+import '../../data/commonplace/commonplace_service.dart';
+import '../../data/ledger/helpers.dart'
+    show computeContentHash, computeEntryHash;
 import '../../data/storage/database.dart';
 import '../../data/storage/preferences.dart';
 import '../../data/storage/secure_preferences.dart';
@@ -23,12 +26,20 @@ class RekeyResult {
   final bool remotePushed;
   final String backupPath;
 
+  /// Commonplace Book (ADR-031) re-encryption side effects. When no
+  /// Commonplace service was supplied to the re-key these are 0 (Ledger-only
+  /// re-key, unchanged behavior).
+  final int commonplaceBlocksReencrypted;
+  final int commonplaceEntriesReencrypted;
+
   const RekeyResult({
     required this.newSeed,
     required this.newSeedFingerprint,
     required this.blocksReencrypted,
     required this.remotePushed,
     required this.backupPath,
+    this.commonplaceBlocksReencrypted = 0,
+    this.commonplaceEntriesReencrypted = 0,
   });
 }
 
@@ -54,6 +65,12 @@ class RekeyService {
   final LedgerBackupService backupService;
   final LedgerPushService? pushService;
 
+  /// Commonplace Book service (ADR-031). When supplied, a re-key ALSO
+  /// re-encrypts the `commonplace.json` chain under the new MK (CPS-R1..R7) so
+  /// the Commonplace book stays decryptable after seed rotation (one seed → one
+  /// MK → both books). Optional — a Ledger-only re-key passes null.
+  final CommonplaceService? commonplaceService;
+
   /// Pending new seed produced by the most recent successful `rekey()`,
   /// gated by the two-step reveal (B5 / S3).
   String? _pendingNewSeed;
@@ -67,6 +84,7 @@ class RekeyService {
     required this.securePreferences,
     required this.backupService,
     this.pushService,
+    this.commonplaceService,
   });
 
   /// Mint a fresh cryptographically-random 32-byte base64 recovery seed that
@@ -134,13 +152,16 @@ class RekeyService {
       newSeed: newSeed,
     );
 
+    // Re-key the Commonplace chain (CPS-R) BEFORE any ledger write (CPS-R6
+    // atomicity: a build/store failure throws here and leaves BOTH chains
+    // unmodified).
+    final cpRekey = await _rekeyCommonplace(oldMK: oldMK, newMK: newMK);
+    final cpBlocks = cpRekey?.blocks ?? 0;
+    final cpEntries = cpRekey?.entries ?? 0;
+
     // Atomically replace the chain + re-encrypt the vault (R5/R6, B2).
     final fingerprint = seedFingerprint(newSeed);
-    await _replaceChainAndVault(
-      rebuilt,
-      newSeed: newSeed,
-      newPdk: newPdk,
-    );
+    await _replaceChainAndVault(rebuilt, newSeed: newSeed, newPdk: newPdk);
 
     // Rotate the device cookie so old-MK sessions re-auth on next sync (P3),
     // record the re-key marker + fingerprint (B3/B4), and hand the live
@@ -158,12 +179,44 @@ class RekeyService {
       blocksReencrypted: rebuilt.length,
       remotePushed: false,
       backupPath: backupPath,
+      commonplaceBlocksReencrypted: cpBlocks,
+      commonplaceEntriesReencrypted: cpEntries,
     );
   }
 
   /// Whether a re-key has already been recorded (double-run guard, B3).
   Future<bool> hasRekeyed() {
     return preferences.hasRekeyed();
+  }
+
+  /// Re-key the Commonplace chain (CPS-R) BEFORE any ledger write. Building
+  /// seals/content-hashes requires the Commonplace service's OWN cached MK to
+  /// already be the NEW MK (the service carries a separate CryptoService that
+  /// shares the same seed→MK), so this switches that instance, rebuilds, and
+  /// persists. Returns the counts of re-encrypted blocks/entries, or null when
+  /// no Commonplace service is wired. On build/store failure it restores the
+  /// old MK and rethrows — BEFORE the ledger transaction — so a failed re-key
+  /// leaves BOTH chains unmodified (CPS-R6 atomicity).
+  Future<({int blocks, int entries})?> _rekeyCommonplace({
+    required String oldMK,
+    required String newMK,
+  }) async {
+    final cp = commonplaceService;
+    if (cp == null) return null;
+    final cpOldMK = cp.crypto.getMasterKey() ?? oldMK;
+    cp.crypto.setMasterKey(newMK);
+    try {
+      final r = _buildRebuiltCommonplace(
+        oldMK: cpOldMK,
+        commonplaceService: cp,
+      );
+      await cp.replaceChainWith(r.blocks);
+      // Leave the Commonplace crypto on the NEW MK: both books now share it.
+      return (blocks: r.blockCount, entries: r.entriesReencrypted);
+    } catch (_) {
+      cp.crypto.setMasterKey(cpOldMK);
+      rethrow;
+    }
   }
 
   /// Produce a PHPSPEC-format snapshot of the currently-stored chain before
@@ -282,8 +335,9 @@ class RekeyService {
   }) {
     final Map<String, dynamic> data;
     try {
-      data = json.decode(utf8.decode(base64.decode(block.dataEnc)))
-          as Map<String, dynamic>;
+      data =
+          json.decode(utf8.decode(base64.decode(block.dataEnc)))
+              as Map<String, dynamic>;
     } catch (e) {
       throw StateError('Block ${block.blockIndex} cannot be decoded: $e');
     }
@@ -318,9 +372,7 @@ class RekeyService {
     // Store the NEW recovery seed, encrypted under the new PDK (R7).
     final newSeedPdkEnc = crypto.encrypt(newSeed, newPdk);
 
-    final base = <String, dynamic>{
-      'seed': newSeedPdkEnc,
-    };
+    final base = <String, dynamic>{'seed': newSeedPdkEnc};
     final seal = crypto.seal(_canonicalJson(base), newMK);
     final newData = <String, dynamic>{
       ...base,
@@ -351,11 +403,13 @@ class RekeyService {
     final entries = data['entries'];
     if (entries is List) {
       data['entries'] = entries
-          .map((e) => _reencryptEntryMap(
-                Map<String, dynamic>.from(e as Map),
-                oldMK: oldMK,
-                newMK: newMK,
-              ))
+          .map(
+            (e) => _reencryptEntryMap(
+              Map<String, dynamic>.from(e as Map),
+              oldMK: oldMK,
+              newMK: newMK,
+            ),
+          )
           .toList();
     }
 
@@ -410,6 +464,140 @@ class RekeyService {
     return entry;
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Commonplace chain re-key (CPS-R1..R7)
+  // ═══════════════════════════════════════════════════════════════
+
+  /// Rebuild the ENTIRE Commonplace chain under [oldMK]→[newMK] in memory.
+  ///
+  /// Requires the Commonplace service's OWN cached MK to already be the NEW MK
+  /// (the caller switches it) so `sealBlock` / `computeContentHash` — which use
+  /// that instance's cached MK — seal and hash under the NEW key. Each block's
+  /// `_enc` fields are decrypted with [oldMK] and re-encrypted with the cached
+  /// NEW MK (explicit key), content + entry hashes recomputed, and seals
+  /// re-derived under the new MK so the chain still verifies afterwards
+  /// (CPS-R2). Plaintext fields (type/timestamp_ms/date) are preserved
+  /// (CPS-R3). Anything that cannot be decoded throws BEFORE any write
+  /// (CPS-R6 atomicity).
+  ({List<Map<String, dynamic>> blocks, int blockCount, int entriesReencrypted})
+  _buildRebuiltCommonplace({
+    required String oldMK,
+    required CommonplaceService commonplaceService,
+  }) {
+    final chain = commonplaceService.engine.chain;
+    final cpCrypto = commonplaceService.crypto;
+    final blocks = chain.readAll();
+    final rebuilt = <Map<String, dynamic>>[];
+    var entriesReencrypted = 0;
+    // The Commonplace seal whitelist INCLUDES `prev_hash`, so re-sealing under
+    // the NEW MK changes every block hash; each successor's `prev_hash` must be
+    // re-linked to its predecessor's NEW hash (else verify() fails linkage).
+    String? newPrevHash;
+
+    for (final block in blocks) {
+      final type = block['type'] as String?;
+      final newBlock = Map<String, dynamic>.from(block);
+
+      // Re-link the successor onto the predecessor's NEW seal.
+      if (newPrevHash != null) {
+        newBlock['prev_hash'] = newPrevHash;
+      }
+
+      if (type == 'commonplace_genesis') {
+        // Re-encrypt the genesis recovery seed under the new key set
+        // (CPS-R5), then re-derive the block seal + identity MAC. The seed is
+        // only re-encrypted when it is a real ciphertext (even-length hex) —
+        // the live app seeds an EMPTY string and some test fixtures seed a
+        // plaintext placeholder, neither of which is decryptable.
+        final rs = block['recovery_seed_enc'];
+        if (rs is String && rs.isNotEmpty && _isHexCiphertext(rs)) {
+          final plain = cpCrypto.decrypt(rs, oldMK);
+          newBlock['recovery_seed_enc'] = cpCrypto.encrypt(
+            plain,
+            cpCrypto.getMasterKey()!,
+          );
+        }
+        newBlock['block_hash'] = chain.sealBlock(newBlock);
+        _resignIdentity(
+          newBlock,
+          chain,
+          sealKey: 'block_hash',
+          crypto: cpCrypto,
+        );
+        newPrevHash = newBlock['block_hash'] as String;
+      } else if (type == 'commonplace') {
+        // Re-encrypt every entry's content under the new MK and recompute the
+        // content + entry hashes so verify() passes (CPS-R1/R2).
+        final entries = block['entries'];
+        if (entries is List) {
+          newBlock['entries'] = entries.map((e) {
+            final emap = Map<String, dynamic>.from(e as Map);
+            final data = emap['data'];
+            if (data is Map) {
+              final newData = <String, dynamic>{};
+              for (final field in data.entries) {
+                final key = field.key;
+                final value = field.value;
+                if (key.endsWith('_enc') &&
+                    value is String &&
+                    value.isNotEmpty) {
+                  final plain = cpCrypto.decrypt(value, oldMK);
+                  newData[key] = cpCrypto.encrypt(
+                    plain,
+                    cpCrypto.getMasterKey()!,
+                  );
+                } else {
+                  newData[key] = value;
+                }
+              }
+              // Recompute under the (now NEW) cached MK.
+              newData['content_hash'] = computeContentHash(newData, cpCrypto);
+              emap['data'] = newData;
+              emap['hash'] = computeEntryHash(newData);
+              entriesReencrypted++;
+            }
+            return emap;
+          }).toList();
+        }
+        newBlock['day_hash'] = chain.sealBlock(newBlock);
+        _resignIdentity(newBlock, chain, sealKey: 'day_hash', crypto: cpCrypto);
+        newPrevHash = newBlock['day_hash'] as String;
+      }
+
+      rebuilt.add(newBlock);
+    }
+
+    return (
+      blocks: rebuilt,
+      blockCount: rebuilt.length,
+      entriesReencrypted: entriesReencrypted,
+    );
+  }
+
+  /// Re-sign a Commonplace block's `identity_seal` over its [sealKey] hash
+  /// after a seal change (the seal key, not the identity secret, changed).
+  /// No-op when the chain carries no identity secret (test fakes / identityless
+  /// bootstrap).
+  void _resignIdentity(
+    Map<String, dynamic> newBlock,
+    dynamic chain, {
+    required String sealKey,
+    required CryptoService crypto,
+  }) {
+    final identityHex = chain.identitySecretHex as String?;
+    final stored = newBlock['identity_seal'];
+    if (identityHex == null || stored == null) return;
+    final hash = newBlock[sealKey] as String;
+    newBlock['identity_seal'] = crypto.sign(hash, identityHex);
+  }
+
+  /// Whether [value] looks like hex-encoded ciphertext (even-length, hex-only).
+  /// Used to skip non-encrypted `recovery_seed_enc` placeholders (CPS-R).
+  bool _isHexCiphertext(String value) {
+    if (value.isEmpty || value.length.isOdd) return false;
+    return RegExp(r'^[0-9a-fA-F]+$').hasMatch(value);
+  }
+
   String _sealFieldFor(Block block) {
     switch (block.blockType) {
       case BlockType.genesis:
@@ -439,7 +627,8 @@ class RekeyService {
   /// Persist [snapshot] to a temp recovery file, returning its path.
   Future<String> _writeSnapshot(String snapshot) async {
     final dir = Directory.systemTemp;
-    final name = 'phpoc_pre_rekey_${DateTime.now().millisecondsSinceEpoch}.json';
+    final name =
+        'phpoc_pre_rekey_${DateTime.now().millisecondsSinceEpoch}.json';
     final file = File('${dir.path}/$name');
     await file.writeAsString(snapshot);
     return file.path;

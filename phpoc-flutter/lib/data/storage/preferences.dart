@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Thin wrapper around SharedPreferences for app-level config values.
@@ -8,8 +9,17 @@ class AppPreferences {
   final Map<String, dynamic>? _store;
   final SharedPreferences? _prefs;
 
-  AppPreferences._test(this._store) : _prefs = null;
-  AppPreferences._prod(this._prefs) : _store = null;
+  /// Reactive current book mode (a ChangeNotifier so the shell can swap
+  /// content when the persisted book changes, e.g. via the BookSwitcher or a
+  /// direct `setBookMode`). Seeded from the persisted value on construction.
+  final ValueNotifier<String?> bookMode;
+
+  AppPreferences._test(this._store)
+    : _prefs = null,
+      bookMode = ValueNotifier<String?>(_store?[_keyBookMode] as String?);
+  AppPreferences._prod(this._prefs)
+    : _store = null,
+      bookMode = ValueNotifier<String?>(_prefs?.getString(_keyBookMode));
 
   bool get _isTest => _store != null;
 
@@ -20,6 +30,7 @@ class AppPreferences {
   static const _keyDeviceCookie = 'device_cookie';
   static const _keyHasExistingData = 'has_existing_data';
   static const _keyThemeMode = 'theme_mode';
+  static const _keyCommonplaceThemeMode = 'commonplace_theme_mode';
   static const _keyBiometricEnabled = 'biometric_enabled';
   static const _keyBookMode = 'book_mode';
   static const _keyHasRekeyed = 'has_rekeyed';
@@ -110,6 +121,29 @@ class AppPreferences {
     await _prefs!.setString(_keyThemeMode, mode);
   }
 
+  // ── Commonplace Theme Mode ─────────────────────────────────
+
+  /// The Commonplace book's own theme, persisted under a key distinct from
+  /// [theme_mode] (ADR-031 per-book theme). Defaults to the Ledger theme so a
+  /// first-run user never sees a blank/broken palette before selecting one
+  /// (CPS-T6). While [Book.commonplace] is active the app renders this value.
+  Future<String> getCommonplaceThemeMode() async {
+    final stored = _isTest
+        ? _store![_keyCommonplaceThemeMode] as String?
+        : _prefs!.getString(_keyCommonplaceThemeMode);
+    if (stored != null && stored.isNotEmpty) return stored;
+    // Fall back to the Ledger theme (sane first-run default — CPS-T6).
+    return getThemeMode();
+  }
+
+  Future<void> setCommonplaceThemeMode(String mode) async {
+    if (_isTest) {
+      _store![_keyCommonplaceThemeMode] = mode;
+      return;
+    }
+    await _prefs!.setString(_keyCommonplaceThemeMode, mode);
+  }
+
   // ── Biometric Enabled ───────────────────────────────────
 
   /// Whether the user has opted into biometric unlock.
@@ -138,9 +172,11 @@ class AppPreferences {
   Future<void> setBookMode(String mode) async {
     if (_isTest) {
       _store![_keyBookMode] = mode;
+      bookMode.value = mode;
       return;
     }
     await _prefs!.setString(_keyBookMode, mode);
+    bookMode.value = mode;
   }
 
   // ── Seed re-key markers (C-2) ────────────────────────────

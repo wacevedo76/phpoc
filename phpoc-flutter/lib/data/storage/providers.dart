@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/crypto/crypto_service.dart';
+import '../../data/commonplace/commonplace_service.dart';
+import '../../data/commonplace/commonplace_storage.dart';
 import '../../data/ledger/engine.dart';
 import '../../data/ledger/store_adapters.dart';
 import '../../data/sync/staging_storage.dart';
@@ -62,7 +64,8 @@ final cryptoServiceProvider = Provider<CryptoService>((ref) {
 /// [AppPreferences.preResolvedInstance] is set, otherwise falls back
 /// to the test instance.
 final appPreferencesProvider = Provider<AppPreferences>((ref) {
-  final prefs = AppPreferences.preResolvedInstance ?? AppPreferences.testInstance();
+  final prefs =
+      AppPreferences.preResolvedInstance ?? AppPreferences.testInstance();
   ref.onDispose(() => prefs.clearAll());
   return prefs;
 });
@@ -72,6 +75,22 @@ final appPreferencesProvider = Provider<AppPreferences>((ref) {
 /// Uses platform secure storage in production, in-memory in tests.
 final securePreferencesProvider = Provider<SecurePreferences>((ref) {
   return SecurePreferences();
+});
+
+/// Commonplace Book service provider — a shared-MK `[CommonplaceService]`
+/// over a real `commonplace.json` file store (ADR-031). Uses the same
+/// [cryptoServiceProvider] (one seed → one MK → both books). Falls back to an
+/// in-memory `[CommonplaceStorage]` when no file path is pre-resolved (tests),
+/// mirroring [databaseProvider].
+final commonplaceServiceProvider = Provider<CommonplaceService>((ref) {
+  final crypto = ref.watch(cryptoServiceProvider);
+  // A real `commonplace.json` when [main] pre-resolves a path, else an
+  // in-memory fake (tests). [CommonplaceStorage.filePath] is the switch.
+  final store = CommonplaceStorage(
+    filePath: CommonplaceService.preResolvedPath ?? '',
+    masterKeyHex: crypto.getMasterKey() ?? '',
+  );
+  return CommonplaceService(crypto: crypto, store: store);
 });
 
 /// Sync service provider — uses SQLite-backed staging storage
@@ -96,13 +115,16 @@ final syncServiceProvider = Provider<SyncService>((ref) {
 /// calls [SyncService.startPeriodicSync], on leaving `ready` it stops it, and
 /// on provider disposal it detaches from the lifecycle and stops the timer.
 /// Never started until this provider is first read.
-final periodicSyncCoordinatorProvider =
-    Provider<PeriodicSyncCoordinator>((ref) {
+final periodicSyncCoordinatorProvider = Provider<PeriodicSyncCoordinator>((
+  ref,
+) {
   final sync = ref.watch(syncServiceProvider);
   // Observe the phase ValueNotifier kept in sync by AppLifecycleNotifier on
   // every transition, so the coordinator latches onto the live app phase.
-  final coordinator =
-      PeriodicSyncCoordinator(sync: sync, phase: appPhaseNotifier);
+  final coordinator = PeriodicSyncCoordinator(
+    sync: sync,
+    phase: appPhaseNotifier,
+  );
   ref.onDispose(coordinator.dispose);
   return coordinator;
 });
@@ -136,6 +158,7 @@ final onboardingServiceProvider = Provider<OnboardingService>((ref) {
     securePreferences: securePrefs,
     syncService: sync,
     ledgerPullService: ledgerPull,
+    commonplaceService: ref.watch(commonplaceServiceProvider),
   );
 });
 
@@ -178,6 +201,7 @@ final rekeyServiceProvider = Provider<RekeyService>((ref) {
     securePreferences: securePrefs,
     backupService: ref.watch(ledgerBackupServiceProvider),
     pushService: ref.watch(ledgerPushServiceProvider),
+    commonplaceService: ref.watch(commonplaceServiceProvider),
   );
 });
 
@@ -218,6 +242,5 @@ final ledgerPushServiceProvider = Provider<LedgerPushService?>((ref) {
   if (!sync.isRemoteAvailable) return null;
   final crypto = ref.watch(cryptoServiceProvider);
   final db = ref.watch(databaseProvider);
-  return LedgerPushService(
-      db: db, crypto: crypto, transport: sync.transport!);
+  return LedgerPushService(db: db, crypto: crypto, transport: sync.transport!);
 });

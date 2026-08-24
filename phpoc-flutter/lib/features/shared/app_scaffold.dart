@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../data/storage/providers.dart' show appPreferencesProvider;
+import '../commonplace/commonplace_screen.dart';
+import '../commonplace/commonplace_settings_screen.dart';
 import 'book_switcher.dart';
 
 /// Shared bottom-navigation scaffold for the main app shell.
@@ -7,12 +11,46 @@ import 'book_switcher.dart';
 /// Shown after auth (AppPhase.ready). Renders a book-switcher bar
 /// ([BookSwitcher]) above the page, then a BottomNavigationBar with
 /// Dashboard, History, Sync, and Settings tabs.
-class AppScaffold extends StatelessWidget {
+class AppScaffold extends ConsumerWidget {
   final Widget child;
   const AppScaffold({super.key, required this.child});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Reactively derive the active book from the persisted `book_mode`. Both
+    // the BookSwitcher's `select()` (persists then notifies) and any direct
+    // `setBookMode` update the same ValueNotifier, so the body swap reflects
+    // the current book after the persisted value changes.
+    final prefs = ref.watch(appPreferencesProvider);
+
+    return ValueListenableBuilder<String?>(
+      valueListenable: prefs.bookMode,
+      builder: (context, key, _) {
+        final book = Book.fromKey(key);
+        // When the Commonplace Book is active, swap the routed page child for
+        // the Commonplace dashboard surface. The bottom-nav tabs and
+        // BookSwitcher bar stay mounted (shared shell); only the body content
+        // is book-scoped.
+        final Widget body;
+        if (book == Book.commonplace) {
+          // Only the `/settings` route redirects to the Commonplace settings
+          // page; Dashboard/History/Sync keep the dashboard content-swap
+          // (CPS-S5). For the Ledger book the routed child is preserved
+          // (CPS-S1/S6).
+          final isSettings =
+              GoRouterState.of(context).matchedLocation == '/settings';
+          body = isSettings
+              ? const CommonplaceSettingsScreen()
+              : const CommonplaceScreen();
+        } else {
+          body = child;
+        }
+        return _buildScaffold(context, body);
+      },
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, Widget body) {
     return Scaffold(
       body: Column(
         children: [
@@ -25,7 +63,7 @@ class AppScaffold extends StatelessWidget {
           Expanded(
             child: MediaQuery(
               data: MediaQuery.of(context).removePadding(removeTop: true),
-              child: child,
+              child: body,
             ),
           ),
         ],
@@ -74,5 +112,3 @@ class AppScaffold extends StatelessWidget {
     }
   }
 }
-
-

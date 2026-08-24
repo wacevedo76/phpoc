@@ -57,8 +57,7 @@ class BookNotifier extends StateNotifier<Book> {
 }
 
 /// The active [Book]. Overritable in tests via `data_providers.appPreferencesProvider`.
-final bookProvider =
-    StateNotifierProvider<BookNotifier, Book>((ref) {
+final bookProvider = StateNotifierProvider<BookNotifier, Book>((ref) {
   return BookNotifier(ref.watch(appPreferencesProvider));
 });
 
@@ -86,10 +85,7 @@ class BookSwitcher extends ConsumerWidget {
             onSelected: (b) => ref.read(bookProvider.notifier).select(b),
             itemBuilder: (context) => [
               for (final b in Book.values)
-                PopupMenuItem<Book>(
-                  value: b,
-                  child: Text(b.label),
-                ),
+                PopupMenuItem<Book>(value: b, child: Text(b.label)),
             ],
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -104,8 +100,11 @@ class BookSwitcher extends ConsumerWidget {
                     color: scheme.onPrimaryContainer,
                   ),
                 ),
-                Icon(Icons.arrow_drop_down,
-                    size: 20, color: scheme.onPrimaryContainer),
+                Icon(
+                  Icons.arrow_drop_down,
+                  size: 20,
+                  color: scheme.onPrimaryContainer,
+                ),
               ],
             ),
           ),

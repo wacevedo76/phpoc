@@ -75,9 +75,9 @@ E (separate-file storage, 9), F (ad-hoc k/v, 5). No UI, no sync, no blind index,
 - Tag-search blind index (encrypted, MK-derived) — deferred
 - Web + CLI parity ports
 
-### 🔜 Commonplace UI wiring — screen + add-entry + tag/topic index
+### ✅ Commonplace UI wiring — screen + add-entry + tag/topic index
 
-**Status:** 🔜 Planned (next slice after the Book Switcher — Phase 1 blueprint: `docs/planning/flutter/COMMONPLACE_BOOK_UI_PHASE1.md`).
+**Status:** ✅ Complete (4-phase TDD — Phase 1 blueprint: `docs/planning/flutter/COMMONPLACE_BOOK_UI_PHASE1.md`; 40/40 GREEN; full suite +2050/0 fails; analyzer 0 on changed files; Phase 4 REFACTOR done 2026-08-23).
 
 **What:** The Commonplace Book's user-facing surface. When the Book Switcher is set to `commonplace`, the
 shell (`AppScaffold`) swaps its child content to Commonplace screens instead of the ledger Dashboard/History/
