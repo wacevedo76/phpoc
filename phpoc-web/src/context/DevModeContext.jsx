@@ -26,6 +26,7 @@ import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
 import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
 import { exportWithAuth } from '../services/export_auth.js';
 import { importLedger } from '../services/ledger_import.js';
+import { RekeyService } from '../services/rekey_service.js';
 
 // ── Context ──────────────────────────────────────────────────────────
 
@@ -1488,6 +1489,32 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     return result;
   }, [services]);
 
+  // ── Re-key to a new recovery seed (C-2) ────────────────────────
+
+  /**
+   * Re-key the entire ledger under a freshly-minted recovery seed
+   * (option (a): new seed = new raw master key). Exposed to the Settings
+   * Security & Recovery UI as `useApp().rekey(...)`.
+   *
+   * @param {object} args
+   * @param {string} args.oldPassphrase - Current passphrase (two-secret gate).
+   * @param {string} args.newPassphrase - New passphrase for the new seed envelope.
+   * @param {string} [args.newSeed] - Optional pre-minted seed (minted if omitted).
+   */
+  const rekey = useCallback(async ({ oldPassphrase, newPassphrase, newSeed } = {}) => {
+    const { crypto, storage, sync } = services;
+    if (!crypto || !storage) {
+      throw new Error('Services not ready — cannot re-key.');
+    }
+    const svc = new RekeyService({
+      crypto,
+      storage,
+      sync,
+      ledgerExport: { exportToJson: exportLedgerFullAction },
+    });
+    return svc.rekey({ oldPassphrase, newPassphrase, newSeed });
+  }, [services, exportLedgerFullAction]);
+
   // ── Context value ────────────────────────────────────────────────
 
   const contextValue = {
@@ -1552,6 +1579,9 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Commit entries to ledger
     commitEntries,
 
+    // Re-key to a new recovery seed (C-2)
+    rekey,
+
     // Re-auth overlay
     reauthState,
     triggerReauth,
@@ -1605,6 +1635,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
  *   confirmImport: (opts: {keepStaging?: boolean}) => Promise<void>,
  *   exportLedger: (passphrase: string) => Promise<void>,
  *   exportLedgerFull: () => Promise<void>,
+ *   rekey: (args: {oldPassphrase: string, newPassphrase: string, newSeed?: string}) => Promise<{newSeed: string, newMasterKey: string, backupKey: string, remotePushed: boolean, seedFingerprint: string}>,
  *   logout: () => void,
  *   checkCookieTtl: () => Promise<boolean>,
  * }}

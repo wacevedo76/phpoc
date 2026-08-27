@@ -8,6 +8,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `BACKLOG.md` — Paused issues awaiting future attention
 - `WEB_ROADMAP.md` — Web/mobile build log (completed steps, bugs found, test plans)
 - `C2_SEED_REKEY_WEB_CLI_ROADMAP.md` — **C-2 seed re-key, Web + CLI rollout roadmap** (HIGH backlog): portfolios the Flutter `RekeyService.rekey()` reference to `phpoc-web` (engine + Settings UI) and `phpoc-cli` (`ph rekey-seed`/`--renew-seed`), fixing the leaked-seed nullification gap on non-Flutter clients. Phases A–D, test groups R/B/M/P/S port.
+- `C2_SEED_REKEY_WEB_PHASE1.md` — **C-2 Seed Re-Key, Web Phase 1 blueprint** (roadmap Phase B engine + Phase C Settings UI): ports Flutter `RekeyService.rekey()` (option (a) — new seed = new raw MK, `key_version` 0) to `phpoc-web`. 34 assertions across groups R (11), B (5), M (6), P (6), S (6). Web deltas: dual seed storage (`phpoc_seed` + genesis `recovery_seed_enc` + passphrase tokens), ciphertext-bound entry `hash` (recomputed) vs plaintext `content_hash` (invariant), genesis `identity` outside the ADR-029a seal, Commonplace N/A. ✅ 4-phase TDD COMPLETE (2026-08-24).
 - `PHPOC-REACT_WEB-DESIGN_DECISIONS.md` — React web UI design decisions and multi-deployment architecture
 - `ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` — Plan to align web staging sharing behavior with CLI multi-machine pattern
 - `STABLE_DEVICE_SPECIFIER_ON_WRITES.md` — Plan: stop re-rolling device cookie specifier on same-device writes (fixes cross-client spurious REAUTH_NEEDED)

@@ -18,7 +18,7 @@
 **Plan (roadmap):** `docs/planning/C2_SEED_REKEY_WEB_CLI_ROADMAP.md`
 **Reference:** Flutter `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — `rekey_service_test.dart` 28/28, Settings Group S 6/6, suite 2010/2010)
 **ADR:** ADR-026 (versioned MK), ADR-001 (sovereign key)
-**Status:** 🔜 **PLANNED — HIGH PRIORITY** — C-2 in Flutter is complete; the **web + CLI** port is missing. This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
+**Status:** 🟡 **IN PROGRESS** — Web ✅ **COMPLETE (4-phase TDD, 2026-08-24)** (`RekeyService` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`); **CLI (Phase A) + cross-client (Phase D) still open**. This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
 
 **What:** Bring the C-2 **seed replacement** (mint a FRESH random seed → full re-key of vault + chain + staging + blind index + device cookie under the new Master Key → push to R2 → rotate cookie specifier) to `phpoc-web` and `phpoc-cli`. After re-key, the **old seed no longer decrypts** any data — a leaked/compromised seed is nullified.
 
@@ -26,11 +26,29 @@
 
 **Phases (4-phase TDD per client, reference-mirrored):**
 - **Phase A (CLI):** extend `RotateKeysCommand` with `--renew-seed` (mint new seed → `derive_mk(new_seed,new_version)` → re-key via `hard_rotate` core → rewrite seed vault/`recovery_seed_enc` → staging+index+cookie → push R2 → cookie rotation); wire `ph rekey-seed` into `main.py`. Test port R/B/M/P.
-- **Phase B (Web engine):** `src/services/rekey_service.js` mirroring Flutter `rekey()` — gate, backup, mint, per-block `_enc` re-key (`deriveMk`+re-seal via `chain.js`/ADR-029a), genesis+PDK rewrite, staging/cookie, IndexedDB persist + migration marker; push to R2; rotate cookie. Test port R/B/M/P.
-- **Phase C (Web UI):** Settings **Security & Recovery** "Re-key to a new Recovery Seed", mirroring Flutter Group S (6/6). Vitest+RTL.
+- **Phase B (Web engine):** ✅ `src/services/rekey_service.js` mirroring Flutter `rekey()` — gate, backup, mint, per-block `_enc` re-key (`deriveMk`+re-seal via `chain.js`/ADR-029a), genesis+PDK rewrite, staging/cookie, IndexedDB persist + migration marker; push to R2; rotate cookie. Test port R/B/M/P.
+- **Phase C (Web UI):** ✅ Settings **Security & Recovery** "Re-key to a new Recovery Seed", mirroring Flutter Group S (6/6). Vitest+RTL.
 - **Phase D:** cross-client verify (re-keyed chain pulls + verifies under new MK on all clients; old-seed device can't decrypt), spec/format doc pass, ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates.
 
 **Prerequisites:** chain must be a valid canonical 0.4.0+ chain (re-key presumes valid seals/content hashes — see `LEDGER_VALIDITY_WORKFLOW_PHASE1.md`). Web `deriveMk(seed,version)`/`generateSeed()` need a green baseline before the re-key path relies on them.
+
+---
+
+## 🟡 Web: Full vitest suite baseline — hygiene (harness + pre-existing failures)
+
+**Status:** 🟡 Partially done (2026-08-27). **Inventory:** `docs/planning/WEB_TEST_BASELINE_FAILURES.md` (2026-08-27).
+
+**What:** `npx vitest run` in `phpoc-web/` discovers 85 files. The **one** genuine failing assertion file
+(`settings_genesis_component.test.mjs`, was 25 failed / 1 passed) is now **FIXED** (Phase 3 GREEN, 26/26) —
+`handleSaveRemote` in `Settings.jsx` was rewritten to call `GenesisGate.check` directly (removed the
+`/health` fetch-ping). Full `vitest run` now has **0 real failures** (117 passed / 1 intentional `it.skip`).
+The remaining 77 non-green files are harness/config noise, not test failures: the `vite.config.js`
+`test.include` glob `**/*_test.?(c|m)[jt]s?(x)` pulls node `--test` suites into vitest (51 "No test suite
+found" + 23 `process.exit` aborts), plus 3 genuine load errors (`genesis_gate_test.mjs`, `ledger_merge_test.mjs`,
+`sync_indicator_test.mjs`). Unrelated to C-2 Seed Re-Key Web (34/34 GREEN).
+
+**Next action:** (1) drop the second `include` glob from `vite.config.js`; (2) fix the 3 load errors;
+(3) ~~optional Phase 4 REFACTOR for `settings_genesis_component.test.mjs` (latest-request-wins guard for E2)~~ **DONE (2026-08-27)** — `checkGenesis` helper + latest-request-wins guard, `saved`→boolean `justSaved`.
 
 ---
 

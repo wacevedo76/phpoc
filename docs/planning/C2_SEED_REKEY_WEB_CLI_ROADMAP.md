@@ -3,7 +3,7 @@
 > **Plan:** C-2 full seed replacement — cross-client port of the Flutter `RekeyService` to **phpoc-web** and **phpoc-cli**.
 > **Depends on:** ADR-026 (versioned MK), ADR-001 (sovereign key), Flutter reference `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — 28/28 `rekey_service_test.dart`, 6/6 Settings Group S, suite 2010/2010, analyze 0), CLI rotation precedent `docs/planning/I01A_ROTATEKEYS_EXECUTION_PHASE1.md` + `phpoc_cli/rotate_keys.py` (`soft_rotate`/`hard_rotate`, `derive_mk(seed, version)`).
 > **Purpose:** Blueprint + roadmap for bringing the C-2 **seed replacement** capability (fresh random seed → full re-key of the personal ledger under the new Master Key so a leaked/compromised seed is nullified) to the **web** and **CLI** clients, mirroring the already-completed Flutter implementation.
-> **Status:** 🔜 **Planned** — high priority (BACKLOG). Cross-client port. See `docs/planning/BACKLOG.md`.
+> **Status:** 🟡 **Web COMPLETE (4-phase TDD, 2026-08-24) — CLI + cross-client still open.** Cross-client port. See `docs/planning/BACKLOG.md`. Web: Phase 1 blueprint `docs/planning/C2_SEED_REKEY_WEB_PHASE1.md` (34 assertions R/B/M/P/S) → Phase 2 RED (28 Node + 6 Vitest) → Phase 3 GREEN (`src/services/rekey_service.js` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`) → **Phase 4 REFACTOR ✅** (extracted `rekey()` into named phase helpers). Phase A (CLI) + Phase D (cross-client) still open.
 
 ---
 
@@ -22,7 +22,7 @@ C-2 is the *only* operation that genuinely mitigates the **pre-existing credenti
 | Client | Key-rotation (`key_version` bump, same seed) | **Seed replacement (C-2, new seed)** |
 |---|---|---|
 | Python CLI | ✅ `RotateKeysCommand.soft_rotate`/`hard_rotate` + `derive_mk(seed, version)` | ❌ **Missing** — `rotate_keys.py` can take an `old_seed`/`seed`, but no command mints a *new* seed (out-of-scope for rotation) |
-| Web | ⚠️ `deriveMk(seed, version)` + `CryptoManager` + `generateSeed()` primitives exist | ❌ **Missing** — no `RekeyService` equivalent, no Settings UI, no seed-mint flow |
+| Web | ⚠️ `deriveMk(seed, version)` + `CryptoManager` + `generateSeed()` primitives exist | ✅ **Done** — `RekeyService` (`src/services/rekey_service.js`) + Settings Security & Recovery UI + `DevModeContext.rekey` (Phase B/C GREEN 2026-08-24) |
 | Flutter | ✅ + **C-2 seed re-key** done (reference) | ✅ `RekeyService.rekey()` — 28/28, reference |
 
 **Key primitives already present (what we build on):**
@@ -44,19 +44,20 @@ C-2 is the *only* operation that genuinely mitigates the **pre-existing credenti
 - **[A3] CLI tests** — port Flutter Group R/B/M/P assertions to Python (`tests/test_rotate_keys.py` / new `tests/test_rekey_seed.py`). Reference: Flutter `rekey_service_test.dart` 28/28.
 - **Exit:** CLI seed-rekey GREEN; `ph rekey-seed` reachable + tested; remote/R2 verified under new MK.
 
-### 🔜 Phase B — Web engine + orchestration
+### ✅ Phase B — Web engine + orchestration (GREEN 2026-08-24)
 
-- **[B1] Web `RekeyService`** (`src/services/rekey_service.js`) — mirror Flutter `rekey()`: gate (unlocked or valid current seed+passphrase), backup (chain + vault snapshot), mint new seed (`generateSeed()`), re-key every block `_enc` under new MK via `deriveMk(new_seed, new_version)` + re-seal via `chain.js`/`seal_fields.js` (ADR-029a whitelist), rewrite genesis `recovery_seed_enc` + PDK, re-encrypt staging rows + device cookie, persist (IndexedDB), migration marker (`key_version`, `seed_fingerprint`).
-- **[B2] Web remote push / device coordinates** — push re-keyed chain + `hash_index.json` + `index.json` + genesis to the Worker/R2 (extend `SyncService.pushLedgerBlocks` or a dedicated push), rotate device cookie specifier → next sync returns `reauthNeeded` (ADR-030 ownership handoff).
-- **[B3] Web wiring** — `DevModeContext` exposes `rekeyToNewSeed(...)`; integrate with passphrase/auth state; re-verify the re-keyed chain is loaded by History/ledger.
-- **[B4] Web tests** — port Group R/B/M/P to `test/rekey_service_web_test.mjs` (node) + orchestration integration. Reference: Flutter 28/28.
+- **[B1] Web `RekeyService`** (`src/services/rekey_service.js`) ✅ — mirror Flutter `rekey()`: gate (unlocked or valid current seed+passphrase), backup (chain + vault snapshot), mint new seed (`generateSeed()`), re-key every block `_enc` under new MK via `deriveMk(new_seed, new_version)` + re-seal via `chain.js`/`seal_fields.js` (ADR-029a whitelist), rewrite genesis `recovery_seed_enc` + PDK, re-encrypt staging rows + device cookie, persist (IndexedDB), migration marker (`key_version`, `seed_fingerprint`).
+- **[B2] Web remote push / device coordinates** ✅ — `RekeyService.rekey()` pushes the rewritten chain via `sync.pushLedgerBlocks({ forceAll: true })` and rotates the device-cookie specifier (P1/P3 GREEN). `hash_index.json`/`index.json`/genesis parity is inherited from the existing push path.
+- **[B3] Web wiring** ✅ — `DevModeContext` exposes `rekey(...)`; integrate with passphrase/auth state; re-verify the re-keyed chain is loaded by History/ledger.
+- **[B4] Web tests** ✅ — Group R/B/M/P ported to `test/rekey_service_web_test.mjs` (node): 28/28 GREEN. Reference: Flutter 28/28.
 - **Exit:** web re-key engine + remote push GREEN.
 
-### 🔜 Phase C — Web Settings UI (Security & Recovery)
+### ✅ Phase C — Web Settings UI (Security & Recovery) (GREEN 2026-08-24)
 
-- **[C1] Settings "Section Security & Recovery"** — add "Re-key to a new Recovery Seed" alongside any existing passphrase entry, mirroring Flutter Settings Group S (6/6): two-secret confirmation (current passphrase/seed + explicit acknowledge), reveal-gate (new seed shown once after write, requires user-saved confirmation), cancel/back aborts with no mutation, network-failure leaves local consistent, success dialog shown once.
-- **[C2] Web component tests** — Vitest + RTL port of Flutter Group S (`test/rekey_settings_web.test.mjs`). Reference: Flutter Settings Group S 6/6.
+- **[C1] Settings "Section Security & Recovery"** ✅ — added "Re-key to new Recovery Seed" alongside any existing passphrase entry, mirroring Flutter Settings Group S (6/6): two-secret confirmation (current passphrase/seed + explicit acknowledge), reveal-gate (new seed shown once after write, requires user-saved confirmation), cancel/back aborts with no mutation, network-failure leaves local consistent, success dialog shown once.
+- **[C2] Web component tests** ✅ — Vitest + RTL port of Flutter Group S (`test/rekey_settings_web.test.mjs`): 6/6 GREEN. Reference: Flutter Settings Group S 6/6.
 - **Exit:** web UI + UX GREEN; user can re-key to a fresh seed entirely in the browser.
+- **Phase 4 (REFACTOR) ✅ (2026-08-24):** extracted `rekey()` in `rekey_service.js` into named phase helpers — `_recoverIdentitySecret`, `_rebuildBlocks` (in-memory re-encrypt + re-seal + entry-hash recompute + prev_hash cascade), `_persistNewKeySet`, `_recordRekeyMarker`, `_pushRewrittenChain` — mirroring Flutter Phase 4. 28/28 node + 6/6 Vitest GREEN retained. **Web 4-phase TDD COMPLETE.**
 
 ### 🔜 Phase D — Cross-client verification + docs
 

@@ -13,7 +13,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/components/ui/` — Icon components
 - `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils, **seal_fields** (`SEAL_FIELDS`/`selectSealFields`/`computeSeal` — canonical ADR-029/029a block-seal whitelist, mirror of Python `chain.py`)
 - `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory, row_staging_store, row_sync, migration
-- `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import
+- `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import, export_auth, import_service, rekey_service
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
 - `src/context/` — DevModeContext (dev and production share the same boot path; no mock services or DummyCryptoService fallbacks remain)
 - `src/hooks/` — useActiveTasks, useAutoSync, useCookieMonitor
@@ -51,6 +51,7 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
   Backing logic: `DevModeContext.wipeLedger()` clears the IndexedDB backend + localStorage worker creds
   + master key, then → landing fresh start. See WEB_ROADMAP Build 63.
 - **connectToWorker full-chain fix (2026-08-21):** `worker_connect_fullchain_regression.test.mjs` — 23/23 GREEN. Locks in that `connectToWorker` fetches the FULL remote `ledger/blocks/` chain into `ledger:blocks` (so committed history loads), keeps only genuinely-uncommitted staging rows uncommitted (no D11 auto-commit), converts them via `canonicalRowToDTO` + `LocalCache.writeEntries` so the Sync cards render full fields (no blank cards), and never promotes staging into the ledger. Fixes the `588b034` "staging-based connectToWorker" regression.
+- **C-2 Seed Re-Key Web (2026-08-24):** `rekey_service_web_test.mjs` — 28 Node tests (Groups R11/B5/M6/P6) + `rekey_settings_web.test.mjs` — 6 Vitest/RTL tests (Group S1–S6). **Phase 3 GREEN: 28/28 + 6/6.** Implemented `src/services/rekey_service.js` (`RekeyService`, option a: new seed = new raw MK, key_version unchanged) + Settings Security & Recovery tile/dialog + `DevModeContext.rekey(...)`. Node harness uses the REAL WASM `CryptoService` (`src/crypto/wasm/phpoc_crypto_core_bg.wasm`) + `MemoryBackend`; Group S mirrors Flutter `settings_screen_test.dart` Group S. Run: `node --test test/rekey_service_web_test.mjs` / `npx vitest run test/rekey_settings_web.test.mjs`.
 - Node-based tests: `node test/<name>.mjs`
 - Vitest component tests: `npx vitest run test/settings_genesis_component.test.mjs`
 - Smoke tests for WASM integration
