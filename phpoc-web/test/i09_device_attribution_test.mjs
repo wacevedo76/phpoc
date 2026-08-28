@@ -1,5 +1,5 @@
 /**
- * i09_device_attribution.test.mjs — I-09 Phase 2 RED: JS tests.
+ * i09_device_attribution_test.mjs — I-09 Phase 2 RED: JS tests.
  *
  * Tests device_local_secret generation, deriveDeviceId() via WASM,
  * migration from existing UUID formats, and SyncService._getDeviceId() changes.
@@ -9,7 +9,7 @@
  * Group G: sync.js integration — 6 tests
  *
  * Usage:
- *   node test/i09_device_attribution.test.mjs
+ *   node test/i09_device_attribution_test.mjs
  */
 
 import { MemoryBackend } from '../src/sync/storage.js';

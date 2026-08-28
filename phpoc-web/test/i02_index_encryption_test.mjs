@@ -9,7 +9,7 @@
  * They are expected to FAIL (RED) because encryption is not yet implemented.
  *
  * Usage:
- *   node phpoc-web/test/i02_index_encryption.test.mjs
+ *   node phpoc-web/test/i02_index_encryption_test.mjs
  */
 
 import { createHash } from 'crypto';

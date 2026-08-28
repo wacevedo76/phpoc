@@ -361,7 +361,7 @@ appears in the unlock step as a fallback for the rare stale-blob case.
    - CLI fallback link shows only when `connectCliFallback` is set and format is 'blob'
    - Selecting CLI format hides the fallback link and shows block count + seed field
 2. ~~Add automated E2E test for the stale-`ledger:blocks` scenario~~ ✅ **DONE**
-   - Tests: `onboarding_cloud_conflict.test.mjs` — 23 pure-logic tests covering
+   - Tests: `onboarding_cloud_conflict_test.mjs` — 23 pure-logic tests covering
      C1 (different genesis → conflict), C2 (same genesis → no conflict),
      C3 (blocks-only), C4 (blob-only), C5 (choose blocks → stale blob deleted)
 3. Eventually, consider **schema unification** — a single R2 key for both CLI
@@ -369,7 +369,7 @@ appears in the unlock step as a fallback for the rare stale-blob case.
 
 **Files modified:**
 - `phpoc-web/src/components/screens/OnboardingScreen.jsx` — Phase 3 enhancement
-- `phpoc-web/test/onboarding_cloud_conflict.test.mjs` — 23 pure-logic tests (all GREEN)
+- `phpoc-web/test/onboarding_cloud_conflict_test.mjs` — 23 pure-logic tests (all GREEN)
 
 **No Python CLI changes needed.** The CLI's block-file scheme is correct and
 unaffected by this bug.

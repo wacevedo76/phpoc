@@ -10,7 +10,7 @@
  * and _fieldToken() currently uses SHA-256(constant + fieldName).
  *
  * Usage:
- *   cd phpoc-web && node --test test/i02a_field_token_wasm.test.mjs
+ *   cd phpoc-web && node --test test/i02a_field_token_wasm_test.mjs
  */
 
 import { readFileSync } from 'fs';

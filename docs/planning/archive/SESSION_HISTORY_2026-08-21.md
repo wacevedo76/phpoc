@@ -41,6 +41,6 @@ staging — expected).
 `588b034` regression made Web `connectToWorker` pull only genesis + rebuild by re-committing the staging
 blob. Fixed to fetch full `ledger/blocks/` chain via `WorkerImportSource.fetchChain`, write to `ledger:blocks`,
 keep only genuinely-uncommitted staging rows (D11). Matches `f1b466c` canonical blocks format.
-`worker_connect_fullchain_regression.test.mjs` 23/23 GREEN; verified on personal ledger R2 (132 blocks).
+`worker_connect_fullchain_regression_test.mjs` 23/23 GREEN; verified on personal ledger R2 (132 blocks).
 **BLANK-CARD fix:** convert each uncommitted staging row via `canonicalRowToDTO` + `LocalCache.writeEntries`
 so Sync cards render full fields (C6/C7 assert title + start_epoch survive round-trip).

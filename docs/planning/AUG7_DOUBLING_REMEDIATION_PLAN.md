@@ -79,13 +79,23 @@ Both the source and the repaired chain are re-verified (`verify_ledger.Verifier`
 `VALID: chain verifies (140 blocks)` confirmed for both.
 
 ## Apply + push (separate, user-initiated — NOT automated)
-1. Review `/tmp/repaired.json` (block diff is seal-only: `block_hash`, type hash,
-   `prev_hash`, `entries`, `identity_seal`).
-2. User explicitly authorizes the one-time write to the personal ledger and the remote
-   push. The script has no apply/push path on purpose; apply must be a deliberate,
-   separate step (or manual R2 upload via the Worker).
-3. After apply, re-run the read-only scanner (`/tmp/scan_double_seals.py`) to confirm
-   **0** same-start-ms groups remain.
+The repair script only produces the repaired chain. Applying it to R2 is a separate,
+deliberate step via `scripts/apply_ledger_repair_r2.py`, which is **dry-run by default**
+and writes only with an explicit `--apply` (plus interactive confirmation):
+
+```
+# dry-run against live R2 (read-only): lists exact block/index plan
+python3 scripts/apply_ledger_repair_r2.py --input /tmp/repaired.json
+
+# apply (user-initiated): overwrite re-sealed blocks + rebuild hash_index/index
+python3 scripts/apply_ledger_repair_r2.py --input /tmp/repaired.json --apply
+```
+
+The apply script compares by seal against the ACTUAL remote blocks, overwrites only the
+re-sealed span, and regenerates + pushes `hash_index.json` (+ `.sha256`) and `index.json`
+(the remote `.sha256` sidecar is currently missing). After apply, each client must do a
+**full restore-from-cloud** (not incremental sync, which would detect a divergence at
+block 39).
 
 ## Open decisions / risks
 - **Identity seal re-sign**: if the device secret is available, re-sign; otherwise the

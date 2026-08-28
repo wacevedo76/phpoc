@@ -5,6 +5,11 @@
 > the full `vitest run` that are **unrelated to the C-2 Seed Re-Key Web work** (which is
 > 34/34 GREEN: 28/28 node + 6/6 vitest).
 
+> ✅ **REMEDIATED 2026-08-28** — all remediation steps below are complete (see
+> `WEB_VITEST_HARNESS_PHASE1.md`): second `include` glob removed, 3 load errors fixed, 8 node
+> suites renamed `*.test.mjs`→`*_test.mjs`, and 2 `verifyLedgerChain` mock gaps patched.
+> `npx vitest run` is now clean: **9 files / 119 passed / 1 skipped / 0 failed / 0 errors**.
+
 ## Executive Summary
 
 | Category | Files | Real test failures? |
@@ -61,8 +66,8 @@ These suites abort at load/teardown before any assertion runs. Grouped by error:
 
 - `test/cookie_monitor_reauth_test.mjs`
 - `test/export_passphrase_validation_test.mjs`
-- `test/i02_index_encryption.test.mjs`
-- `test/i02_staging_keys.test.mjs`
+- `test/i02_index_encryption_test.mjs`
+- `test/i02_staging_keys_test.mjs`
 - `test/import_orchestration_test.mjs`
 - `test/index_manager_test.mjs`
 - `test/ledger_chain_test.mjs`
@@ -81,7 +86,7 @@ These suites abort at load/teardown before any assertion runs. Grouped by error:
 
 ### `process.exit unexpectedly called with "1"` (4)
 
-- `test/i02a_field_token_wasm.test.mjs`
+- `test/i02a_field_token_wasm_test.mjs`
 - `test/ledger_engine_test.mjs`
 - `test/remote_import_test.mjs`
 - `test/storage_plugin_test.mjs`
@@ -123,8 +128,8 @@ vitest suite (they use `node:test` globals). These are **not** failures — they
 - `test/entry_dto_committed_test.mjs`
 - `test/hash_index_test.mjs`
 - `test/http_backend_test.mjs`
-- `test/i01_key_rotation_web.test.mjs`
-- `test/i09_device_attribution.test.mjs`
+- `test/i01_key_rotation_web_test.mjs`
+- `test/i09_device_attribution_test.mjs`
 - `test/import_entries_test.mjs`
 - `test/ledger_sync_test.mjs`
 - `test/local_cache_test.mjs`
@@ -132,7 +137,7 @@ vitest suite (they use `node:test` globals). These are **not** failures — they
 - `test/mock_remote_test.mjs`
 - `test/naming_i04_test.mjs`
 - `test/no_fallback_cookie_test.mjs`
-- `test/onboarding_cloud_conflict.test.mjs`
+- `test/onboarding_cloud_conflict_test.mjs`
 - `test/pbkdf2_salt_test.mjs`
 - `test/reauth_genesis_mismatch_test.mjs`
 - `test/reauth_integration_test.mjs`
@@ -155,8 +160,8 @@ vitest suite (they use `node:test` globals). These are **not** failures — they
 - `test/transport_wiring_test.mjs`
 - `test/unlock_performance_regression_test.mjs`
 - `test/web_ledger_auto_pull_test.mjs`
-- `test/worker_connect_blocks_format.test.mjs`
-- `test/worker_connect_fullchain_regression.test.mjs`
+- `test/worker_connect_blocks_format_test.mjs`
+- `test/worker_connect_fullchain_regression_test.mjs`
 - `test/worker_connect_onboarding_test.mjs`
 
 ## ✅ Category 4 — Pass cleanly (8 files)

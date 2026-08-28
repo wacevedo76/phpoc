@@ -1,5 +1,5 @@
 /**
- * onboarding_cloud_conflict.test.mjs — Cloud Onboarding Dual-Format Conflict Detection.
+ * onboarding_cloud_conflict_test.mjs — Cloud Onboarding Dual-Format Conflict Detection.
  *
  * Tests the enhanced handleWorkerFetch logic that detects when both
  * ledger:blocks AND ledger/blocks/ exist on R2 with potentially different
@@ -16,7 +16,7 @@
  * implemented. Tests are written in TDD RED phase style.
  *
  * Usage:
- *   node test/onboarding_cloud_conflict.test.mjs
+ *   node test/onboarding_cloud_conflict_test.mjs
  */
 
 import { createHash } from 'crypto';

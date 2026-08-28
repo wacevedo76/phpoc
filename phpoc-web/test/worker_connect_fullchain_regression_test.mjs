@@ -1,5 +1,5 @@
 /**
- * worker_connect_fullchain_regression.test.mjs — Regression for the
+ * worker_connect_fullchain_regression_test.mjs — Regression for the
  * staging-based `connectToWorker` bug (commit 588b034 reverted behavior).
  *
  * That regression made `connectToWorker` pull only the genesis block + the
@@ -22,7 +22,7 @@
  *   Group D: committed history visible — getCompleted returns committed entries
  *
  * Usage:
- *   node test/worker_connect_fullchain_regression.test.mjs
+ *   node test/worker_connect_fullchain_regression_test.mjs
  */
 
 import { createHash } from 'crypto';
@@ -36,7 +36,7 @@ import { canonicalRowToDTO } from '../src/sync/entry_dto.js';
 const t = new TestHelpers();
 
 // ══════════════════════════════════════════════════════════════════════
-// Deterministic helpers (mirrors worker_connect_blocks_format.test.mjs)
+// Deterministic helpers (mirrors worker_connect_blocks_format_test.mjs)
 // ══════════════════════════════════════════════════════════════════════
 
 function deterministicHash(data) {

@@ -32,6 +32,7 @@ import { createHash } from 'crypto';
 import { TestHelpers } from './test_helpers.mjs';
 import { MockCrypto } from './mock_crypto.mjs';
 import { jsonSort, jsonSortIndent2, computeEntryHash as utilsComputeEntryHash } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 
 const t = new TestHelpers();
 
@@ -161,7 +162,7 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
     prev_hash: prevHash,
     entries: sortedEntries,
   };
-  const sealJson = jsonSort(content);
+  const sealJson = jsonSort(selectSealFields(content));
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
@@ -190,7 +191,7 @@ function buildGenesisBlock(opts = {}) {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = jsonSort(content);
+  const sealJson = jsonSort(selectSealFields(content));
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);
@@ -385,11 +386,11 @@ console.log('\n=== Group A — Genesis Hash Comparison ===');
   console.log('\n  --- A2: Different genesis → GenesisMismatchError ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
-  ], { username: 'localuser', email: 'local@example.com' });
+  ], { date: '2026-01-01' });
 
   const remoteChain = buildChain([
     { date: '2026-06-11', entries: [ENTRY_C] },
-  ], { username: 'remoteuser', email: 'remote@example.com' });
+  ], { date: '2026-01-02' });
 
   const transport = new MockTransport();
   transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
@@ -740,10 +741,7 @@ console.log('\n=== Group B — Merge on Genesis Match ===');
       else if (type === 'year_summary') hashKey = 'year_hash';
       else hashKey = 'day_hash';
 
-      const checkData = {};
-      for (const [k, v] of Object.entries(block)) {
-        if (k !== hashKey && k !== 'signature' && k !== 'identity_seal') checkData[k] = v;
-      }
+      const checkData = selectSealFields(block);
       if (!crypto.verifySeal(jsonSort(checkData), block[hashKey], MASTER_KEY)) {
         sealsValid = false;
         break;
@@ -863,7 +861,7 @@ console.log('\n=== Group C — Edge Cases ===');
   // Build remote with different identity → different genesis seal
   const remoteChain = buildChain([
     { date: '2026-06-11', entries: [ENTRY_C] },
-  ], { username: 'otheruser', email: 'other@test.com' });
+  ], { date: '2026-01-02' });
 
   const transport = new MockTransport();
   transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
@@ -1012,10 +1010,10 @@ console.log('\n=== Group D — Typed Error Hierarchy (Bug 1 Fix) ===');
     // Create actual genesis mismatch scenario
     const localChain = buildChain([
       { date: '2026-06-10', entries: [ENTRY_A] },
-    ], { username: 'localuser', email: 'local@example.com' });
+    ], { date: '2026-01-01' });
     const remoteChain = buildChain([
       { date: '2026-06-11', entries: [ENTRY_C] },
-    ], { username: 'remoteuser', email: 'remote@example.com' });
+    ], { date: '2026-01-02' });
 
     const transport = new MockTransport();
     transport.setData(LEDGER_BLOCKS_KEY, encodeChainForRemote(remoteChain));
@@ -1603,10 +1601,10 @@ console.log('⛔ hash_index Tier 2 NOT IMPLEMENTED — all tests expected to FAI
 
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
-  ], { username: 'localuser', email: 'local@example.com' });
+  ], { date: '2026-01-01' });
   const remoteChain = buildChain([
     { date: '2026-06-11', entries: [ENTRY_C] },
-  ], { username: 'remoteuser', email: 'remote@example.com' });
+  ], { date: '2026-01-02' });
 
   const transport = new MockTransport();
   transport.setData(HI_SHA_PATH, new TextEncoder().encode(sha256HashIndex(remoteHI)));
@@ -1968,10 +1966,10 @@ console.log('⛔ hash_index integration NOT IMPLEMENTED — all tests expected t
   console.log('\n  --- G4: Full flow — genesis mismatch via hash index ---');
   const localChain = buildChain([
     { date: '2026-06-10', entries: [ENTRY_A] },
-  ], { username: 'localuser', email: 'local@example.com' });
+  ], { date: '2026-01-01' });
   const remoteChain = buildChain([
     { date: '2026-06-11', entries: [ENTRY_C] },
-  ], { username: 'remoteuser', email: 'remote@example.com' });
+  ], { date: '2026-01-02' });
 
   const transport = new MockTransport();
   const remoteHI = buildHashIndexFromChain(remoteChain);

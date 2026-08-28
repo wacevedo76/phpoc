@@ -27,7 +27,7 @@
 import { createHash } from 'crypto';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, computeEntryHash as utilsComputeEntryHash } from '../src/ledger/utils.js';
 import { selectSealFields } from '../src/ledger/seal_fields.js';
 
 const t = new TestHelpers();
@@ -98,9 +98,7 @@ function computeContentHash(data) {
  * SHA-256 over JSON.stringify(data, null, 2).
  */
 function computeEntryHash(data) {
-  return createHash('sha256')
-    .update(JSON.stringify(data, null, 2), 'utf-8')
-    .digest('hex');
+  return utilsComputeEntryHash(data, crypto);
 }
 
 /**
@@ -168,8 +166,8 @@ function buildDayBlock(entries, prevHash, dateStr, dayIndex) {
     prev_hash: prevHash,
     entries: sortedEntries,
   };
-  // Building seal: sort keys properly (whitelist-free)
-  const sealJson = jsonSort(content);
+  // Building seal: sort keys properly over the canonical whitelist
+  const sealJson = jsonSort(selectSealFields(content));
   content.day_hash = crypto.seal(sealJson, MASTER_KEY);
   if (IDENTITY_SECRET) {
     content.identity_seal = crypto.mac(content.day_hash, IDENTITY_SECRET);

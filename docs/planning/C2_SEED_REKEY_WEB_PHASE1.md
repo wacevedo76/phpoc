@@ -146,7 +146,7 @@ Port of Flutter groups R/B/M/P (engine) + S (web UI). IDs are web-scoped (`R1`â€
 | `phpoc-web/test/rekey_service_web_test.mjs` | node (existing `.test.mjs` harness; mock `storage`/`sync`/`transport`, real `CryptoService` WASM + `chain.js`) | R, B, M, P | 28 |
 | `phpoc-web/test/rekey_settings_web.test.mjs` | Vitest + React Testing Library | S | 6 |
 
-**Baseline green-first:** add a small pre-re-key green baseline exercising `generateSeed()` + `deriveMk(seed,0)` + a valid genesis/day chain (`i01_key_rotation_web.test.mjs` is the existing key-rotation precedent to mirror). Reference Flutter assertion count: 28 (R/B/M/P) + 6 (S).
+**Baseline green-first:** add a small pre-re-key green baseline exercising `generateSeed()` + `deriveMk(seed,0)` + a valid genesis/day chain (`i01_key_rotation_web_test.mjs` is the existing key-rotation precedent to mirror). Reference Flutter assertion count: 28 (R/B/M/P) + 6 (S).
 
 ---
 
@@ -164,4 +164,4 @@ Port of Flutter groups R/B/M/P (engine) + S (web UI). IDs are web-scoped (`R1`â€
 - **`authenticate` vs `deriveMk`:** re-key should derive the new MK via `deriveMk(newSeed, 0)` (or `deriveMasterKey(newSeed)`), not `authenticate('', newSeed, â€¦)`, to keep the derivation explicit and version-aware.
 - **Genesis collision on push:** `pushLedgerBlocks` already has a genesis-collision guard â€” confirm whether re-key needs a dedicated "authoritative overwrite" flag (D6) or can reuse `forceAll`.
 - **`identitySecret` recovery source:** during re-key the identity secret is recovered from `identity_secret_enc_fallback` (old MK) or held in `LedgerEngine`/`chain.identitySecret` â€” pick the in-memory source and assert it stays constant (D2).
-- **WASM in node tests:** the existing `.test.mjs` harness already runs `CryptoService` WASM under node (precedent: `i01_key_rotation_web.test.mjs`).
+- **WASM in node tests:** the existing `.test.mjs` harness already runs `CryptoService` WASM under node (precedent: `i01_key_rotation_web_test.mjs`).

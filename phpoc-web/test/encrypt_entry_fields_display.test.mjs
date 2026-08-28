@@ -49,6 +49,7 @@ const mockSyncService = {
   readEntries: vi.fn(() => Promise.resolve([])),
   getElapsedTime: vi.fn(() => '00:00:00'),
   hasMasterKey: vi.fn(() => false),
+  verifyLedgerChain: vi.fn(() => Promise.resolve({ verified: null, blockCount: 0, error: null, firstFailure: null, failReason: null })),
   revealEncryptedFields: vi.fn(),
   isEncryptedRevealed: vi.fn(() => false),
   isRemoteAvailable: false,

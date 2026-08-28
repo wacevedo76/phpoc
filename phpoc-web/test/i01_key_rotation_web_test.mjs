@@ -7,7 +7,7 @@
  * web soft/hard rotation, and cross-client roundtrip.
  *
  * Usage:
- *   cd phpoc-web && node --test test/i01_key_rotation_web.test.mjs
+ *   cd phpoc-web && node --test test/i01_key_rotation_web_test.mjs
  */
 
 import { createHmac } from 'crypto';

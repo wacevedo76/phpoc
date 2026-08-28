@@ -8,7 +8,7 @@
  * They are expected to FAIL (RED) because field-key encryption is not yet implemented.
  *
  * Usage:
- *   node phpoc-web/test/i02_staging_keys.test.mjs
+ *   node phpoc-web/test/i02_staging_keys_test.mjs
  */
 
 import { createHash, createHmac } from 'crypto';

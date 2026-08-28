@@ -263,8 +263,8 @@ in genesis blocks. These must be updated to use the new format.
 
 | File | Refs | Change |
 |------|------|--------|
-| `worker_connect_blocks_format.test.mjs` | 1 | Remove `format_version` from fixture |
-| `onboarding_cloud_conflict.test.mjs` | 1 | Remove `format_version` from fixture |
+| `worker_connect_blocks_format_test.mjs` | 1 | Remove `format_version` from fixture |
+| `onboarding_cloud_conflict_test.mjs` | 1 | Remove `format_version` from fixture |
 | `settings_genesis_test.mjs` | 1 | Remove `format_version` from parameter |
 | `settings_genesis_component.test.mjs` | 1 | Remove `format_version` from parameter |
 

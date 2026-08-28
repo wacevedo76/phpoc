@@ -1,5 +1,5 @@
 /**
- * worker_connect_blocks_format.test.mjs — CLI Blocks-Format Onboarding Tests.
+ * worker_connect_blocks_format_test.mjs — CLI Blocks-Format Onboarding Tests.
  *
  * Tests the connectToWorker blocks-format path: deleting stale ledger:blocks
  * before the genesis gate runs, and the bootstrapServices auto-clear recovery
@@ -23,7 +23,7 @@
  *     B5 — after auto-clear + retry, genesis gate is clean and Sync Now works
  *
  * Usage:
- *   node test/worker_connect_blocks_format.test.mjs
+ *   node test/worker_connect_blocks_format_test.mjs
  */
 
 import { createHash } from 'crypto';

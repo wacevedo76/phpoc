@@ -195,7 +195,7 @@ See `docs/planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` and `docs/plann
 
 **86 tests across 3 files for the GENESIS_MISMATCH bug fix (all GREEN):**
 
-**New file: `test/worker_connect_blocks_format.test.mjs` (56 tests)**
+**New file: `test/worker_connect_blocks_format_test.mjs` (56 tests)**
 - Group A — Blocks-format onboarding: stale `ledger:blocks` delete (7 scenarios, 39 assertions)
   - A1: delete called after storage write, before bootstrap
   - A2: stale ledger:blocks with different genesis → delete clears it from R2
@@ -222,7 +222,7 @@ See `docs/planning/ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` and `docs/plann
 
 MockTransport gained `delete()`, `resetCache()`, and `hasKey()` methods (used by Group N and above).
 
-**New file: `test/onboarding_cloud_conflict.test.mjs` (23 tests — Phase 3 deferred)**
+**New file: `test/onboarding_cloud_conflict_test.mjs` (23 tests — Phase 3 deferred)**
 - C1: Both formats, different genesis → `status: 'conflict'`
 - C2: Both formats, same genesis → no conflict
 - C3: Only CLI blocks → blocks-format path

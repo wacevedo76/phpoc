@@ -16,6 +16,11 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | File | Temp | Key contents |
 |---|---|---|
 | `CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` | HOT | **Implementation plan**: CCS-1 through CCS-4 phases, scorecard matrix, dependency graph, per-client source file index. References abstract workflow in reference doc §12. |
+| `WEB_FLUTTER_PARITY_SPEC.md` | HOT | **Web ↔ Flutter parity spec (2026-08-28)** — the tracked gaps to bring `phpoc-web` in line with `phpoc-flutter` (P1 Commonplace, P2 C-2 Phase D, P3 staging Option A, P4 vitest hygiene) + already-in-line areas + related CLI Phase A note |
+| `COMMONPLACE_BOOK_WEB_ROADMAP.md` | HOT | **Commonplace Book web port roadmap (ADR-031)** — Flutter-mirrored slices: chain/engine/storage → Book Switcher → UI → Settings, then sync/rotation follow-ons |
+| `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | HOT | **C-2 Phase D cross-client verification blueprint** — pull+verify under new MK + old-seed decrypt-fails matrix; spec/format pass; doc updates |
+| `WEB_STAGING_OPTION_A_PHASE1.md` | HOT | **Web staging Option A blueprint** — migrate `SyncService` CRUD to `RowStagingStore` as authoritative store (retire `LocalCache` `entries`) |
+| `WEB_VITEST_HARNESS_PHASE1.md` | HOT | **Web vitest harness hygiene blueprint** — drop second `test.include` glob + fix 3 load errors |
 
 ### Source (core Python packages)
 
@@ -122,9 +127,9 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/test/staging_backward_compat_test.mjs` | 🔴 RED | **NEW** — 24 tests (Categories I/J): legacy entries/remote backward compat (I1-I10), edge cases & stress (J1-J14). Phase 2 RED. (2026-07-07) |
 | `phpoc-web/test/unlock_performance_regression_test.mjs` | 🔴 RED | **NEW** — 34 tests (Groups A-D) for unlock performance regression fixes: hash index bootstrap gap (A1-A6), cookie catch-22 (B1-B6), specifier mismatch short-circuit (C1-C6), combined scenarios (D1-D3). Current: 15 pass / 19 fail (RED phase, fix not implemented). (2026-07-05) |
 | `phpoc-web/test/worker_connect_onboarding_test.mjs` | HOT | 65 tests — Worker Connect onboarding (fetch genesis, passphrase verify, persistence) |
-| `phpoc-web/test/worker_connect_blocks_format.test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
+| `phpoc-web/test/worker_connect_blocks_format_test.mjs` | 🟢 GREEN | **NEW** — 56 tests: Group A blocks-format onboarding (7 scenarios, stale `ledger:blocks` delete) + Group B bootstrap auto-clear recovery (5 scenarios) (2026-06-29) |
 | `phpoc-web/test/onboarding_import_component.test.mjs` | 🟢 GREEN | **NEW** — 21 Vitest+RTL component tests for OnboardingScreen import form state machine (file picker gating, destroy warnings, checkbox gates, error display, back navigation) |
-| `phpoc-web/test/onboarding_cloud_conflict.test.mjs` | 🟢 GREEN | **NEW** — 23 tests: Phase 3 deferred — cloud onboarding dual-format conflict detection (`probeDualFormats()`) (2026-06-29) |
+| `phpoc-web/test/onboarding_cloud_conflict_test.mjs` | 🟢 GREEN | **NEW** — 23 tests: Phase 3 deferred — cloud onboarding dual-format conflict detection (`probeDualFormats()`) (2026-06-29) |
 | `phpoc-web/src/sync/remote_import.js` | HOT | `WorkerImportSource` — cloud backup import source (list, fetch, validate). 57-test suite. (2026-06-20) |
 | `phpoc-web/test/remote_import_test.mjs` | HOT | 57 assertions — 6 groups (connection, list, fetch, validate happy/error, edge cases) |
 | `phpoc-web/src/components/screens/OnboardingScreen.jsx` | HOT | 5 onboarding paths including "From Cloud" import sub-option (2026-06-20) |
@@ -175,6 +180,7 @@ or **[COLD]** (stable — skip unless handoff says otherwise).
 | `phpoc-web/src/components/ui/EncryptionFlags.jsx` | HOT | **NEW** — reusable encryption checkbox group (master + per-field), extracted from Dashboard + NewTask (Phase 4 refactor) |
 | `phpoc-web/test/settings_genesis_component.test.mjs` | 🟢 GREEN | 26-test Vitest + RTL component test suite for Settings genesis gate (B: 16, E: 6, F: 4). All 26 pass — `handleSaveRemote` fixed 2026-08-27 to call `GenesisGate.check` directly (accessibility attributes added); Phase 4 REFACTOR done (`checkGenesis` helper + latest-request-wins guard, `saved`→boolean `justSaved`). |
 | `phpoc-web/test/auth_screen_wipe.test.mjs` | 🟢 GREEN | **NEW** — 7 Vitest + RTL tests for the AuthScreen "Wipe Ledger" destructive action (Flutter parity): button gating (full-screen only / requires onWipe), confirm-dialog open/cancel/confirm, onWipe invocation + wiping state, error surfacing. (2026-08-22) |
+| `phpoc-web/test/vitest_harness_config.test.js` | 🟢 GREEN | **NEW** — 2 Vitest meta-tests guarding the harness config: `test.include` is a single glob and no glob matches node `*_test` suites (keeps node `--test` suites out of vitest). Added as part of Web Vitest Harness Hygiene (P4) (2026-08-28) |
 | `phpoc-web/src/App.jsx` | HOT | Re-auth overlay replaced with TTL warning banner + `ErrorBoundary` class component + /import route → ImportScreen (2026-08-03). Wires `wipeLedger` → AuthScreen `onWipe` (2026-08-22). |
 
 *(See full file listing in MAP.md — this is a quick-reference summary.)*
@@ -213,7 +219,7 @@ Key test files:
 - `phpoc-web/test/ccs4_cross_client.mjs` — 🟢 GREEN **NEW (CCS-4)** — JS-facing parity helpers/assertions for Groups A–E (canonical row, hash index, merge, device ID, blob) used by the Python↔JS cross-client suite
 - `tests/test_ccs4_cross_client.py` — 🟢 GREEN **NEW (CCS-4)** — Groups A–D cross-client deterministic equivalence (Python ↔ JS) — **20/20 GREEN** (A1–A5, A6-JS, C6 divergences converged in Phase 3; B2 Flutter divergence verified false)
 - `tests/test_ccs4_live_worker.py` — 🟢 GREEN **NEW (CCS-4)** — Group E live Worker round-trips (Web↔CLI) — 5/5 GREEN (real Worker). Blueprint: `docs/planning/CCS4_PHASE1.md`
-- `phpoc-web/test/i09_device_attribution.test.mjs` — 🟢 GREEN **NEW (Phase 3)** — 17 tests for I-09 device attribution (Groups E, F, G): device_local_secret, deriveDeviceId, migration, sync.js integration
+- `phpoc-web/test/i09_device_attribution_test.mjs` — 🟢 GREEN **NEW (Phase 3)** — 17 tests for I-09 device attribution (Groups E, F, G): device_local_secret, deriveDeviceId, migration, sync.js integration
 
 ### Active docs
 

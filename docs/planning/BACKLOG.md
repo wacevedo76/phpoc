@@ -1,6 +1,6 @@
 # PHPOC Backlog — Active Issue Queue
 
-> **Last updated:** 2026-08-22
+> **Last updated:** 2026-08-28
 > **Sources consolidated:** `docs/design/flaws/ISSUES_TO_ADDRESS.md` (17 issues, 3 Critical / 5 High / 6 Medium / 3 Low),
 > `docs/design/flaws/PHPSPEC-Design_Flaws.md` (13 flaws + 4 observations).
 > Those files are retired — this document is the single queue.
@@ -10,6 +10,21 @@
 > **Rule:** Every item here has a concrete next action. No "someday" items.
 > Phases are ordered — each phase unblocks the next.
 > Within each phase, items are ordered by severity (Critical → High → Medium → Low).
+
+---
+
+## Web ↔ Flutter Parity (spec + planning docs)
+
+**Spec:** `docs/planning/WEB_FLUTTER_PARITY_SPEC.md` (2026-08-28) — the tracked set of gaps to bring
+`phpoc-web` in line with `phpoc-flutter`. Already-in-line areas (C-2 seed re-key web, ADR-030, wipe ledger,
+staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
+
+| Point | Planning doc | Status |
+|-------|--------------|--------|
+| P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🔜 Not started |
+| P2 — C-2 cross-client verification (Phase D) | `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | 🔜 Not started |
+| P3 — Web staging "Option A" refactor | `WEB_STAGING_OPTION_A_PHASE1.md` | 🔜 Deferred |
+| P4 — Web vitest harness hygiene | `WEB_VITEST_HARNESS_PHASE1.md` | ✅ Complete (2026-08-28) |
 
 ---
 
@@ -28,7 +43,7 @@
 - **Phase A (CLI):** extend `RotateKeysCommand` with `--renew-seed` (mint new seed → `derive_mk(new_seed,new_version)` → re-key via `hard_rotate` core → rewrite seed vault/`recovery_seed_enc` → staging+index+cookie → push R2 → cookie rotation); wire `ph rekey-seed` into `main.py`. Test port R/B/M/P.
 - **Phase B (Web engine):** ✅ `src/services/rekey_service.js` mirroring Flutter `rekey()` — gate, backup, mint, per-block `_enc` re-key (`deriveMk`+re-seal via `chain.js`/ADR-029a), genesis+PDK rewrite, staging/cookie, IndexedDB persist + migration marker; push to R2; rotate cookie. Test port R/B/M/P.
 - **Phase C (Web UI):** ✅ Settings **Security & Recovery** "Re-key to a new Recovery Seed", mirroring Flutter Group S (6/6). Vitest+RTL.
-- **Phase D:** cross-client verify (re-keyed chain pulls + verifies under new MK on all clients; old-seed device can't decrypt), spec/format doc pass, ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates.
+- **Phase D:** cross-client verify (re-keyed chain pulls + verifies under new MK on all clients; old-seed device can't decrypt), spec/format doc pass, ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates. **Plan:** `docs/planning/C2_CROSS_CLIENT_VERIFY_PHASE1.md`.
 
 **Prerequisites:** chain must be a valid canonical 0.4.0+ chain (re-key presumes valid seals/content hashes — see `LEDGER_VALIDITY_WORKFLOW_PHASE1.md`). Web `deriveMk(seed,version)`/`generateSeed()` need a green baseline before the re-key path relies on them.
 
@@ -36,12 +51,14 @@
 
 ## 🟡 Web: Full vitest suite baseline — hygiene (harness + pre-existing failures)
 
-**Status:** 🟡 Partially done (2026-08-27). **Inventory:** `docs/planning/WEB_TEST_BASELINE_FAILURES.md` (2026-08-27).
+**Status:** ✅ Complete (2026-08-28). **Inventory:** `docs/planning/WEB_TEST_BASELINE_FAILURES.md`. **Plan:** `docs/planning/WEB_VITEST_HARNESS_PHASE1.md`. Removed the second `test.include` glob; fixed the 3 load errors (`ledger_merge_test.mjs` 105/105, `genesis_gate_test.mjs` 218/218, `sync_indicator_test.mjs` 32/32); renamed 8 mis-named node suites `*.test.mjs`→`*_test.mjs`; patched 2 `verifyLedgerChain` mock gaps; added a 2-assertion config meta-test. `npx vitest run` clean: 9 files / 119 passed / 1 skip / 0 fail / 0 errors.
 
-**What:** `npx vitest run` in `phpoc-web/` discovers 85 files. The **one** genuine failing assertion file
-(`settings_genesis_component.test.mjs`, was 25 failed / 1 passed) is now **FIXED** (Phase 3 GREEN, 26/26) —
-`handleSaveRemote` in `Settings.jsx` was rewritten to call `GenesisGate.check` directly (removed the
-`/health` fetch-ping). Full `vitest run` now has **0 real failures** (117 passed / 1 intentional `it.skip`).
+**What:** `npx vitest run` in `phpoc-web/` now discovers only true vitest suites (9 files). All prior noise
+is removed: the second `test.include` glob dropped the 51 "No test suite found" + 23 `process.exit` node
+suites; the 3 genuine load errors were root-caused and fixed; and 8 node suites that were mis-named
+`*.test.mjs` were renamed to `*_test.mjs` (consistent with the other 68). The one genuine failing assertion
+file (`settings_genesis_component.test.mjs`) was fixed earlier (2026-08-27). **Full `vitest run`: 0 failures**
+(119 passed / 1 intentional `it.skip`).
 The remaining 77 non-green files are harness/config noise, not test failures: the `vite.config.js`
 `test.include` glob `**/*_test.?(c|m)[jt]s?(x)` pulls node `--test` suites into vitest (51 "No test suite
 found" + 23 `process.exit` aborts), plus 3 genuine load errors (`genesis_gate_test.mjs`, `ledger_merge_test.mjs`,
@@ -146,6 +163,7 @@ queryable blind index is a later optimization.
 
 ### ⏸️ Commonplace parity ports — Web then CLI
 
+**Plan:** `docs/planning/COMMONPLACE_BOOK_WEB_ROADMAP.md` (web port roadmap; engine → switcher → UI → settings, then sync/rotation follow-ons)
 **Status:** ⏸️ Pending.
 
 **What:** Port the Commonplace Book (chain engine + UI + sync) to the **Web** (`phpoc-web`) then the **CLI**
@@ -277,7 +295,7 @@ always wraps in one). Dashboard content intentionally untouched (user decision).
 
 **Result:** CCS-2 suite **41/41 GREEN**; full web suite no regressions (76/14, 14 pre-existing env/WASM/DOM). 21 `sync_service_test` ledger-chain failures remain known/out-of-scope.
 
-**Explicitly NOT done (Option A deferred):** migrating `SyncService` CRUD to `RowStagingStore` as authoritative store — deferred to a future CCS task.
+**Explicitly NOT done (Option A deferred):** migrating `SyncService` CRUD to `RowStagingStore` as authoritative store — deferred to a future CCS task. Tracked in `docs/planning/WEB_STAGING_OPTION_A_PHASE1.md`.
 
 **Blocks:** CCS-4 (Web cross-client testing).
 
