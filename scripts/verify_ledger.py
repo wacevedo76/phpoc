@@ -9,7 +9,7 @@ Checks, in order (first failure short-circuits):
   1. prev_hash linkage across all blocks
   2. per-block internal seal (HMAC-SHA256 over ADR-029a seal-field whitelist)
   3. identity_seal (HMAC-SHA256 signature, requires identity secret)
-  4. entry hash (3-way serialization fallback)
+  4. entry hash (4-way serialization fallback: canonical sort+indent2 + 3 legacy)
   5. content_hash (decrypt `_enc` fields via AES-128-CTR, canonical jsonSort)
   6. key_version invariant (day blocks must not exceed genesis key_version)
 
@@ -202,8 +202,17 @@ def sha256(s):
 
 
 def entry_hash_ok(data, hashv):
-    """3-way entry-hash serialization check (compact, compact-no-space, indent2)."""
+    """4-way entry-hash serialization check.
+
+    Canonical sort+indent2 (the cross-client standard from
+    helpers.compute_entry_hash — produced by current Python and Flutter)
+    plus three legacy forms (sort+compact, sort+compact-no-space,
+    nosort+indent2) accepted by older clients.
+    """
     cands = [
+        # Canonical: sort_keys=True, indent=2 (ensure_ascii default True)
+        json.dumps(data, sort_keys=True, indent=2),
+        # Legacy forms (older clients / pre-v0.4 staging entries)
         json.dumps(data, sort_keys=True, ensure_ascii=False),
         json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(',', ':')),
         json.dumps(data, sort_keys=False, indent=2, ensure_ascii=False),
