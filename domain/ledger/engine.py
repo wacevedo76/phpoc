@@ -199,16 +199,17 @@ class LedgerEngine:
             data.pop("metadata", None)
             data.pop("has_encrypted_fields", None)
 
-            # Compute content hash — for encrypted entries both plaintext
-            # and _enc variants exist; _compute_content_hash decrypts _enc
-            # and uses canonical (stripped) key names, so hash is independent
-            # of encryption state
-            data["content_hash"] = self._compute_content_hash(data)
-
-            # Remove plaintext versions of encrypted per-field values
+            # Remove plaintext versions of encrypted per-field values BEFORE
+            # computing content_hash, so the hash covers the canonical stored
+            # form (_enc only, decrypted to kept-suffix keys per §5.5) and
+            # matches what the verifier recomputes from the persisted entry.
             if has_encrypted_fields:
                 for field in self._PER_FIELD_ENCRYPTABLE:
                     data.pop(field, None)
+
+            # Compute content hash over the final canonical data (decrypts
+            # _enc fields, keeps the _enc suffix per PHPSPEC §5.5/§6.1)
+            data["content_hash"] = self._compute_content_hash(data)
 
             # Compute entry hash (2-space indent — matches web app utils.js computeEntryHash)
             entry_hash = hashlib.sha256(
@@ -451,9 +452,10 @@ class LedgerEngine:
     def _compute_content_hash(self, data: dict) -> str:
         """Compute a content hash from all entry data fields.
 
-        Decrypts _enc fields using the crypto manager and strips the
-        ``_enc`` suffix from field names, so the content hash is
-        independent of encryption state (survives re-keying).
+        Decrypts _enc fields using the crypto manager, KEEPING the ``_enc``
+        suffix on the canonical key name (PHPSPEC §5.5/§6.1), so the content
+        hash is independent of encryption state (survives re-keying) and is
+        byte-identical across Python/Web/Flutter.
 
         Matches the algorithm in the web app's engine.js._computeContentHash.
         """
@@ -463,8 +465,8 @@ class LedgerEngine:
                 continue
             if key.endswith("_enc") and value is not None and value != "":
                 try:
-                    # Strip _enc suffix for canonical key name
-                    content[key[:-4]] = self.crypto.decrypt(value)
+                    # Keep _enc suffix on the canonical key name (spec §5.5)
+                    content[key] = self.crypto.decrypt(value)
                 except Exception:
                     content[key] = value
             elif isinstance(value, list):

@@ -81,9 +81,10 @@ class MigrateFormatCommand:
     def _compute_content_hash(self, data: dict, crypto: CryptoManager) -> str:
         """Compute content_hash using the extensible v0.4.0 algorithm.
 
-        Decrypts _enc fields, strips _enc suffix, sorts lists,
+        Decrypts _enc fields, KEEPS the _enc suffix, sorts lists,
         excludes content_hash itself, then SHA-256 of compact
-        sort_keys=True JSON.
+        sort_keys=True JSON (PHPSPEC §5.5/§6.1 — byte-identical across
+        Python/Web/Flutter).
         """
         content = {}
         for key, value in data.items():
@@ -91,8 +92,8 @@ class MigrateFormatCommand:
                 continue
             if key.endswith("_enc") and value is not None and value != "":
                 try:
-                    # Strip _enc suffix for canonical key name
-                    content[key[:-4]] = crypto.decrypt(value)
+                    # Keep _enc suffix on the canonical key name (spec §5.5)
+                    content[key] = crypto.decrypt(value)
                 except Exception:
                     content[key] = value
             elif isinstance(value, list):

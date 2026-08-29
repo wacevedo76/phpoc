@@ -697,8 +697,8 @@ class LedgerChain:
                        encrypted values directly (less accurate, but matches
                        old pre-v0.4 behavior).
         """
-        content_canonical = {}  # strips _enc suffix (new v0.4.0+ format)
-        content_legacy_ext = {}  # keeps _enc suffix (old extensible format)
+        content_canonical = {}  # keeps _enc suffix (v0.4.0+ per PHPSPEC §5.5/§6.1)
+        content_legacy = {}  # strips _enc suffix (pre-spec Python format)
         for key, value in data.items():
             if key == "content_hash":
                 continue
@@ -706,22 +706,22 @@ class LedgerChain:
                 if decrypt_fn is not None:
                     try:
                         decrypted = decrypt_fn(value)
-                        content_canonical[key[:-4]] = decrypted
-                        content_legacy_ext[key] = decrypted
+                        content_canonical[key] = decrypted
+                        content_legacy[key[:-4]] = decrypted
                     except Exception:
                         content_canonical[key] = value
-                        content_legacy_ext[key] = value
+                        content_legacy[key] = value
                     continue
                 else:
                     content_canonical[key] = value
-                    content_legacy_ext[key] = value
+                    content_legacy[key] = value
                     continue
             elif isinstance(value, list):
                 content_canonical[key] = sorted(value)
-                content_legacy_ext[key] = sorted(value)
+                content_legacy[key] = sorted(value)
             else:
                 content_canonical[key] = value
-                content_legacy_ext[key] = value
+                content_legacy[key] = value
 
         computed = hashlib.sha256(
             json.dumps(content_canonical, sort_keys=True).encode()
@@ -729,9 +729,9 @@ class LedgerChain:
         if computed == data["content_hash"]:
             return True
 
-        # Try old extensible format (keeps _enc suffix on decrypted fields)
+        # Try legacy Python format (strips _enc suffix on decrypted fields)
         computed_legacy = hashlib.sha256(
-            json.dumps(content_legacy_ext, sort_keys=True).encode()
+            json.dumps(content_legacy, sort_keys=True).encode()
         ).hexdigest()
         if computed_legacy == data["content_hash"]:
             return True

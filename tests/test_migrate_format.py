@@ -329,7 +329,7 @@ class TestMigrateFormatProvenance(unittest.TestCase):
                 continue
             if key.endswith("_enc") and value is not None and value != "":
                 try:
-                    content[key[:-4]] = self.crypto.decrypt(value)
+                    content[key] = self.crypto.decrypt(value)
                 except Exception:
                     content[key] = value
             elif isinstance(value, list):

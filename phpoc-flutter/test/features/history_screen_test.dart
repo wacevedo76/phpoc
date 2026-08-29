@@ -579,9 +579,11 @@ void main() {
       final genesisBlocks = await db.blockDao.getBlocksByType(BlockType.genesis);
       final genesis = genesisBlocks.first;
 
-      // Genesis identity_seal from the current canonical testdata/ledger.json
-      expect(genesis.identitySeal,
-          'f33ef7bfcaf3023d52be04b8ba224f5aa0f020beba7ac8cc0ec91ddbb0c5d641');
+      // Genesis identity_seal must match the canonical testdata/ledger.json
+      // (read dynamically — the value changes whenever the test ledger is
+      // regenerated, since the identity secret is random per generation).
+      final expectedIdentitySeal = (ledger.first as Map<String, dynamic>)['identity_seal'];
+      expect(genesis.identitySeal, expectedIdentitySeal);
       expect(genesis.prevHash, Block.genesisPrevHash);
       expect(genesis.blockIndex, 0);
       expect(genesis.blockType, BlockType.genesis);

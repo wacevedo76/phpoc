@@ -42,7 +42,7 @@ const _testSeedB64 = 'RtwewIHiZc9fCSUb8HRATJ8T8X5+9CNN1pzMJpFJAl0=';
 
 /// Known genesis hash from the test ledger.
 const _knownGenesisHash =
-    'f8f461b612f770b90b05e45188fa0848e134cfa92af3218037d4c049d9d3035a';
+    'e718daf3ea681830b464207f4ddfe28594c4d6540e2a80dceec9fcf83bd4458b';
 
 /// Whether E2E tests should run.
 bool get _shouldRun =>

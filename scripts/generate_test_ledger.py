@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from security.crypto import CryptoManager
 from security.recovery import RecoveryManager
+from domain.ledger.chain import compute_seal
 
 
 
@@ -215,10 +216,8 @@ def create_genesis_block(
         "signature": "",
     }
 
-    # Seal (excluding signature, matching factory.py)
-    seal_data = {k: v for k, v in genesis.items() if k != "signature"}
-    genesis_json = json.dumps(seal_data, sort_keys=True)
-    genesis["block_hash"] = crypto.seal(genesis_json)
+    # Seal over the ADR-029a per-type whitelist (excludes identity, signature)
+    genesis["block_hash"] = compute_seal(crypto, genesis)
     genesis["identity_seal"] = crypto.mac(genesis["block_hash"], identity_secret)
 
     return genesis
@@ -260,22 +259,19 @@ def encrypt_entry_fields(entry: dict, crypto: CryptoManager) -> dict:
 
 
 def compute_content_hash(entry_data: dict, crypto: CryptoManager) -> str:
-    """Compute extensible content hash (PHPSPEC §6.1)."""
+    """Compute extensible content hash (PHPSPEC §5.5/§6.1).
+
+    Decrypts _enc fields, KEEPING the _enc suffix on the canonical key name
+    and KEEPING the decrypted value as a string, so the hash is byte-identical
+    across Python/Web/Flutter.
+    """
     content = {}
     for key, value in entry_data.items():
         if key == "content_hash":
             continue
         if key.endswith("_enc") and value is not None and value != "":
             try:
-                decrypted = crypto.decrypt(value)
-                # Convert numeric strings to int for canonical comparison
-                if decrypted.lstrip("-").isdigit():
-                    content[key[:-4]] = int(decrypted)
-                else:
-                    try:
-                        content[key[:-4]] = json.loads(decrypted)
-                    except (json.JSONDecodeError, TypeError):
-                        content[key[:-4]] = decrypted
+                content[key] = crypto.decrypt(value)
             except Exception:
                 content[key] = value
         elif isinstance(value, list):
@@ -304,9 +300,7 @@ def build_day_block(
         "entries": entries,
     }
 
-    seal_data = {k: v for k, v in block.items() if k != "block_hash"}
-    block_json = json.dumps(seal_data, sort_keys=True)
-    block["block_hash"] = crypto.seal(block_json)
+    block["block_hash"] = compute_seal(crypto, block)
     block["identity_seal"] = crypto.mac(block["block_hash"], identity_secret)
 
     return block
@@ -429,11 +423,9 @@ def verify_ledger(ledger: list, mk: bytes, identity_secret: bytes) -> bool:
             print(f"     curr type: {current.get('type')}, prev_hash: {current['prev_hash'][:16]}...")
             return False
 
-        # Verify seal (exclude block_hash, identity_seal, signature)
+        # Verify seal over ADR-029a per-type whitelist (excludes identity)
         hash_key = "block_hash"
-        seal_exclude = {hash_key, "identity_seal", "signature"}
-        seal_data = {k: v for k, v in current.items() if k not in seal_exclude}
-        expected = crypto.seal(json.dumps(seal_data, sort_keys=True))
+        expected = compute_seal(crypto, current)
         if current[hash_key] != expected:
             print(f"\n  ❌ Block {i}: seal mismatch")
             return False
