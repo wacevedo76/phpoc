@@ -116,9 +116,10 @@ class CryptoService {
   /// and iteration count. Uses a fixed salt for determinism.
   String derivePdk(String passphrase, int iterations) {
     _requireInitialized();
-    // Fixed salt — keeps derivation deterministic for the dev shim.
-    // Production Rust FFI will match the exact JS salt scheme.
-    const salt = 'phpoc:pdk:fixed-salt:v1';
+    // Canonical salt matches Rust `PDK_SALT` / Web WASM `derive_pdk`:
+    // PBKDF2-HMAC-SHA256(passphrase, "session-salt", 600_000, 32).
+    // (Previously a dev-shim fixed salt; aligned to the cross-client scheme.)
+    const salt = 'session-salt';
     final derivator = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64));
     derivator.init(
       Pbkdf2Parameters(

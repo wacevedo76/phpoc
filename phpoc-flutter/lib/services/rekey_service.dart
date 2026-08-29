@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../../core/crypto/crypto_service.dart';
 import '../../core/models/block.dart';
+import '../../core/utils/json_utils.dart';
 import '../../data/commonplace/commonplace_service.dart';
 import '../../data/ledger/helpers.dart'
     show computeContentHash, computeEntryHash;
@@ -242,8 +243,20 @@ class RekeyService {
     required String newSeed,
   }) async {
     final currentBlocks = await db.blockDao.getAllBlocks();
+
+    // The device-scoped identity secret is key-independent: recover it from
+    // the genesis `identity.identity_secret_enc_fallback` under the OLD MK so
+    // every re-signed identity_seal stays verifiable by the same
+    // identity_pub_key (cross-client parity with Web).
+    final identitySecret = _recoverIdentitySecret(currentBlocks, oldMK);
+
     final rebuilt = <Block>[];
-    for (final block in currentBlocks) {
+    for (var i = 0; i < currentBlocks.length; i++) {
+      final block = currentBlocks[i];
+      // Re-sealing under the NEW MK changes every block hash, so each
+      // successor's prev_hash must re-link to its predecessor's NEW seal
+      // (genesis keeps the all-zero anchor).
+      final prevBlockId = i > 0 ? rebuilt[i - 1].blockId : null;
       rebuilt.add(
         _rekeyBlock(
           block,
@@ -251,6 +264,8 @@ class RekeyService {
           newMK: newMK,
           newPdk: newPdk,
           newSeed: newSeed,
+          identitySecret: identitySecret,
+          prevBlockId: prevBlockId,
         ),
       );
     }
@@ -332,6 +347,8 @@ class RekeyService {
     required String newMK,
     required String newPdk,
     required String newSeed,
+    required String? identitySecret,
+    required String? prevBlockId,
   }) {
     final Map<String, dynamic> data;
     try {
@@ -349,24 +366,71 @@ class RekeyService {
         newMK: newMK,
         newPdk: newPdk,
         newSeed: newSeed,
+        identitySecret: identitySecret,
       );
     }
-    return _rekeySealedBlock(block, data, oldMK: oldMK, newMK: newMK);
+    return _rekeySealedBlock(
+      block,
+      data,
+      oldMK: oldMK,
+      newMK: newMK,
+      identitySecret: identitySecret,
+      prevBlockId: prevBlockId,
+    );
   }
 
-  /// Re-key the genesis block: keep the fixture/legacy ``{"seed": ...}``
-  /// payload but (a) re-encrypt the seed under the new PDK (R7) and (b) add
-  /// the canonical ``block_hash`` + ``identity_seal`` fields sealed under the
-  /// new MK so the block verifies via the R10 recanonicalization.
+  /// Re-key the genesis block.
+  ///
+  /// Two shapes are supported:
+  ///   - Canonical web-shaped genesis (nested `identity`): rewrites
+  ///     `identity.recovery_seed_enc` under the NEW PDK and
+  ///     `identity.identity_secret_enc_fallback` under the NEW MK, preserves
+  ///     the key-independent `identity_pub_key`/`username`/`email`, then
+  ///     re-seals + re-signs canonically (R1 cross-client parity).
+  ///   - Legacy flat Flutter genesis (`{"seed": ...}`): re-encrypts the seed
+  ///     under the NEW PDK (R7) and re-seals over the flat payload.
   Block _rekeyGenesis(
     Block block,
     Map<String, dynamic> data, {
     required String newMK,
     required String newPdk,
     required String newSeed,
+    required String? identitySecret,
   }) {
+    // Canonical web-shaped genesis (nested identity) — the cross-client path.
+    if (data['identity'] is Map) {
+      final identity = Map<String, dynamic>.from(data['identity'] as Map);
+      identity['recovery_seed_enc'] = crypto.encrypt(newSeed, newPdk);
+      if (identitySecret != null) {
+        identity['identity_secret_enc_fallback'] =
+            crypto.encrypt(identitySecret, newMK);
+      }
+
+      final newData = Map<String, dynamic>.from(data)..['identity'] = identity;
+      final seal = _sealBlockCanonical(newData, newMK);
+      newData[_sealFieldFor(block)] = seal;
+      if (identitySecret != null && newData.containsKey('identity_seal')) {
+        newData['identity_seal'] = crypto.sign(seal, identitySecret);
+      }
+
+      final dataEncB64 = base64.encode(utf8.encode(json.encode(newData)));
+      return Block(
+        blockId: seal,
+        blockType: block.blockType,
+        blockIndex: block.blockIndex,
+        keyVersion: block.keyVersion,
+        dataEnc: dataEncB64,
+        identitySeal: newData['identity_seal'] as String?,
+        prevHash: block.prevHash,
+        createdAt: block.createdAt,
+      );
+    }
+
+    // Legacy flat Flutter genesis.
     if (data['seed'] == null) {
-      throw StateError('Genesis block ${block.blockIndex} has no seed field');
+      throw StateError(
+        'Genesis block ${block.blockIndex} has no seed field and no nested identity',
+      );
     }
 
     // Store the NEW recovery seed, encrypted under the new PDK (R7).
@@ -393,12 +457,17 @@ class RekeyService {
   }
 
   /// Re-key a standard (day/summary) block: re-encrypt every entry `_enc`
-  /// field under the new MK and re-seal the block body.
+  /// field under the new MK, recompute the ciphertext-bound entry hash,
+  /// re-link `prev_hash` to the predecessor's NEW seal, then re-seal
+  /// canonically (ADR-029a whitelist) and re-sign under the preserved
+  /// identity secret.
   Block _rekeySealedBlock(
     Block block,
     Map<String, dynamic> data, {
     required String oldMK,
     required String newMK,
+    required String? identitySecret,
+    required String? prevBlockId,
   }) {
     final entries = data['entries'];
     if (entries is List) {
@@ -413,26 +482,28 @@ class RekeyService {
           .toList();
     }
 
-    // Recompute the per-type seal under the new MK over the canonical payload
-    // (seal + identity_seal keys excluded), keys sorted.
-    final payload = Map<String, dynamic>.from(data)
-      ..remove(_sealFieldFor(block))
-      ..remove('identity_seal');
-    final newSeal = crypto.seal(_canonicalJson(payload), newMK);
-    final newIdentitySeal = crypto.sign(newSeal, crypto.getDeviceSecret(newMK));
+    // Re-link onto the predecessor's NEW seal (genesis keeps the zero anchor).
+    if (prevBlockId != null) {
+      data['prev_hash'] = prevBlockId;
+    }
 
+    // Recompute the per-type seal under the new MK over the ADR-029a
+    // whitelist, then re-sign with the preserved identity secret (falling back
+    // to the derived device secret for legacy flat chains).
+    final newSeal = _sealBlockCanonical(data, newMK);
+    final signSecret = identitySecret ?? crypto.getDeviceSecret(newMK);
     data[_sealFieldFor(block)] = newSeal;
-    data['identity_seal'] = newIdentitySeal;
+    data['identity_seal'] = crypto.sign(newSeal, signSecret);
 
     final dataEncB64 = base64.encode(utf8.encode(json.encode(data)));
     return Block(
-      blockId: block.blockId,
+      blockId: newSeal,
       blockType: block.blockType,
       blockIndex: block.blockIndex,
       keyVersion: block.keyVersion,
       dataEnc: dataEncB64,
-      identitySeal: newIdentitySeal,
-      prevHash: block.prevHash,
+      identitySeal: data['identity_seal'] as String?,
+      prevHash: (data['prev_hash'] as String?) ?? block.prevHash,
       createdAt: block.createdAt,
     );
   }
@@ -460,6 +531,10 @@ class RekeyService {
         }
       }
       entry['data'] = newData;
+      // Entry hash is ciphertext-bound (hashes the `_enc` ciphertext): after
+      // re-encryption the ciphertext changed, so the hash must be recomputed
+      // or verify() fails (cross-client parity with Web's recomputeEntryHash).
+      entry['hash'] = computeEntryHash(newData);
     }
     return entry;
   }
@@ -622,6 +697,60 @@ class RekeyService {
       sorted[k] = data[k];
     }
     return json.encode(sorted);
+  }
+
+  /// ADR-029/029a closed per-type seal whitelist, serialized with recursive
+  /// `jsonSort` — identical to Python `chain.py` / Web `computeSeal`. A field
+  /// is included only when present on the block.
+  static const Map<String, List<String>> _sealFieldsByType = {
+    'genesis': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'day': ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+    'month_summary': ['type', 'month', 'date', 'prev_hash', 'original_hash'],
+    'year_summary': ['type', 'year', 'date', 'prev_hash', 'original_hash'],
+  };
+
+  /// Compute the canonical per-type seal for [data] under [mk].
+  String _sealBlockCanonical(Map<String, dynamic> data, String mk) {
+    final type = data['type'] as String?;
+    final fields = _sealFieldsByType[type];
+    if (fields == null) {
+      throw StateError('Unknown block type for seal: $type');
+    }
+    final sealData = <String, dynamic>{};
+    for (final field in fields) {
+      if (data.containsKey(field)) sealData[field] = data[field];
+    }
+    return crypto.seal(jsonSort(sealData), mk);
+  }
+
+  /// Recover the device-scoped identity secret (key-independent) from the
+  /// genesis `identity.identity_secret_enc_fallback`, decrypting under [oldMK].
+  /// Returns null for legacy flat Flutter genesis (no nested identity) or when
+  /// the fallback is absent/undecryptable.
+  String? _recoverIdentitySecret(List<Block> blocks, String oldMK) {
+    for (final block in blocks) {
+      if (block.blockType != BlockType.genesis) continue;
+      final Map<String, dynamic> data;
+      try {
+        data =
+            json.decode(utf8.decode(base64.decode(block.dataEnc)))
+                as Map<String, dynamic>;
+      } catch (_) {
+        continue;
+      }
+      final identity = data['identity'];
+      if (identity is Map) {
+        final fallback = identity['identity_secret_enc_fallback'];
+        if (fallback is String && fallback.isNotEmpty) {
+          try {
+            return crypto.decrypt(fallback, oldMK);
+          } catch (_) {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /// Persist [snapshot] to a temp recovery file, returning its path.

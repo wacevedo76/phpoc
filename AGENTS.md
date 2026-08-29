@@ -119,6 +119,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - `storage/AGENTS.md` — Storage layer: abstract interfaces + file-based implementations
 
 ### Frontend & Cross-Platform
+- `phpoc-flutter/AGENTS.md` — Flutter mobile application (Dart + Riverpod + SQLite + FFI crypto)
 - `phpoc-web/AGENTS.md` — React web application (Vite + IndexedDB + WASM)
 - `phpoc-crypto-core/AGENTS.md` — Portable Rust crypto library (WASM / iOS / Android)
 - `worker/AGENTS.md` — Cloudflare Worker for remote staging blob storage

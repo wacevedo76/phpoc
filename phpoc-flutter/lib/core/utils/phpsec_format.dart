@@ -135,6 +135,14 @@ class PhpSpecFormat {
       result[kOriginalHash] = encodedMap[kOriginalHash];
     }
 
+    // Nested genesis `identity` — carry it through export so a re-imported /
+    // re-keyed genesis retains identity.{recovery_seed_enc, identity_pub_key,
+    // identity_secret_enc_fallback} (R1 cross-client parity). Absent on
+    // non-genesis blocks.
+    if (encodedMap[kIdentity] is Map<String, dynamic>) {
+      result[kIdentity] = encodedMap[kIdentity];
+    }
+
     // Include block_hash as a convenience for consumers (same as seal field).
     result[kBlockHash] = sealValue;
 

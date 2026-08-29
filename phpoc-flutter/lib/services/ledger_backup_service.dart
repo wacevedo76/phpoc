@@ -97,10 +97,15 @@ class LedgerBackupService {
 
     // Genesis-specific fields
     if (block.blockType == BlockType.genesis) {
-      final entries = PhpSpecFormat.extractEntries(block.dataEnc);
-      final identityData = _extractIdentityFromEntries(entries);
-      if (identityData != null) {
-        result[PhpSpecFormat.kIdentity] = identityData;
+      // Prefer the nested identity carried in data_enc (canonical web-shaped
+      // genesis). Only fall back to the legacy entries-embedded identity when
+      // the canonical nested object is absent.
+      if (!result.containsKey(PhpSpecFormat.kIdentity)) {
+        final entries = PhpSpecFormat.extractEntries(block.dataEnc);
+        final identityData = _extractIdentityFromEntries(entries);
+        if (identityData != null) {
+          result[PhpSpecFormat.kIdentity] = identityData;
+        }
       }
       result[PhpSpecFormat.kFormatVersion] = '0.4.0';
     }
@@ -231,6 +236,11 @@ class LedgerBackupService {
       PhpSpecFormat.kYear,
       PhpSpecFormat.kIdentitySeal,
       PhpSpecFormat.kEntries,
+      // Nested genesis `identity` must survive the data_enc round-trip or the
+      // exported/verified genesis loses identity.{recovery_seed_enc,
+      // identity_pub_key, identity_secret_enc_fallback} (R1 cross-client
+      // parity — Web verifies the Flutter wire genesis against this object).
+      PhpSpecFormat.kIdentity,
       // original_hash is part of the ADR-029a per-type seal set (sealed when
       // present on migrated blocks). It must survive the data_enc round-trip
       // or _blockToMap reconstructs the chain WITHOUT it and the sealer

@@ -30,7 +30,7 @@ This specification and its reference implementations have known limitations that
 - **Plaintext blind index:** `index.json` stores `{date: {activity_title: total_duration_ms}}` in the clear next to the encrypted ledger. This reveals what activities a user does and for how long to anyone with filesystem access.
 - **Plaintext staging at rest:** Staging entries use a `plain:` prefix convention, leaving the most recent, most sensitive data unencrypted on disk.
 - **Key-derived device IDs:** Device identity is derived from the Master Key via HMAC, meaning any device with the MK can impersonate any other device. True hardware-bound device attribution (TPM, biometric, device-local secrets) is not yet implemented.
-- **No key rotation:** A single Master Key protects all data forever. If the MK is compromised, all historical and future data is exposed, with no remediation path.
+- **Key rotation / re-key (partially addressed):** ADR-026 adds versioned Master Key rotation, and C-2 seed replacement (§2.10) adds full re-keying to a new Seed/MK. Both are implemented in the Web and Flutter clients; the CLI `ph rotate-keys` command and the CLI seed-replacement flow remain on the roadmap. No client yet performs automatic, scheduled rotation.
 
 These limitations are tracked as active issues in the project backlog (`docs/planning/BACKLOG.md`). See severity tiers and dependency ordering there.
 
@@ -198,6 +198,11 @@ master_key = base64.b64decode(seed)  # 32 bytes
 ```
 
 No key stretching or derivation is applied here — the Seed already has full 256-bit entropy.
+
+> **Raw-Seed-as-MK is the `key_version 0` contract.** All pre-rotation blocks (and the
+> cross-client re-key path in §2.10) treat the raw Seed bytes as the Master Key. Versioned
+> derivation (`derive_mk(seed, version)`, ADR-026) applies **only** at `key_version >= 1`,
+> after a rotation: `version 0 → raw seed`, `version N ≥ 1 → HMAC-SHA256(seed, "phpoc:mk:v{N}")`.
 
 ### 2.4 Passphrase-Derived Key (PDK)
 
@@ -372,6 +377,44 @@ To recover a ledger when the passphrase is lost (but the Seed is known):
 All ledger data remains encrypted under the same Master Key — only the seed's encryption envelope changes.
 
 > **To change a passphrase knowing the old passphrase** (without the Seed), the implementation must first decrypt the Seed using the old PDK, then re-encrypt with the new PDK. This is a straightforward extension — the primitives are identical to the recovery flow.
+
+### 2.10 Key Evolution: Rotation (ADR-026) vs Re-key / Seed Replacement (C-2)
+
+PHPOC supports two distinct key-evolution operations. They are **not** interchangeable,
+and implementers must not conflate them:
+
+| | **Rotation** (ADR-026) | **Re-key / Seed replacement** (C-2) |
+|---|---|---|
+| Trigger | Suspected MK exposure; scheduled hygiene | Seed exposure; device loss; voluntary reset |
+| Seed | **Unchanged** | **New** (minted, 32 random bytes) |
+| Master Key | `derive_mk(seed, key_version + 1)` — versioned | Raw bytes of the new Seed (§2.3) |
+| `key_version` | **Increments** (`+1`) | **Unchanged** (no versioned derivation) |
+| Entry re-encryption | Soft: none (O(1)); hard: re-encrypt all `_enc` | Re-encrypt every `_enc` field under the new MK |
+| `content_hash` | Preserved | Preserved (plaintext-bound — survives re-key unchanged) |
+| Entry `hash` | Preserved (soft) / recomputed (hard) | **Recomputed** (ciphertext-bound) |
+| Seals | Recomputed under the new versioned MK | Recomputed under the new MK (same closed whitelist, ADR-029/029a) |
+| `prev_hash` | Relinked on hard rotation | Relinked (successor links to predecessor's **new** seal) |
+| Identity secret | Preserved | Recovered from genesis, re-encrypted under new MK, re-signed |
+| Recovery seed envelope | Preserved (soft) / re-encrypted (hard) | Re-encrypted under the new PDK |
+
+**Seed-mint re-key (C-2) invariants** — enforced by the cross-client verification harness
+(`phpoc-web/test/c2_cross_client_verify.mjs` and
+`phpoc-flutter/test/services/c2_cross_client_verify_test.dart`):
+
+1. **No `key_version` bump.** Re-key mints a new Seed and uses the raw-Seed-as-MK rule
+   (§2.3), not ADR-026 versioned derivation.
+2. **`content_hash` is byte-invariant.** It binds plaintext, not ciphertext, and is carried
+   through re-key unchanged; the entry `hash` is ciphertext-bound and **is** recomputed.
+3. **Seals use the same closed whitelist** (§5.2) serialized via `jsonSort`. Re-key introduces
+   **no new block type**, so the canonical seal vectors remain valid.
+4. **`prev_hash` is relinked** to the predecessor's *new* seal, keeping the chain
+   self-consistent under the new MK.
+5. **The identity secret survives** — decrypted from genesis
+   `identity.identity_secret_enc_fallback` under the old MK, re-encrypted under the new MK,
+   and re-signed; `identity_pub_key` (= SHA-256 of the identity secret) is key-independent
+   and invariant.
+6. **The recovery seed envelope** (`identity.recovery_seed_enc`) is re-encrypted under a PDK
+   derived from the new passphrase, establishing a new passphrase in the same operation.
 
 ---
 

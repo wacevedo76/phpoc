@@ -3,7 +3,7 @@
 > **Plan:** C-2 full seed replacement — cross-client port of the Flutter `RekeyService` to **phpoc-web** and **phpoc-cli**.
 > **Depends on:** ADR-026 (versioned MK), ADR-001 (sovereign key), Flutter reference `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — 28/28 `rekey_service_test.dart`, 6/6 Settings Group S, suite 2010/2010, analyze 0), CLI rotation precedent `docs/planning/I01A_ROTATEKEYS_EXECUTION_PHASE1.md` + `phpoc_cli/rotate_keys.py` (`soft_rotate`/`hard_rotate`, `derive_mk(seed, version)`).
 > **Purpose:** Blueprint + roadmap for bringing the C-2 **seed replacement** capability (fresh random seed → full re-key of the personal ledger under the new Master Key so a leaked/compromised seed is nullified) to the **web** and **CLI** clients, mirroring the already-completed Flutter implementation.
-> **Status:** 🟡 **Web COMPLETE (4-phase TDD, 2026-08-24) — CLI + cross-client still open.** Cross-client port. See `docs/planning/BACKLOG.md`. Web: Phase 1 blueprint `docs/planning/C2_SEED_REKEY_WEB_PHASE1.md` (34 assertions R/B/M/P/S) → Phase 2 RED (28 Node + 6 Vitest) → Phase 3 GREEN (`src/services/rekey_service.js` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`) → **Phase 4 REFACTOR ✅** (extracted `rekey()` into named phase helpers). Phase A (CLI) + Phase D (cross-client) still open.
+> **Status:** 🟡 **Web COMPLETE (4-phase TDD, 2026-08-24); Phase D (cross-client Web↔Flutter + spec + docs) COMPLETE (2026-08-28) — CLI (Phase A) still open.** Cross-client port. See `docs/planning/BACKLOG.md`. Web: Phase 1 blueprint `docs/planning/C2_SEED_REKEY_WEB_PHASE1.md` (34 assertions R/B/M/P/S) → Phase 2 RED (28 Node + 6 Vitest) → Phase 3 GREEN (`src/services/rekey_service.js` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`) → **Phase 4 REFACTOR ✅** (extracted `rekey()` into named phase helpers). Phase D hermetic matrix GREEN (Web re-key→Flutter verify A7–A11, Flutter re-key→Web verify B7–B11, crypto invariants C — 18/18 each direction). Phase A (CLI) still open.
 
 ---
 
@@ -59,11 +59,11 @@ C-2 is the *only* operation that genuinely mitigates the **pre-existing credenti
 - **Exit:** web UI + UX GREEN; user can re-key to a fresh seed entirely in the browser.
 - **Phase 4 (REFACTOR) ✅ (2026-08-24):** extracted `rekey()` in `rekey_service.js` into named phase helpers — `_recoverIdentitySecret`, `_rebuildBlocks` (in-memory re-encrypt + re-seal + entry-hash recompute + prev_hash cascade), `_persistNewKeySet`, `_recordRekeyMarker`, `_pushRewrittenChain` — mirroring Flutter Phase 4. 28/28 node + 6/6 Vitest GREEN retained. **Web 4-phase TDD COMPLETE.**
 
-### 🔜 Phase D — Cross-client verification + docs
+### ✅ Phase D — Cross-client verification + docs (2026-08-28)
 
-- **[D1] Cross-client re-key verification** — after a CLI `ph rekey-seed`, the re-keyed chain must pull + verify under the new MK on **web** and **Flutter** (P4/lifecycle parity); a device holding the OLD seed must no longer decrypt (leak nullification proof).
-- **[D2] Spec/format pass** — confirm PHPSPEC `key_version` + ADR-029/029a seal whitelist cover a seed-mint re-key (mirror `CANONICAL_SEALFIELD_*` style); document the seed-replacement (vs rotation) semantic.
-- **[D3] Docs** — update ROADMAP (mark C-2 cross-client), WEB_ROADMAP (build entries), MAP.md (new files), CHANGELOG on release; update `SESSION_HANDOFF.md`.
+- **[D1] Cross-client re-key verification** ✅ — hermetic matrix GREEN both directions (Web re-key→Flutter verify A7–A11; Flutter re-key→Web verify B7–B11; crypto invariants C), 18/18 pass + 2 live-only skip per harness. A device holding the OLD seed/MK no longer decrypts (leak nullification proof, A11/B11/C7). CLI↔client E2E (`ph rekey-seed` → web/Flutter pull+verify) remains gated on Phase A.
+- **[D2] Spec/format pass** ✅ — `PHPSPEC.md` §2.3 + §2.10 document seed-mint re-key vs ADR-026 rotation; ADR-029/029a closed whitelist confirmed seal-transparent (no schema change; no new block type; `canonical_seal_vectors.json` unchanged).
+- **[D3] Docs** ✅ — ROADMAP, MAP.md, SESSION_HANDOFF, WEB_ROADMAP, BACKLOG updated; CHANGELOG deferred to release. See `C2_CROSS_CLIENT_VERIFY_PHASE1.md`.
 
 ---
 

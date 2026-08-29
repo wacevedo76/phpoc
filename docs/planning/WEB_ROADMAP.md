@@ -7,6 +7,25 @@
 
 ---
 
+## Build 64 — Cross-Client Re-key Verification (C-2) — 2026-08-28
+
+**Hermetic cross-client matrix proving Web and Flutter re-key to a new Recovery Seed produce byte-compatible PHPSPEC chains.**
+
+Fixed 4 cross-client divergences + 1 PDK-derivation divergence (Flutter side):
+- `crypto_service.dart` `derivePdk` salt → canonical `b"session-salt"` (was dev-shim `phpoc:pdk:fixed-salt:v1`)
+- `helpers.dart` `verifyContentHash` accepts the kept-suffix (`legacy_ext`) map
+- `phpsec_format.dart` / `ledger_backup_service.dart` carry the nested genesis `identity` through export
+- `rekey_service.dart` canonical re-key: ADR-029/029a whitelist `jsonSort` seal, recomputed ciphertext-bound entry `hash`, `prev_hash` cascade, recovered identity-secret re-sign
+
+**Harness files:**
+- `test/c2_fixture_gen.mjs` — canonical fixture generator + shared cross-client constants
+- `test/c2_cross_client_verify.mjs` — Web probe (Groups A/C), emits `c2_web_rekeyed_wire.json`
+- `testdata/c2_cross_client_fixture.json`, `c2_web_rekeyed_wire.json`, `c2_flutter_rekeyed_wire.json`
+
+**Result:** Web harness 18 pass / 0 fail / 2 skip (live-only); Flutter cross-client + re-key 46 pass / 0 fail / 2 skip; full Flutter suite 2115 pass / 0 fail. Zero regressions.
+
+See `docs/planning/C2_CROSS_CLIENT_VERIFY_PHASE1.md`.
+
 ## Build 63 — Wipe Ledger from Unlock Screen (Flutter parity) — 2026-08-22
 
 **Adds a destructive "Wipe Ledger" action to the unlock screen, mirroring

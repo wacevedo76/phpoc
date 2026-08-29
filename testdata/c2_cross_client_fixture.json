@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "generator": "web",
+  "note": "Canonical 0.4.0+ PHPSPEC wire chain (web-shaped, nested identity). Generated once; ciphertext is non-reproducible (random salt/nonce).",
+  "old_seed": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=",
+  "old_mk": "4242424242424242424242424242424242424242424242424242424242424242",
+  "old_passphrase": "CorrectHorseBatteryStaple42!",
+  "identity_secret": "abababababababababababababababababababababababababababababababab",
+  "new_seed": "ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE=",
+  "new_mk": "2121212121212121212121212121212121212121212121212121212121212121",
+  "new_passphrase": "NewCorrectHorseBatteryStaple99!",
+  "pdk_iterations": 600000,
+  "format_version": "0.4.0",
+  "blocks": [
+    {
+      "type": "genesis",
+      "day_index": 0,
+      "date": "2026-01-01",
+      "format_version": "0.4.0",
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "entries": [],
+      "identity": {
+        "username": "Test User",
+        "email": "test@example.com",
+        "recovery_seed_enc": "1bb98bee1b60878060aca4b3ee7982eb5fb8afc3bc44d4f98c671d38e7341c4da2b17c4139dfa3efc37a3f83abbb17c97c99bc3b9df07cd86f2d0934cabc436d67adac6a092fadad641d64e675aa49ee898c731643c73ba32ce8dfb7266002825e827ef7",
+        "identity_pub_key": "271a413bd339c5709fdceaec41f14f11e9fbfb5042d72d331c65f32b284cd09a",
+        "identity_secret_enc_fallback": "f249fbfcdabea9caa26eba1a7dbcf9d264d679affa7354e8bbd2e32d0e8c638d47c885f46a964c9c31bfa096db3b7569ae3408e02f68e27fcaaa5d705861bb3fd62dd83044087a88d2618accceab718f7fcbfe4a5d5ec45a1a01a47a5b2bed2703dd51e4e16f580939ab8b6c2eeb50e355c4faeda00ff1ef"
+      },
+      "block_hash": "c1cd1b0e29557ee6726030ea33486a0a724126b28d00b85f96fd03f3a5e00a3d",
+      "identity_seal": "b7679faf08611d6eee127709bbb34383f179f77d79b89e392d390c9c685fc25d"
+    },
+    {
+      "type": "day",
+      "day_index": 1,
+      "date": "2026-01-02",
+      "format_version": "0.4.0",
+      "prev_hash": "c1cd1b0e29557ee6726030ea33486a0a724126b28d00b85f96fd03f3a5e00a3d",
+      "entries": [
+        {
+          "hash": "68825e05103c2c3e9dc39738ece3d36bc61ca610980fe7354d36a50798222e54",
+          "data": {
+            "title": "Alpha task",
+            "startTime_enc": "b7b1aa6dceb97149cf6638ba8ab57e895efe8945efe2864fdeb61ed68679dfba9fb57a35573b0a4b040d6fb32b1726367d1e7b78ee9266f20e9464c133393ef1b28b",
+            "endTime_enc": "63c6d3660e63be29dee55c4ca53a501c300985dac60fb0ec47134b53135dfa6591fb60b1a378b6607e443c1a7b54b25fad320c506bd2fbd4aea4ce129e028930627c",
+            "duration": 3600,
+            "content_hash": "7fff19b77e8f9edb0dbaf3352317df44f51b433f55dfdf98b8d4b423fffa0dd9"
+          },
+          "start_epoch": 1767225600
+        },
+        {
+          "hash": "1115981490fc4adc06a41661bc4f279bd9d857dd358202f28185167f3790e0fb",
+          "data": {
+            "title": "Beta task",
+            "startTime_enc": "8b0f42f8cc535eb34d47ab81ff22795c835b1e6b441f03027817f9172a0afaac6d7e68f033df848ecc77985db11ea9aa4bcceb0847bbeaf1a529f247708c404f5dbf",
+            "endTime_enc": "4e50a7c43761daa8859f55a3ae1c238ab51f83e0eaf70f0bf6f13b23a49df53aec89f28dbab5b9648a664463040a92426fcb47b27bfb65455fcb728a50e7feabdc66",
+            "duration": 1800,
+            "content_hash": "2e521bcfb51b7a814ed1df788d933c227073c7ba97c92d5817cb6942339c15ba"
+          },
+          "start_epoch": 1767312000
+        }
+      ],
+      "day_hash": "171b4211cfee9163198bc9410ae8e441c97476c4e81abcf61be20425f9a02054",
+      "identity_seal": "22ad4dfaca18c27e7ad0212edc41208ac4e7eff30ef2fcee7951db03faf4e666"
+    },
+    {
+      "type": "day",
+      "day_index": 2,
+      "date": "2026-01-03",
+      "format_version": "0.4.0",
+      "prev_hash": "171b4211cfee9163198bc9410ae8e441c97476c4e81abcf61be20425f9a02054",
+      "entries": [
+        {
+          "hash": "4d11b8cb54145941ec0bdaaec15228c3b341ff6d42d17c4c5da0a2267a8401a9",
+          "data": {
+            "title": "Gamma task",
+            "startTime_enc": "683414415291dd7fd71e501c35ec4bd8879771547dbf2014053041928d1dff684b79664fe84497cb2259736209fd547d54e793605a17f56034bbdae8149f8c58682c",
+            "endTime_enc": "be37e45353705ff51c4321ef22c614277b91de11d98610f8f54eea8e0568f2224cb4bbb1595b34a63ced520017f350cf3d5c3d5e50664303f821d0e9377b992aaee8",
+            "duration": 5400,
+            "content_hash": "042f2ae498e0ede8210eb01f5aa4f7a15cc228ac5f2c624887e651f83033df85"
+          },
+          "start_epoch": 1767398400
+        },
+        {
+          "hash": "a9eea6327b70568f61356d336b574f72c5f82c9ab1a2e0ab88bd93f23450283d",
+          "data": {
+            "title": "Delta task",
+            "startTime_enc": "393ba65e7e2974c54e276954d239417292c29f4e0fd287ada434f085817324a1eb6b6a49422bed89d75440ea4941efa3d14a8d96512080e5bf9988b2a56b9ce5518d",
+            "endTime_enc": "f5785c65710f5e075f5b1f84c61b614572b71c55f9eae425796b4231b0d396cf5fea689b00e7ea144f58cee3147083ae6a291529ae1e720720e6c3fc8f0471726558",
+            "duration": 7200,
+            "content_hash": "f4cb83f03a6257b9b3cc61386facadcf32ac02b36182fef5a12d8a1de205c247"
+          },
+          "start_epoch": 1767484800
+        }
+      ],
+      "day_hash": "f693e850c9cdd9cbd0d792fc9caff53f8955962207e4ed4438952d07539caada",
+      "identity_seal": "d0b15e5069f74d9c04fc8dcaf178f4c985d589ba6d0934d39dd3bcfb775ded9d"
+    }
+  ]
+}

@@ -22,7 +22,7 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 | Point | Planning doc | Status |
 |-------|--------------|--------|
 | P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🔜 Not started |
-| P2 — C-2 cross-client verification (Phase D) | `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | 🔜 Not started |
+| P2 — C-2 cross-client verification (Phase D) | `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | ✅ Complete (2026-08-28) |
 | P3 — Web staging "Option A" refactor | `WEB_STAGING_OPTION_A_PHASE1.md` | 🔜 Deferred |
 | P4 — Web vitest harness hygiene | `WEB_VITEST_HARNESS_PHASE1.md` | ✅ Complete (2026-08-28) |
 
@@ -33,7 +33,7 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 **Plan (roadmap):** `docs/planning/C2_SEED_REKEY_WEB_CLI_ROADMAP.md`
 **Reference:** Flutter `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — `rekey_service_test.dart` 28/28, Settings Group S 6/6, suite 2010/2010)
 **ADR:** ADR-026 (versioned MK), ADR-001 (sovereign key)
-**Status:** 🟡 **IN PROGRESS** — Web ✅ **COMPLETE (4-phase TDD, 2026-08-24)** (`RekeyService` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`); **CLI (Phase A) + cross-client (Phase D) still open**. This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
+**Status:** 🟡 **IN PROGRESS** — Web ✅ **COMPLETE (4-phase TDD, 2026-08-24)** (`RekeyService` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`); **cross-client (Phase D) ✅ COMPLETE (2026-08-28)** — hermetic Web↔Flutter matrix GREEN (18/18 each direction, 46 Flutter cross-client+re-key tests, suite 2115/0); **CLI (Phase A) still open**. This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
 
 **What:** Bring the C-2 **seed replacement** (mint a FRESH random seed → full re-key of vault + chain + staging + blind index + device cookie under the new Master Key → push to R2 → rotate cookie specifier) to `phpoc-web` and `phpoc-cli`. After re-key, the **old seed no longer decrypts** any data — a leaked/compromised seed is nullified.
 
@@ -43,7 +43,7 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 - **Phase A (CLI):** extend `RotateKeysCommand` with `--renew-seed` (mint new seed → `derive_mk(new_seed,new_version)` → re-key via `hard_rotate` core → rewrite seed vault/`recovery_seed_enc` → staging+index+cookie → push R2 → cookie rotation); wire `ph rekey-seed` into `main.py`. Test port R/B/M/P.
 - **Phase B (Web engine):** ✅ `src/services/rekey_service.js` mirroring Flutter `rekey()` — gate, backup, mint, per-block `_enc` re-key (`deriveMk`+re-seal via `chain.js`/ADR-029a), genesis+PDK rewrite, staging/cookie, IndexedDB persist + migration marker; push to R2; rotate cookie. Test port R/B/M/P.
 - **Phase C (Web UI):** ✅ Settings **Security & Recovery** "Re-key to a new Recovery Seed", mirroring Flutter Group S (6/6). Vitest+RTL.
-- **Phase D:** cross-client verify (re-keyed chain pulls + verifies under new MK on all clients; old-seed device can't decrypt), spec/format doc pass, ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates. **Plan:** `docs/planning/C2_CROSS_CLIENT_VERIFY_PHASE1.md`.
+- **Phase D:** ✅ cross-client verify (Web↔Flutter hermetic matrix GREEN 18/18 each direction; old-seed device can't decrypt), spec/format doc pass (PHPSPEC §2.10), ROADMAP/WEB_ROADMAP/MAP/CHANGELOG updates. CLI↔client E2E still gated on Phase A. **Plan:** `docs/planning/C2_CROSS_CLIENT_VERIFY_PHASE1.md`.
 
 **Prerequisites:** chain must be a valid canonical 0.4.0+ chain (re-key presumes valid seals/content hashes — see `LEDGER_VALIDITY_WORKFLOW_PHASE1.md`). Web `deriveMk(seed,version)`/`generateSeed()` need a green baseline before the re-key path relies on them.
 

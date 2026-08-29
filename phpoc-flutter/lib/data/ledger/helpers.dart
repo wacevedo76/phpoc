@@ -133,10 +133,14 @@ String computeContentHash(Map<String, dynamic> data, CryptoService crypto) {
   return sha256(jsonStr);
 }
 
-/// Verify the content hash using an extensible two-algorithm approach.
+/// Verify the content hash using an extensible multi-algorithm approach.
 ///
-/// Tries the extensible algorithm first (decrypt `_enc`, sort lists),
-/// then falls back to legacy v0.3.0 format.
+/// Mirrors Python `_verify_content_hash`, which accepts BOTH the v0.4.0+
+/// format (strips the `_enc` suffix from decrypted fields) AND the older
+/// extensible format (KEEPS the `_enc` suffix on decrypted fields — the
+/// format the Web client emits via `_computeContentHash`). Flutter's
+/// `computeContentHash` emits the stripped form; accepting the kept form here
+/// is what makes a Web-rekeyed chain verify on Flutter (cross-client).
 ///
 /// [decryptFn] decrypts a ciphertext string and returns plaintext.
 bool verifyContentHash(
@@ -144,26 +148,35 @@ bool verifyContentHash(
   String expectedHash, {
   required String Function(String) decryptFn,
 }) {
-  // Build canonical map, then strip content_hash (same as computeContentHash)
+  // 1. v0.4.0+ canonical: strip `_enc` suffix, compact jsonSort.
   final extensibleCanonical = _buildCanonicalMap(data, decryptFn);
   extensibleCanonical.remove('content_hash');
-  final extensibleJson = jsonSort(extensibleCanonical);
-  if (sha256(extensibleJson) == expectedHash) return true;
+  if (sha256(jsonSort(extensibleCanonical)) == expectedHash) return true;
 
-  // Try legacy v0.3.0 fallback: 9 hardcoded fields with indent=2
+  // 2. Legacy extensible (Web/Python `content_legacy_ext`): KEEP the `_enc`
+  //    suffix on decrypted fields, compact jsonSort.
+  final keptSuffix = _buildCanonicalMap(data, decryptFn, keepEncSuffix: true);
+  keptSuffix.remove('content_hash');
+  if (sha256(jsonSort(keptSuffix)) == expectedHash) return true;
+
+  // 3. Legacy indent=2 fallback (stripped form).
   final legacyCanonical = _buildCanonicalMap(data, decryptFn);
   legacyCanonical.remove('content_hash');
-  final legacyJson = jsonSortIndent2(legacyCanonical);
-  if (sha256(legacyJson) == expectedHash) return true;
+  if (sha256(jsonSortIndent2(legacyCanonical)) == expectedHash) return true;
 
   return false;
 }
 
 /// Build canonical map for the extensible algorithm (v0.4.0+).
+///
+/// When [keepEncSuffix] is true the `_enc` suffix is RETAINED on decrypted
+/// fields (the Web/Python legacy-extensible format); otherwise it is stripped
+/// (the v0.4.0+ Flutter format).
 Map<String, dynamic> _buildCanonicalMap(
   Map<String, dynamic> data,
-  String Function(String) decryptFn,
-) {
+  String Function(String) decryptFn, {
+  bool keepEncSuffix = false,
+}) {
   final canonical = <String, dynamic>{};
 
   for (final entry in data.entries) {
@@ -171,7 +184,9 @@ Map<String, dynamic> _buildCanonicalMap(
     var value = entry.value;
 
     if (key.endsWith('_enc')) {
-      key = key.substring(0, key.length - 4);
+      if (!keepEncSuffix) {
+        key = key.substring(0, key.length - 4);
+      }
       if (value is String && value.isNotEmpty) {
         try {
           final decrypted = decryptFn(value);

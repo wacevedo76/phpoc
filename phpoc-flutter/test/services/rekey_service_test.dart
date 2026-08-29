@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
 import 'package:phpoc_flutter/core/models/block.dart';
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
+import 'package:phpoc_flutter/data/ledger/helpers.dart' show computeEntryHash;
 import 'package:phpoc_flutter/data/storage/database.dart';
 import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/secure_preferences.dart';
@@ -349,7 +351,8 @@ void main() {
       }
     });
 
-    test('R9: block content_hashes unchanged before/after re-key', () async {
+    test('R9: entry plaintext survives re-key; ciphertext-bound hashes recompute',
+        () async {
       final crypto = _crypto();
       final db = AppDatabase.inMemory();
       final prefs = AppPreferences.testInstance();
@@ -361,17 +364,27 @@ void main() {
       final stack = await _makeRekey(crypto, db, prefs, secPrefs);
       await stack.auth.unlock(validPassphrase, validSeedB64);
 
-      // Capture pre-re-key plaintext content hashes.
-      final before = <String, String>{};
+      // Capture pre-re-key plaintext for each `_enc` field, keyed by block
+      // index + entry position so we can compare the SAME logical entry after
+      // the re-key. Entry hashes are ciphertext-bound, so they MUST change;
+      // what must survive is the decrypted plaintext.
+      final before = <String, List<String>>{};
       for (final b in await db.blockDao.getAllBlocks()) {
         final data = json.decode(utf8.decode(base64.decode(b.dataEnc)));
         final entries = (data as Map<String, dynamic>)['entries'];
         if (entries is! List) continue;
-        for (final e in entries.cast<Map>()) {
-          final hash = e['hash'] as String;
-          // Decrypt the plaintext-equivalent and hash it canonically.
-          final content = json.encode(e['data']);
-          before[hash] = content;
+        for (var i = 0; i < entries.length; i++) {
+          final e = entries[i] as Map;
+          final eData = e['data'] as Map? ?? const {};
+          final plaintexts = <String>[];
+          for (final field in eData.entries) {
+            final key = field.key;
+            final value = field.value;
+            if (key.endsWith('_enc') && value is String && value.isNotEmpty) {
+              plaintexts.add(crypto.decrypt(value, oldMK));
+            }
+          }
+          before['${b.blockIndex}:$i'] = plaintexts;
         }
       }
 
@@ -381,21 +394,35 @@ void main() {
         newSeed: altSeedB64,
       );
 
-      // After re-key, same plaintext content must map to the same entry hashes.
-      final after = <String, String>{};
+      // After re-key the SAME plaintexts must decrypt under the NEW MK, and
+      // every entry hash must equal the ciphertext-bound recomputation.
+      final after = <String, List<String>>{};
       for (final b in await db.blockDao.getAllBlocks()) {
         final data = json.decode(utf8.decode(base64.decode(b.dataEnc)));
         final entries = (data as Map<String, dynamic>)['entries'];
         if (entries is! List) continue;
-        for (final e in entries.cast<Map>()) {
-          final hash = e['hash'] as String;
-          after[hash] = json.encode(e['data']);
+        for (var i = 0; i < entries.length; i++) {
+          final e = entries[i] as Map;
+          final eData = e['data'] as Map? ?? const {};
+          final plaintexts = <String>[];
+          for (final field in eData.entries) {
+            final key = field.key;
+            final value = field.value;
+            if (key.endsWith('_enc') && value is String && value.isNotEmpty) {
+              plaintexts.add(crypto.decrypt(value, newMK));
+            }
+          }
+          after['${b.blockIndex}:$i'] = plaintexts;
+          // Ciphertext-bound entry hash must match the re-encrypted data.
+          expect(computeEntryHash(Map<String, dynamic>.from(eData)), e['hash'],
+              reason: 'entry hash must be recomputed over the NEW ciphertext');
         }
       }
+
       expect(after.length, before.length);
-      for (final h in before.keys) {
-        expect(after.containsKey(h), isTrue,
-            reason: 'content hash $h must survive re-key (plaintext unchanged)');
+      for (final key in before.keys) {
+        expect(after[key], before[key],
+            reason: 'plaintext for $key must survive re-key unchanged');
       }
     });
 
@@ -424,17 +451,28 @@ void main() {
       for (final b in await db.blockDao.getAllBlocks()) {
         final data = json.decode(utf8.decode(base64.decode(b.dataEnc)));
         final dataMap = data as Map<String, dynamic>;
-        final hashKey = b.blockType == BlockType.genesis ? 'block_hash' : 'day_hash';
-        final seal = dataMap[hashKey] as String?;
-        final payload = Map<String, dynamic>.from(dataMap)
-          ..remove(hashKey)
-          ..remove('identity_seal');
-        final serialized = json.encode(
-          Map<String, dynamic>.fromEntries(payload.entries.toList()
-            ..sort((a, b) => a.key.compareTo(b.key))),
-        );
-        expect(crypto.seal(serialized, newMK), seal,
-            reason: 'block ${b.blockIndex} seal must verify under the NEW MK');
+        if (b.blockType == BlockType.genesis) {
+          // Legacy flat genesis seals over the flat `{"seed": ...}` payload.
+          final seal = dataMap['block_hash'] as String?;
+          final payload = <String, dynamic>{'seed': dataMap['seed']};
+          final serialized = json.encode(
+            Map<String, dynamic>.fromEntries(payload.entries.toList()
+              ..sort((a, b) => a.key.compareTo(b.key))),
+          );
+          expect(crypto.seal(serialized, newMK), seal,
+              reason: 'genesis seal must verify under the NEW MK');
+        } else {
+          // Canonical ADR-029a whitelist seal (jsonSort), matching Python/Web.
+          final sealData = <String, dynamic>{
+            'type': dataMap['type'],
+            'day_index': dataMap['day_index'],
+            'date': dataMap['date'],
+            'prev_hash': dataMap['prev_hash'],
+            'entries': dataMap['entries'],
+          };
+          expect(crypto.seal(jsonSort(sealData), newMK), b.blockId,
+              reason: 'block ${b.blockIndex} seal must verify under the NEW MK');
+        }
       }
     });
 
