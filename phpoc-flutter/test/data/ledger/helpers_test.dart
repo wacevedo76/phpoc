@@ -243,4 +243,88 @@ void main() {
           isFalse);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group CH: computeContentHash strip divergence — KEEP `_enc` suffix
+  // (PHPSPEC §5.5/§6.1, byte-identical with Python json.dumps(sort_keys=True))
+  // Blueprint: docs/planning/flutter/CONTENT_HASH_STRIP_DIVERGENCE_PHASE1.md
+  // ═══════════════════════════════════════════════════════════════
+  group('CH: computeContentHash strip divergence', () {
+    const mk = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+
+    // CH1 — KEEP `_enc` suffix + plaintext-as-string (V1 vector)
+    test('CH1: KEEPS _enc suffix + plaintext-as-string (V1 vector)', () {
+      crypto.setMasterKey(mk);
+      final data = {
+        'duration': 598172,
+        'metadata_enc': crypto.encryptWithCachedKey('{}'),
+        'startTime_enc': crypto.encryptWithCachedKey('1777028295844'),
+        'title': 'Music Practice - Flute',
+      };
+      expect(computeContentHash(data, crypto),
+          '6bcdf73697a738fd7412bc6c4cfe8daf5fc4b7167b8dac8a013fe9602b1d26dd');
+    });
+
+    // CH2 — JSON-typed `_enc` plaintext stays a string (V2 vector)
+    test('CH2: JSON-typed _enc plaintext stays a string (V2 vector)', () {
+      crypto.setMasterKey(mk);
+      final data = {
+        'comment': 'deep work',
+        'duration': 3600000,
+        'endTime_enc': crypto.encryptWithCachedKey('1714003600000'),
+        'pauses_enc': crypto.encryptWithCachedKey('[]'),
+        'startTime_enc': crypto.encryptWithCachedKey('1714000000000'),
+        'tags': ['focus', 'work'],
+        'title': 'Coding',
+      };
+      expect(computeContentHash(data, crypto),
+          '3df78f0abccaf7b9fdf0b504a1d205d91561420782791869642f4792e23169f9');
+    });
+
+    // CH3 — plaintext-only entry (V4): content_hash excluded, jsonSort spacing
+    test('CH3: plaintext-only entry hashes to V4 vector', () {
+      crypto.setMasterKey(mk);
+      final data = {'title': 'Test', 'duration': 1000};
+      expect(computeContentHash(data, crypto),
+          'fe8dfdbf3f76aa2fa466cdcaa628343b87f9081c67c73db8dd35759a2c62d0f1');
+    });
+
+    // CH4 — list fields sorted (V3 vector)
+    test('CH4: list fields sorted (V3 vector)', () {
+      crypto.setMasterKey(mk);
+      final data = {
+        'duration': 1800000,
+        'media': <String>[],
+        'tags': ['b', 'a', 'c'],
+        'title': 'Reading',
+      };
+      expect(computeContentHash(data, crypto),
+          '77492680df22b4a852d2b7dacfc350275a02b08c3f32171087fd9412012f1708');
+    });
+
+    // CH5 — empty-string `_enc` kept as-is with suffix retained (V6 vector)
+    test('CH5: empty _enc value kept as-is with suffix (V6 vector)', () {
+      crypto.setMasterKey(mk);
+      final data = {'duration': 1, 'empty_enc': '', 'title': 'X'};
+      expect(computeContentHash(data, crypto),
+          '7fa34bb1e3ef6a5d23c6d2a05b6d97358d1be0ddff8dc557f9f8c8d0a6eadfb8');
+    });
+
+    // CH6 — compute → verify round-trip self-consistent
+    test('CH6: computeContentHash → verifyContentHash round-trips', () {
+      crypto.setMasterKey(mk);
+      final data = {
+        'duration': 598172,
+        'metadata_enc': crypto.encryptWithCachedKey('{}'),
+        'startTime_enc': crypto.encryptWithCachedKey('1777028295844'),
+        'title': 'Music Practice - Flute',
+      };
+      final hash = computeContentHash(data, crypto);
+      expect(
+        verifyContentHash(data, hash,
+            decryptFn: (c) => crypto.decrypt(c, crypto.getMasterKey()!)),
+        isTrue,
+      );
+    });
+  });
 }

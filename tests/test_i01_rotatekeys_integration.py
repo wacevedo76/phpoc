@@ -420,16 +420,13 @@ class TestRotationIntegration(unittest.TestCase):
         pushed_staging = None
 
         class _MockTransport:
-            def push_cookie(self, cookie_bytes):
-                nonlocal pushed_cookie
-                pushed_cookie = cookie_bytes
-                return True
-
-            def push_blob(self, path, data_bytes):
-                nonlocal pushed_staging
-                if "staging" in path:
+            def push(self, path, data_bytes):
+                nonlocal pushed_cookie, pushed_staging
+                if path == "staging/blobs/device_cookie.bin":
+                    pushed_cookie = data_bytes
+                elif path == "staging/blob":
                     pushed_staging = data_bytes
-                return True
+                return None
 
         transport = _MockTransport()
 

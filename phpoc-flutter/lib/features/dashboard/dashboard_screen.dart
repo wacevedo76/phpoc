@@ -697,11 +697,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           ),
         ),
       ),
+      // The expanded form lives in the Scaffold's bottomSheet, whose height
+      // is bounded by the space above the keyboard. Use a shrink-wrapping
+      // ListView so the form sizes to its content when there's room, but
+      // scrolls when the keyboard leaves less space (instead of overflowing
+      // and hiding the Start button behind the keyboard).
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
           children: [
             _buildFieldRow(
               controller: _titleController,

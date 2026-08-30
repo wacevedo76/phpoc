@@ -62,7 +62,19 @@ class AppScaffold extends ConsumerWidget {
           // vertically centered (top gap == bottom gap).
           Expanded(
             child: MediaQuery(
-              data: MediaQuery.of(context).removePadding(removeTop: true),
+              // The BookSwitcher's SafeArea already accounts for the top
+              // status-bar inset (see above). We must ALSO remove the bottom
+              // view inset here: the outer Scaffold already resizes its body
+              // for the keyboard (resizeToAvoidBottomInset) and strips
+              // viewInsets.bottom from that body, but this explicit MediaQuery
+              // is built from the ROOT MediaQuery (which still carries the
+              // full keyboard inset). Re-introducing it makes every nested
+              // page Scaffold double-apply the keyboard inset, collapsing its
+              // body and pushing bottom-anchored panels (e.g. the dashboard
+              // "New Task" form) out of position when the keyboard opens.
+              data: MediaQuery.of(context)
+                  .removePadding(removeTop: true)
+                  .removeViewInsets(removeBottom: true),
               child: body,
             ),
           ),

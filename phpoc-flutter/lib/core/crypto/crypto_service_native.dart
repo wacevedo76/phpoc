@@ -15,6 +15,8 @@ import 'dart:typed_data';
 
 import 'frb_generated.dart' as frb;
 
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
+
 class CryptoServiceNative {
   // ── State ─────────────────────────────────────────────────────
 
@@ -210,20 +212,20 @@ class CryptoServiceNative {
     }
     final canonical = <String, dynamic>{};
     for (final entry in data.entries) {
-      var key = entry.key;
+      final key = entry.key;
       var value = entry.value;
+      // KEEP the `_enc` suffix — do NOT strip (PHPSPEC §5.5/§6.1).
       if (key.endsWith('_enc')) {
-        key = key.substring(0, key.length - 4);
         if (value is String && value.isNotEmpty) {
           try {
+            // Decrypt; plaintext stays a STRING (no json.decode).
             value = decrypt(value, _bytesToHex(_masterKey!));
           } catch (_) {}
         }
       }
       canonical[key] = value;
     }
-    final sorted = _sortMap(canonical);
-    final jsonStr = _toJson(sorted);
+    final jsonStr = jsonSort(canonical);
     return frb.sha256(jsonStr);
   }
 

@@ -5,9 +5,10 @@ import json
 import hashlib
 import base64
 import os
+import sys
 from pathlib import Path
 from security.crypto import CryptoManager, NoAuthCryptoManager
-from security.auth import PassphraseAuthenticator, RecoveryAuthenticator
+from security.auth import PassphraseAuthenticator, RecoveryAuthenticator, derive_pdk_salt
 from security.recovery import RecoveryManager
 from security.config_manager import ConfigManager
 from storage.implementations.file_config import FileConfigStore, _resolve_config_path, _resolve_data_dir
@@ -57,6 +58,15 @@ def _resolve_data_paths(data_dir: Path):
         data_dir / "staging.json",
         data_dir / "identity.json",
     )
+
+
+# Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
+# These modify the ledger or perform irreversible operations.
+# Extracted to module level so CLI-wiring tests can assert require_auth gating.
+REQUIRE_AUTH = [
+    "sync", "verify", "rep", "modify", "review", "add", "revert",
+    "migrate-format", "rotate-keys", "rekey-seed",
+]
 
 
 def main():
@@ -184,6 +194,15 @@ def main():
     rotate_p.add_argument("--full", action="store_true",
                           help="Full (hard) rotation — re-encrypt the entire chain, "
                                "re-seal every block, recompute hashes/MACs and prev_hash links")
+    rotate_p.add_argument("--renew-seed", action="store_true",
+                          help="C-2 seed replacement — mint a fresh seed and re-key the full "
+                               "chain + vault + staging + index + cookie under the new Master Key")
+
+    # Rekey-seed command (C-2) — seed replacement (nullifies a leaked seed)
+    rekey_p = subparsers.add_parser(
+        "rekey-seed",
+        help="Mint a fresh recovery seed and re-key the full ledger under the new Master Key",
+    )
 
     # Rep/List commands...
     rep_parser = subparsers.add_parser("rep", help="Show reputation summary")
@@ -627,7 +646,7 @@ def main():
     
     # Commands that REQUIRE a valid passphrase (no fallback to NoAuth).
     # These modify the ledger or perform irreversible operations.
-    require_auth = ["sync", "verify", "rep", "modify", "review", "add", "revert", "migrate-format", "rotate-keys"]
+    require_auth = list(REQUIRE_AUTH)
     
     # Read-only commands that SHOULD use a cached session if available
     # but can proceed without one (cookie-based auth handles remote access).
@@ -788,7 +807,8 @@ def main():
     elif args.command == "rotate-keys":
         # I-01 Master Key rotation — escape-hatch parity with the Flutter C-2
         # re-key, driven from the trusted CLI so a user can rotate the key set
-        # without the app. Soft (default) or full (--full, re-encrypt chain).
+        # without the app. Soft (default), full (--full), or C-2 seed
+        # replacement (--renew-seed).
         from phpoc_cli.rotate_keys import RotateKeysCommand
         raw_seed = auth.get_key()  # 32-byte raw seed (base64-decoded recovery seed)
         if raw_seed is None:
@@ -796,17 +816,35 @@ def main():
             exit(1)
         # Recover the identity secret for MAC re-signing (same path as 'recover').
         identity_secret = ledger._get_identity_secret()
-        rotator = RotateKeysCommand(
-            data_dir=CONFIG_DIR,
-            seed=raw_seed,
-            identity_secret=identity_secret,
-        )
-        ok = rotator.execute(full=args.full)
-        mode = "hard (full chain rewrite)" if args.full else "soft"
-        if ok:
-            print(f"\u2713 {mode.capitalize()} rotation successful.")
+        if getattr(args, "renew_seed", False):
+            # C-2: re-prompt passphrase → derive PDK → seed replacement.
+            ok = _handle_rekey_seed(auth, CONFIG_DIR, ledger, transport)
+            if ok:
+                print("\u2713 Seed re-key successful.")
+            else:
+                print("\u26a0 Seed re-key failed — ledger left unchanged.")
+                exit(1)
         else:
-            print(f"\u26a0 {mode.capitalize()} rotation failed — ledger left unchanged.")
+            rotator = RotateKeysCommand(
+                data_dir=CONFIG_DIR,
+                seed=raw_seed,
+                identity_secret=identity_secret,
+            )
+            ok = rotator.execute(full=args.full)
+            mode = "hard (full chain rewrite)" if args.full else "soft"
+            if ok:
+                print(f"\u2713 {mode.capitalize()} rotation successful.")
+            else:
+                print(f"\u26a0 {mode.capitalize()} rotation failed — ledger left unchanged.")
+                exit(1)
+    elif args.command == "rekey-seed":
+        # C-2 seed replacement (require_auth-gated): mint a fresh seed and
+        # re-key the whole vault/chain/staging/index/cookie under the new MK.
+        ok = _handle_rekey_seed(auth, CONFIG_DIR, ledger, transport)
+        if ok:
+            print("\u2713 Seed re-key successful.")
+        else:
+            print("\u26a0 Seed re-key failed — ledger left unchanged.")
             exit(1)
     elif args.command == "migrate-format":
         print("[migrate-format] Starting format migration to 0.4.0…")
@@ -1837,6 +1875,118 @@ def _resolve_till_date(date_str: str) -> str:
         return f"{datetime.date.today().year}-{date_str}"
     print(f"WARN: Invalid --till format '{date_str}'. Use MM-DD or YYYY-MM-DD. Ignoring.")
     return None
+
+
+def _derive_rekey_pdk(passphrase: str, identity_pub_key: str) -> bytes:
+    """Derive the Passphrase Derived Key (PDK) for seed-vault rewrite (C-2).
+
+    Matches PassphraseAuthenticator's derivation: PBKDF2-HMAC-SHA256 with the
+    per-user salt derived from the identity pub key.
+
+    Returns:
+        32-byte PDK.
+    """
+    salt = derive_pdk_salt(identity_pub_key)
+    return hashlib.pbkdf2_hmac(
+        "sha256", passphrase.encode(), salt,
+        PassphraseAuthenticator.PBKDF2_ITERATIONS, 32,
+    )
+
+
+def _handle_rekey_seed(auth, CONFIG_DIR, ledger, transport=None, *,
+                       passphrase=None, acknowledge=None, out=None):
+    """C-2 rekey-seed CLI handler: re-prompt passphrase → derive PDK → renew_seed.
+
+    Args:
+        auth: object with ``get_key() -> old raw seed bytes``.
+        CONFIG_DIR: data directory (Path).
+        ledger: object with ``_get_identity_secret() -> bytes``.
+        transport: optional AbstractStagingTransport (pull/push), used by the
+            re-key to push the rotated cookie, staging blob, and re-keyed
+            chain to remote.
+        passphrase: optional injected passphrase (test hook); prompts via
+            getpass when omitted.
+        acknowledge: optional callable() -> bool (test hook); prompts via
+            input when omitted. Required before the one-shot reveal (B5).
+        out: optional file-like for the one-shot reveal print (test hook);
+            defaults to sys.stdout.
+
+    Returns:
+        True on success (new seed printed to ``out`` exactly once), False on failure.
+    """
+    raw_seed = auth.get_key() if hasattr(auth, "get_key") else None
+    if raw_seed is None:
+        return False
+
+    ledger_path = CONFIG_DIR / "ledger.json"
+    try:
+        genesis = json.loads(ledger_path.read_text())[0]
+    except (OSError, json.JSONDecodeError, IndexError):
+        return False
+
+    identity_pub_key = genesis.get("identity", {}).get("identity_pub_key")
+    if not identity_pub_key:
+        return False
+
+    # Two-secret confirmation: re-prompt (or accept injected) passphrase.
+    if passphrase is None:
+        try:
+            passphrase = getpass.getpass(
+                "Passphrase (re-enter to confirm seed re-key): "
+            )
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return False
+    if not passphrase:
+        return False
+
+    pdk = _derive_rekey_pdk(passphrase, identity_pub_key)
+
+    # The PDK must decrypt the CURRENT seed vault (proves the right passphrase).
+    try:
+        recovered_b64 = RecoveryManager.decrypt_seed(
+            genesis["identity"]["recovery_seed_enc"], pdk
+        )
+    except Exception:
+        return False
+    if recovered_b64 != base64.b64encode(raw_seed).decode():
+        return False
+
+    # Explicit acknowledgment before the destructive rewrite + one-shot reveal.
+    if acknowledge is None:
+        try:
+            ans = input(
+                "This mints a NEW recovery seed and re-keys the entire ledger "
+                "under a new Master Key. The new seed is shown exactly once. "
+                "Continue? [y/N]: "
+            ).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return False
+        if ans not in ("y", "yes"):
+            return False
+    elif not acknowledge():
+        return False
+
+    identity_secret = (ledger._get_identity_secret()
+                       if hasattr(ledger, "_get_identity_secret") else None)
+
+    from phpoc_cli.rotate_keys import RotateKeysCommand
+    cmd = RotateKeysCommand(
+        data_dir=CONFIG_DIR,
+        seed=raw_seed,
+        identity_secret=identity_secret,
+        pdk=pdk,
+        transport=transport,
+    )
+    new_seed_b64 = cmd.renew_seed()
+    if not new_seed_b64:
+        return False
+
+    # One-shot reveal (B5/C4) — printed exactly once, never re-shown.
+    out = out if out is not None else sys.stdout
+    print(new_seed_b64, file=out)
+    return True
 
 
 if __name__ == "__main__":

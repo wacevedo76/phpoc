@@ -117,14 +117,16 @@ String encodeValueNoSpaces(dynamic value) {
 ///
 /// Skips `content_hash` itself (avoid circular dependency).
 /// Algorithm:
-/// 1. For each field with _enc suffix: strip suffix, decrypt value, parse JSON if possible
+/// 1. For each field with `_enc` suffix: KEEP the suffix, decrypt the value
+///    (plaintext stays a STRING — never JSON-decoded), matching Python/Web
+///    PHPSPEC §5.5/§6.1.
 /// 2. Sort lists for deterministic ordering
 /// 3. Skip content_hash field
 /// 4. SHA-256 of canonical JSON (compact, sort_keys=True)
 String computeContentHash(Map<String, dynamic> data, CryptoService crypto) {
   final canonical = _buildCanonicalMap(data, (ciphertext) {
     return crypto.decryptWithCachedKey(ciphertext);
-  });
+  }, keepEncSuffix: true);
 
   // Remove content_hash to avoid circular dependency
   canonical.remove('content_hash');
@@ -135,12 +137,12 @@ String computeContentHash(Map<String, dynamic> data, CryptoService crypto) {
 
 /// Verify the content hash using an extensible multi-algorithm approach.
 ///
-/// Mirrors Python `_verify_content_hash`, which accepts BOTH the v0.4.0+
-/// format (strips the `_enc` suffix from decrypted fields) AND the older
-/// extensible format (KEEPS the `_enc` suffix on decrypted fields — the
-/// format the Web client emits via `_computeContentHash`). Flutter's
-/// `computeContentHash` emits the stripped form; accepting the kept form here
-/// is what makes a Web-rekeyed chain verify on Flutter (cross-client).
+/// Accepts, in order:
+///   1. Canonical — KEEP the `_enc` suffix on decrypted fields (plaintext as
+///      a STRING), compact `jsonSort`. This is what Flutter's
+///      `computeContentHash` and Python/Web emit today (PHPSPEC §5.5/§6.1).
+///   2. Legacy v0.4.0+ Flutter — STRIP the `_enc` suffix, compact `jsonSort`.
+///   3. Legacy indent=2 — STRIP the `_enc` suffix, `jsonSortIndent2`.
 ///
 /// [decryptFn] decrypts a ciphertext string and returns plaintext.
 bool verifyContentHash(
@@ -148,30 +150,34 @@ bool verifyContentHash(
   String expectedHash, {
   required String Function(String) decryptFn,
 }) {
-  // 1. v0.4.0+ canonical: strip `_enc` suffix, compact jsonSort.
-  final extensibleCanonical = _buildCanonicalMap(data, decryptFn);
-  extensibleCanonical.remove('content_hash');
-  if (sha256(jsonSort(extensibleCanonical)) == expectedHash) return true;
-
-  // 2. Legacy extensible (Web/Python `content_legacy_ext`): KEEP the `_enc`
-  //    suffix on decrypted fields, compact jsonSort.
+  // 1. Canonical: KEEP `_enc` suffix (matches Flutter `computeContentHash`
+  //    and Python/Web §5.5/§6.1), compact jsonSort.
   final keptSuffix = _buildCanonicalMap(data, decryptFn, keepEncSuffix: true);
   keptSuffix.remove('content_hash');
   if (sha256(jsonSort(keptSuffix)) == expectedHash) return true;
 
+  // 2. Legacy v0.4.0+ Flutter: STRIP `_enc` suffix, compact jsonSort.
+  final stripped = _buildCanonicalMap(data, decryptFn);
+  stripped.remove('content_hash');
+  final strippedJson = jsonSort(stripped);
+  if (sha256(strippedJson) == expectedHash) return true;
+
   // 3. Legacy indent=2 fallback (stripped form).
-  final legacyCanonical = _buildCanonicalMap(data, decryptFn);
-  legacyCanonical.remove('content_hash');
-  if (sha256(jsonSortIndent2(legacyCanonical)) == expectedHash) return true;
+  if (sha256(jsonSortIndent2(stripped)) == expectedHash) return true;
 
   return false;
 }
 
-/// Build canonical map for the extensible algorithm (v0.4.0+).
+/// Build the canonical map for content hashing.
+///
+/// Decrypts `_enc`-suffixed fields (plaintext stays a STRING — never
+/// `json.decode`d, so JSON-shaped plaintext like `"{}"` serializes verbatim)
+/// and sorts list values for deterministic ordering.
 ///
 /// When [keepEncSuffix] is true the `_enc` suffix is RETAINED on decrypted
-/// fields (the Web/Python legacy-extensible format); otherwise it is stripped
-/// (the v0.4.0+ Flutter format).
+/// field keys — the canonical form (PHPSPEC §5.5/§6.1, emitted by Flutter's
+/// `computeContentHash` and Python/Web). When false the suffix is STRIPPED —
+/// the legacy v0.4.0+ Flutter form.
 Map<String, dynamic> _buildCanonicalMap(
   Map<String, dynamic> data,
   String Function(String) decryptFn, {

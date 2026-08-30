@@ -577,4 +577,118 @@ void main() {
           reason: 'No active tasks after all ended');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group V: DashboardScreen — Keyboard Avoidance
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // Regression for the "on-screen keyboard covers the New Task form" bug.
+  // Root cause: AppScaffold re-introduced the keyboard view inset into the
+  // nested DashboardScreen Scaffold (whose bottom-anchored form lives in
+  // `bottomSheet`), causing the form to be mislaid when the keyboard opened.
+
+  group('V: DashboardScreen — Keyboard Avoidance', () {
+    const dpr = 3.0;
+
+    /// Pump the real shell (GoRouter + AppScaffold + DashboardScreen) so the
+    /// nested-Scaffold structure matches production.
+    Future<void> pumpNestedApp(WidgetTester tester) async {
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          ShellRoute(
+            builder: (_, _, child) => AppScaffold(child: child),
+            routes: [
+              GoRoute(
+                  path: '/',
+                  builder: (_, _) => const DashboardScreen()),
+            ],
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: defaultScreenOverrides(),
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pump();
+    }
+
+    /// Simulate an on-screen keyboard. FakeViewPadding is in PHYSICAL pixels,
+    /// so [logical] logical pixels of keyboard become `logical * dpr` physical.
+    void openKeyboard(WidgetTester tester, double logical) {
+      tester.view.viewInsets =
+          FakeViewPadding(bottom: logical * dpr);
+    }
+
+    // V1 — With a typical keyboard, every form field stays above the keyboard.
+    testWidgets('V1: form fields stay above the keyboard', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400); // 360×800 @3x
+      tester.view.devicePixelRatio = dpr;
+      addTearDown(tester.view.reset);
+
+      await pumpNestedApp(tester);
+      await tester.tap(find.text('New Task'));
+      await tester.pumpAndSettle();
+      openKeyboard(tester, 400);
+      await tester.pumpAndSettle();
+
+      final keyboardTop = 800.0 - 400.0;
+      for (final finder in [
+        find.byType(TextField).at(0),
+        find.byType(TextField).at(1),
+        find.byType(TextField).at(2),
+        find.text('Start'),
+      ]) {
+        expect(
+          tester.getRect(finder).bottom,
+          lessThanOrEqualTo(keyboardTop),
+          reason: 'No form control may sit behind the on-screen keyboard',
+        );
+      }
+    });
+
+    // V2 — With a tall keyboard (small screen), the form must not overflow;
+    // instead it scrolls so the Start button stays reachable.
+    testWidgets('V2: form scrolls instead of overflowing on a small screen',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160); // 360×720 @3x
+      tester.view.devicePixelRatio = dpr;
+      addTearDown(tester.view.reset);
+
+      await pumpNestedApp(tester);
+      await tester.tap(find.text('New Task'));
+      await tester.pumpAndSettle();
+      openKeyboard(tester, 400);
+      await tester.pumpAndSettle();
+
+      // No RenderFlex overflow must have been recorded.
+      expect(tester.takeException(), isNull,
+          reason: 'The form must not overflow when the keyboard leaves '
+              'little vertical space');
+
+      // The title field (autofocus) must be visible above the keyboard.
+      expect(
+        tester.getRect(find.byType(TextField).first).bottom,
+        lessThanOrEqualTo(720.0 - 400.0),
+        reason: 'The focused title field must stay above the keyboard',
+      );
+
+      // The Start button is at the bottom of a scrolled-out form; drag the
+      // shrink-wrapping ListView up to confirm it is reachable.
+      final formList = find.byWidgetPredicate(
+          (w) => w is ListView && w.shrinkWrap == true);
+      await tester.drag(formList, const Offset(0, -150));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Start'), findsOneWidget,
+          reason: 'Start must be reachable by scrolling the form');
+      expect(
+        tester.getRect(find.text('Start')).bottom,
+        lessThanOrEqualTo(720.0 - 400.0),
+        reason: 'Start must be reachable above the keyboard after scrolling',
+      );
+    });
+  });
 }

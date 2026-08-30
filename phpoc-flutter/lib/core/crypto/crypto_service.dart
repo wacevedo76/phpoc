@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:pointycastle/export.dart';
 
+import 'package:phpoc_flutter/core/utils/json_utils.dart';
+
 /// Base exception for crypto errors.
 class CryptoException implements Exception {
   final String message;
@@ -623,8 +625,10 @@ class CryptoService {
 
   /// Compute the extensible content hash (v0.4.0+).
   ///
-  /// Strips `_enc` suffix from keys before hashing, decrypts encrypted
-  /// field values using the cached MK. Matches the web `computeContentHash`.
+  /// KEEPS the `_enc` suffix on decrypted field keys and keeps the decrypted
+  /// plaintext as a STRING (no `json.decode`), serialized with `jsonSort`
+  /// (`": "`/`", "` spacing) — byte-identical to Python `json.dumps(sort_keys=True)`
+  /// and Web `_computeContentHash` (PHPSPEC §5.5/§6.1).
   String computeContentHash(Map<String, dynamic> data) {
     _requireInitialized();
     if (!hasMasterKey) {
@@ -635,22 +639,15 @@ class CryptoService {
 
     final canonical = <String, dynamic>{};
     for (final entry in data.entries) {
-      var key = entry.key;
+      final key = entry.key;
       var value = entry.value;
 
-      // Strip _enc suffix
+      // KEEP the `_enc` suffix — do NOT strip.
       if (key.endsWith('_enc')) {
-        key = key.substring(0, key.length - 4);
-        // Decrypt the value
+        // Decrypt the value; plaintext stays a STRING (no json.decode).
         if (value is String && value.isNotEmpty) {
           try {
             value = decrypt(value, _bytesToHex(_masterKey!));
-            // Try to parse as JSON for proper sorting
-            try {
-              value = json.decode(value);
-            } catch (_) {
-              // Keep as string
-            }
           } catch (_) {
             // If decryption fails, use the raw value
           }
@@ -660,7 +657,7 @@ class CryptoService {
       canonical[key] = value;
     }
 
-    final jsonStr = _canonicalJson(canonical);
+    final jsonStr = jsonSort(canonical);
     return sha256(jsonStr);
   }
 

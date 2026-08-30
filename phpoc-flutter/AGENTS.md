@@ -39,7 +39,8 @@ maintain **behavioral parity** with the Python reference (`domain/ledger/chain.p
 - **Cross-client invariants (do not break):** entry `hash` is ciphertext-bound (recompute after
   re-encrypt); `content_hash` is plaintext-bound (carry unchanged through re-key); `derivePdk` salt is
   canonical `session-salt` (600,000 iters) — never the dev shim; genesis wire `identity` is nested;
-  `verifyContentHash` must accept kept-`_enc`-suffix AND indent2 fallback (Web/Python legacy).
+  `computeContentHash` KEEPs the `_enc` suffix on decrypted fields (§5.5/§6.1, plaintext-as-string);
+  `verifyContentHash` tries KEEP-first, then strip, then indent2 fallback (Web/Python legacy).
 - **Re-key (C-2) is canonical:** `rekey_service.dart` re-encrypts `_enc`, recomputes ciphertext-bound
   entry `hash`, cascades `prev_hash`, re-seals via whitelist `jsonSort`, re-signs with the recovered
   identity secret; `content_hash` and `key_version` unchanged.

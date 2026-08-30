@@ -682,8 +682,8 @@ void main() {
       expect(h1, isNot(h2));
     });
 
-    // I3 — computeContentHash strips _enc suffix, decrypts fields
-    test('I3: computeContentHash strips _enc suffix and decrypts fields', () {
+    // I3 — computeContentHash keeps _enc suffix and decrypts fields
+    test('I3: computeContentHash keeps _enc suffix and decrypts fields', () {
       service.setMasterKey(mkHex);
       final data = {
         'title': 'Coding',
@@ -1066,6 +1066,59 @@ void main() {
       final longNonce = Uint8List(9);
       expect(
         () => service.obfuscateBlobDeterministic(data, mkHex, testSalt, longNonce),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // Group B: computeContentHash strip divergence (method) — KEEP `_enc`
+  // Blueprint: docs/planning/flutter/CONTENT_HASH_STRIP_DIVERGENCE_PHASE1.md
+  // ═══════════════════════════════════════════════════════════════
+  group('B: computeContentHash strip divergence (method)', () {
+    late CryptoService service;
+
+    setUp(() async {
+      service = CryptoService();
+      await service.initialize();
+    });
+
+    // B1 — KEEP `_enc` suffix (V1 vector)
+    test('B-CH1: KEEPS _enc suffix (V1 vector)', () {
+      service.setMasterKey(mkHex);
+      final data = {
+        'duration': 598172,
+        'metadata_enc': service.encryptWithCachedKey('{}'),
+        'startTime_enc': service.encryptWithCachedKey('1777028295844'),
+        'title': 'Music Practice - Flute',
+      };
+      expect(service.computeContentHash(data),
+          '6bcdf73697a738fd7412bc6c4cfe8daf5fc4b7167b8dac8a013fe9602b1d26dd');
+    });
+
+    // B2 — does NOT json.decode plaintext (V5 vector: title_enc is '{"a":1}')
+    test('B-CH2: does NOT json.decode plaintext (V5 vector)', () {
+      service.setMasterKey(mkHex);
+      final data = {
+        'duration': 5,
+        'title_enc': service.encryptWithCachedKey('{"a":1}'),
+      };
+      expect(service.computeContentHash(data),
+          'e87350241d5e578af9fc632cd23492ee09245e39f96ecfacb0ef6aab2f6e7943');
+    });
+
+    // B3 — serializes with jsonSort spacing (V4 vector, no _enc fields)
+    test('B-CH3: serializes with jsonSort spacing (V4 vector)', () {
+      service.setMasterKey(mkHex);
+      final data = {'title': 'Test', 'duration': 1000};
+      expect(service.computeContentHash(data),
+          'fe8dfdbf3f76aa2fa466cdcaa628343b87f9081c67c73db8dd35759a2c62d0f1');
+    });
+
+    // B4 — throws when no master key cached (regression guard)
+    test('B-CH4: throws when no master key cached', () {
+      expect(
+        () => service.computeContentHash({'title': 'Test'}),
         throwsA(isA<Exception>()),
       );
     });
