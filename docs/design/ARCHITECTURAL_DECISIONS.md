@@ -2615,3 +2615,68 @@ Binding directives engaged:
   (canonical per-type block seal), ADR-011 (backward compat), ADR-030 (ledger auto-pull)
 - `docs/planning/flutter/COMMONPLACE_BOOK_PHASE1.md` (Phase 1 blueprint)
 - `docs/spec/PHPSPEC.md` (format spec; Commonplace type is a proposed extension)
+
+## ADR-032: Seed Replacement (C-2 Re-Key) — Raw Seed MK, No Version Bump
+
+**Date:** 2026-08-29
+**Status:** ✅ Decided — cross-client verify Phase 1 (`C2_CLI_CLIENT_VERIFY_PHASE1.md`); **implemented Phase 3 (GREEN) 2026-08-29** (hermetic CLI↔Web↔Flutter matrix GREEN, 34/34 Python + 9/2skip Flutter); **Phase 4 (REFACTOR + Group E docs) DONE 2026-08-29**
+**Supersedes:** CLI "option (a-CLI)" in `C2_CLI_SEED_REKEY_PHASE1.md` §2
+
+### Context
+
+ADR-026 introduced versioned Master Keys for **key rotation**: the *same* seed derives
+`HMAC(seed, "phpoc:mk:v{N}")` per version, and `soft_rotate`/`hard_rotate` bump `key_version`
+to move the ledger to a fresh MK. C-2 **seed replacement** is a *different* operation: it mints
+a brand-new random seed (replacing the leaked/compromised one) and re-encrypts the entire vault +
+chain + staging + blind index + device cookie under the new root, so the **old seed no longer
+decrypts anything**.
+
+The CLI's initial C-2 implementation ("option (a-CLI)") reused ADR-026's version-bump shape:
+`new_version = current_version + 1; new_mk = derive_mk(new_seed, new_version)`. Cross-client
+verify Phase 1 found this is **not** wire-compatible: Flutter's `deriveMasterKey(seed)` has no
+versioned-MK path, so a CLI-rekeyed chain (`key_version=2`, HMAC-derived MK) cannot be verified by
+Flutter, and the CLI's `_get_current_key_version` default of `1` makes it unable to even start on
+a raw-seed (`key_version=0`) ledger.
+
+### Decision
+
+**C-2 seed replacement uses the raw seed as the Master Key, with `key_version` unchanged** —
+the same "option (a)" already shipped by Flutter and Web:
+
+- `new_mk = base64.b64decode(new_seed)` (32 raw bytes; no HMAC derivation)
+- `key_version` is **carried through unchanged** on genesis and every block
+- ADR-026 versioned derivation remains **only** for same-seed rotation (`soft_rotate`/`hard_rotate`)
+
+Concretely, the CLI must: default `_get_current_key_version` to `0` for pre-ADR (absent) ledgers;
+cover v=0 (raw seed) in `_verify_seed` and `_make_multi_version_mk_lookup`; and stop bumping
+`key_version` in `renew_seed`.
+
+### Rationale
+
+- **Cross-client convergence:** raw-seed-as-MK is the only MK-derivation rule all three clients
+  (Python, Web, Flutter) agree on today (`key_version=0`). Seed replacement needs no versioning —
+  the old seed is nullified, so there is no multi-version coexistence to read.
+- **D8 (Recoverability):** the seed is *the* 32-byte root; making it directly the MK (no version
+  indirection) is the purest reading of "a user who knows their Recovery Seed can reconstruct
+  everything from genesis alone."
+- **D9 (Backward Compat):** fixing v=0 coverage in the CLI's verify/lookup makes the CLI able to
+  verify the raw-seed ledgers that Web/Flutter already produce.
+- Rejected: **option (b)** — add versioned-MK derivation to Flutter (`crypto_service.dart` + the
+  portable Rust core and its WASM/FFI bindings). Larger blast radius for a property versioning
+  doesn't provide when the seed itself is replaced.
+
+### Consequences
+
+- **CLI change:** `renew_seed` stops bumping `key_version`; `test_rekey_seed.py` M1 (bump assertion)
+  and the `key_version=1` fixtures are re-pointed to the raw-seed convention.
+- **ADR-026 scope narrows:** versioned derivation applies to rotation only, not to seed replacement.
+- **No Flutter/Web changes:** they already implement option (a); only verification (this leg) remains.
+- **PHPSPEC §2.10/§4** must state unambiguously that seed re-key leaves `key_version` unchanged.
+
+### Related
+
+- ADR-026 (key rotation, versioned MKs) — the rotation path, now explicitly orthogonal to C-2
+- ADR-001 (Sovereign Key Model), ADR-004 (PBKDF2 600K), ADR-013 (`_enc` suffix)
+- `docs/planning/C2_CLI_CLIENT_VERIFY_PHASE1.md` (this leg's blueprint, §Decision)
+- `docs/planning/C2_CLI_SEED_REKEY_PHASE1.md` (CLI re-key; §2 superseded)
+- `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md`, `docs/planning/C2_SEED_REKEY_WEB_PHASE1.md` (option (a))

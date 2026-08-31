@@ -298,6 +298,18 @@ def verify_mac(data_str: str, mac_tag: str, identity_secret: bytes) -> bool:
 
 The identity secret is a 32-byte random value. The public key is `SHA-256(identity_secret)`. This is not a true asymmetric key pair — anyone who knows the identity secret can both sign and verify. True public-key cryptography (Ed25519) is planned.
 
+> **Cross-client raw-bytes helper (C-2 parity):** `identity_pub_key` must hash the
+> secret's **raw 32 bytes**, never its 64-char hex string. Each client exposes a
+> raw-bytes binding that hex-decodes → SHA-256 → hex:
+> - **Rust core:** `digest::identity_pub_key_hex(hex_str)` (shared helper) behind
+>   `wasm.rs::identity_pub_key` (WASM) and `frb.rs::identity_pub_key` (FRB contract).
+> - **Web:** `CryptoService.identityPubKey(identitySecretHex)` → WASM `identity_pub_key`.
+> - **Flutter:** `CryptoService.identityPubKey` (pure Dart) / `CryptoServiceNative.identityPubKey`
+>   → hand-written `frb_generated.dart::identityPubKey`.
+>
+> Known-answer (32 × `0xAB`): `sha256(raw) = 9a2db2e2…1af885` (canonical);
+> `sha256("ab"×32 as UTF-8) = 271a413b…4cd09a` (divergent — the pre-fix bug).
+
 #### 2.7.2 Identity Storage
 
 The identity secret is stored in two places for redundancy:
@@ -397,9 +409,11 @@ and implementers must not conflate them:
 | Identity secret | Preserved | Recovered from genesis, re-encrypted under new MK, re-signed |
 | Recovery seed envelope | Preserved (soft) / re-encrypted (hard) | Re-encrypted under the new PDK |
 
-**Seed-mint re-key (C-2) invariants** — enforced by the cross-client verification harness
-(`phpoc-web/test/c2_cross_client_verify.mjs` and
-`phpoc-flutter/test/services/c2_cross_client_verify_test.dart`):
+**Seed-mint re-key (C-2) invariants** — enforced by the cross-client verification harnesses
+(Web↔Flutter: `phpoc-web/test/c2_cross_client_verify.mjs` +
+`phpoc-flutter/test/services/c2_cross_client_verify_test.dart`; CLI↔client:
+`tests/test_c2_cli_client_verify.py` + `phpoc-web/test/c2_cli_rekey_verify.mjs` +
+`phpoc-flutter/test/services/c2_cli_verify_test.dart`):
 
 1. **No `key_version` bump.** Re-key mints a new Seed and uses the raw-Seed-as-MK rule
    (§2.3), not ADR-026 versioned derivation.

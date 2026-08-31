@@ -192,6 +192,21 @@ pub fn sha256(data: &str) -> String {
     digest::sha256_string(data)
 }
 
+/// Derive the identity public key from a hex-encoded identity secret.
+///
+/// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+/// to bytes before SHA-256 (NOT hashed as a UTF-8 string). This is the
+/// raw-bytes binding that fixes the Web divergence (`sha256(String)`).
+///
+/// * `identity_secret_hex` — 64-char hex-encoded 32-byte identity secret.
+///
+/// Returns 64-char lowercase hex, or throws on invalid hex / wrong length.
+#[wasm_bindgen]
+pub fn identity_pub_key(identity_secret_hex: &str) -> Result<String, JsValue> {
+    digest::identity_pub_key_hex(identity_secret_hex)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // Blob obfuscation
 // ---------------------------------------------------------------------------

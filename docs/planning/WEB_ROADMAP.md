@@ -7,6 +7,27 @@
 
 ---
 
+## Build 65 — CLI↔Client Cross-Client Re-key Verification (C-2) — 2026-08-29
+
+**Extends the Build 64 matrix to the CLI leg: a chain re-keyed by `ph rekey-seed` pulls + verifies on Web and Flutter (and vice-versa), with old-seed nullification in every direction.**
+
+Resolved the cross-client MK-derivation divergence (ADR-032, option (a) raw-seed re-key):
+- `phpoc_cli/rotate_keys.py` `renew_seed` keeps `key_version` unchanged and uses the raw new seed as MK (`_get_current_key_version` default-0; `_make_multi_version_mk_lookup` covers v=0; `_prepare_rekey` derives `derive_mk(new_seed, 0)`)
+- `domain/ledger/chain.py` `_hash_key_for_block` mirrors `get_block_hash` priority (legacy `block_hash`-on-day-blocks re-key correctly)
+- R6 resolved: `identity_pub_key` canonical = SHA-256 of the raw 32-byte identity secret (Python correct; Web/Flutter hex-string derivation **RESOLVED 2026-08-31** via `C2_IDENTITY_PUB_KEY_RAW_BYTES_PHASE1.md`)
+
+**Harness files:**
+- `tests/test_c2_cli_client_verify.py` — Python hermetic driver (Groups A/B/C/D, 34 tests) + `test_rekey_seed.py` 34/34
+- `phpoc-web/test/c2_cli_rekey_verify.mjs` — Node WASM verify helper (`verify`/`deriveMk`/`deriveMasterKey`)
+- `phpoc-flutter/test/services/c2_cli_verify_test.dart` — Flutter Group L + Group D (9 pass / 2 skip)
+- `testdata/c2_cli_rekeyed_wire.json` — CLI re-keyed wire artifact
+
+**Result:** hermetic matrix GREEN all 4 directions; `test_c2_cli_client_verify.py` 34/34 + `test_rekey_seed.py` 34/34; Flutter 9/2 skip (B10/B12 live-only). **Phase 4 (REFACTOR + docs) DONE.** Live R2 E2E (`tests/test_c2_cli_client_live_r2.py`) remains live-only (clean live Worker state).
+
+See `docs/planning/C2_CLI_CLIENT_VERIFY_PHASE1.md`.
+
+---
+
 ## Build 64 — Cross-Client Re-key Verification (C-2) — 2026-08-28
 
 **Hermetic cross-client matrix proving Web and Flutter re-key to a new Recovery Seed produce byte-compatible PHPSPEC chains.**

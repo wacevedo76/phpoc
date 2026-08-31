@@ -53,6 +53,9 @@ const newMK = '2121212121212121212121212121212121212121212121212121212121212121'
 /// Device-scoped identity secret (unchanged by re-key) — 32×0xab.
 const identitySecret = 'abababababababababababababababababababababababababababababababab';
 
+/// Canonical raw-bytes identity_pub_key: SHA-256(raw 32×0xab) per PHPSPEC §2.7.1.
+const canonicalPubKey = '9a2db2e23f1504cd056606553ac049c5e718e8f9ce9233876df1a7a1821af885';
+
 const oldPassphrase = 'CorrectHorseBatteryStaple42!';
 const newPassphrase = 'NewCorrectHorseBatteryStaple99!';
 
@@ -256,6 +259,19 @@ void main() {
       f.writeAsStringSync('${const JsonEncoder.withIndent('  ').convert(artifact)}\n');
       expect(f.existsSync(), isTrue);
     });
+
+    test('B7 (raw-bytes C6): re-key preserves identity_pub_key (canonical, never re-derived)', () {
+      expect(rekeyError, isNull,
+          reason: 're-key did not complete (see B1): $rekeyError');
+      final list = jsonDecode(exportJson!) as List<dynamic>;
+      final genesis = list.first as Map<String, dynamic>;
+      final identity = genesis['identity'] as Map<String, dynamic>?;
+      expect(identity, isNotNull, reason: 'genesis must carry a nested identity');
+      expect(identity!['identity_pub_key'], canonicalPubKey,
+          reason: 're-key must preserve the canonical raw-bytes identity_pub_key (key-independent)');
+      expect(identity['identity_pub_key'], c.identityPubKey(identitySecret),
+          reason: 're-keyed identity_pub_key must equal identityPubKey(identitySecret), not sha256(identitySecret)');
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -355,14 +371,16 @@ void main() {
       }
     });
 
-    test('C5: identity parity — identity_pub_key == SHA-256(identity_secret)', () {
+    test('C5: identity parity — identity_pub_key == raw-bytes identityPubKey(identity_secret)', () {
       final fixture = _readArtifact(fixturePath)!;
       final genesis = (fixture['blocks'] as List).first as Map<String, dynamic>;
       final identity = genesis['identity'] as Map<String, dynamic>?;
       expect(identity, isNotNull, reason: 'fixture genesis must carry a nested identity');
       final c = _crypto();
-      expect(identity!['identity_pub_key'], c.sha256(identitySecret),
-          reason: 'identity_pub_key must equal SHA-256(identity_secret) on both clients');
+      expect(identity!['identity_pub_key'], c.identityPubKey(identitySecret),
+          reason: 'identity_pub_key must equal raw-bytes identityPubKey(identity_secret), not sha256(String)');
+      expect(identity['identity_pub_key'], canonicalPubKey,
+          reason: 'fixture identity_pub_key must be the canonical raw-bytes value');
     });
 
     test('C6: prev_hash cascade intact in the committed fixture', () {

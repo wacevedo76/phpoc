@@ -602,6 +602,40 @@ export function hmac_hex(key_hex, data) {
 }
 
 /**
+ * Derive the identity public key from a hex-encoded identity secret.
+ *
+ * Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+ * to bytes before SHA-256 (NOT hashed as a UTF-8 string). This is the
+ * raw-bytes binding that fixes the Web divergence (`sha256(String)`).
+ *
+ * * `identity_secret_hex` — 64-char hex-encoded 32-byte identity secret.
+ *
+ * Returns 64-char lowercase hex, or throws on invalid hex / wrong length.
+ * @param {string} identity_secret_hex
+ * @returns {string}
+ */
+export function identity_pub_key(identity_secret_hex) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(identity_secret_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.identity_pub_key(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Obfuscate a staging blob for remote transport.
  *
  * * `plaintext` — UTF-8 string (serialized JSON blob).

@@ -371,3 +371,72 @@ fn test_full_encrypt_decrypt_seal_roundtrip() {
     let deobfuscated = blob::deobfuscate_blob(&obfuscated, &master_key).unwrap();
     assert_eq!(deobfuscated, blob_data);
 }
+
+// ===========================================================================
+// Group A: identity_pub_key raw-bytes parity (C-2 R6 follow-up)
+// Blueprint: docs/planning/C2_IDENTITY_PUB_KEY_RAW_BYTES_PHASE1.md
+//
+// Canonical (PHPSPEC §2.7.1): identity_pub_key = SHA-256(raw 32-byte
+// identity_secret). Web/Flutter diverge by hashing the hex *string* via
+// `sha256(String)`; the raw-bytes primitive is `digest::identity_pub_key`.
+// The WASM (`wasm.rs`) and FRB (`frb.rs`) bindings both hex-decode → 32 bytes
+// → SHA-256, delegating to the shared `digest::identity_pub_key_hex` helper
+// (Phase 3). A2–A5 are RED until that helper + bindings exist.
+// ===========================================================================
+
+/// SHA-256(32×0xAB) — the canonical raw-bytes identity_pub_key.
+const IDENTITY_PUB_KEY_CANONICAL: &str =
+    "9a2db2e23f1504cd056606553ac049c5e718e8f9ce9233876df1a7a1821af885";
+
+/// SHA-256("abab…") — the divergent hex-string hash Web/Flutter emit today.
+const IDENTITY_PUB_KEY_DIVERGENT: &str =
+    "271a413bd339c5709fdceaec41f14f11e9fbfb5042d72d331c65f32b284cd09a";
+
+/// A1: `digest::identity_pub_key(&[0xAB; 32])` returns the canonical value.
+#[test]
+fn test_identity_pub_key_known_answer() {
+    let secret = [0xABu8; 32];
+    assert_eq!(digest::identity_pub_key(&secret), IDENTITY_PUB_KEY_CANONICAL);
+    // Guard the bug boundary: raw-bytes ≠ string hash.
+    assert_ne!(digest::sha256_string(&"ab".repeat(32)), IDENTITY_PUB_KEY_CANONICAL);
+    assert_eq!(digest::sha256_string(&"ab".repeat(32)), IDENTITY_PUB_KEY_DIVERGENT);
+}
+
+/// A2: raw-bytes hex helper (shared by wasm.rs + frb.rs bindings) decodes
+/// hex → 32 bytes → SHA-256, returning the canonical value (not the string hash).
+#[test]
+fn test_identity_pub_key_hex_known_answer() {
+    let secret_hex = "ab".repeat(32);
+    let pk = digest::identity_pub_key_hex(&secret_hex)
+        .expect("identity_pub_key_hex must accept a 64-char hex secret");
+    assert_eq!(pk, IDENTITY_PUB_KEY_CANONICAL);
+    assert_ne!(pk, IDENTITY_PUB_KEY_DIVERGENT);
+}
+
+/// A3: rejects non-hex / odd-length / empty input.
+#[test]
+fn test_identity_pub_key_hex_rejects_invalid_hex() {
+    assert!(digest::identity_pub_key_hex("zz".repeat(32).as_str()).is_err(), "non-hex");
+    assert!(digest::identity_pub_key_hex("abc").is_err(), "odd length");
+    assert!(digest::identity_pub_key_hex("").is_err(), "empty");
+}
+
+/// A4: rejects hex that does not decode to exactly 32 bytes.
+#[test]
+fn test_identity_pub_key_hex_rejects_wrong_length() {
+    assert!(digest::identity_pub_key_hex(&"ab".repeat(31)).is_err(), "31 bytes");
+    assert!(digest::identity_pub_key_hex(&"ab".repeat(33)).is_err(), "33 bytes");
+}
+
+/// A5: FRB/WASM contract — both bindings delegate to the same raw-bytes helper.
+/// `frb.rs::identity_pub_key` (CryptoError) and `wasm.rs::identity_pub_key`
+/// (JsValue) wrap `digest::identity_pub_key_hex`, so this asserts the shared
+/// semantics the Flutter (FRB) and Web (WASM) surfaces must expose.
+#[test]
+fn test_identity_pub_key_frb_wasm_shared_contract() {
+    let secret_hex = "ab".repeat(32);
+    let pk = digest::identity_pub_key_hex(&secret_hex).unwrap();
+    assert_eq!(pk, IDENTITY_PUB_KEY_CANONICAL);
+    assert!(digest::identity_pub_key_hex("not-hex").is_err());
+    assert!(digest::identity_pub_key_hex(&"ab".repeat(16)).is_err());
+}

@@ -416,6 +416,20 @@ export class CryptoService {
     return this.#call1('sha256', data);
   }
 
+  /**
+   * Derive the identity public key from a hex-encoded identity secret.
+   *
+   * Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+   * to bytes before SHA-256 (NOT hashed as a UTF-8 string). Delegates to the
+   * `identity_pub_key` WASM binding (hex-decode → 32 bytes → SHA-256).
+   * @param {string} identitySecretHex - 64-char hex-encoded 32-byte secret.
+   * @returns {string} 64-char lowercase hex.
+   * @throws {Error} On invalid hex / wrong length.
+   */
+  identityPubKey(identitySecretHex) {
+    return this.#call1('identity_pub_key', identitySecretHex);
+  }
+
   // -----------------------------------------------------------------------
   // Generic HMAC-SHA256 + field-key derivation (I-02a)
   // -----------------------------------------------------------------------

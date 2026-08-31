@@ -122,6 +122,16 @@ class CryptoServiceNative {
     return frb.sha256(data);
   }
 
+  /// Derive the identity public key from a hex-encoded identity secret.
+  ///
+  /// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+  /// to bytes before SHA-256 (NOT hashed as a UTF-8 string). Delegates to
+  /// `frb.identityPubKey`.
+  String identityPubKey(String identitySecretHex) {
+    _requireInit();
+    return frb.identityPubKey(identitySecretHex);
+  }
+
   // ── HMAC / Sealing / Signing ──────────────────────────────────
 
   String seal(String data, String mkHex) {

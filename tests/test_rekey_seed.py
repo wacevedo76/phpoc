@@ -75,7 +75,7 @@ FIXED_PDK = hashlib.sha256(b"phpoc:test:pdk").digest()
 # ══════════════════════════════════════════════════════════════════
 
 def _build_genesis(seed, identity_secret, identity_pub_key, pdk,
-                   key_version=1, format_version="0.5.0"):
+                   key_version=0, format_version="0.5.0"):
     """Genesis block with a PDK-encrypted recovery_seed_enc (production shape)."""
     mk = derive_mk(seed, key_version)
     crypto = CryptoManager(mk, key_version=key_version)
@@ -133,7 +133,7 @@ def _make_entry(crypto, title, duration_ms=3600000, start_time="1700000000000"):
 
 
 def _build_day_block(crypto, entries, prev_hash, date_str, day_index=1,
-                     key_version=1, identity_secret=None):
+                     key_version=0, identity_secret=None):
     normalized = [
         {"hash": hashlib.sha256(json.dumps(dict(e), sort_keys=True, indent=2).encode()).hexdigest(),
          "data": dict(e)}
@@ -154,7 +154,7 @@ def _build_day_block(crypto, entries, prev_hash, date_str, day_index=1,
     return day_content
 
 
-def _setup_test_ledger(tmpdir, seed, key_version=1, num_day_blocks=2,
+def _setup_test_ledger(tmpdir, seed, key_version=0, num_day_blocks=2,
                        format_version="0.5.0", pdk=FIXED_PDK, passphrase=None):
     """Set up a complete test ledger in a temp dir (PDK-realistic).
 
@@ -331,7 +331,7 @@ class TestRekeyOrchestration(unittest.TestCase):
         self.assertTrue((backups[0] / "ledger.json").exists())
         # Backup is the pre-re-key chain: it must decrypt under the OLD MK.
         backup_chain = json.loads((backups[0] / "ledger.json").read_text())
-        self.assertEqual(backup_chain[0]["key_version"], 1)
+        self.assertEqual(backup_chain[0]["key_version"], 0)
 
     def test_r3_mint_new_seed_returns_32_bytes(self):
         data_dir, genesis, identity_secret, crypto_v1, mk_v1, seed_b64, pdk = \
@@ -585,17 +585,22 @@ class TestRekeyMigration(unittest.TestCase):
         return RotateKeysCommand(data_dir=data_dir, seed=self.seed,
                                  identity_secret=identity_secret, pdk=pdk)
 
-    def test_m1_key_version_bumped_on_every_block(self):
+    def test_m1_key_version_unchanged_on_every_block(self):
+        """M1: a seed-mint re-key does NOT bump key_version (option (a)).
+
+        Every block keeps its raw-seed key_version (0) — seed replacement is a
+        different operation from ADR-026 same-seed version rotation.
+        """
         data_dir, genesis, identity_secret, crypto_v1, mk_v1, seed_b64, pdk = \
-            _setup_test_ledger(self.tmpdir, self.seed, key_version=1)
+            _setup_test_ledger(self.tmpdir, self.seed, key_version=0)
         cmd = self._cmd(data_dir, identity_secret, pdk)
         new_seed_b64 = cmd.renew_seed()
         self.assertTrue(new_seed_b64)
 
         chain = json.loads((data_dir / "ledger.json").read_text())
-        self.assertEqual(chain[0]["key_version"], 2)
+        self.assertEqual(chain[0]["key_version"], 0)
         for block in chain[1:]:
-            self.assertEqual(block["key_version"], 2)
+            self.assertEqual(block["key_version"], 0)
 
     def test_m2_identity_mac_recomputed_under_new_mk(self):
         data_dir, genesis, identity_secret, crypto_v1, mk_v1, seed_b64, pdk = \
@@ -636,7 +641,7 @@ class TestRekeyMigration(unittest.TestCase):
         leftovers = list(data_dir.glob("ledger.json*"))
         self.assertEqual([p.name for p in leftovers], ["ledger.json"])
         chain = json.loads((data_dir / "ledger.json").read_text())
-        self.assertEqual(chain[0]["key_version"], 2)
+        self.assertEqual(chain[0]["key_version"], 0)
 
     def test_m5_commonplace_untouched(self):
         data_dir, genesis, identity_secret, crypto_v1, mk_v1, seed_b64, pdk = \
@@ -704,10 +709,10 @@ class TestRekeyPushCoords(unittest.TestCase):
         self.assertIn("ledger/index.json", paths)
 
         # Block files are obfuscated per-block; pull back under the NEW MK.
-        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 2)
+        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 0)
         chain = RemoteLedgerSync(spy, mk_v2).pull_full_chain()
         self.assertEqual(len(chain), 3)  # genesis + 2 day blocks
-        self.assertEqual(chain[0]["key_version"], 2)
+        self.assertEqual(chain[0]["key_version"], 0)
 
     def test_p2_pushes_genesis_with_new_recovery_seed_enc(self):
         data_dir, genesis, identity_secret, crypto_v1, mk_v1, seed_b64, pdk = \
@@ -717,7 +722,7 @@ class TestRekeyPushCoords(unittest.TestCase):
         new_seed_b64 = cmd.renew_seed()
         self.assertTrue(new_seed_b64)
 
-        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 2)
+        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 0)
         pushed_genesis = RemoteLedgerSync(spy, mk_v2).pull_block_by_index(0)
         self.assertEqual(RecoveryManager.decrypt_seed(
             pushed_genesis["identity"]["recovery_seed_enc"], pdk), new_seed_b64)
@@ -746,10 +751,10 @@ class TestRekeyPushCoords(unittest.TestCase):
         new_seed_b64 = cmd.renew_seed()
         self.assertTrue(new_seed_b64)
 
-        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 2)
+        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 0)
         chain = RemoteLedgerSync(spy, mk_v2).pull_full_chain()
         self.assertEqual(len(chain), 3)
-        crypto_v2 = CryptoManager(mk_v2, key_version=2)
+        crypto_v2 = CryptoManager(mk_v2, key_version=0)
         p4_dir = self.tmpdir / "phpoc_second"
         p4_dir.mkdir(parents=True, exist_ok=True)
         (p4_dir / "ledger.json").write_text(json.dumps(chain, indent=2))
@@ -785,15 +790,15 @@ class TestRekeyPushCoords(unittest.TestCase):
 
         # Staging blob round-trips: obfuscated under the NEW MK, deobfuscates
         # cleanly on a second-device pull.
-        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 2)
-        rsync = RemoteStagingSync(CryptoManager(mk_v2, key_version=2), spy,
+        mk_v2 = derive_mk(base64.b64decode(new_seed_b64), 0)
+        rsync = RemoteStagingSync(CryptoManager(mk_v2, key_version=0), spy,
                                   device_id_provider=None, master_key=mk_v2)
         blob = rsync.pull(master_key=mk_v2)
         self.assertIsNotNone(blob)
         self.assertEqual(len(blob["entries"]), 2)  # staged_task_1 + staged_task_2
 
         # Leak nullification: pulling the staging blob under the OLD MK fails.
-        rsync_old = RemoteStagingSync(CryptoManager(mk_v1, key_version=1), spy,
+        rsync_old = RemoteStagingSync(CryptoManager(mk_v1, key_version=0), spy,
                                       device_id_provider=None, master_key=mk_v1)
         self.assertIs(rsync_old.pull(master_key=mk_v1), BLOB_KEY_MISMATCH)
 

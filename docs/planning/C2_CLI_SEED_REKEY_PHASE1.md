@@ -33,7 +33,14 @@ it does **NOT** replace the seed. A user who only has the CLI cannot nullify a l
 
 ### Design option (resolved)
 
-**Option (a-CLI) — new seed + version bump, versioned derivation.** The CLI derives MKs versioned
+> **⚠️ SUPERSEDED (2026-08-29):** cross-client verify Phase 1 (`C2_CLI_CLIENT_VERIFY_PHASE1.md`) found that
+> option (a-CLI) is **not** cross-client compatible — Flutter has no versioned-MK derivation, so a
+> CLI-rekeyed chain (`key_version=2`, HMAC-derived MK) cannot verify on Flutter. **The user chose option (a):**
+> align the CLI to raw-seed re-key (new seed = new raw MK, `key_version` unchanged). This section is retained
+> for history; the Phase 3 implementation will re-point `renew_seed` accordingly (see
+> `C2_CLI_CLIENT_VERIFY_PHASE1.md` §Decision).
+
+**Option (a-CLI) — new seed + version bump, versioned derivation (superseded).** The CLI derives MKs versioned
 (`derive_mk(seed, version)`, ADR-026) everywhere, so C-2 keeps that scheme:
 
 - `new_version = current_version + 1`
@@ -43,10 +50,10 @@ This is the exact shape of the existing `hard_rotate` (`mk_v2 = derive_mk(self.s
 seed swapped from `self.seed` → freshly-minted `new_seed`. It matches the roadmap's "mint new seed →
 `derive_mk(new_seed, new_version)`".
 
-> **Flutter divergence note (documented, not a defect):** Flutter chose "new seed = raw MK, `key_version`
-> unchanged" because its `deriveMasterKey(seed)` is still raw-seed-as-MK. The CLI is versioned-first, so it bumps
-> `key_version` AND swaps the seed — byte-compatible with the CLI's own `hard_rotate` precedent, and cross-client
-> convergence is already proven by the Phase-D hermetic matrix (the CLI leg of that matrix is gated on this task).
+> **Flutter divergence note (was "documented, not a defect" — now a confirmed defect):** Flutter chose
+> "new seed = raw MK, `key_version` unchanged" because its `deriveMasterKey(seed)` is raw-seed-as-MK. This
+> divergence was **not** harmless: it means a CLI-rekeyed chain (version-bumped, HMAC-derived MK) cannot verify
+> on Flutter. Resolved by adopting option (a) — see `C2_CLI_CLIENT_VERIFY_PHASE1.md`.
 
 ## 3. Architecture Overview
 

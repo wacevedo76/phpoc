@@ -151,6 +151,27 @@ pub fn identity_pub_key(identity_secret: &[u8; 32]) -> String {
     sha256_hex(identity_secret)
 }
 
+/// Derive an identity public key from a hex-encoded identity secret.
+///
+/// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string must be
+/// decoded to bytes before hashing (NOT hashed as a UTF-8 string). This is
+/// the shared raw-bytes helper behind the WASM (`wasm.rs`) and FRB (`frb.rs`)
+/// `identity_pub_key` bindings.
+///
+/// # Arguments
+/// * `identity_secret_hex` - 64-char hex-encoded 32-byte identity secret.
+///
+/// # Returns
+/// 64-character hex string.
+pub fn identity_pub_key_hex(identity_secret_hex: &str) -> Result<String> {
+    let bytes = hex::decode(identity_secret_hex)
+        .map_err(|e| CryptoError::InvalidHexData(format!("invalid hex: {}", e)))?;
+    if bytes.len() != 32 {
+        return Err(CryptoError::InvalidKeyLength);
+    }
+    Ok(sha256_hex(&bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

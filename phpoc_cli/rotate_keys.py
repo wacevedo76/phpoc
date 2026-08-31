@@ -73,8 +73,8 @@ class RotateKeysCommand:
     # ── Internal helpers ────────────────────────────────────────────
 
     def _get_current_key_version(self, genesis: dict) -> int:
-        """Read the key_version from genesis (default 1 for pre-ADR ledgers)."""
-        return genesis.get("key_version", 1)
+        """Read the key_version from genesis (default 0 for raw-seed / pre-ADR ledgers)."""
+        return genesis.get("key_version", 0)
 
     def _verify_seed(self, genesis: dict) -> bool:
         """Check that the appropriate seed can decrypt the genesis identity secret.
@@ -130,17 +130,18 @@ class RotateKeysCommand:
 
     @staticmethod
     def _make_multi_version_mk_lookup(current_version: int, seed: bytes):
-        """Build a get_mk_for_version callable covering v1..current_version.
+        """Build a get_mk_for_version callable covering v0..current_version.
 
-        Derives MKs for every version from 1 through current_version,
-        enabling multi-version chain verification.
+        Derives MKs for every version from 0 through current_version,
+        enabling multi-version chain verification. v0 is the raw seed
+        (pre-ADR / raw-seed ledgers).
 
         Args:
             current_version: The highest key version to derive.
             seed: Seed for MK derivation (required, not optional).
         """
         mks = {}
-        for v in range(1, current_version + 1):
+        for v in range(0, current_version + 1):
             mks[v] = CryptoManager(derive_mk(seed, v), key_version=v)
         return lambda version: mks.get(version)
 
@@ -703,7 +704,9 @@ class RotateKeysCommand:
         new_seed_b64 = self.mint_new_seed()
         new_seed = base64.b64decode(new_seed_b64)
 
-        new_version = current_version + 1
+        # Option (a) raw-seed re-key: the fresh seed IS the MK (key_version=0).
+        # A seed replacement does not bump key_version (ADR-026 rotation does).
+        new_version = 0
         mk_v2 = derive_mk(new_seed, new_version)
         crypto_v2 = CryptoManager(mk_v2, key_version=new_version)
 
@@ -735,7 +738,6 @@ class RotateKeysCommand:
         chain_blocks = ctx["chain_blocks"]
         genesis = ctx["genesis"]
         current_version = ctx["current_version"]
-        new_version = ctx["new_version"]
         crypto_v1 = ctx["crypto_v1"]
         crypto_v2 = ctx["crypto_v2"]
         get_mk = ctx["get_mk"]
@@ -765,7 +767,7 @@ class RotateKeysCommand:
                     )
 
                 old_hash = genesis.get("block_hash")
-                block["key_version"] = new_version
+                # key_version carried through unchanged (option (a) raw-seed re-key).
                 block["block_hash"] = crypto_v2.seal(
                     json.dumps(select_seal_fields(block), sort_keys=True)
                 )
@@ -792,23 +794,22 @@ class RotateKeysCommand:
                 if old_prev and old_prev in old_to_new_hash:
                     block["prev_hash"] = old_to_new_hash[old_prev]
 
-                old_day_hash = block.get("day_hash")
-                block["key_version"] = new_version
-                block["day_hash"] = compute_seal(crypto_v2, block)
+                # Re-seal under the block's canonical hash key (mirrors
+                # get_block_hash): legacy test ledgers seal day blocks under
+                # ``block_hash``; canonical ledgers use ``day_hash``.
+                hash_key = LedgerChain._hash_key_for_block(block)
+                old_day_hash = block.get(hash_key)
+                block[hash_key] = compute_seal(crypto_v2, block)
                 if self.identity_secret:
                     block["identity_seal"] = crypto_v2.mac(
-                        block["day_hash"], self.identity_secret
+                        block[hash_key], self.identity_secret
                     )
                 if old_day_hash:
-                    old_to_new_hash[old_day_hash] = block["day_hash"]
+                    old_to_new_hash[old_day_hash] = block[hash_key]
 
             else:
-                # Summary blocks (month/year) — bump version + re-seal only.
-                block["key_version"] = new_version
-                hash_key = ("month_hash" if block.get("type") == "month_summary"
-                            else "year_hash" if block.get("type") == "year_summary"
-                            else "day_hash")
-                block[hash_key] = compute_seal(crypto_v2, block)
+                # Summary blocks (month/year) — re-seal only (key_version unchanged).
+                block[LedgerChain._hash_key_for_block(block)] = compute_seal(crypto_v2, block)
 
             new_blocks.append(block)
 

@@ -179,6 +179,15 @@ pub fn sha256(data: String) -> String {
     digest::sha256_string(&data)
 }
 
+/// Derive the identity public key from a hex-encoded identity secret.
+///
+/// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+/// to bytes before SHA-256 (NOT hashed as a UTF-8 string). Mirrors the WASM
+/// `identity_pub_key` binding (raw-bytes semantics) for the Flutter side.
+pub fn identity_pub_key(identity_secret_hex: String) -> Result<String, CryptoError> {
+    digest::identity_pub_key_hex(&identity_secret_hex)
+}
+
 // ---------------------------------------------------------------------------
 // Blob obfuscation
 // ---------------------------------------------------------------------------

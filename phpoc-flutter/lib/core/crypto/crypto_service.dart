@@ -499,6 +499,18 @@ class CryptoService {
     return digest.toString();
   }
 
+  /// Derive the identity public key from a hex-encoded identity secret.
+  ///
+  /// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+  /// to bytes before SHA-256 (NOT hashed as a UTF-8 string).
+  String identityPubKey(String identitySecretHex) {
+    _requireInitialized();
+    _validateHex(identitySecretHex, 64);
+    final bytes = Uint8List.fromList(_hexToBytes(identitySecretHex));
+    final digest = crypto.sha256.convert(bytes);
+    return digest.toString();
+  }
+
   // ── Group F: HMAC / Sealing / Signing ─────────────────────────
 
   /// Create an HMAC-SHA256 seal over data using a derived seal sub-key.

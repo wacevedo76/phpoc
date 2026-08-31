@@ -381,6 +381,16 @@ String sha256(String data) {
   return _sha256(data);
 }
 
+/// identity_pub_key: hex-decode → 32 bytes → SHA-256 → hex.
+///
+/// Per PHPSPEC §2.7.1 the secret is 32 raw bytes; the hex string is decoded
+/// to bytes before SHA-256 (NOT hashed as a UTF-8 string).
+String identityPubKey(String identitySecretHex) {
+  final bytes = _decodeHex32(identitySecretHex);
+  final digest = crypto.sha256.convert(bytes);
+  return digest.toString();
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Blob Obfuscation (Group D) — 2 functions
 // ═══════════════════════════════════════════════════════════════════

@@ -603,15 +603,18 @@ class LedgerChain:
 
     @staticmethod
     def _hash_key_for_block(block: dict) -> str:
-        """Return the hash field name for a block based on its type.
+        """Return the hash field name for a block, mirroring get_block_hash.
 
-        Genesis blocks use ``block_hash`` (I-17). Old-format genesis
-        blocks with only ``day_hash`` are still supported for backward
-        compatibility. Non-genesis blocks use type-specific keys.
+        Genesis blocks use ``block_hash`` (I-17). Legacy pre-0.4.0 ledgers
+        (e.g. the canonical test ledger) used the universal ``block_hash`` key
+        on *every* block type, so ``block_hash`` wins whenever present.
+        Non-genesis blocks otherwise use type-specific keys (``day_hash`` /
+        ``month_hash`` / ``year_hash``). Genesis blocks with only ``day_hash``
+        remain supported for I-17 backward compat.
         """
         btype = block.get("type", "day")
-        if btype == "genesis" and "block_hash" in block:
-            return "block_hash"
+        if "block_hash" in block:
+            return "block_hash"  # universal legacy key (any block type)
         if btype == "genesis" and "day_hash" in block:
             return "day_hash"  # I-17 backward compat
         return {

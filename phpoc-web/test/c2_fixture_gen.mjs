@@ -110,7 +110,7 @@ export function buildGenesis(c, mk, pdk, seed, identitySecret) {
       username: 'Test User',
       email: 'test@example.com',
       recovery_seed_enc: c.encrypt(seed, pdk),
-      identity_pub_key: c.sha256(identitySecret),
+      identity_pub_key: c.identityPubKey(identitySecret),
       identity_secret_enc_fallback: c.encrypt(identitySecret, mk),
     },
   };

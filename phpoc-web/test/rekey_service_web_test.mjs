@@ -153,7 +153,7 @@ function buildGenesis(c, mk, pdk, seed, identitySecret) {
       username: 'Test User',
       email: 'test@example.com',
       recovery_seed_enc: c.encrypt(seed, pdk),
-      identity_pub_key: c.sha256(identitySecret),
+      identity_pub_key: c.identityPubKey(identitySecret),
       identity_secret_enc_fallback: c.encrypt(identitySecret, mk),
     },
   };
@@ -252,6 +252,18 @@ const REKEY_ARGS = {
 // ═══════════════════════════════════════════════════════════════
 // Group R: RekeyService orchestration (R1–R11)
 // ═══════════════════════════════════════════════════════════════
+describe('Group K: identity_pub_key raw-bytes parity (fixture builder)', () => {
+  it('B4: local buildGenesis uses identityPubKey (not sha256) for identity_pub_key', () => {
+    assert.equal(typeof crypto.identityPubKey, 'function', 'CryptoService.identityPubKey binding must exist');
+    const pdk = crypto.derivePdk(OLD_PASSPHRASE, PBKDF2_ITERATIONS);
+    const genesis = buildGenesis(crypto, OLD_MK, pdk, VALID_SEED, IDENTITY_SECRET);
+    assert.equal(genesis.identity.identity_pub_key, crypto.identityPubKey(IDENTITY_SECRET),
+      'fixture genesis identity_pub_key must be derived via identityPubKey');
+    assert.notEqual(genesis.identity.identity_pub_key, crypto.sha256(IDENTITY_SECRET),
+      'fixture genesis identity_pub_key must not be the hex-string hash');
+  });
+});
+
 describe('Group R: RekeyService orchestration', () => {
   it('R1: rekey() requires an unlocked session and a valid old passphrase', async () => {
     const store = freshStore();

@@ -1084,31 +1084,37 @@ class TestRotationErrors(unittest.TestCase):
         self.assertFalse(result,
                          "Rotation with NoAuthCryptoManager must return False")
 
-    # ── E2: Backward compat — no key_version → defaults to v1 ─
+    # ── E2: Backward compat — no key_version → raw seed (v0) ─
 
-    def test_e2_no_key_version_defaults_to_v1(self):
-        """E2: Rotation when genesis has no key_version defaults to v1 and works."""
+    def test_e2_no_key_version_defaults_to_v0_raw_seed(self):
+        """E2: Rotation of a no-key_version ledger treats it as v0 (raw seed).
+
+        ADR-026 backward compat: pre-rotation ledgers have no ``key_version``
+        field and ``MK = seed`` (raw bytes) — the implicit ``key_version = 0``.
+        The first rotation moves to ``key_version = 1`` (HMAC-derived MK).
+        """
         data_dir = self.tmpdir / "phpoc"
         data_dir.mkdir(parents=True)
 
-        mk_v1 = derive_mk(self.seed, 1)
-        crypto_v1 = CryptoManager(mk_v1, key_version=1)
+        # v0 = raw seed (pre-ADR backward compat, ADR-026 / PHPSPEC §2.3).
+        mk_v0 = derive_mk(self.seed, 0)
+        crypto_v0 = CryptoManager(mk_v0, key_version=0)
         identity_secret = os.urandom(32)
 
-        # Build genesis WITHOUT key_version field (pre-ADR backward compat)
+        # Build genesis WITHOUT key_version field (pre-rotation raw-seed ledger)
         genesis = {
             "type": "genesis",
             "format_version": "0.4.0",
             "identity": {
                 "identity_pub_key": "cc" * 32,
-                "identity_secret_enc_fallback": crypto_v1.encrypt(identity_secret.hex()),
-                "recovery_seed_enc": crypto_v1.encrypt("mock_seed"),
+                "identity_secret_enc_fallback": crypto_v0.encrypt(identity_secret.hex()),
+                "recovery_seed_enc": crypto_v0.encrypt("mock_seed"),
             },
         }
         check_data = {k: v for k, v in genesis.items()
                       if k not in ("block_hash", "identity_seal", "signature", "format_version", "key_version")}
-        genesis["block_hash"] = crypto_v1.seal(json.dumps(check_data, sort_keys=True))
-        genesis["identity_seal"] = crypto_v1.mac(genesis["block_hash"], identity_secret)
+        genesis["block_hash"] = crypto_v0.seal(json.dumps(check_data, sort_keys=True))
+        genesis["identity_seal"] = crypto_v0.mac(genesis["block_hash"], identity_secret)
 
         (data_dir / "ledger.json").write_text(json.dumps([genesis], indent=2))
         (data_dir / "staging.json").write_text("[]")
@@ -1118,11 +1124,11 @@ class TestRotationErrors(unittest.TestCase):
                                 identity_secret=identity_secret)
         result = cmd.execute(full=False)
         self.assertTrue(result,
-                        "Rotation must work for pre-ADR ledgers without key_version")
+                        "Rotation must work for pre-ADR raw-seed ledgers without key_version")
 
         chain_after = json.loads((data_dir / "ledger.json").read_text())
-        # After rotation, genesis should have key_version=2 (defaulted from 1)
-        self.assertEqual(chain_after[0].get("key_version"), 2)
+        # After rotation, genesis should have key_version=1 (bumped from implicit 0)
+        self.assertEqual(chain_after[0].get("key_version"), 1)
 
     # ── E3: Format version auto-bump ─────────────────────────
 

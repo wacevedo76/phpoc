@@ -332,6 +332,14 @@ describe('Group C: cross-client cryptographic invariants (Web side)', () => {
     const after = blocks[0].identity;
     assert.equal(after.identity_pub_key, before.identity_pub_key, 'identity_pub_key must be invariant');
     assert.equal(crypto.decrypt(after.identity_secret_enc_fallback, NEW_MK), IDENTITY_SECRET, 'identity secret must survive (device-scoped)');
+
+    // D1 (raw-bytes): the invariant pubkey must be the canonical raw-bytes
+    // identityPubKey(IDENTITY_SECRET) — not the hex-string sha256(String).
+    assert.equal(typeof crypto.identityPubKey, 'function', 'crypto.identityPubKey binding must exist');
+    assert.equal(after.identity_pub_key, crypto.identityPubKey(IDENTITY_SECRET),
+      'identity_pub_key must equal the raw-bytes identityPubKey(IDENTITY_SECRET)');
+    assert.notEqual(after.identity_pub_key, crypto.sha256(IDENTITY_SECRET),
+      'identity_pub_key must NOT be the hex-string hash');
   });
 
   it('C6: prev_hash cascade intact after re-key', async () => {

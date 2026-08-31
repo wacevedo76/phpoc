@@ -285,8 +285,8 @@ export class LedgerChain {
     // Store identity secret for future block signing
     this.identitySecret = identitySecret;
 
-    // 2. Compute identity public key: SHA-256(identity_secret)
-    const identityPubKey = this.crypto.sha256(identitySecret);
+    // 2. Compute identity public key: SHA-256(raw 32-byte identity_secret)
+    const identityPubKey = this.crypto.identityPubKey(identitySecret);
 
     // 3. Derive PDK from passphrase (PBKDF2, 600K iterations)
     const pdk = this.crypto.derivePdk(passphrase, 600000);
