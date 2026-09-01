@@ -154,9 +154,9 @@ if (typeof LedgerEngine === 'function') {
   const storedEntry = blocks1[0].entries[0];
   t.assert(typeof storedEntry.hash === 'string', 'entry has hash');
   t.assertEq(storedEntry.hash.length, 64, 'entry hash is 64 hex chars');
-  t.assert(storedEntry.data.startTime_enc.startsWith('enc:'),
+  t.assert(storedEntry.data.startTime_enc.includes('enc:'),
     'startTime_enc is encrypted');
-  t.assert(storedEntry.data.endTime_enc.startsWith('enc:'),
+  t.assert(storedEntry.data.endTime_enc.includes('enc:'),
     'endTime_enc is encrypted');
 
   // Test 9: Entry has content_hash

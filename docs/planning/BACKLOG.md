@@ -21,7 +21,7 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 
 | Point | Planning doc | Status |
 |-------|--------------|--------|
-| P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🔜 Not started |
+| P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🟢 Slices 1–2 done (chain/engine/storage + Book Switcher, Phases 1–4); Slices 3–6 pending |
 | P2 — C-2 cross-client verification (Phase D) | `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | ✅ Complete (2026-08-28) |
 | P3 — Web staging "Option A" refactor | `WEB_STAGING_OPTION_A_PHASE1.md` | 🔜 Deferred |
 | P4 — Web vitest harness hygiene | `WEB_VITEST_HARNESS_PHASE1.md` | ✅ Complete (2026-08-28) |

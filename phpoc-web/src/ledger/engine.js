@@ -15,7 +15,7 @@
 import { LedgerChain } from './chain.js';
 import { IndexManager } from './index_manager.js';
 import { YearMonthSummaryPolicy } from './summary_policy.js';
-import { jsonSort, computeEntryHash, getBlockHash } from './utils.js';
+import { jsonSort, computeEntryHash, getBlockHash, computeContentHash } from './utils.js';
 
 export class LedgerEngine {
   /**
@@ -483,19 +483,6 @@ export class LedgerEngine {
    * @returns {string} 64-char hex SHA-256.
    */
   _computeContentHash(data) {
-    const content = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (key === 'content_hash') {
-        continue;
-      }
-      if (key.endsWith('_enc') && value !== null && value !== undefined && value !== '') {
-        content[key] = this.crypto.decrypt(value, this.masterKey);
-      } else if (Array.isArray(value)) {
-        content[key] = value.slice().sort((a, b) => String(a).localeCompare(String(b)));
-      } else {
-        content[key] = value;
-      }
-    }
-    return this.crypto.sha256(jsonSort(content));
+    return computeContentHash(data, this.crypto, this.masterKey);
   }
 }

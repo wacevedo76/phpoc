@@ -480,6 +480,69 @@ a { color: var(--accent-blue); text-decoration: none; }
   overflow: hidden;
 }
 
+/* -------------------------------------------------------------------
+   Book Switcher (Commonplace Slice 2) — persistent title bar
+   ------------------------------------------------------------------- */
+.book-switcher {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.book-switcher-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.book-switcher-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.book-switcher-caret {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.book-switcher-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-top: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.book-switcher-item {
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.book-switcher-item:hover,
+.book-switcher-item-active {
+  background: var(--bg-secondary);
+}
+
 .app-content {
   flex: 1;
   overflow-y: auto;

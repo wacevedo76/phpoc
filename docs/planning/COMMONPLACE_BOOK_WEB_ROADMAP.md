@@ -3,7 +3,7 @@
 > **ADR:** ADR-031 (Commonplace Book — separate sealed chain, shared master key)
 > **Spec:** `docs/planning/WEB_FLUTTER_PARITY_SPEC.md` §P1
 > **Reference (Flutter):** `flutter/COMMONPLACE_BOOK_PHASE1.md` (chain engine, 55), `flutter/COMMONPLACE_BOOK_SWITCHER_PHASE1.md` (13), `flutter/COMMONPLACE_BOOK_UI_PHASE1.md` (40), `flutter/COMMONPLACE_BOOK_SETTINGS_PHASE1.md` (46)
-> **Status:** 🔜 Not started. Web has zero Commonplace support today (no refs in `phpoc-web/src/` or `phpoc-web/test/`).
+> **Status:** ✅ Slice 1 (chain/engine/storage) 4-phase TDD complete — `CommonplaceChain`/`CommonplaceEngine`/`CommonplaceStorage` implemented + `seal_fields.js` `commonplace_genesis`/`commonplace` whitelist; 55 tests / 130 assertions GREEN. Phase 4 deduped shared version/content-hash/zero-hash helpers into `ledger/utils.js`. ✅ **Slice 2 (Book Switcher) 4-phase TDD complete (2026-08-31):** `book.js` (`Book` identity + `getBookMode`/`setBookMode` localStorage persistence) + `BookSwitcher.jsx` rendered above page content in `AppLayout`; 13 tests GREEN.
 
 ## Purpose
 
@@ -16,8 +16,8 @@ then the follow-on slices (remote sync, key-rotation extension) that are still p
 
 | Slice | Flutter | Web |
 |-------|---------|-----|
-| Chain / engine / storage | ✅ 55/55 | ❌ |
-| Book Switcher | ✅ 13/13 | ❌ |
+| Chain / engine / storage | ✅ 55/55 | ✅ Phases 1–4 complete — 55 tests / 130 assertions passing |
+| Book Switcher | ✅ 13/13 | ✅ Phases 1–4 complete — 13 tests GREEN (`book_switcher_web.test.mjs`) |
 | UI (screen / add-entry / topic index) | ✅ 40/40 | ❌ |
 | Settings surface | ✅ 46/46 | ❌ |
 | Remote sync (`commonplace/...` R2 path + MK cookie) | ⏸️ Pending | ❌ |
@@ -53,9 +53,11 @@ Each slice runs the 4-phase TDD loop (blueprint → RED → GREEN → REFACTOR),
 ### Slice 2 — Book Switcher
 
 **Mirror:** `flutter/COMMONPLACE_BOOK_SWITCHER_PHASE1.md` (13 tests, groups A–D).
+**Status:** ✅ Phases 1–4 complete (2026-08-31) — blueprint `COMMONPLACE_BOOK_SWITCHER_WEB_PHASE1.md`; 13 tests GREEN.
 
-- Shell-level switcher bar in `AppScaffold` (`PH Ledger` ↔ `PH Commonplace Book`).
-- `Book` identity (`ledger` ↔ `commonplace`) + selection state, persisted (mirrors theme-mode pattern).
+- Shell-level switcher bar in `AppLayout` (`PH Ledger` ↔ `PH Commonplace Book`).
+- `Book` identity (`ledger` ↔ `commonplace`) + selection state, persisted (mirrors the localStorage pattern).
+- **Web deltas:** `AppScaffold` → `AppLayout`; Riverpod `bookProvider` → React `useState`; `AppPreferences` → `book.js` `getBookMode`/`setBookMode` over localStorage (`phpoc_book_mode`); 6-tab web bottom nav (BS-D2 asserts 6 tabs + Logout, not Flutter's 4).
 
 ### Slice 3 — UI wiring
 

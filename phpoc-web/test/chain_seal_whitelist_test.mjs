@@ -86,6 +86,8 @@ const EXPECTED_SEAL_FIELDS = {
   day: new Set(['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash']),
   month_summary: new Set(['type', 'month', 'date', 'prev_hash', 'original_hash']),
   year_summary: new Set(['type', 'year', 'date', 'prev_hash', 'original_hash']),
+  commonplace_genesis: new Set(['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash']),
+  commonplace: new Set(['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash']),
 };
 
 const EXCLUDED_FIELDS = new Set([
@@ -98,6 +100,8 @@ const TYPE_HASH_KEY = {
   day: 'day_hash',
   month_summary: 'month_hash',
   year_summary: 'year_hash',
+  commonplace_genesis: 'block_hash',
+  commonplace: 'day_hash',
 };
 
 function hashKeyForBlock(block) {
@@ -215,24 +219,27 @@ console.log('\n=== Group A: Whitelist selection (SEAL_FIELDS / selectSealFields)
 
 t.assert(
   typeof SEAL_FIELDS === 'object' && SEAL_FIELDS !== null &&
-  Object.keys(SEAL_FIELDS).length === 4,
-  'A1: SEAL_FIELDS exists as the per-type map with 4 keys (genesis/day/month/year)'
+  Object.keys(SEAL_FIELDS).length === 6,
+  'A1: SEAL_FIELDS exists as the per-type map with 6 keys (genesis/day/month/year/commonplace_genesis/commonplace)'
 );
 
 if (SEAL_FIELDS) {
   t.assert(
-    setEqual(new Set([Object.keys(SEAL_FIELDS)[0],
-      Object.keys(SEAL_FIELDS)[1],
-      Object.keys(SEAL_FIELDS)[2],
-      Object.keys(SEAL_FIELDS)[3]]),
-      new Set(['genesis', 'day', 'month_summary', 'year_summary'])),
-    'A1b: SEAL_FIELDS keys are {genesis, day, month_summary, year_summary}'
+    setEqual(new Set(Object.keys(SEAL_FIELDS)),
+      new Set(['genesis', 'day', 'month_summary', 'year_summary', 'commonplace_genesis', 'commonplace'])),
+    'A1b: SEAL_FIELDS keys are {genesis, day, month_summary, year_summary, commonplace_genesis, commonplace}'
   );
 
   t.assert(
     setEqual(new Set(SEAL_FIELDS.genesis), EXPECTED_SEAL_FIELDS.genesis) &&
     setEqual(new Set(SEAL_FIELDS.day), EXPECTED_SEAL_FIELDS.day),
     'A2: genesis/day set == {type, day_index, date, prev_hash, entries, original_hash}'
+  );
+
+  t.assert(
+    setEqual(new Set(SEAL_FIELDS.commonplace_genesis), EXPECTED_SEAL_FIELDS.commonplace_genesis) &&
+    setEqual(new Set(SEAL_FIELDS.commonplace), EXPECTED_SEAL_FIELDS.commonplace),
+    'A2b: commonplace_genesis/commonplace set == {type, day_index, date, prev_hash, entries, original_hash}'
   );
 
   t.assert(

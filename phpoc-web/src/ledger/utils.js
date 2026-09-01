@@ -130,3 +130,75 @@ export function verifyEntryHash(data, storedHash, crypto) {
 export function getBlockHash(block) {
   return block.block_hash || block.day_hash || block.month_hash || block.year_hash;
 }
+
+// ── Format-version helpers (shared by chain.js / commonplace_chain.js) ──
+
+// Default format_version when genesis has none (pre-spec, implicit 0.2.0)
+export const DEFAULT_FORMAT_VERSION = [0, 2, 0];
+// Content hash is required at this version and above
+export const CONTENT_HASH_REQUIRED_VERSION = [0, 4, 0];
+
+/** The 64-zero prev_hash sentinel that anchors a chain's first block. */
+export const ZERO_HASH_64 = '0'.repeat(64);
+
+/**
+ * Parse format_version from a genesis block into an array of ints.
+ * Returns [0, 2, 0] if genesis is null/undefined or has no format_version.
+ */
+export function parseFormatVersion(genesis) {
+  if (!genesis) return DEFAULT_FORMAT_VERSION;
+  const fv = genesis.format_version;
+  if (typeof fv !== 'string') return DEFAULT_FORMAT_VERSION;
+  try {
+    return fv.split('.').map((s) => parseInt(s, 10));
+  } catch (_) {
+    return DEFAULT_FORMAT_VERSION;
+  }
+}
+
+/**
+ * Return true if the genesis format_version >= minimum (segment-wise int comparison).
+ */
+export function isFormatVersionAtLeast(genesis, minimum) {
+  const actual = parseFormatVersion(genesis);
+  const maxLen = Math.max(actual.length, minimum.length);
+  for (let i = 0; i < maxLen; i++) {
+    const a = actual[i] || 0;
+    const m = minimum[i] || 0;
+    if (a > m) return true;
+    if (a < m) return false;
+  }
+  return true; // equal
+}
+
+/**
+ * Compute the extensible content hash of an entry's sealed data dict.
+ *
+ * - Fields ending in `_enc` are decrypted (plaintext stays a STRING, never
+ *   JSON-decoded) so the hash binds to the plaintext content regardless of
+ *   re-encryption (ADR-026 rotation-safe).
+ * - List fields are sorted for deterministic output.
+ * - `content_hash` itself is excluded.
+ * - Sort keys normalize key ordering (jsonSort).
+ *
+ * NOTE: list sorting uses `String(a).localeCompare(String(b))` to match the
+ * pre-existing LedgerEngine._computeContentHash implementation. This differs
+ * from the `[...v].sort()` used by LedgerChain/LedgerMerge verification — a
+ * latent cross-client inconsistency for non-ASCII list items that should be
+ * unified to plain code-unit sort in a dedicated parity task (behaviour is
+ * identical for ASCII today, so this is not changed here).
+ */
+export function computeContentHash(data, crypto, masterKey) {
+  const content = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'content_hash') continue;
+    if (key.endsWith('_enc') && value !== null && value !== undefined && value !== '') {
+      content[key] = crypto.decrypt(value, masterKey);
+    } else if (Array.isArray(value)) {
+      content[key] = value.slice().sort((a, b) => String(a).localeCompare(String(b)));
+    } else {
+      content[key] = value;
+    }
+  }
+  return crypto.sha256(jsonSort(content));
+}

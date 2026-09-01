@@ -7,17 +7,18 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - `src/App.jsx` — Application root
 - `src/components/screens/` — Screen components: Auth, Configuration, Dashboard, History, Landing, LedgerSync, NewTask, Onboarding, Settings, SyncSettings, Tags, UserProfile
 - `src/components/modals/` — Modal components: PassphraseModal
-- `src/components/layout/` — Layout component: AppLayout
+- `src/components/layout/` — Layout components: AppLayout (nav shell), **BookSwitcher** (Commonplace book-switcher bar rendered above page content)
 - `src/components/pills/` — ActiveTaskPill
 - `src/components/sync/` — SyncIndicator
 - `src/components/ui/` — Icon components
-- `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils, **seal_fields** (`SEAL_FIELDS`/`selectSealFields`/`computeSeal` — canonical ADR-029/029a block-seal whitelist, mirror of Python `chain.py`)
+- `src/ledger/` — Ledger logic ported from Python: chain, engine, index_manager, merge, summary_policy, utils, **seal_fields** (`SEAL_FIELDS`/`selectSealFields`/`computeSeal` — canonical ADR-029/029a block-seal whitelist, mirror of Python `chain.py`; extended 2026-08-31 with `commonplace_genesis`/`commonplace` rows for the Commonplace Book)
+- `src/commonplace/` — Commonplace Book chain/engine/storage (ADR-031): `commonplace_chain.js` (genesis + day-block build/seal/append/truncate/verify over `commonplace:blocks`), `commonplace_engine.js` (commit/verify/readEntries), `commonplace_storage.js` (export/import `commonplace:export`), **`book.js`** (Book identity + `getBookMode`/`setBookMode` localStorage persistence — Slice 2)
 - `src/sync/` — Sync logic ported: cookie, device_uuid, http_backend, indexeddb_storage, local_cache, merge_engine, remote_sync, storage, storage_plugin, sync, transport, plugin_factory, row_staging_store, row_sync, migration
 - `src/services/` — DummyLedger, MockDataSeeder, ledger_export, ledger_import, export_auth, import_service, rekey_service
 - `src/crypto/` — Crypto bridge to WASM (phpoc-crypto-core); `wasm/` subdirectory contains bundled artifacts from `phpoc-crypto-core/pkg/`
 - `src/context/` — DevModeContext (dev and production share the same boot path; no mock services or DummyCryptoService fallbacks remain)
 - `src/hooks/` — useActiveTasks, useAutoSync, useCookieMonitor
-- `test/` — JavaScript test suite (79 test files)
+- `test/` — JavaScript test suite (83 test files)
 
 ## Local Contracts
 - Built with Vite + React
@@ -40,6 +41,8 @@ React-based web frontend for the PH Ledger — user interface for task tracking,
 - Use context for dev mode state; hooks for derived data
 
 ## Verification
+- **Commonplace Book Slice 1 (ADR-031, 2026-08-31):** `commonplace_chain_test.mjs` (67), `commonplace_engine_test.mjs` (28), `commonplace_storage_test.mjs` (19), `commonplace_ad_hoc_test.mjs` (16) — 55 tests / 130 assertions GREEN (**Phases 1–4 complete**). Phase 4 deduped `parseFormatVersion`/`isFormatVersionAtLeast`/`CONTENT_HASH_REQUIRED_VERSION`/`ZERO_HASH_64`/`computeContentHash` into `ledger/utils.js` (were duplicated across `chain.js`, `engine.js`, `commonplace_chain.js`). Run: `node test/commonplace_*_test.mjs`. Blueprint: `docs/planning/COMMONPLACE_BOOK_WEB_PHASE1.md`.
+- **Commonplace Book Slice 2 — Book Switcher (ADR-031, 2026-08-31):** `book_switcher_web.test.mjs` — 13 Vitest+RTL tests (groups A–D: Book identity, `book.js` persistence, `BookSwitcher` component, `AppLayout` integration) GREEN (**Phases 1–4 complete**). `src/commonplace/book.js` (Book identity + `getBookMode`/`setBookMode` over localStorage `phpoc_book_mode`), `src/components/layout/BookSwitcher.jsx`, `AppLayout` renders the switcher above `.app-content`, `.book-switcher*` styles in `App.css`. Phase 4 deduped `Book.values` to share object references with `Book.ledger`/`Book.commonplace`. Run: `npx vitest run test/book_switcher_web.test.mjs`. Blueprint: `docs/planning/COMMONPLACE_BOOK_SWITCHER_WEB_PHASE1.md`.
 - `test/` directory: 37 test files covering crypto, sync, ledger, storage, import/export, transport, and component rendering
 - New (Jun 2026): `ledger_import_chain_test.mjs` (31), `ledger_import_v2_test.mjs` (42), `import_orchestration_test.mjs` (51), `ledger_roundtrip_test.mjs` (46) — 170 tests for web import/export workflow coverage
 - **CCS-2 (Jul 2026):** `ccs2_row_level_reconcile_test.mjs` — 41/41 GREEN — canonical-row (activity_id LWW) reconcile layer in `sync.js` (Option B). Blueprint: `docs/planning/CCS2_PHASE1.md`

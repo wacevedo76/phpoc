@@ -156,4 +156,14 @@ export class MockCrypto {
   derivePdk(passphrase, iterations) {
     return this.sha256(passphrase + String(iterations));
   }
+
+  /**
+   * Derive an identity public key from an identity secret (hex).
+   * Deterministic stand-in for the WASM digest::identity_pub_key_hex binding
+   * (sha256 over the raw identity-secret bytes). The test only needs a
+   * stable, distinct value per secret.
+   */
+  identityPubKey(identitySecretHex) {
+    return this.sha256(identitySecretHex);
+  }
 }

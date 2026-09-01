@@ -25,6 +25,9 @@ const SEAL_FIELDS = {
   day: ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
   month_summary: ['type', 'month', 'date', 'prev_hash', 'original_hash'],
   year_summary: ['type', 'year', 'date', 'prev_hash', 'original_hash'],
+  // Commonplace Book (ADR-031): separate sealed chain under the same master key.
+  commonplace_genesis: ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
+  commonplace: ['type', 'day_index', 'date', 'prev_hash', 'entries', 'original_hash'],
 };
 
 /**

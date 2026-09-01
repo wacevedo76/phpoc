@@ -1,5 +1,6 @@
 import React from 'react';
 import { Icons } from '../ui/Icons.jsx';
+import BookSwitcher from './BookSwitcher.jsx';
 
 /**
  * AppLayout — navigation shell + routing.
@@ -29,6 +30,7 @@ export default function AppLayout({ currentScreen, onNavigate, children, onLogou
 
   return (
     <div className="app-layout">
+      <BookSwitcher />
       <main className="app-content">
         {children}
       </main>

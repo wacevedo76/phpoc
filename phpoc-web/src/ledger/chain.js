@@ -15,45 +15,18 @@
  *   const valid = await chain.verify();
  */
 
-import { jsonSort, computeEntryHash, getBlockHash, verifyEntryHash } from './utils.js';
+import {
+  jsonSort,
+  computeEntryHash,
+  getBlockHash,
+  verifyEntryHash,
+  isFormatVersionAtLeast,
+  CONTENT_HASH_REQUIRED_VERSION,
+  ZERO_HASH_64,
+} from './utils.js';
 import { selectSealFields, computeSeal } from './seal_fields.js';
 
 const BLOCKS_KEY = 'ledger:blocks';
-
-// Default format_version when genesis has none (pre-spec, implicit 0.2.0)
-const DEFAULT_FORMAT_VERSION = [0, 2, 0];
-// Content hash is required at this version and above
-const CONTENT_HASH_REQUIRED_VERSION = [0, 4, 0];
-
-/**
- * Parse format_version from a genesis block into an array of ints.
- * Returns [0, 2, 0] if genesis is null/undefined or has no format_version.
- */
-function parseFormatVersion(genesis) {
-  if (!genesis) return DEFAULT_FORMAT_VERSION;
-  const fv = genesis.format_version;
-  if (typeof fv !== 'string') return DEFAULT_FORMAT_VERSION;
-  try {
-    return fv.split('.').map(s => parseInt(s, 10));
-  } catch (_) {
-    return DEFAULT_FORMAT_VERSION;
-  }
-}
-
-/**
- * Return true if the genesis format_version >= minimum (segment-wise int comparison).
- */
-function isFormatVersionAtLeast(genesis, minimum) {
-  const actual = parseFormatVersion(genesis);
-  const maxLen = Math.max(actual.length, minimum.length);
-  for (let i = 0; i < maxLen; i++) {
-    const a = actual[i] || 0;
-    const m = minimum[i] || 0;
-    if (a > m) return true;
-    if (a < m) return false;
-  }
-  return true; // equal
-}
 
 export class LedgerChain {
   /**
@@ -314,7 +287,7 @@ export class LedgerChain {
         identity_pub_key: identityPubKey,
         identity_secret_enc_fallback: identitySecretEncFallback,
       },
-      prev_hash: '0'.repeat(64),
+      prev_hash: ZERO_HASH_64,
       entries: [],
     };
 
