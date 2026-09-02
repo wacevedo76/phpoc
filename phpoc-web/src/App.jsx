@@ -294,7 +294,7 @@ function AppInner() {
       )}
       <BookModeProvider>
         <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogout}>
-          <BookBody ledgerScreen={renderScreen()} commonplaceService={services.commonplaceService} />
+          <BookBody ledgerScreen={renderScreen()} commonplaceService={services.commonplaceService} currentScreen={currentScreen} />
         </AppLayout>
       </BookModeProvider>
 

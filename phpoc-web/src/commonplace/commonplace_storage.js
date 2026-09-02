@@ -91,4 +91,56 @@ export class CommonplaceStorage {
   async replaceAll(blocks) {
     await this.store.set(BLOCKS_KEY, Array.isArray(blocks) ? blocks : []);
   }
+
+  /**
+   * Serialize the current live chain to the portable sealed shape
+   * `{type:'commonplace_chain', genesis, blocks}` as a JSON string (the
+   * same payload `save()` persists under "commonplace:export").
+   * @returns {Promise<string>}
+   */
+  async exportToJson() {
+    const blocks = (await this.store.get(BLOCKS_KEY)) || [];
+    const genesis = blocks.find((b) => b && b.type === 'commonplace_genesis') || null;
+    return JSON.stringify({ type: 'commonplace_chain', genesis, blocks });
+  }
+
+  /**
+   * Replace the live chain from a portable backup JSON string (or parsed
+   * object). Mirrors `load()`'s decode rules but reads the payload from the
+   * argument instead of the "commonplace:export" key.
+   * @param {string|object} json
+   * @returns {Promise<void>}
+   */
+  async restoreFromJson(json) {
+    let decoded;
+    try {
+      decoded = typeof json === 'string' ? JSON.parse(json) : json;
+    } catch (e) {
+      throw new Error(`Corrupt commonplace backup: ${e.message}`);
+    }
+
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      throw new Error('Corrupt commonplace backup: expected a JSON object');
+    }
+
+    const blocks = [];
+    const genesis = decoded.genesis;
+    if (genesis && typeof genesis === 'object' && genesis.type === 'commonplace_genesis') {
+      blocks.push(genesis);
+    }
+
+    if (Array.isArray(decoded.blocks)) {
+      for (const b of decoded.blocks) {
+        if (!b || typeof b !== 'object') continue;
+        // A genesis stored inside `blocks` is the same object as `genesis`;
+        // keep it once.
+        if (b.type === 'commonplace_genesis' && genesis && genesis.type === 'commonplace_genesis') {
+          continue;
+        }
+        blocks.push(b);
+      }
+    }
+
+    await this.store.set(BLOCKS_KEY, blocks);
+  }
 }

@@ -16,6 +16,7 @@
  */
 
 import { CommonplaceEngine } from './commonplace_engine.js';
+import { CommonplaceStorage } from './commonplace_storage.js';
 
 /**
  * Normalize a tag list: coerce to strings, trim, lower-case, and dedupe
@@ -47,6 +48,7 @@ export class CommonplaceService {
     this.identitySecret = identitySecret;
     this.engine = new CommonplaceEngine(crypto, store, masterKey, identitySecret);
     this.chain = this.engine.chain;
+    this.storage = new CommonplaceStorage(store);
   }
 
   // ── Read ──────────────────────────────────────────────────────────
@@ -133,6 +135,27 @@ export class CommonplaceService {
     const count = await this.chain.getBlockCount();
     if (count > 0) return null;
     return await this.engine.buildGenesis(opts);
+  }
+
+  // ── Backup / restore ─────────────────────────────────────────────
+
+  /**
+   * Export the sealed Commonplace chain as a JSON string (portable shape
+   * `{type:'commonplace_chain', genesis, blocks}`) — wraps CommonplaceStorage.
+   * @returns {Promise<string>}
+   */
+  async exportForBackup() {
+    return await this.storage.exportToJson();
+  }
+
+  /**
+   * Replace the live Commonplace chain from a backup JSON string — wraps
+   * CommonplaceStorage.
+   * @param {string|object} json
+   * @returns {Promise<void>}
+   */
+  async restoreFromBackup(json) {
+    await this.storage.restoreFromJson(json);
   }
 }
 

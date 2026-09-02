@@ -39,6 +39,7 @@ const STORED_PASSPHRASE_HASH_KEY = 'phpoc_passphrase_hash';
 const PDK_TOKEN_KEY = 'phpoc_pdk_token';
 const IDENTITY_SECRET_KEY = 'phpoc_identity_secret';
 const BLOCKS_KEY = 'ledger:blocks';
+const COMMONPLACE_BLOCKS_KEY = 'commonplace:blocks';
 const COOKIE_KEY = 'cookie';
 const REKEYED_KEY = 'phpoc_rekeyed';
 const BACKUP_KEY = 'phpoc_rekey_backup';
@@ -200,24 +201,43 @@ export class RekeyService {
   }
 
   /**
-   * Re-encrypt + re-seal every block under the new key set. Built fully in
-   * memory (D4 atomic swap) so a mid-loop throw leaves the persisted chain
-   * untouched.
+   * Shared in-memory chain-rewrite engine (Phase 4 refactor): re-encrypt every
+   * entry `_enc` under the new MK, recompute ciphertext-bound entry hashes,
+   * cascade `prev_hash`, re-seal via the ADR-029a whitelist, and re-sign the
+   * device-scoped identity seal — for either the ledger or the Commonplace
+   * chain. The two callers differ only in genesis identity shape and identity
+   * seal algorithm, captured by `chainKind`.
+   *
+   * Built fully in memory (D4 atomic swap) so a mid-loop throw (corrupt
+   * ciphertext) leaves the persisted chain untouched.
    * @private
+   * @returns {object[]|{rebuilt: object[], entries: number}}
    */
-  _rebuildBlocks(blocks, { newSeed, oldMk, newMk, newPdk, identitySecret }) {
+  _rebuildChain(blocks, { newSeed, oldMk, newMk, newPdk, identitySecret, chainKind, countEntries = false }) {
+    const isCommonplace = chainKind === 'commonplace';
     const rebuilt = [];
+    let entries = 0;
+
     for (let i = 0; i < blocks.length; i++) {
       const block = JSON.parse(JSON.stringify(blocks[i]));
 
       // Genesis: rewrite the seed envelope + identity-secret fallback under
-      // the new key set. identity_pub_key is key-independent and preserved.
-      if (block.type === 'genesis' && block.identity) {
+      // the new key set. Ledger nests them under `block.identity`; Commonplace
+      // (Slice 4) keeps a flattened top-level shape. identity_pub_key is
+      // key-independent and preserved.
+      if (isCommonplace) {
+        if (block.type === 'commonplace_genesis') {
+          if (block.recovery_seed_enc !== undefined) {
+            block.recovery_seed_enc = this.crypto.encrypt(newSeed, newPdk);
+          }
+          if (identitySecret && block.identity_secret_enc_fallback !== undefined) {
+            block.identity_secret_enc_fallback = this.crypto.encrypt(identitySecret, newMk);
+          }
+        }
+      } else if (block.type === 'genesis' && block.identity) {
         block.identity.recovery_seed_enc = this.crypto.encrypt(newSeed, newPdk);
         if (identitySecret) {
-          block.identity.identity_secret_enc_fallback = this.crypto.encrypt(
-            identitySecret, newMk,
-          );
+          block.identity.identity_secret_enc_fallback = this.crypto.encrypt(identitySecret, newMk);
         }
       }
 
@@ -227,12 +247,15 @@ export class RekeyService {
         for (const entry of block.entries) {
           if (!entry || !entry.data) continue;
           const data = entry.data;
+          let reencrypted = false;
           for (const [key, value] of Object.entries(data)) {
             if (key.endsWith('_enc') && value !== null && value !== undefined && value !== '') {
               const plain = this.crypto.decrypt(value, oldMk);
               data[key] = this.crypto.encrypt(plain, newMk);
+              reencrypted = true;
             }
           }
+          if (reencrypted) entries++;
           entry.hash = computeEntryHash(data, this.crypto);
         }
       }
@@ -242,16 +265,46 @@ export class RekeyService {
         block.prev_hash = getBlockHash(rebuilt[i - 1]);
       }
 
-      // Re-seal under the new MK + re-sign with the same identity secret.
+      // Re-seal under the new MK + re-sign the identity seal. Ledger always
+      // uses `crypto.sign`; Commonplace prefers `mac` (MockCrypto) and falls
+      // back to `sign` (WASM) for byte-parity with the ledger path.
       const hashKey = hashKeyFor(block);
       block[hashKey] = computeSeal(block, this.crypto, newMk);
-      if (identitySecret && block.identity_seal) {
+      if (isCommonplace) {
+        if (identitySecret && block.identity_seal !== undefined) {
+          if (typeof this.crypto.mac === 'function') {
+            block.identity_seal = this.crypto.mac(block[hashKey], identitySecret);
+          } else if (typeof this.crypto.sign === 'function') {
+            block.identity_seal = this.crypto.sign(block[hashKey], identitySecret);
+          }
+        }
+      } else if (identitySecret && block.identity_seal) {
         block.identity_seal = this.crypto.sign(block[hashKey], identitySecret);
       }
 
       rebuilt.push(block);
     }
-    return rebuilt;
+
+    return countEntries ? { rebuilt, entries } : rebuilt;
+  }
+
+  /**
+   * Re-encrypt + re-seal the ledger chain under the new key set.
+   * @private
+   */
+  _rebuildBlocks(blocks, opts) {
+    return this._rebuildChain(blocks, { ...opts, chainKind: 'ledger' });
+  }
+
+  /**
+   * Re-encrypt + re-seal the Commonplace chain under the new key set (Slice 4
+   * additive; flattened genesis identity shape). Returns the entry re-encrypt
+   * count for the R6 abort/rollback accounting.
+   * @private
+   * @returns {{rebuilt: object[], entries: number}}
+   */
+  _rebuildCommonplaceBlocks(blocks, opts) {
+    return this._rebuildChain(blocks, { ...opts, chainKind: 'commonplace', countEntries: true });
   }
 
   /**
@@ -345,8 +398,30 @@ export class RekeyService {
       identitySecret,
     });
 
-    // D4: single atomic local write.
+    // Slice 4: re-encrypt + re-seal the Commonplace chain in memory too, so a
+    // Commonplace re-encrypt failure aborts BEFORE any local write (R6).
+    const cpBlocks = (await this.storage.get(COMMONPLACE_BLOCKS_KEY)) || [];
+    let newCpBlocks = null;
+    let commonplaceBlocksReencrypted = 0;
+    let commonplaceEntriesReencrypted = 0;
+    if (Array.isArray(cpBlocks) && cpBlocks.length > 0) {
+      const cp = this._rebuildCommonplaceBlocks(cpBlocks, {
+        newSeed: newSeedValue,
+        oldMk,
+        newMk,
+        newPdk,
+        identitySecret,
+      });
+      newCpBlocks = cp.rebuilt;
+      commonplaceBlocksReencrypted = cp.rebuilt.length;
+      commonplaceEntriesReencrypted = cp.entries;
+    }
+
+    // D4: single atomic local write (ledger, then Commonplace).
     await this.storage.set(BLOCKS_KEY, newBlocks);
+    if (newCpBlocks !== null) {
+      await this.storage.set(COMMONPLACE_BLOCKS_KEY, newCpBlocks);
+    }
 
     // R5: rewrite seed + passphrase tokens, and persist the B4 marker.
     await this._persistNewKeySet(newSeedValue, newPdk);
@@ -368,6 +443,8 @@ export class RekeyService {
       backupKey,
       remotePushed,
       seedFingerprint: this.seedFingerprint(newSeedValue),
+      commonplaceBlocksReencrypted,
+      commonplaceEntriesReencrypted,
     };
   }
 }

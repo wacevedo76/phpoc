@@ -2,6 +2,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useApp } from '../../context/DevModeContext.jsx';
 import { Icons } from '../ui/Icons.jsx';
 import PassphraseModal from '../modals/PassphraseModal.jsx';
+import RekeyModal from '../modals/RekeyModal.jsx';
+import { useRekeyFlow } from '../../hooks/useRekeyFlow.js';
 
 /**
  * Lightweight check: does IndexedDB hold existing ledger or staging data?
@@ -156,67 +158,11 @@ export default function Settings() {
     handleResetImport();
   }, [handleResetImport]);
 
-  // ── Re-key (Security & Recovery) state ─────────────────────────
-  const [showRekeyModal, setShowRekeyModal] = useState(false);
-  const [rekeyOldPassphrase, setRekeyOldPassphrase] = useState('');
-  const [rekeyNewPassphrase, setRekeyNewPassphrase] = useState('');
-  const [rekeyAcknowledge, setRekeyAcknowledge] = useState(false);
-  const [rekeySavedSeed, setRekeySavedSeed] = useState(false);
-  const [rekeySeedConfirm, setRekeySeedConfirm] = useState('');
-  const [rekeyNewSeed, setRekeyNewSeed] = useState('');
-  const [rekeyError, setRekeyError] = useState('');
-  const [rekeyBusy, setRekeyBusy] = useState(false);
-  const [rekeyDone, setRekeyDone] = useState(false);
-
-  // Open the re-key flow and mint the fresh seed up front (reveal-gate).
-  const handleOpenRekey = useCallback(() => {
-    setShowRekeyModal(true);
-    setRekeyOldPassphrase('');
-    setRekeyNewPassphrase('');
-    setRekeyAcknowledge(false);
-    setRekeySavedSeed(false);
-    setRekeySeedConfirm('');
-    setRekeyError('');
-    setRekeyBusy(false);
-    setRekeyDone(false);
-    try {
-      const crypto = services?.crypto;
-      if (crypto && typeof crypto.generateSeed === 'function') {
-        setRekeyNewSeed(crypto.generateSeed());
-      } else {
-        setRekeyNewSeed('');
-        setRekeyError('Failed to generate a new recovery seed — crypto is not ready.');
-      }
-    } catch (err) {
-      setRekeyNewSeed('');
-      setRekeyError('Failed to generate a new recovery seed: ' + (err?.message || 'error'));
-    }
-  }, [services]);
-
-  const handleCancelRekey = useCallback(() => {
-    setShowRekeyModal(false);
-  }, []);
-
-  const handleConfirmRekey = useCallback(async () => {
-    if (!rekey) {
-      setRekeyError('Re-key is not available in this build.');
-      return;
-    }
-    setRekeyBusy(true);
-    setRekeyError('');
-    try {
-      await rekey({
-        oldPassphrase: rekeyOldPassphrase,
-        newPassphrase: rekeyNewPassphrase,
-        newSeed: rekeyNewSeed,
-      });
-      setRekeyDone(true);
-    } catch (err) {
-      setRekeyError(err?.message || 'Re-key failed.');
-    } finally {
-      setRekeyBusy(false);
-    }
-  }, [rekey, rekeyOldPassphrase, rekeyNewPassphrase, rekeyNewSeed]);
+  // ── Re-key (Security & Recovery) state — shared `useRekeyFlow` hook ──
+  const rekeyFlow = useRekeyFlow({
+    rekey,
+    generateSeed: services?.crypto?.generateSeed,
+  });
 
   const genesisCheckSeq = useRef(0);
 
@@ -523,7 +469,7 @@ export default function Settings() {
                 This is the only way to nullify a leaked seed.
               </p>
             </div>
-            <button className="btn btn-warning btn-sm" onClick={handleOpenRekey}>
+            <button className="btn btn-warning btn-sm" onClick={rekeyFlow.open}>
               Re-key to new Recovery Seed
             </button>
           </div>
@@ -761,143 +707,26 @@ export default function Settings() {
         )}
 
         {/* Re-key modal (Security & Recovery) */}
-        {showRekeyModal && (
-          <div className="auth-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleCancelRekey(); }}>
-            <div className="auth-overlay-card" style={{ maxWidth: '500px' }}>
-              <h2 className="auth-title" style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>
-                🔄 Re-key Recovery Seed
-              </h2>
-              <p className="auth-subtitle">
-                Generate a fresh recovery seed and re-encrypt your entire ledger under a new
-                master key. The old seed will no longer decrypt anything.
-              </p>
-
-              {rekeyError && (
-                <p className="auth-error-msg" role="alert">
-                  {rekeyError}
-                </p>
-              )}
-
-              <div className="form-group">
-                <label className="auth-label" htmlFor="rekey-old-passphrase">Current Passphrase</label>
-                <input
-                  id="rekey-old-passphrase"
-                  type="password"
-                  className="auth-input"
-                  value={rekeyOldPassphrase}
-                  onChange={(e) => setRekeyOldPassphrase(e.target.value)}
-                  disabled={rekeyBusy}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="auth-label" htmlFor="rekey-new-passphrase">New Passphrase</label>
-                <input
-                  id="rekey-new-passphrase"
-                  type="password"
-                  className="auth-input"
-                  value={rekeyNewPassphrase}
-                  onChange={(e) => setRekeyNewPassphrase(e.target.value)}
-                  disabled={rekeyBusy}
-                />
-              </div>
-
-              {rekeyNewSeed && (
-                <div style={{
-                  background: '#fff3e0',
-                  border: '1px solid #e67e22',
-                  borderRadius: '8px',
-                  padding: '0.75rem',
-                  marginBottom: '0.75rem',
-                }}>
-                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#e65100' }}>
-                    <strong>Save this new Recovery Seed now.</strong> It will be shown only once.
-                  </p>
-                  <code style={{ display: 'block', marginTop: '0.4rem', wordBreak: 'break-all' }}>
-                    {rekeyNewSeed}
-                  </code>
-                </div>
-              )}
-
-              <label style={{
-                display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-                cursor: 'pointer', fontSize: '0.9rem', color: '#2e7d32', marginBottom: '0.75rem',
-              }}>
-                <input
-                  type="checkbox"
-                  checked={rekeySavedSeed}
-                  onChange={(e) => setRekeySavedSeed(e.target.checked)}
-                  disabled={rekeyBusy}
-                  style={{ marginTop: '0.15rem', flexShrink: 0 }}
-                />
-                <span>I have saved my new Recovery Seed</span>
-              </label>
-
-              <div className="form-group">
-                <label className="auth-label" htmlFor="rekey-seed-confirm">Type your new Recovery Seed to confirm</label>
-                <input
-                  id="rekey-seed-confirm"
-                  type="text"
-                  className="auth-input"
-                  value={rekeySeedConfirm}
-                  onChange={(e) => setRekeySeedConfirm(e.target.value)}
-                  disabled={rekeyBusy}
-                />
-              </div>
-
-              <label style={{
-                display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-                cursor: 'pointer', fontSize: '0.9rem', color: '#c62828', marginBottom: '0.75rem',
-              }}>
-                <input
-                  type="checkbox"
-                  checked={rekeyAcknowledge}
-                  onChange={(e) => setRekeyAcknowledge(e.target.checked)}
-                  disabled={rekeyBusy}
-                  style={{ marginTop: '0.15rem', flexShrink: 0 }}
-                />
-                <span>Acknowledge</span>
-              </label>
-
-              {rekeyDone && (
-                <div style={{
-                  background: '#e8f5e9', border: '1px solid #4caf50', borderRadius: '8px',
-                  padding: '0.75rem', marginBottom: '0.75rem',
-                }}>
-                  <p style={{ margin: 0, color: '#2e7d32', fontWeight: 600 }}>
-                    ✅ Re-key complete. Keep your new Recovery Seed safe.
-                  </p>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-danger btn-sm"
-                  style={{ flex: 1 }}
-                  onClick={handleConfirmRekey}
-                  disabled={
-                    rekeyBusy ||
-                    !rekeyOldPassphrase.trim() ||
-                    !rekeyAcknowledge ||
-                    !rekeySavedSeed ||
-                    rekeySeedConfirm !== rekeyNewSeed
-                  }
-                >
-                  {rekeyBusy ? 'Re-keying…' : 'Re-key'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  style={{ flex: 1 }}
-                  onClick={handleCancelRekey}
-                  disabled={rekeyBusy}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
+        {rekeyFlow.show && (
+          <RekeyModal
+            description="Generate a fresh recovery seed and re-encrypt your entire ledger under a new master key. The old seed will no longer decrypt anything."
+            error={rekeyFlow.error}
+            done={rekeyFlow.done}
+            busy={rekeyFlow.busy}
+            oldPassphrase={rekeyFlow.oldPassphrase}
+            newPassphrase={rekeyFlow.newPassphrase}
+            newSeed={rekeyFlow.newSeed}
+            savedSeed={rekeyFlow.savedSeed}
+            acknowledge={rekeyFlow.acknowledge}
+            seedConfirm={rekeyFlow.seedConfirm}
+            onOldPassphraseChange={rekeyFlow.setOldPassphrase}
+            onNewPassphraseChange={rekeyFlow.setNewPassphrase}
+            onSavedSeedChange={rekeyFlow.setSavedSeed}
+            onAcknowledgeChange={rekeyFlow.setAcknowledge}
+            onSeedConfirmChange={rekeyFlow.setSeedConfirm}
+            onConfirm={rekeyFlow.confirm}
+            onCancel={rekeyFlow.cancel}
+          />
         )}
       </div>
     </div>

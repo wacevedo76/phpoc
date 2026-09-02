@@ -3,7 +3,7 @@
 > **ADR:** ADR-031 (Commonplace Book — separate sealed chain, shared master key)
 > **Spec:** `docs/planning/WEB_FLUTTER_PARITY_SPEC.md` §P1
 > **Reference (Flutter):** `flutter/COMMONPLACE_BOOK_PHASE1.md` (chain engine, 55), `flutter/COMMONPLACE_BOOK_SWITCHER_PHASE1.md` (13), `flutter/COMMONPLACE_BOOK_UI_PHASE1.md` (40), `flutter/COMMONPLACE_BOOK_SETTINGS_PHASE1.md` (46)
-> **Status:** ✅ Slice 1 (chain/engine/storage) 4-phase TDD complete — `CommonplaceChain`/`CommonplaceEngine`/`CommonplaceStorage` implemented + `seal_fields.js` `commonplace_genesis`/`commonplace` whitelist; 55 tests / 130 assertions GREEN. Phase 4 deduped shared version/content-hash/zero-hash helpers into `ledger/utils.js`. ✅ **Slice 2 (Book Switcher) 4-phase TDD complete (2026-08-31):** `book.js` (`Book` identity + `getBookMode`/`setBookMode` localStorage persistence) + `BookSwitcher.jsx` rendered above page content in `AppLayout`; 13 tests GREEN. ✅ **Slice 3 (UI wiring) 4-phase TDD complete (2026-08-31):** `commonplace_service.js` + `book_mode.jsx` + `CommonplaceScreen`/`AddEntrySheet`/`TopicIndex` + `BookBody` + `DevModeContext.services.commonplaceService` wiring + `.commonplace-*` styles; 40 tests GREEN. Phase 4 (REFACTOR) extracted the shared `usePersistedBookState` hook (book_mode) and the `normalizeTags` pure helper (service).
+> **Status:** ✅ Slice 1 (chain/engine/storage) 4-phase TDD complete — `CommonplaceChain`/`CommonplaceEngine`/`CommonplaceStorage` implemented + `seal_fields.js` `commonplace_genesis`/`commonplace` whitelist; 55 tests / 130 assertions GREEN. Phase 4 deduped shared version/content-hash/zero-hash helpers into `ledger/utils.js`. ✅ **Slice 2 (Book Switcher) 4-phase TDD complete (2026-08-31):** `book.js` (`Book` identity + `getBookMode`/`setBookMode` localStorage persistence) + `BookSwitcher.jsx` rendered above page content in `AppLayout`; 13 tests GREEN. ✅ **Slice 3 (UI wiring) 4-phase TDD complete (2026-08-31):** `commonplace_service.js` + `book_mode.jsx` + `CommonplaceScreen`/`AddEntrySheet`/`TopicIndex` + `BookBody` + `DevModeContext.services.commonplaceService` wiring + `.commonplace-*` styles; 40 tests GREEN. Phase 4 (REFACTOR) extracted the shared `usePersistedBookState` hook (book_mode) and the `normalizeTags` pure helper (service). ✅ **Slice 4 (Settings surface) 4-phase TDD complete (2026-08-31):** blueprint `COMMONPLACE_BOOK_SETTINGS_WEB_PHASE1.md` (34 assertions, groups S/W/P/V/R/B/C/X). Phase 2 (RED): 34 tests / 31 RED + 3 regression-green. Phase 3 (GREEN): all GREEN — `CommonplaceSettingsScreen` + `BookBody` `settings` redirect (over-swap fix) + `CommonplaceService.exportForBackup`/`restoreFromBackup` + `RekeyService` re-encrypts `commonplace:blocks` in lockstep + backup/restore/clear-all. Phase 4 (REFACTOR): extracted shared `useRekeyFlow` hook + `RekeyModal` component (deduped the re-key modal/state across ledger `Settings.jsx` + `CommonplaceSettingsScreen.jsx`) and unified `_rebuildChain` in `rekey_service.js` (deduped `_rebuildBlocks`/`_rebuildCommonplaceBlocks`); all suites re-verified GREEN. Web deltas: Group T (per-book theme) and Group SP (shared security) deferred — no web theme system / no change-passphrase-export-seed-fingerprint yet.
 
 ## Purpose
 
@@ -19,7 +19,7 @@ then the follow-on slices (remote sync, key-rotation extension) that are still p
 | Chain / engine / storage | ✅ 55/55 | ✅ Phases 1–4 complete — 55 tests / 130 assertions passing |
 | Book Switcher | ✅ 13/13 | ✅ Phases 1–4 complete — 13 tests GREEN (`book_switcher_web.test.mjs`) |
 | UI (screen / add-entry / topic index) | ✅ 40/40 | ✅ Phases 1–4 complete — 40 tests GREEN |
-| Settings surface | ✅ 46/46 | ❌ |
+| Settings surface | ✅ 46/46 | ✅ Phases 1–4 complete — 34 assertion IDs / 44 test cases GREEN (service 13 / rekey 7 / swap 6 / screen 18) |
 | Remote sync (`commonplace/...` R2 path + MK cookie) | ⏸️ Pending | ❌ |
 | Shared key-rotation extension (ADR-026 re-encrypts both books) | ⏸️ Pending | ❌ |
 | Tag-search blind index | ⏸️ Deferred (both clients) | ❌ |
@@ -72,9 +72,13 @@ Each slice runs the 4-phase TDD loop (blueprint → RED → GREEN → REFACTOR),
 ### Slice 4 — Settings surface
 
 **Mirror:** `flutter/COMMONPLACE_BOOK_SETTINGS_PHASE1.md` (46 assertions).
+**Status:** ✅ Phases 1–4 complete (2026-08-31) — blueprint `COMMONPLACE_BOOK_SETTINGS_WEB_PHASE1.md`; 34 assertion IDs / 44 test cases GREEN (`node test/commonplace_settings_{service,rekey}_test.mjs` + `npx vitest run test/commonplace_settings_{swap,screen}_web.test.mjs`). Phase 4 (REFACTOR) extracted the shared `useRekeyFlow` hook + `RekeyModal` component and unified `_rebuildChain` in `rekey_service.js`.
 
 - Commonplace Settings reachable while the book is active: verify / backup / restore / clear-all / re-key /
-  shared Worker URL + API token / per-book theme.
+  shared Worker URL + API token.
+- **Web deltas:** no per-book theme (no web theme system → Group T deferred), no change-passphrase / export-seed /
+  fingerprint (Group SP deferred). Re-key extends `rekey_service.js` to re-encrypt `commonplace:blocks` in lockstep
+  (flattened genesis shape); backup/restore via browser Blob download + file input.
 
 ### Slice 5 — Remote sync (follow-on)
 
