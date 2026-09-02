@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
-import { Book, getBookMode, setBookMode } from '../../commonplace/book.js';
+import { Book } from '../../commonplace/book.js';
+import { useBookMode } from '../../commonplace/book_mode.jsx';
 
 /**
  * BookSwitcher — persistent title bar showing the active book with a pull-down
  * to switch between "PH Ledger" and "PH Commonplace Book".
  *
  * Rendered once by the shell (`AppLayout`) above each screen's content, so all
- * main pages share one instance. Selecting a book updates local state + persists
- * the choice to localStorage (`phpoc_book_mode`); page content is not swapped
- * until the Commonplace screens are built (Slice 3).
+ * main pages share one instance. Selecting a book updates the shared book-mode
+ * state (via `useBookMode`) — so `BookBody` swaps the page content reactively —
+ * and persists the choice to localStorage (`phpoc_book_mode`). When rendered
+ * without a `BookModeProvider`, `useBookMode` falls back to a local state that
+ * still persists the selection.
  */
 export default function BookSwitcher() {
-  const [book, setBook] = useState(() => Book.fromKey(getBookMode()));
+  const { book, setBook } = useBookMode();
   const [open, setOpen] = useState(false);
 
   const select = (b) => {
@@ -20,7 +23,6 @@ export default function BookSwitcher() {
       return;
     }
     setBook(b);
-    setBookMode(b.key);
     setOpen(false);
   };
 

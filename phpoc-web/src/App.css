@@ -3391,3 +3391,193 @@ a { color: var(--accent-blue); text-decoration: none; }
   background: #e65100;
   color: #fff;
 }
+
+/* ===================================================================
+   Commonplace Book (Slice 3) — screen, topic index, add-entry sheet
+   =================================================================== */
+.commonplace-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.commonplace-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.commonplace-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.commonplace-count {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.commonplace-verify-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.commonplace-verify-ok {
+  background: var(--accent-green, #2e7d32);
+  color: #fff;
+}
+
+.commonplace-verify-bad {
+  background: var(--accent-red, #c62828);
+  color: #fff;
+}
+
+.commonplace-add-button {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.commonplace-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.commonplace-empty p {
+  margin: 4px 0;
+}
+
+.commonplace-empty-prompt {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.commonplace-topic-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.commonplace-topic-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.commonplace-topic-chip-active {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+
+.commonplace-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.commonplace-entry {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--bg-secondary);
+}
+
+.commonplace-entry-title {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.commonplace-entry-passage {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.commonplace-entry-passage[data-expanded='false'] {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.commonplace-tag {
+  display: inline-block;
+  margin: 8px 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--accent-blue);
+}
+
+.commonplace-add-sheet {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.commonplace-add-sheet h2 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.commonplace-add-sheet label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.commonplace-add-sheet input,
+.commonplace-add-sheet textarea {
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.commonplace-add-sheet textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.commonplace-error {
+  color: var(--accent-red, #c62828);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.commonplace-add-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}

@@ -27,6 +27,7 @@ import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
 import { exportWithAuth } from '../services/export_auth.js';
 import { importLedger } from '../services/ledger_import.js';
 import { RekeyService } from '../services/rekey_service.js';
+import { createCommonplaceService } from '../commonplace/commonplace_service.js';
 
 // ── Context ──────────────────────────────────────────────────────────
 
@@ -181,6 +182,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     crypto: null,
     sync: null,
     storage: null,
+    commonplaceService: null,
   });
 
   // ── Auto-sync wrapper ────────────────────────────────────────────
@@ -451,7 +453,18 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
       // Non-critical
     }
 
-    setServices({ crypto, sync, storage, mockRemote: null });
+    // Bootstrap the Commonplace Book service (ADR-031) over the shared store
+    // and the same master key (one seed → one MK → both books). The identity
+    // secret (if any) is passed through for signing parity with the ledger.
+    const identitySecret = (await storage.get('phpoc_identity_secret')) || null;
+    const commonplaceService = createCommonplaceService({
+      crypto,
+      store: storage,
+      masterKey,
+      identitySecret,
+    });
+
+    setServices({ crypto, sync, storage, commonplaceService, mockRemote: null });
     setPhase('ready');
     setLoading(false);
   }
@@ -1381,7 +1394,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setHasExistingData(true);
     setPhase('landing');
     // Keep storage in services so in-memory data survives logout
-    setServices({ crypto: null, sync: null, storage: services.storage });
+    setServices({ crypto: null, sync: null, storage: services.storage, commonplaceService: null });
     setIdentityInfo({ username: null, email: null });
     setLoading(false);
   }, [services.crypto, services.storage]);
@@ -1436,7 +1449,7 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     setGenesisMismatch(false);
     setIdentityInfo({ username: null, email: null });
     setHasExistingData(false);
-    setServices({ crypto: null, sync: null, storage: null });
+    setServices({ crypto: null, sync: null, storage: null, commonplaceService: null });
     setLoading(false);
     setPhase('landing');
   }, [services.crypto, services.storage]);

@@ -13,8 +13,10 @@ import UserProfile from './components/screens/UserProfile.jsx';
 import Configuration from './components/screens/Configuration.jsx';
 import ImportScreen from './components/screens/ImportScreen.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
+import BookBody from './components/layout/BookBody.jsx';
 import ReauthOverlay from './components/overlays/ReauthOverlay.jsx';
 import { performReauth } from './sync/reauth.js';
+import { BookModeProvider } from './commonplace/book_mode.jsx';
 
 import './App.css';
 
@@ -290,9 +292,11 @@ function AppInner() {
           but will be lost when you close this tab/window.
         </div>
       )}
-      <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogout}>
-        {renderScreen()}
-      </AppLayout>
+      <BookModeProvider>
+        <AppLayout currentScreen={currentScreen} onNavigate={handleNavigate} onLogoutRequest={handleLogout}>
+          <BookBody ledgerScreen={renderScreen()} commonplaceService={services.commonplaceService} />
+        </AppLayout>
+      </BookModeProvider>
 
       {/* TTL warning banner: shown 5 minutes before cookie expires */}
       {ttlWarning && (
