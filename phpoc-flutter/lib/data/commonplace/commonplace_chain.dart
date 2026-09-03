@@ -8,6 +8,7 @@ import 'package:phpoc_flutter/data/ledger/helpers.dart'
         compareVersions,
         secretToHex;
 import 'package:phpoc_flutter/data/ledger/sealable_chain.dart';
+import 'package:phpoc_flutter/data/ledger/chain_reconcile.dart';
 import 'dart:convert';
 
 /// The Commonplace chain — a separate, sealed append-only chain (ADR-031).
@@ -251,13 +252,41 @@ class CommonplaceChain with SealableChain {
     return store.truncate(keepCount);
   }
 
+  /// Append-only merge of [remoteBlocks] onto this chain.
+  ///
+  /// Mirrors `SyncService.reconcileRemoteLedger` semantics for the Commonplace
+  /// sealed chain (ADR-031 remote-sync slice):
+  ///   - a remote block identical (same hash) to the local one is skipped;
+  ///   - a remote tail that bridges the last local block is appended in order;
+  ///   - same index / different hash, a non-bridging tip, or a non-genesis
+  ///     first block on an empty chain is reported as a conflict and **never
+  ///     written** (a stale device never clobbers the remote canonical chain).
+  CommonplaceReconcileResult reconcileRemoteChain(
+    List<Map<String, dynamic>> remoteBlocks,
+  ) {
+    final r = reconcileChainCore(
+      local: readAll(),
+      remoteBlocks: remoteBlocks,
+      blockHash: getBlockHashFor,
+      genesisType: 'commonplace_genesis',
+      appendBlocks: appendBlocks,
+    );
+    return CommonplaceReconcileResult(
+      conflictedIndices: r.conflictedIndices,
+      appended: r.appended,
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // Verification
   // ═══════════════════════════════════════════════════════════════
 
   /// Verify the entire Commonplace chain.
-  bool verify() {
-    final blocks = readAll();
+  bool verify() => verifyBlocks(readAll());
+
+  /// Verify an arbitrary Commonplace block sequence (used by both [verify] and
+  /// the pull-service pre-import validation). An empty list is vacuously valid.
+  bool verifyBlocks(List<Map<String, dynamic>> blocks) {
     if (blocks.isEmpty) return true;
 
     final genesis = blocks.first;
@@ -453,4 +482,25 @@ class CommonplaceChain with SealableChain {
     }
     return result;
   }
+}
+
+/// Result of a [CommonplaceChain.reconcileRemoteChain] merge: which remote
+/// block ordinals diverged from the local sealed chain (never written), and
+/// how many missing blocks were appended (behind-device catch-up).
+class CommonplaceReconcileResult {
+  /// Block ordinals where the remote chain conflicted with the local chain and
+  /// was NOT written (fork / same-index-different-hash / non-bridging tip /
+  /// non-genesis-first on an empty chain).
+  final List<int> conflictedIndices;
+
+  /// Number of missing remote blocks appended to the local chain.
+  final int appended;
+
+  const CommonplaceReconcileResult({
+    this.conflictedIndices = const [],
+    this.appended = 0,
+  });
+
+  /// Whether the merge surfaced any divergent/cannot-merge remote block.
+  bool get hasConflicts => conflictedIndices.isNotEmpty;
 }

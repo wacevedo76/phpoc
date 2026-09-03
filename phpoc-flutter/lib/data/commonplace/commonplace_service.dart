@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:phpoc_flutter/core/crypto/crypto_service.dart';
+import 'package:phpoc_flutter/data/commonplace/commonplace_chain.dart';
 import 'package:phpoc_flutter/data/commonplace/commonplace_engine.dart';
 import 'package:phpoc_flutter/data/commonplace/commonplace_storage.dart';
 import 'package:phpoc_flutter/data/ledger/helpers.dart' show epochToDate;
@@ -109,6 +110,15 @@ class CommonplaceService {
 
   /// Verify the integrity of the entire Commonplace chain.
   bool verify() => engine.verify();
+
+  /// Append-only merge of [remoteBlocks] onto the local chain (ADR-031 remote
+  /// sync). Delegates to `engine.chain.reconcileRemoteChain`; see there for the
+  /// skip-identical / append-bridging-tail / report-conflict semantics.
+  Future<CommonplaceReconcileResult> reconcileRemoteChain(
+    List<Map<String, dynamic>> remoteBlocks,
+  ) async {
+    return engine.chain.reconcileRemoteChain(remoteBlocks);
+  }
 
   /// The hex hash of the last block, or null if the chain is empty.
   String? getLastHash() {

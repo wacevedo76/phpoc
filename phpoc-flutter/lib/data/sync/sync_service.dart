@@ -7,6 +7,7 @@ import '../../core/models/sync_result.dart';
 import '../../core/utils/format_utils.dart';
 import '../ledger/engine.dart';
 import '../ledger/helpers.dart' show getBlockHash;
+import '../ledger/chain_reconcile.dart';
 import 'activity_id.dart';
 import 'device_cookie.dart';
 import 'staging_paths.dart';
@@ -1320,58 +1321,17 @@ class SyncService {
     final engine = ledgerEngine;
     if (engine == null) return const ReconcileResult();
     final chain = engine.chain;
-    final local = chain.readAll();
 
-    final conflicted = <int>[];
-    var appended = 0;
-
-    for (var i = 0; i < remoteBlocks.length; i++) {
-      final remote = remoteBlocks[i];
-      if (i < local.length) {
-        // Same ordinal exists locally: skip if identical, else conflict.
-        if (getBlockHash(local[i]) == getBlockHash(remote)) continue;
-        conflicted.add(i);
-        return ReconcileResult(
-          conflictedIndices: conflicted,
-          appended: appended,
-        );
-      }
-
-      // Remote block extends beyond the local tail.
-      final toAppend = remoteBlocks.sublist(i);
-      if (i == 0) {
-        // No local blocks at all — only a genesis can start a chain.
-        if (toAppend.first['type'] != 'genesis') {
-          conflicted.add(0);
-          return ReconcileResult(
-            conflictedIndices: conflicted,
-            appended: appended,
-          );
-        }
-        chain.appendBlocks(toAppend);
-        appended = toAppend.length;
-        break;
-      }
-
-      // The introduced remote block must bridge to the last local block;
-      // otherwise the remote fork diverged earlier → conflict, no write.
-      final expectedPrev = getBlockHash(local[i - 1]);
-      final actualPrev = remote['prev_hash'] as String? ?? '';
-      if (expectedPrev.isNotEmpty && actualPrev != expectedPrev) {
-        conflicted.add(i);
-        return ReconcileResult(
-          conflictedIndices: conflicted,
-          appended: appended,
-        );
-      }
-      chain.appendBlocks(toAppend);
-      appended = toAppend.length;
-      break;
-    }
-
+    final r = reconcileChainCore(
+      local: chain.readAll(),
+      remoteBlocks: remoteBlocks,
+      blockHash: getBlockHash,
+      genesisType: 'genesis',
+      appendBlocks: chain.appendBlocks,
+    );
     return ReconcileResult(
-      conflictedIndices: conflicted,
-      appended: appended,
+      conflictedIndices: r.conflictedIndices,
+      appended: r.appended,
     );
   }
 }

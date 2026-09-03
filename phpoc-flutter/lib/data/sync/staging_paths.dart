@@ -18,4 +18,11 @@ class StagingPaths {
 
   // Already correct — regression guard
   static const String remoteHashIndex = 'ledger/hash_index.json';
+
+  // ── Commonplace sealed-chain R2 paths (ADR-031 remote-sync slice) ──
+  // Genesis at `commonplace/blocks/000000.json`, day blocks follow in chain
+  // order. The hash index is plaintext (matches the ledger's hash_index).
+  static const String commonplaceBlocksPrefix = 'commonplace/blocks/';
+
+  static const String commonplaceHashIndex = 'commonplace/hash_index.json';
 }

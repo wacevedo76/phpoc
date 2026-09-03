@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import '../core/crypto/crypto_service.dart';
 import '../core/models/block.dart';
@@ -8,23 +7,7 @@ import '../core/utils/phpsec_format.dart';
 import '../data/ledger/helpers.dart' as ledger_helpers;
 import '../data/storage/database.dart';
 import '../data/sync/transport.dart';
-
-/// One block waiting to be uploaded: its [index] (selects the remote
-/// `ledger/blocks/NNNNNN.json` path), its block [hash] (for
-/// `ledger/hash_index.json`), and its already-PHPSPEC-serialized JSON.
-///
-/// Kept as a small top-level value type (not a member class) so it can be
-/// used as a generic type argument in [_pushChainPayloads].
-class _BlockPayload {
-  final int index;
-  final String hash;
-  final String serialized;
-  _BlockPayload({
-    required this.index,
-    required this.hash,
-    required this.serialized,
-  });
-}
+import 'chain_transport_helpers.dart';
 
 /// Pushes the full ledger chain to a remote Worker/R2 blob store.
 ///
@@ -111,9 +94,9 @@ class LedgerPushService {
     // Serialize each block and delegate the common transport loop to
     // [_pushChainPayloads] (same as the DB-backed [pushAll] path). The
     // 0-indexed list position is the block index in chain order.
-    final payloads = <_BlockPayload>[];
+    final payloads = <ChainBlockPayload>[];
     for (var i = 0; i < blocks.length; i++) {
-      payloads.add(_BlockPayload(
+      payloads.add(ChainBlockPayload(
         index: i,
         // Type-appropriate hash (day_hash / block_hash / ...) in chain
         // order, matching Python's block_hash selection for hash_index.
@@ -156,9 +139,9 @@ class LedgerPushService {
     // Serialize + push each block and the plaintext hash_index via the
     // shared transport loop. blockId (block_hash) feeds hash_index — matches
     // Python scripts/push_test_ledger.py: h = block.block_hash or day_hash.
-    final payloads = <_BlockPayload>[];
+    final payloads = <ChainBlockPayload>[];
     for (final block in blocks) {
-      payloads.add(_BlockPayload(
+      payloads.add(ChainBlockPayload(
         index: block.blockIndex,
         hash: block.blockId,
         serialized: _blockToPhpSpecJson(block),
@@ -191,10 +174,6 @@ class LedgerPushService {
 
   // ── Helpers ──────────────────────────────────────────────────
 
-  /// Encode a string as UTF-8 bytes for transport.
-  static Uint8List _textBytes(String s) =>
-      Uint8List.fromList(utf8.encode(s));
-
   // ── PHPSPEC serialization ────────────────────────────────────
 
   /// Serialize a [Block] to PHPSPEC JSON string.
@@ -212,50 +191,23 @@ class LedgerPushService {
   /// Push each [payloads] blob to `ledger/blocks/NNNNNN.json` and then a
   /// plaintext `ledger/hash_index.json` array of the pushed block hashes.
   ///
-  /// Shared by [pushBlocks] (raw chain maps) and the DB-backed [pushAll]
-  /// path so both serialize blocks consistently. Returns
-  /// `(blocksPushed, failedIndices, errors, firstHashPrefix)`. A block's
-  /// [index], not its list position, selects the remote filename, so callers
-  /// may push chain maps whose keys differ from their sort/order.
+  /// Thin wrapper over the shared [pushChainPayloads] helper (also used by
+  /// [CommonplacePushService]) pinned to the ledger R2 paths. Shared by
+  /// [pushBlocks] (raw chain maps) and the DB-backed [pushAll] path so both
+  /// serialize blocks consistently. Returns
+  /// `(blocksPushed, failedIndices, errors, firstHashPrefix)`.
   Future<(int, List<int>, List<String>, String?)> _pushChainPayloads(
     String mkHex,
-    List<_BlockPayload> payloads,
-  ) async {
-    int pushedCount = 0;
-    final failedBlocks = <int>[];
-    final errors = <String>[];
-    final blockHashes = <String>[];
-
-    for (final payload in payloads) {
-      final obfuscated =
-          crypto.obfuscateBlob(payload.serialized, mkHex);
-      final path = 'ledger/blocks/${payload.index.toString().padLeft(6, '0')}.json';
-      try {
-        await transport.push(path, obfuscated);
-        pushedCount++;
-        blockHashes.add(payload.hash);
-      } catch (e) {
-        failedBlocks.add(payload.index);
-        errors.add(e.toString());
-      }
-    }
-
-    // Push hash_index.json as plaintext JSON array of block hashes in
-    // chain order (matching Python scripts/push_test_ledger.py).
-    try {
-      await transport.push(
-        'ledger/hash_index.json',
-        _textBytes(jsonEncode(blockHashes)),
-      );
-    } catch (e) {
-      errors.add('Failed to push hash_index.json: $e');
-    }
-
-    return (
-      pushedCount,
-      failedBlocks,
-      errors,
-      blockHashes.isNotEmpty ? blockHashes.first : null,
+    List<ChainBlockPayload> payloads,
+  ) {
+    return pushChainPayloads(
+      crypto: crypto,
+      transport: transport,
+      mkHex: mkHex,
+      blocksPrefix: 'ledger/blocks/',
+      hashIndexPath: 'ledger/hash_index.json',
+      hashIndexErrorLabel: 'hash_index.json',
+      payloads: payloads,
     );
   }
 

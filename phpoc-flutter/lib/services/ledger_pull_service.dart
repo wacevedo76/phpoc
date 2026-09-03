@@ -11,6 +11,7 @@ import '../data/sync/transport.dart';
 import 'ledger_backup_service.dart';
 import 'pull_stage_functions.dart';
 import 'staging_seed_helpers.dart';
+import 'chain_transport_helpers.dart';
 
 /// Pulls the full ledger chain from a remote Worker/R2 blob store.
 ///
@@ -305,37 +306,18 @@ class LedgerPullService with DecryptHelpers {
   }
 
   /// Core freshness check: fetch the plaintext `ledger/hash_index.json` and
-  /// compare its length against [localBlockCount]. Network/auth failures and
-  /// a missing/empty hash_index are treated as "no change" (fail-safe) so a
-  /// freshness hiccup never fails an ownership handoff.
+  /// compare its length against [localBlockCount] (delegates to the shared
+  /// [pullRemoteHasMore] helper — fail-safe on network/auth failure or a
+  /// missing/empty index, so a freshness hiccup never fails a handoff).
   Future<PullResult> _doPullIfRemoteHasMore(
     HttpTransport t,
     int localBlockCount,
-  ) async {
-    // L2.3: remote hash_index absent/empty → treat as no change.
-    List<dynamic> hashIndex;
-    try {
-      final raw = await t.pull('ledger/hash_index.json');
-      if (raw == null) {
-        return PullResult.ok(blocksPulled: 0);
-      }
-      hashIndex = jsonDecode(utf8.decode(raw)) as List<dynamic>;
-    } catch (_) {
-      // Network or auth failure: don't fail the handoff; report no change.
-      return PullResult.ok(blocksPulled: 0);
-    }
-    if (hashIndex.isEmpty) {
-      return PullResult.ok(blocksPulled: 0);
-    }
-
-    final remoteCount = hashIndex.length;
-    // L2.1: remote not greater than local → no new blocks to pull.
-    final freshCount = remoteCount - localBlockCount;
-    if (freshCount <= 0) {
-      return PullResult.ok(blocksPulled: 0);
-    }
-    // L2.2: remote greater → report the missing block count.
-    return PullResult.ok(blocksPulled: freshCount);
+  ) {
+    return pullRemoteHasMore(
+      transport: t,
+      hashIndexPath: 'ledger/hash_index.json',
+      localBlockCount: localBlockCount,
+    );
   }
 
   /// Produce a human-readable error for pull failures, detecting HTTP 403
