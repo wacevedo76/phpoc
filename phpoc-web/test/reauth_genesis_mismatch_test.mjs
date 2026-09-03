@@ -25,6 +25,7 @@ import { createHash } from 'crypto';
 import { SyncService, SyncResult } from '../src/sync/sync.js';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { jsonSort } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 import { TestHelpers } from './test_helpers.mjs';
 
 const t = new TestHelpers();
@@ -157,37 +158,39 @@ class MockCrypto {
 // Helpers
 // ══════════════════════════════════════════════════════════════════════
 
-function makeGenesisBlock(masterKey) {
-  const base = {
+function makeGenesisBlock(masterKey, overrides = {}) {
+  const crypto = new MockCrypto();
+  const block = {
     type: 'genesis',
-    master_key_enc: masterKey.slice(0, 32),
-    chain_sig: 'fs',
-    block_id: '00000001',
-    timestamp: 1700000000,
+    day_index: 0,
+    date: '2026-01-01',
+    identity: {
+      username: 'testuser',
+      email: 'test@example.com',
+      recovery_seed_enc: 'enc:mockseed',
+      identity_pub_key: 'mockpubkey0000000000000000000000000000000000000000000000000000',
+      identity_secret_enc_fallback: 'enc:mocksecret',
+    },
+    prev_hash: '0'.repeat(64),
+    entries: [],
+    ...overrides,
   };
-  const checkDataStr = jsonSort(base);
-  const blockHash = createHash('sha256')
-    .update(masterKey + ':' + checkDataStr)
-    .digest('hex');
-  return { ...base, block_hash: blockHash };
+  block.block_hash = crypto.seal(jsonSort(selectSealFields(block)), masterKey);
+  return block;
 }
 
-function makeDayBlock(masterKey, prevBlock) {
-  const prevHash = prevBlock.block_hash || prevBlock.day_hash || '';
-  const base = {
+function makeDayBlock(masterKey, prevBlock, overrides = {}) {
+  const crypto = new MockCrypto();
+  const block = {
     type: 'day',
-    master_key_enc: masterKey.slice(0, 32),
-    chain_sig: 'fs',
-    block_id: '00000002',
-    prev_hash: prevHash,
-    timestamp: 1700086400,
+    day_index: 1,
+    date: '2026-01-02',
+    prev_hash: prevBlock.block_hash || prevBlock.day_hash || '',
     entries: [],
+    ...overrides,
   };
-  const checkDataStr = jsonSort(base);
-  const dayHash = createHash('sha256')
-    .update(masterKey + ':' + checkDataStr)
-    .digest('hex');
-  return { ...base, day_hash: dayHash };
+  block.day_hash = crypto.seal(jsonSort(selectSealFields(block)), masterKey);
+  return block;
 }
 
 async function setupLocalLedger(storage, masterKey) {
@@ -262,7 +265,7 @@ console.log('\n=== Group A: _reconcileAndClaim — Genesis Gate ===');
   crypto.setMasterKey(localMk);
 
   await setupLocalLedger(storage, localMk);
-  const remoteGenesis = makeGenesisBlock(remoteMk);
+  const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
   await setupRemoteLedger(transport, remoteGenesis);
 
   const sync = makeSync(storage, crypto, transport);
@@ -333,7 +336,7 @@ console.log('\n=== Group A: _reconcileAndClaim — Genesis Gate ===');
   crypto.setMasterKey(localMk);
 
   await setupLocalLedger(storage, localMk);
-  const remoteGenesis = makeGenesisBlock('b'.repeat(64));
+  const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
   await setupRemoteLedger(transport, remoteGenesis);
 
   const blob = [{ id: 'e6', title: 'should not be pulled' }];
@@ -394,7 +397,7 @@ console.log('\n=== Group B: performReauth — Genesis Mismatch Propagation ===')
     const transport = new MockTransport();
     const backend = new MemoryBackend();
     await setupLocalLedger(backend, localMk);
-    const remoteGenesis = makeGenesisBlock(remoteMk);
+    const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
     await setupRemoteLedger(transport, remoteGenesis);
 
     const sync = makeSync(backend, crypto, transport);
@@ -419,7 +422,7 @@ console.log('\n=== Group B: performReauth — Genesis Mismatch Propagation ===')
     const transport = new MockTransport();
     const backend = new MemoryBackend();
     await setupLocalLedger(backend, localMk);
-    const remoteGenesis = makeGenesisBlock('b'.repeat(64));
+    const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
     await setupRemoteLedger(transport, remoteGenesis);
 
     const sync = makeSync(backend, crypto, transport);
@@ -580,7 +583,7 @@ console.log('\n=== Group D: Integration — Full Re-auth Flow ===');
   crypto.setMasterKey(localMk);
 
   await setupLocalLedger(storage, localMk);
-  const remoteGenesis = makeGenesisBlock('b'.repeat(64));
+  const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
   await setupRemoteLedger(transport, remoteGenesis);
 
   const sync = makeSync(storage, crypto, transport);
@@ -603,7 +606,7 @@ console.log('\n=== Group D: Integration — Full Re-auth Flow ===');
   crypto.setMasterKey(localMk);
 
   await setupLocalLedger(storage, localMk);
-  const remoteGenesis = makeGenesisBlock(remoteMk);
+  const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
   await setupRemoteLedger(transport, remoteGenesis);
 
   const sync = makeSync(storage, crypto, transport);
@@ -628,7 +631,7 @@ console.log('\n=== Group D: Integration — Full Re-auth Flow ===');
   crypto.setMasterKey(mk);
 
   const chain = await setupLocalLedger(storage, mk);
-  const remoteGenesis = makeGenesisBlock('b'.repeat(64));
+  const remoteGenesis = makeGenesisBlock(mk, { date: '1970-01-01' });
   await setupRemoteLedger(transport, remoteGenesis);
 
   const sync = makeSync(storage, crypto, transport);
@@ -698,7 +701,7 @@ console.log('\n=== Group E: Edge Cases ===');
     const transport = new MockTransport();
     const backend = new MemoryBackend();
     await setupLocalLedger(backend, localMk);
-    const remoteGenesis = makeGenesisBlock(remoteMk);
+    const remoteGenesis = makeGenesisBlock(localMk, { date: '1970-01-01' });
     await setupRemoteLedger(transport, remoteGenesis);
 
     const sync = makeSync(backend, crypto, transport);

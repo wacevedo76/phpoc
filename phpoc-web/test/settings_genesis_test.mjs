@@ -30,6 +30,7 @@ import {
   InvalidFormatError,
 } from '../src/sync/genesis_gate.js';
 import { jsonSort } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 
 const t = new TestHelpers();
 
@@ -140,7 +141,7 @@ function buildGenesisBlock(opts = {}) {
     prev_hash: ZERO_HASH,
     entries: [],
   };
-  const sealJson = jsonSort(content);
+  const sealJson = jsonSort(selectSealFields(content));
   content.day_hash = crypto.seal(sealJson, masterKey);
   return content;
 }
@@ -159,7 +160,7 @@ function buildChain(genesisOpts = {}) {
     entries: [],
   };
   const crypto = new MockCrypto();
-  const sealJson = jsonSort(dayContent);
+  const sealJson = jsonSort(selectSealFields(dayContent));
   dayContent.day_hash = crypto.seal(sealJson, genesisOpts.masterKey || 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
   return [genesis, dayContent];
 }
@@ -291,12 +292,12 @@ async function run() {
     t.assert(result.stats !== undefined, 'S1b. compatible result includes stats');
   }
 
-  // ── S2: Different genesis (same MK, different identity) → genesis_mismatch ──
+  // ── S2: Different genesis (same MK, different date) → genesis_mismatch ──
   console.log('\n── S2: Different genesis → incompatible ──\n');
   {
-    // Same master key but different identity → different genesis hash
-    const localChain = buildChain({ masterKey: MASTER_KEY, username: 'local' });
-    const remoteChain = buildChain({ masterKey: MASTER_KEY, username: 'remote', email: 'other@evil.com' });
+    // Same master key but different genesis date (a sealed field) → different genesis hash
+    const localChain = buildChain({ masterKey: MASTER_KEY, date: '2026-01-01' });
+    const remoteChain = buildChain({ masterKey: MASTER_KEY, date: '2026-01-02' });
 
     const storage = new MockStorage();
     await storage.set(LEDGER_BLOCKS_KEY, localChain);

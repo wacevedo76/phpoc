@@ -376,6 +376,7 @@ async function run() {
     await sync.capture({ title: 'Shared Task', startEpoch: 1000, endEpoch: 2000 });
     let entries = await sync.readEntries();
     entries[0].entry_id = SHARED_ID;
+    entries[0].activity_id = SHARED_ID;
     // Bug 3b: must go through writeEntries (DTO→raw conversion)
     await sync._local.writeEntries(entries);
 
@@ -440,6 +441,7 @@ async function run() {
     await sync.capture({ title: 'Will Be Stopped', startEpoch: 1000, is_active: true });
     let entries = await sync.readEntries();
     entries[0].entry_id = 'task-to-stop';
+    entries[0].activity_id = 'task-to-stop';
     // Bug 3b: must go through writeEntries (DTO→raw conversion)
     await sync._local.writeEntries(entries);
 
@@ -771,7 +773,7 @@ async function run() {
     const webEnded = await syncWeb3.readEntries();
     t.assert(!webEnded[0].is_active, '5.1z task ended on web (is_active = false)');
     t.assertEq(webEnded[0].end_epoch, 4000, '5.1za end_epoch = 4000');
-    t.assertEq(webEnded[0].end_device_uuid, DEVICE_WEB, '5.1zb end_device_uuid = web device');
+    t.assertEq(webEnded[0].end_device_uuid, await syncWeb3._getDeviceId(), '5.1zb end_device_uuid = web device');
     t.assert(webEnded[0].duration > 0, '5.1zc duration computed');
 
     // Push ended state to remote (staging blob only — not committed to ledger)

@@ -128,6 +128,18 @@ export class CommonplaceService {
   }
 
   /**
+   * Append-only merge of a remote Commonplace chain onto the local chain.
+   * Delegates to `CommonplaceChain.reconcileRemoteChain` (skip identical,
+   * append a bridging tail, report — never write — divergences).
+   *
+   * @param {object[]} remoteBlocks
+   * @returns {Promise<{conflictedIndices: number[], appended: number, hasConflicts: boolean}>}
+   */
+  async reconcileRemoteChain(remoteBlocks) {
+    return await this.chain.reconcileRemoteChain(remoteBlocks);
+  }
+
+  /**
    * Bootstrap a missing chain with a genesis block (no-op when one exists).
    * Drawn from the ledger's shared identity/seed (ADR-031 — same MK).
    */

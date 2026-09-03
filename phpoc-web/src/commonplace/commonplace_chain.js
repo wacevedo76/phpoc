@@ -27,6 +27,7 @@ import {
   ZERO_HASH_64,
 } from '../ledger/utils.js';
 import { selectSealFields, computeSeal } from '../ledger/seal_fields.js';
+import { reconcileChainCore } from '../ledger/chain_reconcile.js';
 
 const BLOCKS_KEY = 'commonplace:blocks';
 
@@ -310,8 +311,17 @@ export class CommonplaceChain {
   // ── Verification ──────────────────────────────────────────────────
 
   async verify() {
-    const blocks = await this._getBlocks();
-    if (blocks.length === 0) return true;
+    return this.verifyBlocks(await this._getBlocks());
+  }
+
+  /**
+   * Verify an arbitrary Commonplace block sequence (shared by [verify] and the
+   * pull-service pre-import validation). An empty list is vacuously valid.
+   * @param {object[]} blocks
+   * @returns {boolean}
+   */
+  verifyBlocks(blocks) {
+    if (!blocks || blocks.length === 0) return true;
 
     const genesis = blocks[0];
     const genesisKv = genesis.key_version ?? 1;
@@ -357,6 +367,36 @@ export class CommonplaceChain {
     }
 
     return true;
+  }
+
+  // ── Reconcile (append-only merge) ─────────────────────────────────
+
+  /**
+   * Append-only merge of [remoteBlocks] onto this chain (ADR-031 remote-sync).
+   * Delegates to `reconcileChainCore` (mirroring Flutter's `chain_reconcile.dart`):
+   *   - a remote block identical (same hash) to the local one is skipped;
+   *   - a remote tail that bridges the last local block is appended in order;
+   *   - same index / different hash, a non-bridging tip, or a non-genesis-first
+   *     block on an empty chain is reported as a conflict and **never written**
+   *     (a stale device never clobbers the remote canonical chain).
+   *
+   * @param {object[]} remoteBlocks
+   * @returns {Promise<{conflictedIndices: number[], appended: number, hasConflicts: boolean}>}
+   */
+  async reconcileRemoteChain(remoteBlocks) {
+    const local = await this._getBlocks();
+    const { conflictedIndices, appended } = await reconcileChainCore({
+      local,
+      remoteBlocks,
+      blockHash: (b) => this.getBlockHashFor(b),
+      genesisType: 'commonplace_genesis',
+      appendBlocks: (blocks) => this.appendBlocks(blocks),
+    });
+    return {
+      conflictedIndices,
+      appended,
+      hasConflicts: conflictedIndices.length > 0,
+    };
   }
 
   /** Verify a single block's seal against the ADR-029a per-type whitelist. */

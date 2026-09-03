@@ -19,6 +19,12 @@ export const REMOTE_HASH_INDEX_SHA256 = 'ledger/hash_index.sha256';
 export const REMOTE_STAGING_HASH_INDEX = 'staging/hash_index.json';
 export const REMOTE_STAGING_HASH_INDEX_SHA256 = 'staging/hash_index.sha256';
 
+// ── Commonplace sealed-chain R2 paths (ADR-031 remote-sync slice) ──
+// Genesis at `commonplace/blocks/000000.json`, day blocks follow in chain
+// order. The hash index is plaintext (mirrors `ledger/hash_index.json`).
+export const REMOTE_COMMONPLACE_BLOCKS_PREFIX = 'commonplace/blocks/';
+export const REMOTE_COMMONPLACE_HASH_INDEX = 'commonplace/hash_index.json';
+
 // ── Local storage keys (IndexedDB / in-memory) ─────────────────────
 
 export const LOCAL_COOKIE = 'cookie';

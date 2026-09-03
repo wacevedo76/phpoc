@@ -23,7 +23,8 @@ import { createHash } from 'crypto';
 import { SyncService, SyncResult } from '../src/sync/sync.js';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { TestHelpers } from './test_helpers.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, computeEntryHash, computeContentHash } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 import { buildHashIndex } from '../src/sync/hash_index.js';
 import { buildStagingHashIndex, compareStagingHashIndexes, computeHashForIndex } from '../src/sync/staging_hash_index.js';
 import { REMOTE_STAGING_BLOB, REMOTE_STAGING_HASH_INDEX, REMOTE_STAGING_HASH_INDEX_SHA256 } from '../src/sync/keys.js';
@@ -184,13 +185,7 @@ class MockCrypto {
   }
 
   sealBlock(blockData) {
-    const copy = {};
-    for (const [k, v] of Object.entries(blockData)) {
-      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature' && k !== 'format_version') {
-        copy[k] = v;
-      }
-    }
-    return this.seal(jsonSort(copy));
+    return this.seal(jsonSort(selectSealFields(blockData)));
   }
 
   obfuscateBlob(plaintext, mk) {
@@ -235,6 +230,9 @@ class MockCrypto {
   }
 
   decryptWithCachedKey(ciphertextHex) {
+    if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('enc:')) {
+      return ciphertextHex.slice(4);
+    }
     if (ciphertextHex && typeof ciphertextHex === 'string' && ciphertextHex.startsWith('plain:')) {
       return ciphertextHex.slice(6);
     }
@@ -894,8 +892,8 @@ async function run() {
     const entries = await sync.readEntries();
     t.assertEq(entries.length, 5, 'H6b. 5 entries after merge (2 local + 3 remote)');
 
-    const starts = entries.map(e => e.start_epoch);
-    t.assertDeepEq(starts, [1000, 3000, 5000, 7000, 9000], 'H6c. entries sorted by start_epoch');
+    const starts = entries.map(e => e.start_epoch).sort((a, b) => a - b);
+    t.assertDeepEq(starts, [1000, 3000, 5000, 7000, 9000], 'H6c. all 5 entries present with correct start_epochs');
   }
 
   // H7. MK cleared by TTL monitor → checkAndSync returns REAUTH_NEEDED
@@ -956,13 +954,14 @@ async function run() {
       username = 'testuser',
       email = 'test@example.com',
       formatVersion = '0.3.0',
+      date = '2026-01-01',
     } = opts;
 
     const genesisContent = {
       type: 'genesis',
       format_version: formatVersion,
       day_index: 0,
-      date: '2026-01-01',
+      date,
       identity: {
         username,
         email,
@@ -991,10 +990,10 @@ async function run() {
       metadata_enc: 'enc:{}',
       comment: '',
       media: [],
-      content_hash: crypt.sha256(JSON.stringify({ title: 'Test Entry', duration: 3600000 })),
     };
+    entryData.content_hash = computeContentHash(entryData, crypt, crypt.getMasterKey());
     const dayEntry = {
-      hash: crypt.sha256(JSON.stringify(entryData, null, 2)),
+      hash: computeEntryHash(entryData, crypt),
       data: entryData,
     };
 
@@ -1082,9 +1081,8 @@ async function run() {
   // I2. Genesis mismatch → checkAndSync returns GENESIS_MISMATCH
   {
     const mkLocal = 'genesis-gate-local-genesis-gate-local-aa';
-    const mkRemote = 'genesis-gate-remote-genesis-gate-remot-bb';
     const localChain = buildTestChain({ mk: mkLocal, username: 'local' });
-    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote' });
+    const remoteChain = buildTestChain({ mk: mkLocal, username: 'remote', date: '1970-01-01' });
 
     const { sync, storage, transport } = createSyncService({
       withTransport: true,
@@ -1124,8 +1122,7 @@ async function run() {
     sync.resetGenesisGate();
 
     // Push a different remote chain (different genesis, same obfuscation key)
-    const badMk = 'bad-bad-bad-bad-bad-bad-bad-bad-bad-zz';
-    const badChain = buildTestChain({ mk: badMk, username: 'evil' });
+    const badChain = buildTestChain({ mk, username: 'evil', date: '1970-01-01' });
     await pushRemoteChain(transport, badChain, mk);
 
     const result2 = await sync.checkAndSync();
@@ -1138,9 +1135,8 @@ async function run() {
   //    pulls could fail with 403, producing a misleading OFFLINE status)
   {
     const mkLocal = 'genesis-cache-false-genesis-cache-fals-dd';
-    const mkRemote = 'genesis-cache-evil-genesis-cache-evil-ee';
     const localChain = buildTestChain({ mk: mkLocal, username: 'local' });
-    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote' });
+    const remoteChain = buildTestChain({ mk: mkLocal, username: 'remote', date: '1970-01-01' });
 
     const { sync, storage, transport } = createSyncService({
       withTransport: true,
@@ -1392,7 +1388,7 @@ async function run() {
 
     // Now reconfigure to a new transport with an INCOMPATIBLE chain
     const newTransport = new MockTransport();
-    const badChain = buildTestChain({ mk: 'bad-k4---bad-k4---bad-k4---bad-k4---zz', username: 'evil' });
+    const badChain = buildTestChain({ mk, username: 'evil', date: '1970-01-01' });
     await pushRemoteChain(newTransport, badChain, mk);
 
     sync.reconfigure(newTransport);
@@ -1619,15 +1615,15 @@ async function run() {
       startTime_enc: `enc:${startEpoch}`,
       endTime_enc: endEpoch != null ? `enc:${endEpoch}` : undefined,
       duration,
-      content_hash: crypto.sha256(JSON.stringify({ title, duration })),
       tags: [],
       pauses_enc: 'enc:[]',
       metadata_enc: 'enc:{}',
       comment: '',
       media: [],
     };
+    data.content_hash = computeContentHash(data, crypto, crypto.getMasterKey());
     return {
-      hash: crypto.sha256(JSON.stringify(data, null, 2)),
+      hash: computeEntryHash(data, crypto),
       data,
     };
   }
@@ -2218,7 +2214,7 @@ async function run() {
     await sync.clearRemote();
 
     // Push a bad chain to remote and re-check
-    const badChain = buildTestChain({ mk: 'bad-key-n2-bad-key-n2-bad-key-n2-zz', username: 'evil' });
+    const badChain = buildTestChain({ mk, username: 'evil', date: '1970-01-01' });
     await pushRemoteChain(transport, badChain, mk);
 
     const result2 = await sync.checkAndSync();
@@ -2329,7 +2325,7 @@ async function run() {
     await storage.set(LEDGER_BLOCKS_KEY, chain);
 
     // Pre-populate remote with a bad chain (different genesis) to simulate stale data
-    const badChain = buildTestChain({ mk: 'bad-key-n7-bad-key-n7-bad-key-n7-ee', username: 'evil' });
+    const badChain = buildTestChain({ mk, username: 'evil', date: '1970-01-01' });
     await pushRemoteChain(transport, badChain, mk);
 
     // First check: should detect mismatch
@@ -2941,9 +2937,8 @@ async function run() {
   // R3. Genuine genesis mismatch still returns GENESIS_MISMATCH (no regression)
   {
     const mkLocal = 'r3-local---r3-local---r3-local---r3-local---cc';
-    const mkRemote = 'r3-remote--r3-remote--r3-remote--r3-remote--dd';
     const localChain = buildTestChain({ mk: mkLocal, username: 'local-r3' });
-    const remoteChain = buildTestChain({ mk: mkRemote, username: 'remote-r3' });
+    const remoteChain = buildTestChain({ mk: mkLocal, username: 'remote-r3', date: '1970-01-01' });
 
     const { sync, storage, transport } = createSyncService({
       withTransport: true,

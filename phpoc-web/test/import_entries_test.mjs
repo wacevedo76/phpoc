@@ -23,6 +23,7 @@ import { TestHelpers } from './test_helpers.mjs';
 import { MockCrypto } from './mock_crypto.mjs';
 import { MemoryBackend } from '../src/sync/storage.js';
 import { jsonSort, computeEntryHash, getBlockHash } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 import { LedgerChain } from '../src/ledger/chain.js';
 
 // ── Future modules (do not exist yet — RED phase) ─────────────────
@@ -145,7 +146,7 @@ async function buildTestChain(c, mk, identitySecret, dayBlocks = []) {
     identity: { username: 'tester', email: 'test@example.com' },
     prev_hash: '0'.repeat(64), entries: [],
   };
-  genesis.block_hash = c.seal(jsonSort(genesis), mk);
+  genesis.block_hash = c.seal(jsonSort(selectSealFields(genesis)), mk);
   await chain.append(genesis);
 
   let prevHash = genesis.block_hash;
@@ -171,7 +172,7 @@ async function buildRawChain(c, mk, dayBlockEntries = []) {
     },
     prev_hash: '0'.repeat(64), entries: [],
   };
-  genesis.block_hash = c.seal(jsonSort(genesis), mk);
+  genesis.block_hash = c.seal(jsonSort(selectSealFields(genesis)), mk);
   await chain.append(genesis);
 
   let prevHash = genesis.block_hash;

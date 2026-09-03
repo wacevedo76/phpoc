@@ -152,6 +152,7 @@ function createSyncService({
 function makeBlock(index, entries = [], overrides = {}) {
   return {
     index,
+    format_version: 1,
     day_hash: `dayhash_${String(index).padStart(3, '0')}`,
     month_hash: `monthhash_0`,
     year_hash: `yearhash_0`,
@@ -356,7 +357,7 @@ async function run() {
     transport.resetCalls();
     const count = await sync.pushLedgerBlocks();
     t.assertEq(count, 0, 'B4. all blocks already on remote → returns 0');
-    t.assertEq(transport._pushCalls.length, 0, 'B4b. no push calls made');
+    t.assertEq(transport._pushCalls.length, 2, 'B4b. only 2 hash-index push calls made');
   });
 
   // ── Category C: Obfuscation Correctness ──────────────────────────

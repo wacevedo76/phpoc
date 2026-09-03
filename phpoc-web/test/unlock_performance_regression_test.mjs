@@ -17,7 +17,8 @@ import { createHash } from 'crypto';
 
 import { SyncService, SyncResult } from '../src/sync/sync.js';
 import { TestHelpers } from './test_helpers.mjs';
-import { jsonSort } from '../src/ledger/utils.js';
+import { jsonSort, computeEntryHash, computeContentHash } from '../src/ledger/utils.js';
+import { selectSealFields } from '../src/ledger/seal_fields.js';
 import { buildHashIndex } from '../src/sync/hash_index.js';
 
 const t = new TestHelpers();
@@ -144,13 +145,7 @@ class MockCrypto {
    * Mirrors _verifyBlockData in merge.js: excludes seal key, signature, and format_version.
    */
   sealBlock(blockData) {
-    const copy = {};
-    for (const [k, v] of Object.entries(blockData)) {
-      if (k !== 'day_hash' && k !== 'month_hash' && k !== 'year_hash' && k !== 'signature' && k !== 'format_version') {
-        copy[k] = v;
-      }
-    }
-    return this.seal(jsonSort(copy));
+    return this.seal(jsonSort(selectSealFields(blockData)));
   }
 
   obfuscateBlob(plaintext, mk) {
@@ -312,9 +307,9 @@ function buildTestChain(opts = {}) {
     metadata_enc: 'enc:{}',
     comment: '',
     media: [],
-    content_hash: crypto.sha256(JSON.stringify({ title: 'Test Entry', duration: 3600000 })),
   };
-  const dayEntry = { hash: crypto.sha256(JSON.stringify(entryData, null, 2)), data: entryData };
+  entryData.content_hash = computeContentHash(entryData, crypto, mk);
+  const dayEntry = { hash: computeEntryHash(entryData, crypto), data: entryData };
 
   const dayContent = {
     type: 'day',
@@ -534,7 +529,7 @@ async function run() {
     };
     const crypt = new MockCrypto();
     crypt.setMasterKey(mk);
-    const extraEntry = { hash: crypt.sha256(JSON.stringify(extraEntryData, null, 2)), data: extraEntryData };
+    const extraEntry = { hash: computeEntryHash(extraEntryData, crypt), data: extraEntryData };
     const extraDayBlock = {
       type: 'day',
       day_index: 2,

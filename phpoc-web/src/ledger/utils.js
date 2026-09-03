@@ -20,6 +20,38 @@ export function jsonSort(data) {
   return _jsonDumps(data);
 }
 
+/**
+ * Deterministic JSON serialization with sorted keys and NO space separators
+ * (`:` and `,` with no spaces), mirroring Flutter's `jsonEncodeSortedNoSpaces`.
+ *
+ * This is the Commonplace wire format: block bytes pushed to
+ * `commonplace/blocks/NNNNNN.json` are sorted-keys compact PHPSPEC JSON, so
+ * web / Flutter / CLI converge on byte-identical obfuscated blobs.
+ *
+ * @param {*} data - Any JSON-serializable value.
+ * @returns {string} Sorted-keys compact JSON with no-space separators.
+ */
+export function jsonSortNoSpaces(data) {
+  return _jsonDumpsNoSpaces(data);
+}
+
+function _jsonDumpsNoSpaces(obj) {
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'boolean') return obj ? 'true' : 'false';
+  if (typeof obj === 'number') return String(obj);
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    return '[' + obj.map((v) => _jsonDumpsNoSpaces(v)).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  const pairs = [];
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined) pairs.push(JSON.stringify(k) + ':' + _jsonDumpsNoSpaces(v));
+  }
+  return '{' + pairs.join(',') + '}';
+}
+
 function _jsonDumps(obj) {
   // Top-level undefined → 'null' (matches JSON.stringify(undefined) behavior).
   // Object-valued keys with undefined values are silently skipped — this is
