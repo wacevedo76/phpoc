@@ -41,7 +41,7 @@
 
 import { DeviceCookie } from './cookie.js';
 import { RemoteSync, BLOB_KEY_MISMATCH, dtoToCanonicalRow } from './remote_sync.js';
-import { mergeRows } from './row_sync.js';
+import { mergeRows, remoteWins } from './row_sync.js';
 import { LocalCache } from './local_cache.js';
 import { LedgerChain } from '../ledger/chain.js';
 import { selectSealFields } from '../ledger/seal_fields.js';
@@ -1003,15 +1003,17 @@ export class SyncService {
     const sealedIds = await this._ledgerActivityIds();
     const mergedRowsToWrite = SyncService._dropSealedUncommitted(mergedRows, sealedIds);
 
-    // Pre-compute which activity_ids remote strictly won (remote.updated_at
-    // newer). Only those rows are rebuilt from their canonical row; every
-    // other merged row keeps the full-fidelity local DTO.
+    // Pre-compute which activity_ids remote won (LWW newer, or the
+    // terminal-state rule: remote ended vs local non-ended). Only those rows
+    // are rebuilt from their canonical row; every other merged row keeps the
+    // full-fidelity local DTO. Uses the same `remoteWins` predicate as
+    // mergeRows so the merge outcome and rebuild decision cannot drift.
     const localCanonById = new Map(localRows.map((r) => [r.activity_id, r]));
     const remoteCanonById = new Map(remoteRows.map((r) => [r.activity_id, r]));
     const remoteWonIds = new Set();
     for (const [aid, localCanon] of localCanonById) {
       const remoteCanon = remoteCanonById.get(aid);
-      if (remoteCanon && remoteCanon.updated_at > localCanon.updated_at) {
+      if (remoteCanon && remoteWins(localCanon, remoteCanon)) {
         remoteWonIds.add(aid);
       }
     }

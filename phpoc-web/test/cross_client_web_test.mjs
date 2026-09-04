@@ -442,6 +442,10 @@ async function run() {
     let entries = await sync.readEntries();
     entries[0].entry_id = 'task-to-stop';
     entries[0].activity_id = 'task-to-stop';
+    // Backdate the local updated_at so the legacy-remote "ended" backfill (merge
+    // `now`) is strictly newer. Without this, capture and merge can land in the
+    // same millisecond → §8.5 tie → local-wins masks the remote end (2.4c flake).
+    entries[0].updated_at = entries[0].start_epoch;
     // Bug 3b: must go through writeEntries (DTO→raw conversion)
     await sync._local.writeEntries(entries);
 

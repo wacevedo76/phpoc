@@ -167,15 +167,123 @@ export function buildDiff(localRows, remoteManifest, ledgerHashIndex) {
 // ══════════════════════════════════════════════════════════════════════
 
 /**
+ * Whether a canonical staging row reflects an ended activity (ADR-033).
+ *
+ * Checks row-level `activity_status` first (canonical), then falls back to
+ * the `is_active` flag inside the `activity` JSON blob for rows that predate
+ * row-level status or carry an empty/missing status. Unknown status without
+ * `is_active:false` is treated as not-ended (fail-safe — never force a row
+ * to end on bad data).
+ *
+ * @param {object} row - Canonical staging row.
+ * @returns {boolean}
+ */
+function isEnded(row) {
+  if (!row) return false;
+  const status = row.activity_status;
+  if (status === 'ended') return true;
+  if (typeof status === 'string' && status !== '') return false; // active/paused
+
+  // Fallback: activity blob `is_active === false` ⇒ ended
+  try {
+    const activityStr = row.activity;
+    if (activityStr) {
+      const activity = typeof activityStr === 'string' ? JSON.parse(activityStr) : activityStr;
+      if (activity && activity.is_active === false) return true;
+    }
+  } catch { /* ignore corrupt blob */ }
+
+  return false;
+}
+
+/**
+ * Effective `activity_status` for a canonical row, resolving the empty-status
+ * fallback so a row ended via `is_active:false` normalizes to `'ended'`.
+ *
+ * @param {object} row - Canonical staging row.
+ * @returns {string}
+ */
+function effectiveStatus(row) {
+  if (isEnded(row)) return 'ended';
+  return (row && row.activity_status) || 'active';
+}
+
+/**
+ * ADR-033 terminal-state winner, if any.
+ *
+ * When exactly one side is `ended` and the other is not, the `ended` side
+ * wins regardless of `updated_at`. Returns 'remote' | 'local' | null
+ * (null when both sides share the same terminal state, or neither ended).
+ *
+ * @param {object} local - Canonical local row.
+ * @param {object} remote - Canonical remote row.
+ * @returns {'remote'|'local'|null}
+ */
+function terminalEndWins(local, remote) {
+  const localEnded = isEnded(local);
+  const remoteEnded = isEnded(remote);
+  if (remoteEnded && !localEnded) return 'remote';
+  if (localEnded && !remoteEnded) return 'local';
+  return null;
+}
+
+/**
+ * Whether the remote row wins the merge for a shared activity_id.
+ *
+ * ADR-033 terminal-state rule + LWW:
+ *   - exactly one side ended → the ended side wins (regardless of updated_at)
+ *   - otherwise → LWW: remote wins iff remote.updated_at > local.updated_at
+ *
+ * Shared by mergeRows (here) and SyncService._mergeRemoteIntoLocal so the
+ * merge outcome and the DTO-rebuild decision cannot drift.
+ *
+ * @param {object} local - Canonical local row.
+ * @param {object} remote - Canonical remote row.
+ * @returns {boolean}
+ */
+export function remoteWins(local, remote) {
+  const terminalWinner = terminalEndWins(local, remote);
+  if (terminalWinner) return terminalWinner === 'remote';
+  const localTs = (local && local.updated_at) ?? 0;
+  const remoteTs = (remote && remote.updated_at) ?? 0;
+  return remoteTs > localTs;
+}
+
+/**
+ * Normalize a canonical row into the merged output shape.
+ *
+ * `updatedAt` and `committed` are passed explicitly because a remote win
+ * carries the remote timestamp, and `committed` is the irreversible OR of
+ * both sides.
+ *
+ * @param {object} row - Canonical staging row.
+ * @param {number} updatedAt - Effective updated_at for the merged row.
+ * @param {boolean} committed - Effective committed flag for the merged row.
+ * @returns {{activity_id: string, activity_status: string, activity: string, updated_at: number, committed: boolean}}
+ */
+function buildMergedRow(row, updatedAt, committed) {
+  return {
+    activity_id: row.activity_id || row.entry_id || '',
+    activity_status: effectiveStatus(row),
+    activity: row.activity || '{}',
+    updated_at: updatedAt,
+    committed,
+  };
+}
+
+/**
  * Merge two arrays of canonical staging rows by activity_id.
  *
  * Resolution rules (PHPSPEC §8.5):
  *   1. activity_id is the primary merge key; entry_id is the legacy fallback.
- *   2. On timestamp conflict: newer updated_at wins.
- *   3. On equal updated_at: local row wins (matches Flutter).
- *   4. Local-only rows with committed:true are excluded.
- *   5. Remote-only rows are included unconditionally.
- *   6. committed:true is irreversible (never downgraded to false).
+ *   2. Terminal-state rule (ADR-033): if exactly one side is `ended` and the
+ *      other is `active`/`paused`/unset, the `ended` side wins regardless of
+ *      `updated_at`. An activity cannot un-end.
+ *   3. Otherwise: newer updated_at wins (LWW).
+ *   4. On equal updated_at: local row wins (matches Flutter).
+ *   5. Local-only rows with committed:true are excluded.
+ *   6. Remote-only rows are included unconditionally.
+ *   7. committed:true is irreversible (never downgraded to false).
  *
  * Pure function — no side effects, does not mutate inputs.
  *
@@ -194,13 +302,7 @@ export function mergeRows(local, remote) {
     if (!row) continue;
     const key = row.activity_id || row.entry_id;
     if (!key) continue;
-    merged.set(key, {
-      activity_id: row.activity_id || row.entry_id || '',
-      activity_status: row.activity_status || 'active',
-      activity: row.activity || '{}',
-      updated_at: row.updated_at ?? 0,
-      committed: row.committed || false,
-    });
+    merged.set(key, buildMergedRow(row, row.updated_at ?? 0, row.committed || false));
   }
 
   // Build a set of remote keys for O(1) lookup during committed-exclusion
@@ -219,29 +321,17 @@ export function mergeRows(local, remote) {
     if (!key) continue;
     const existing = merged.get(key);
     const remoteTime = row.updated_at ?? 0;
-    const localTime = existing ? (existing.updated_at ?? 0) : -1;
     const remoteCommitted = row.committed || false;
 
     if (!existing) {
       // Remote-only row → include unconditionally
-      merged.set(key, {
-        activity_id: row.activity_id || row.entry_id || '',
-        activity_status: row.activity_status || 'active',
-        activity: row.activity || '{}',
-        updated_at: remoteTime,
-        committed: remoteCommitted,
-      });
-    } else if (remoteTime > localTime) {
-      // Remote newer → remote wins, committed is irreversible
-      merged.set(key, {
-        activity_id: row.activity_id || row.entry_id || '',
-        activity_status: row.activity_status || 'active',
-        activity: row.activity || '{}',
-        updated_at: remoteTime,
-        committed: existing.committed || remoteCommitted,
-      });
+      merged.set(key, buildMergedRow(row, remoteTime, remoteCommitted));
+    } else if (remoteWins(existing, row)) {
+      // Remote wins (LWW newer, or terminal-state: remote ended vs local
+      // non-ended). committed is irreversible.
+      merged.set(key, buildMergedRow(row, remoteTime, existing.committed || remoteCommitted));
     } else if (remoteCommitted) {
-      // Remote time ≤ local → local wins, but committed flag is irreversible
+      // Local wins — but committed flag is irreversible
       existing.committed = true;
     }
   }

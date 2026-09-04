@@ -13,7 +13,7 @@
  * (start_epoch, end_epoch, pauses, etc.) for consumers. writeEntries()
  * accepts DTOs and converts them to the spec format for storage.
  *
- * Storage key: 'entries' → array of {hash, data, committed, block_index}
+ * Storage key: 'entries' → array of {hash, data, committed, block_index, updated_at}
  *
  * Each entry (raw) carries:
  *   hash           — SHA-256 hex of sorted data
@@ -34,12 +34,14 @@
  *     metadata_enc — "plain:" + JSON object
  *   committed      — boolean
  *   block_index    — number or null
+ *   updated_at     — number (ms) last-modified timestamp; wrapper-level
+ *                    metadata, NOT part of the hashed `data`
  *
  * Each entry (DTO, returned by readEntries) carries flat fields:
  *   entry_id, title, start_epoch, end_epoch, duration,
  *   is_active, is_paused, pauses, tags, comment, media,
  *   device_uuid, end_device_uuid, metadata, hash, entry_index,
- *   committed, block_index
+ *   committed, block_index, updated_at
  */
 
 import { jsonSortIndent2 } from '../ledger/utils.js';
@@ -68,6 +70,8 @@ import { LOCAL_STAGING_HASH_INDEX } from './keys.js';
  * @property {number} entry_index
  * @property {boolean} committed
  * @property {number|null} block_index
+ * @property {number} [updated_at] - Last-modified timestamp (ms); backfilled to
+ *   start_epoch by _rawToDto when the raw wrapper lacks it.
  */
 
 const ENTRIES_KEY = 'entries';
@@ -79,6 +83,7 @@ export class LocalCache {
    *   (for UUID generation and SHA-256 hashing).
    * @param {object} [options]
    * @param {() => string} [options.generateId] - Injectible activity_id generator (test seam).
+   * @param {() => number} [options.now] - Injectible clock (test seam); defaults to Date.now.
    */
   constructor(storage, crypto, options = {}) {
     /** @private */
@@ -87,6 +92,8 @@ export class LocalCache {
     this._crypto = crypto;
     /** @private */
     this._generateId = options.generateId || generateActivityId;
+    /** @private */
+    this._now = options.now || Date.now;
   }
 
   // ------------------------------------------------------------------
@@ -504,6 +511,7 @@ export class LocalCache {
       data: encodedData,
       committed: false,
       block_index: null,
+      updated_at: this._now(),
     };
 
     entries.push(rawEntry);
@@ -572,6 +580,7 @@ export class LocalCache {
 
     // Recompute hash from plaintext DTO fields
     freshRaw.hash = await this._computeEntryHash(this._rawToDto(freshRaw, index));
+    freshRaw.updated_at = this._now();
     fresh[index] = freshRaw;
     await this._storage.set(ENTRIES_KEY, fresh);
 
@@ -756,6 +765,7 @@ export class LocalCache {
 
     // Recompute hash from plaintext DTO fields
     raw.hash = await this._computeEntryHash(this._rawToDto(raw, index));
+    raw.updated_at = this._now();
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
@@ -806,6 +816,7 @@ export class LocalCache {
 
     // Recompute hash from plaintext DTO fields
     raw.hash = await this._computeEntryHash(this._rawToDto(raw, index));
+    raw.updated_at = this._now();
     rawEntries[index] = raw;
     await this._storage.set(ENTRIES_KEY, rawEntries);
 
@@ -1009,6 +1020,7 @@ export class LocalCache {
       committed: raw.committed || false,
       block_index: raw.block_index ?? null,
       has_encrypted_fields: hasEncryptedFields,
+      updated_at: raw.updated_at ?? (startEpoch || 0),
     };
   }
 
@@ -1053,6 +1065,7 @@ export class LocalCache {
       data: encodedData,
       committed: dto.committed || false,
       block_index: dto.block_index ?? null,
+      updated_at: dto.updated_at,
     };
   }
 

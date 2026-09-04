@@ -1455,12 +1455,16 @@ Previous path `staging/blobs/current.json` is deprecated. The ledger paths (`led
 
 ### 8.5 Merge Strategy
 
-Row-level reconciliation by `activity_id` with Last-Writer-Wins on `updated_at`:
+Row-level reconciliation by `activity_id` with Last-Writer-Wins on `updated_at`, plus a terminal-state rule that makes "ended" permanent:
 
 1. Index both local and remote rows by `activity_id`.
-2. **Both sides have the row:** compare `updated_at`. Newer timestamp wins. On equal timestamp: **local wins** (single-user constraint makes same-millisecond cross-device conflicts a theoretical edge case).
-3. **Remote-only:** included in result (pull).
-4. **Local-only:** if `committed: true` → excluded from result (cleanup — committed on local, should be removed from staging to prevent re-commit). Otherwise → preserved.
+2. **Terminal-state rule:** when exactly one side is `ended` and the other is `active`/`paused`/unset, the `ended` side wins **regardless of `updated_at`**. An activity cannot un-end, so a peer that has ended the activity must have its end adopted even over a newer local `active` copy.
+3. **Otherwise (both terminal states equal, or neither ended):** compare `updated_at`. The newer wins (larger `updated_at`). On equal timestamp: **local wins** (single-user constraint makes same-millisecond cross-device conflicts a theoretical edge case).
+4. **Remote-only:** included in result (pull).
+5. **Local-only:** if `committed: true` → excluded from result (cleanup — committed on local, should be removed from staging to prevent re-commit). Otherwise → preserved.
+6. **`committed` is irreversible** in every branch: if either side is `committed: true`, the merged row stays committed and is never downgraded.
+
+**Rationale:** "ended" is permanent — a completed activity must not be re-opened by a stale `active` copy from another device.
 
 ### 8.6 Sync Workflow
 

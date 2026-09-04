@@ -435,9 +435,14 @@ class TestMergeRows(unittest.TestCase):
         self.assertIn("remote", json.loads(merged[0]["activity"])["title"])
 
     def test_B2_local_newer_wins(self):
-        """B2: same activity_id, local updated_at newer → local wins."""
+        """B2: same activity_id, local updated_at newer → local wins.
+
+        Remote status is 'paused' (non-terminal) so this still exercises pure
+        LWW — ADR-033 gives 'ended' terminal-state precedence regardless of
+        ``updated_at``, covered separately in test_merge_engine_terminal_state.py.
+        """
         local = [canonical_row("a1", updated_at=3000, activity_status="active")]
-        remote = [canonical_row("a1", updated_at=2000, activity_status="ended")]
+        remote = [canonical_row("a1", updated_at=2000, activity_status="paused")]
         merged = self._merge(local, remote)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["updated_at"], 3000)

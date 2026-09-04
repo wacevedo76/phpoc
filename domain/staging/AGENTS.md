@@ -6,7 +6,7 @@ Staging area management for pending activity entries before they are committed t
 ## Ownership
 - `service.py` — `StagingService`: auth gate, `check_and_sync()`, push, `_merge_remote_into_local()` (canonical-row reconcile, CCS-3)
 - `remote_sync.py` — Blob obfuscation, pull/push, device cookie handling, `SyncCheckResult`
-- `merge_engine.py` — Cross-device merge, deduplication by `entry_id`; `merge_rows()` activity_id LWW (CCS-3)
+- `merge_engine.py` — Cross-device merge, deduplication by `entry_id`; `merge_rows()` activity_id LWW + terminal-state rule (ADR-033: "ended" is permanent)
 - `row_merge.py` — `dtoToCanonicalRow` / `canonicalRowToDTO` canonical-row bridge (CCS-3)
 - `local_cache.py` — Local staging cache for offline/performance; `plain:` convention; row-mode (canonical) support for `SqliteStagingStore`
 
@@ -21,7 +21,7 @@ Staging area management for pending activity entries before they are committed t
 - **Cross-client sync plan**: `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — implementation plan and scorecard. Primary reference: `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (abstract protocol workflow).
 - Always gate write access through `StagingService`
 - Use `check_and_sync()` before any operation
-- Merge deduplicates by `activity_id` (LWW, local-wins-on-tie); `entry_id` is the legacy fallback — canonical rows consolidate cross-client duplicates
+- Merge deduplicates by `activity_id` (LWW, local-wins-on-tie) plus the terminal-state rule: when exactly one side is `ended`, the `ended` row wins regardless of `updated_at` (ADR-033); `entry_id` is the legacy fallback — canonical rows consolidate cross-client duplicates
 - Remote blob is obfuscated (not plain JSON)
 - Reconcile at the canonical-row level (`row_merge.py` + `merge_rows`), committing-excluded before persistence
 

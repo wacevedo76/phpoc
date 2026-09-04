@@ -2680,3 +2680,75 @@ cover v=0 (raw seed) in `_verify_seed` and `_make_multi_version_mk_lookup`; and 
 - `docs/planning/C2_CLI_CLIENT_VERIFY_PHASE1.md` (this leg's blueprint, §Decision)
 - `docs/planning/C2_CLI_SEED_REKEY_PHASE1.md` (CLI re-key; §2 superseded)
 - `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md`, `docs/planning/C2_SEED_REKEY_WEB_PHASE1.md` (option (a))
+
+## ADR-033: Staging Terminal-State Rule — "ended" Is Permanent Across Devices
+
+**Date:** 2026-09-03
+**Status:** ✅ Decided (2026-09-03) — implementation via 4-phase TDD (blueprint `docs/planning/TERMINAL_STATE_END_RULE_PHASE1.md`)
+
+### Context
+
+PHPSPEC §8.5 defines staging merge as **pure Last-Writer-Wins** on `updated_at`
+(newer wins; tie → local wins) with no special treatment of terminal states. A row's
+`activity_status` (`active` / `paused` / `ended`) is just data that gets overwritten by
+whichever side has the newer timestamp.
+
+Flutter **already diverges**: `MergeEngine.mergeEntries` implements a *terminal-state
+preference* — when exactly one side is `ended` and the other is `active`/`paused`, the
+`ended` row wins **regardless of `updated_at`** (live on-device bug fix,
+`docs/planning/flutter/CROSS_DEVICE_END_PROPAGATION_PHASE1.md`, 2026-08-19). Web
+(`row_sync.js` `mergeRows`) and the Python CLI (`domain/staging/merge_engine.py`
+`merge_rows`) still implement pure LWW, and the spec does not mention the rule — so three
+implementations disagree and the spec is ambiguous.
+
+Option A (web staging `updated_at` persistence, 2026-09-03) fixed the *artificial-tie*
+bug but left the deeper **"resume-after-end re-open"** edge case: a stale device's
+`active` copy with a newer `updated_at` would re-open an activity that a peer already
+`ended`.
+
+### Decision
+
+**`ended` is terminal and permanent.** Once any device marks an activity `ended`, the
+ended state wins over `active`/`paused` copies from any other device, regardless of
+`updated_at`.
+
+- When local and remote share an `activity_id` and **exactly one side is `ended`** while
+  the other is `active`/`paused` (or unset), the `ended` row wins.
+- All other cases (both `ended`, both non-ended, one side missing) keep **LWW on
+  `updated_at`** (local wins on tie).
+- The `committed`-flag irreversibility rule is preserved in every branch.
+- Port the rule to **Web** (`mergeRows` + `_mergeRemoteIntoLocal`'s remote-wins
+  detection) and the **Python CLI** (`merge_rows`); document it in **PHPSPEC §8.5**.
+
+### Rationale
+
+- An activity's end is an irreversible real-world transition; a peer must not re-open it
+  just because its local copy carries a newer timestamp.
+- **D1 (Protocol Sovereignty):** PHPSPEC is the authoritative contract; all three clients
+  must implement the same merge semantics. Flutter is the already-shipped reference.
+- **D9 (Backward Compat):** a behavioral merge change only — no schema, `format_version`,
+  or on-disk format change. Existing ledgers/staging rows remain readable.
+- **D10 (Testing Integrity):** implemented via 4-phase TDD with terminal-state assertions
+  on all three clients plus spec conformance.
+- Rejected: keeping pure LWW (re-introduces the re-open bug) — and documenting the rule
+  only in Flutter without reconciling the other clients (keeps the divergence).
+
+### Consequences
+
+- **Web change:** `mergeRows` terminal-state preference + `_mergeRemoteIntoLocal` must
+  recognize terminal-state wins when rebuilding DTOs (its `remoteWonIds` set is currently
+  `updated_at`-only, which would otherwise keep a stale `is_active: true` DTO).
+- **Python change:** `merge_rows` terminal-state preference (mirror of Web `mergeRows`).
+- **Spec change:** PHPSPEC §8.5 gains an explicit terminal-state rule (and §8.1 already
+  lists `active`/`paused`/`ended`).
+- **Behavioral note:** a stale device that "re-opens" an already-ended activity now
+  silently adopts the peer's `ended` state on next sync.
+- **Out of scope for the live path:** Web `buildDiff` (`row_sync.js`) is currently dead
+  production code (only `mergeRows` is wired); it should be aligned with the same rule if
+  ever re-wired, but is not part of this change.
+
+### Related
+
+- `docs/planning/flutter/CROSS_DEVICE_END_PROPAGATION_PHASE1.md` (Flutter reference, Group K)
+- ADR-025 (row-level staging sync, LWW model)
+- PHPSPEC §8.1 (row schema), §8.5 (merge strategy)

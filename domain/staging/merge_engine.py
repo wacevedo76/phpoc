@@ -11,6 +11,8 @@ The MergeEngine is a pure function: no I/O, no side effects, no dependencies
 beyond Python builtins.
 """
 
+import json
+
 from typing import List, Dict, Any, Tuple
 
 
@@ -72,17 +74,89 @@ class MergeEngine:
     # row-level merge (activity_id LWW) — CCS-3 canonical-row sync gate
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_ended(row):
+        """Whether a canonical staging row reflects an ended activity.
+
+        Checks row-level ``activity_status`` first (canonical), then falls
+        back to the ``is_active`` flag inside the ``activity`` JSON blob for
+        rows that predate row-level status or carry an empty/missing status.
+        Unknown status without ``is_active:false`` is treated as not-ended
+        (fail-safe — never force a row to end on bad data).
+        """
+        if not row:
+            return False
+        status = row.get("activity_status")
+        if status == "ended":
+            return True
+        if status is not None and status != "":
+            return False  # active/paused
+
+        # Fallback: activity blob `is_active: false` ⇒ ended
+        try:
+            activity_str = row.get("activity")
+            if activity_str:
+                activity = (
+                    json.loads(activity_str)
+                    if isinstance(activity_str, str)
+                    else activity_str
+                )
+                if isinstance(activity, dict) and activity.get("is_active") is False:
+                    return True
+        except (ValueError, TypeError):
+            pass
+
+        return False
+
+    @staticmethod
+    def _effective_status(row):
+        """Resolve empty-status fallback so an ended row normalizes to 'ended'."""
+        if MergeEngine._is_ended(row):
+            return "ended"
+        v = row.get("activity_status") if row else None
+        return v if v else "active"
+
+    @staticmethod
+    def _terminal_end_winner(local, remote):
+        """ADR-033 terminal-state winner, if any.
+
+        When exactly one side is ``ended`` and the other is not, the ``ended``
+        side wins regardless of ``updated_at``. Returns ``"remote"``,
+        ``"local"``, or ``None`` when both sides share the same terminal state
+        (or neither ended).
+        """
+        local_ended = MergeEngine._is_ended(local)
+        remote_ended = MergeEngine._is_ended(remote)
+        if remote_ended and not local_ended:
+            return "remote"
+        if local_ended and not remote_ended:
+            return "local"
+        return None
+
+    @staticmethod
+    def _remote_wins(local, remote):
+        """Terminal-state rule + LWW: does the remote row win the merge?"""
+        terminal_winner = MergeEngine._terminal_end_winner(local, remote)
+        if terminal_winner is not None:
+            return terminal_winner == "remote"
+        local_ts = (local or {}).get("updated_at") or 0
+        remote_ts = (remote or {}).get("updated_at") or 0
+        return remote_ts > local_ts
+
     def merge_rows(self, local_rows, remote_rows):
         """Merge two arrays of canonical staging rows by activity_id.
 
         Ported from the Web ``mergeRows`` (row_sync.js) per PHPSPEC §8.5:
 
           1. ``activity_id`` is the primary merge key; ``entry_id`` falls back.
-          2. On timestamp conflict, newer ``updated_at`` wins.
-          3. On equal ``updated_at``, the local row wins (matches Flutter).
-          4. Local-only rows with ``committed:true`` are excluded.
-          5. Remote-only rows are included unconditionally.
-          6. ``committed:true`` is irreversible (never downgraded to false).
+          2. Terminal-state rule (ADR-033): if exactly one side is ``ended``
+             and the other is ``active``/``paused``/unset, the ``ended`` side
+             wins regardless of ``updated_at``. An activity cannot un-end.
+          3. Otherwise, newer ``updated_at`` wins.
+          4. On equal ``updated_at``, the local row wins (matches Flutter).
+          5. Local-only rows with ``committed:true`` are excluded.
+          6. Remote-only rows are included unconditionally.
+          7. ``committed:true`` is irreversible (never downgraded to false).
 
         Output rows are sorted deterministically by ``activity_id`` so repeated
         merges of the same input produce byte-identical ordering.
@@ -103,14 +177,10 @@ class MergeEngine:
         merged: Dict[str, Any] = {}
         remote_keys = set()
 
-        def _norm_activity_status(row):
-            v = row.get("activity_status")
-            return v if v else "active"
-
         def _build(row, updated_at, committed):
             return {
                 "activity_id": row.get("activity_id") or row.get("entry_id") or "",
-                "activity_status": _norm_activity_status(row),
+                "activity_status": MergeEngine._effective_status(row),
                 "activity": row.get("activity") if row.get("activity") is not None else "{}",
                 "updated_at": updated_at,
                 "committed": committed,
@@ -144,18 +214,18 @@ class MergeEngine:
             remote_time = row.get("updated_at") or 0
             remote_committed = row.get("committed") or False
             existing = merged.get(key)
-            local_time = existing.get("updated_at", -1) if existing else -1
 
             if existing is None:
                 # Remote-only row → include unconditionally
                 merged[key] = _build(row, remote_time, remote_committed)
-            elif remote_time > local_time:
-                # Remote newer → remote wins, committed is irreversible
+            elif MergeEngine._remote_wins(existing, row):
+                # Remote wins (LWW newer, or terminal-state: remote ended vs
+                # local non-ended). committed is irreversible.
                 merged[key] = _build(
                     row, remote_time, bool(existing.get("committed")) or remote_committed
                 )
             elif remote_committed:
-                # Remote time ≤ local → local wins but committed is irreversible
+                # Local wins — but committed is irreversible
                 existing["committed"] = True
 
         # Exclude local-only rows with committed:true (rule 4). Local-only

@@ -301,6 +301,22 @@ always wraps in one). Dashboard content intentionally untouched (user decision).
 
 ---
 
+### ✅ Web: staging `updated_at` persistence (Option A) — fix cross_client 2.4c ✅
+
+**Status:** ✅ 4-Phase TDD Complete (2026-09-03). Phase 1 blueprint (`docs/planning/WEB_STAGING_UPDATED_AT_PHASE1.md`, 14 assertions) → Phase 2 RED (13 RED + 1 guard) → Phase 3 GREEN → Phase 4 REFACTOR.
+
+**What:** The legacy `LocalCache` path (`entries` key) never persisted `updated_at` (PHPSPEC §8.1 requires it). `_mergeRemoteIntoLocal` backfilled both local and legacy-remote rows to the same `Date.now()` → artificial LWW tie → local-wins masked cross-device end propagation (`cross_client_web_test.mjs` 2.4c). Fixed: persist/bump `updated_at` through `LocalCache.append/update/addPause/closePause/_rawToDto/_dtoToRaw` + emit it in `canonicalRowToDTO`/`rawEntryToDTO`. **Phase 4 (REFACTOR):** fixed a same-millisecond capture/merge tie flake (backdated local `updated_at` in `cross_client_web_test.mjs` 2.4) + documented `updated_at` in the `StagingEntry` typedef/storage-format comments. **Resolved follow-on:** Flutter's terminal-state rule (Option B/C) is now **ADR-033** — see the dedicated backlog entry below.
+
+---
+
+### ✅ Terminal-state rule — "ended" is permanent (ADR-033) ✅
+
+**Status:** ✅ 4-Phase TDD Complete (2026-09-03) — `docs/planning/TERMINAL_STATE_END_RULE_PHASE1.md` (Groups K/L/M/N). Implemented Web `mergeRows`/`_mergeRemoteIntoLocal` + Python `merge_rows` + PHPSPEC §8.5. K/L/M/N all GREEN (24 web / 9 M / 4 N). **Phase 4 (REFACTOR):** named the terminal-state branch (`terminalEndWins` / `_terminal_end_winner` in `remoteWins`/`_remote_wins`) + deduped the 3× merged-row construction into `buildMergedRow` (mirrors Python `_build`). Regression: full Python suite 2690 pass / 1 skip (3 live deselected), web row_sync 108 / ccs2 41 / cross_client 78 / sync_service 316 / staging_alignment 24 all GREEN.
+
+**What:** ADR-033 — once any device marks an activity `ended`, it is permanent; a peer's `active`/`paused` copy never re-opens it regardless of `updated_at`. Flutter already implements the rule (`merge_engine.dart` `mergeEntries`); port to Web `mergeRows` + `_mergeRemoteIntoLocal` (its `remoteWonIds` rebuild must recognize terminal-state wins, else `is_active:true` leaks back) and Python CLI `merge_rows`, and document in PHPSPEC §8.5.
+
+---
+
 ### ✅ CCS-3: CLI — Build Row-Level Store + Wire Sync Gate ✅
 
 **Status:** ✅ 4-Phase TDD Complete. Store-level foundation (tasks 1–3) covered by `tests/test_sqlite_staging.py` (104 tests GREEN); sync-gate wiring (tasks 4–8) covered by `tests/test_cli_sync_gate_wiring.py` (**60/60 GREEN**). **Phase 4 (REFACTOR):** extracted `StagingService._resolve_device_id()` (dedup device-identity resolution across `_ensure_cookie`/`_reconcile_and_claim`/`push_to_remote`/`push_blob_only`; removed dead nested `_remote is None` guards) and `_remote_entries_to_dtos()` (consolidates raw→DTO conversion across `_push_on_fast_path`/`_reconcile_and_claim`/`_merge_remote_into_local`); simplified `dtoToCanonicalRow` device_id default. Full suite GREEN: 2535 pass / 1 skip / 0 fail.

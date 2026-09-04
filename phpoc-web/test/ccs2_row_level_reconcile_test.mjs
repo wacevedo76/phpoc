@@ -288,7 +288,10 @@ async function groupA() {
     const localRec = localDtos.find((e) => e.title === 'Local A2');
     // Local has a NEWER updated_at than remote (remote uses a low value).
     queueReconcile(transport);
-    await pushCanonicalBlob(transport, crypto, [row(localRec.activity_id, 'ended', 1, 'Remote A2 stale')], MK);
+    // NOTE: remote status is 'paused' (non-terminal) so this still exercises
+    // pure LWW — ADR-033 gives 'ended' terminal-state precedence regardless of
+    // updated_at, which is covered separately by terminal_state_merge_test.mjs.
+    await pushCanonicalBlob(transport, crypto, [row(localRec.activity_id, 'paused', 1, 'Remote A2 stale')], MK);
 
     const result = await sync.checkAndSync();
     t.assertEq(result, SyncResult.READY, 'A2. local-newer reconcile → READY');
@@ -337,8 +340,10 @@ async function groupA() {
     // Remote has the SAME activity_id and the SAME updated_at (tie) but a different status.
     const localUpdatedAt = localStored[0].updated_at ?? Date.now();
     queueReconcile(transport);
+    // NOTE: remote status is 'paused' (non-terminal) so this still exercises
+    // the equal-timestamp tie — ADR-033 gives 'ended' terminal-state precedence.
     await pushCanonicalBlob(transport, crypto, [
-      row(localRec.activity_id, 'ended', localUpdatedAt, 'Remote A4 tie'),
+      row(localRec.activity_id, 'paused', localUpdatedAt, 'Remote A4 tie'),
     ], MK);
 
     const result = await sync.checkAndSync();

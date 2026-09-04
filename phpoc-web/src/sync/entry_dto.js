@@ -331,6 +331,7 @@ export function rawEntryToDTO(rawEntry, crypto) {
       committed: rawEntry.committed ?? false,
       block_index: rawEntry.block_index ?? null,
       has_encrypted_fields: hasEncryptedFields,
+      updated_at: rawEntry.updated_at,
     };
   } catch {
     return null;
@@ -410,6 +411,7 @@ export function canonicalRowToDTO(row) {
       committed: row.committed || false,
       block_index: activity.block_index ?? null,
       has_encrypted_fields: false,
+      updated_at: row.updated_at,
     };
   } catch {
     return null;
