@@ -27,6 +27,7 @@ Roadmaps, backlogs, and design decisions that track planned and in-progress work
 - `ALIGN_WEB_STAGING_SHARING_WITH_CLI.md` — Plan to align web staging sharing behavior with CLI multi-machine pattern
 - `STABLE_DEVICE_SPECIFIER_ON_WRITES.md` — Plan: stop re-rolling device cookie specifier on same-device writes (fixes cross-client spurious REAUTH_NEEDED)
 - `CLI_READONLY_STAGING_SYNC.md` — Plan: CLI read commands pull remote staging without claiming ownership (fixes `ph view` blocking on specifier mismatch)
+- `CROSS_CLIENT_STAGING_CONVERGENCE_PLAN.md` — **Cross-client staging convergence (Web ↔ Flutter ↔ CLI) plan (2026-09-06):** four live blockers (Web push-only; cookie gates read+write; Web restore skips `active` rows; cookie handoff race) → C1 restore-stop-skipping-active (client-local) → C2 Web periodic+focus pull → C3 read-only observe mode (protocol, CLI-first; extends `CLI_READONLY_STAGING_SYNC.md`) → C4 cookie `seq` + Worker CAS. CLI = reference anchor; protocol changes run spec → CLI → parity → CCS vectors.
 - `E2E_CROSS_CLIENT_BUGS.md` — E2E cross-client test findings: 4 bugs + 1 plumbing issue blocking CLI↔Web staging/ledger sync (2026-06-30)
 - `E2E_CROSS_CLIENT_FIX_PLAN.md` — Fix plan for cross-client bugs: typed errors (Bug 1), summary block indices (Bug 2), staging format (Bug 3), genesis seal (Bug 4)
 - `ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` — Strategy: hash-index based genesis check replacing full block pulls. 4-phase TDD plan. 210× speedup on common case. (2026-06-30)
