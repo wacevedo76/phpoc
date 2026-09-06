@@ -87,7 +87,7 @@ The Device Cookie avoids pulling the ~64KB staging blob on every command:
 - **Remote cookie**: `{"device_uuid": "<UUID>", "device_specifier": "<32-char hex>"}` — stored at `staging/blobs/device_cookie.bin`
 - **TTL**: 30 minutes (configurable via `cookie_ttl_minutes`)
 - **Touch**: Every local write extends `creation_time` (local only, no remote push)
-- **Destroy**: On TTL expiry or specifier mismatch
+- **Destroy**: On TTL expiry only — a specifier mismatch **preserves** the local cookie (the competing-owner marker), so every subsequent sync re-detects the mismatch and returns `REAUTH_NEEDED` until the user consents (gate A1 / invariant I1)
 
 Specifier comparison is byte-for-byte — no decryption needed. Specifier mismatch **always forces REAUTH_NEEDED**, regardless of cached crypto keys.
 

@@ -1442,7 +1442,7 @@ void main() {
         _makeRemoteCookie('ffffffffffffffffffffffffffffffff'),
       );
 
-      // Mismatch should destroy local cookie and return REAUTH
+      // Mismatch should preserve the local cookie and return REAUTH
       final result = await h.svc.checkAndSync();
       expect(result, SyncCheckResult.reauthNeeded,
           reason: 'Cookie mismatch must return REAUTH_NEEDED');
@@ -1800,11 +1800,12 @@ void main() {
 
     // AS2
     test('AS2: reauthNeeded during auto-push degrades silently — no throw, '
-        'local cookie destroyed, no error status surfaced', () async {
+        'local cookie preserved, no error status surfaced', () async {
       final h = await _makeRowSync();
 
       // Remote advertises a DIFFERENT cookie specifier → checkAndSync()
-      // returns reauthNeeded and destroys the local cookie.
+      // returns reauthNeeded and PRESERVES the local cookie (so the next
+      // periodic tick re-detects the mismatch instead of auto-reclaiming).
       h.transport.setPullResponse(
         StagingPaths.remoteDeviceCookie,
         _makeRemoteCookie('ffffffffffffffffffffffffffffffff'),
@@ -1823,12 +1824,16 @@ void main() {
               'surface an error status');
 
       // The cookie conflict must have been routed through checkAndSync()
-      // (which destroys the mismatched local cookie), proving auto-push now
-      // consults the remote cookie rather than blindly pushing.
+      // (which preserves the mismatched local cookie), proving auto-push now
+      // consults the remote cookie rather than blindly pushing. Preserving it
+      // keeps the competing-owner mismatch detectable on the next tick
+      // (§12.3-A1 / I1: no silent reclaim).
       final cookie = await h.storage.get('cookie');
-      expect(cookie, isNull,
-          reason: 'Auto-sync must detect and destroy the mismatched cookie '
+      expect(cookie, isNotNull,
+          reason: 'Auto-sync must detect and preserve the mismatched cookie '
               'instead of silently pushing against a conflicting identity');
+      expect((cookie as Map)['device_specifier'], _knownSpecifier,
+          reason: 'Preserved cookie must retain its original specifier');
 
       await sub.cancel();
       await h.close();

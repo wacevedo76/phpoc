@@ -15,9 +15,9 @@
       "identity": {
         "username": "Test User",
         "email": "test@example.com",
-        "recovery_seed_enc": "cfa7e9db0e8dbbeec8639ed974c8ca185b367251fc5d65907f6a03fd6315f8dcf27c60af31ceccade91382a8e04c7f072ab89db2a7bc87d33ffe6b6deeb2cadc095b7390f7246704cb400652e019fc59048b5508103748e9f5ac8a0b9024a3d87db7855b",
+        "recovery_seed_enc": "23eb3d14c3a36ceafc26cc73ae5b2e7e5b8c8ab60067bd79bc94410e42a68bdf04841b915a0b304b3518eaaf0c95b354e5f4d474d588630f9c7f2b5082f0e5e36f42fc05e82e4a0a5650ddc86e5ab693d3c1622ddced4b8b5b4b5aefd6206de595b20881",
         "identity_pub_key": "9a2db2e23f1504cd056606553ac049c5e718e8f9ce9233876df1a7a1821af885",
-        "identity_secret_enc_fallback": "ff09c955fbffe0eac42e03e7c006466b5d7d4a451aa81d87642c61606c816dbe53d5980b972ad9e44526be604809403f7d6b7daad1352afc196dd13d3c26b04c5ebb10230234198dc1979f38039084880eb87eee4da27f277c7b6230f44229899fdf9de586bc9f794193e020cef0ff9b481f4035cfb667c1"
+        "identity_secret_enc_fallback": "7b4569b1e6944ce1e79e72818222e0e29383d68735c0560e19223bbdd0cce39eafe5bae172a84047870bf823f13c9e35f02e63a2e66fe35bb6aac83774f8f4bf89d73318a86f1d4eb489ac32779509841a28a5658635ecaef9e4f31a16182a4ee50f9eaa2caeace5778f41db71035d4289ef04e5b1a15b98"
       },
       "identity_seal": "0dca0c3ef9f42c9faa1c0e6581ebc2dce4a11fafb85071bc8ef8240a339a64b3",
       "format_version": "0.4.0"
@@ -28,65 +28,65 @@
       "prev_hash": "c287d4f9ba4c8ad533503f17aa41c689b4cabd3d851eddd3a6fd87125a85cdbe",
       "entries": [
         {
-          "hash": "978751a2f3d0d316e931478eb5fcc2176bcde3b5ad008128ce83c4b7668f391a",
+          "hash": "836f6de868f8adff0a49e6c3a8ed2bfb50ec6336628a3fac58f6503e03583e38",
           "data": {
             "title": "Alpha task",
-            "startTime_enc": "82624adaa8b4c415e2c8fc87175d4ef9e364551b54c132fa758d43eb51226a992a9d7a83fab258544d280940ebc9b5976ae1fc53c1898d0fc705aca22a792fa1861e",
-            "endTime_enc": "253ce7266ee621f024a49a3d793a9934c38b16fb36c2ab7f277cc9184a0c94fb02342342432f4af9cc0ed1ab435d1aa5bee9e82fe13311efebc58b11966d865b9605",
+            "startTime_enc": "33d50ef5d8b64773350beb042c953e6ea2849f05dd2264b7baabff3d7f4f4689526be4e81979c83809b16f35d207f6011950ac57e0bc13db7dda33f0c53f152c7909",
+            "endTime_enc": "5d3ea9dbddebee1564b0517d57ced29b6b6c9f6309c272edd4763cb1235ec68df4043399d837e9e4c035422c60289bd9ea30612a3a66494359caa2140c5b22d8af5d",
             "duration": 3600,
             "content_hash": "7fff19b77e8f9edb0dbaf3352317df44f51b433f55dfdf98b8d4b423fffa0dd9"
           },
           "start_epoch": 1767225600
         },
         {
-          "hash": "5913fc8f9fff47494d2c237350fdc6c176fc48e6934c948244b955ed62c6f6ef",
+          "hash": "d2c91bd5aa12c61c8745e48256e8cfaa523df7c4fe193cc09f7ebff1cfcf3090",
           "data": {
             "title": "Beta task",
-            "startTime_enc": "79cd68a4aad33ab57be7cd8a490811a632c6d412033bbddb3c3f95ee5b95c26093f7b10515ed5f8a95a9494489b7b52965a63a8a2977a7ae4bf3d15f0ece0d44f4b3",
-            "endTime_enc": "94464956bdba61e03d901d09918e8af7d6cfb53a28eeceb758e7731bc15d59a247aff54f3f00165c62e8b31a237fe03483accdd97cd17bdf98629edb730592762e01",
+            "startTime_enc": "ad919c5baf41724113df239a9c568d9051425030fb73f8d66e37493979d9a168cea7dd08e3d4a0fa92238d3452529d7988cb4ceb1392fea97bf3b70a05e3ea32949c",
+            "endTime_enc": "19d905610a933dd5a1528427d70de340f26a116c373beecadcb821592198c11622b2b05af4708703fc378f15bb9a695a1382adf4e45d09f9bf21426505591df52736",
             "duration": 1800,
             "content_hash": "2e521bcfb51b7a814ed1df788d933c227073c7ba97c92d5817cb6942339c15ba"
           },
           "start_epoch": 1767312000
         }
       ],
-      "day_hash": "1819548a0385ff28071aa93dc7a3cd0a9942b2e9da594039b81d98e1c7f3da06",
+      "day_hash": "bcda209c2ceed6646ac9c834721b0603321d643d5166aa0021e608cda764ebec",
       "date": "2026-01-02",
-      "block_hash": "1819548a0385ff28071aa93dc7a3cd0a9942b2e9da594039b81d98e1c7f3da06",
-      "identity_seal": "84681e7072de9b64424b4f7b5190cc4cb098786cdb0a5a7d75e8c10a31ed76f5"
+      "block_hash": "bcda209c2ceed6646ac9c834721b0603321d643d5166aa0021e608cda764ebec",
+      "identity_seal": "b823d05d879cfe059af2cb0d76c1dc348a40e39ee6d1d43560a47e0134fe8f4a"
     },
     {
       "type": "day",
       "day_index": 2,
-      "prev_hash": "1819548a0385ff28071aa93dc7a3cd0a9942b2e9da594039b81d98e1c7f3da06",
+      "prev_hash": "bcda209c2ceed6646ac9c834721b0603321d643d5166aa0021e608cda764ebec",
       "entries": [
         {
-          "hash": "2754aa2d864313e0ef9abeb7df6f5628b82d3d84295ca9c5269f5010775c9184",
+          "hash": "5099796acc2b6f38c33704601ae27187ced9d5a6e4a4023acdf0f2c4117cf44f",
           "data": {
             "title": "Gamma task",
-            "startTime_enc": "705bec62da5f928906dd558406de59d1c49eb8d32808eed4061f721743d65a584abf22312bc279ad53ac9121bac0fcb378247de86ab7eace4840045bb85c8210f917",
-            "endTime_enc": "56a376afe3f56b20d6f38661b2b6f38a26cd6d33998945b2c1bc6113d3ba5e9c72f7b78c945af6872d90f1237103812b8a448a4d29694a520f9adb077f9df90dd3b5",
+            "startTime_enc": "11d5115b39ede98cf9a744850da0bff23d1908e72c0aa0888c62f7424b82e250fe7df0aa25a9a949d5ccd616f318f88d41414ffacc3944bc3b499c2d9262bf56b143",
+            "endTime_enc": "98bb2a4145b67420f9036fe02e0405a8b4e0ddae5977290ea723c1795ee361298ac8e1bf3522a36dabf1ea79089b7e31b90bd1e5493b8a148871e72557c8d854a56d",
             "duration": 5400,
             "content_hash": "042f2ae498e0ede8210eb01f5aa4f7a15cc228ac5f2c624887e651f83033df85"
           },
           "start_epoch": 1767398400
         },
         {
-          "hash": "285cccb55a16dd9812efd52a59226495fd67ee628673504457d23f70abc42358",
+          "hash": "cb240fbadf417612ef56f9a79f41f1de4915cc6cdcd90cd1badd816829fbfc2c",
           "data": {
             "title": "Delta task",
-            "startTime_enc": "b6ee1a971f5319101d014848ecfe8aceace9b94574db7df1042ecb8be83c1be1e6bd64e580d5de338fa2a19b77ad90f9c4b265ff28316c118bc57c0c67af0aa0fc3b",
-            "endTime_enc": "546213404cd7caf15adf559e0d6a146e21babc59994a3594c4a316083b6e4432c0b6152da841825b5e32faeeac5f9cd45b647bcfb81ae9f54fd33d27e34d319c3659",
+            "startTime_enc": "2d5c1d700617bd19039ab8ecb462b48498147fb8005ec02b7d51997a5e3e10e4d8a8d3e62b48fcf3e2b5fef1f034ad58353c39e944e6f661130282a7352f2d844bcf",
+            "endTime_enc": "445db0eca9d8ef59dffaeb04a88ac1c04471c3a07fce546b840220054c183416b73f7c69657de3cda779a0e7a6959e3a4424869d1bda7eb02017622aab675600a73a",
             "duration": 7200,
             "content_hash": "f4cb83f03a6257b9b3cc61386facadcf32ac02b36182fef5a12d8a1de205c247"
           },
           "start_epoch": 1767484800
         }
       ],
-      "day_hash": "5588511b84bc72c1ba49bc48362a9c67a9f0ccd554288f6f061856e18e394871",
+      "day_hash": "d9906055717f59cfb923b56c1cee55671dca95f3b49a57c0bb158c65d48d7689",
       "date": "2026-01-03",
-      "block_hash": "5588511b84bc72c1ba49bc48362a9c67a9f0ccd554288f6f061856e18e394871",
-      "identity_seal": "144d28a10077b69508e8f15a2bf04f4f06fbed5b754bac8198ed3bd6266afd37"
+      "block_hash": "d9906055717f59cfb923b56c1cee55671dca95f3b49a57c0bb158c65d48d7689",
+      "identity_seal": "f1e560e07c5f47e8499505f4c18357245ff863bad4dd9423732dab37066d5214"
     }
   ]
 }

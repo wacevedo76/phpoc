@@ -151,4 +151,16 @@ Future<void> pumpShellScreen(
   );
 }
 
+/// Sets the test surface's logical size so orientation-dependent layout can be
+/// exercised deterministically (portrait bottom bar vs landscape left rail).
+///
+/// A device-pixel-ratio of 1 keeps the logical size equal to [physicalSize].
+/// Physical size is reset after the test via [addTearDown].
+void setSurfaceSize(WidgetTester tester, Size physicalSize) {
+  tester.view.physicalSize = physicalSize;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 

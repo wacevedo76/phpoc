@@ -21,7 +21,7 @@ then the follow-on slices (remote sync, key-rotation extension) that were still 
 | UI (screen / add-entry / topic index) | ✅ 40/40 | ✅ Phases 1–4 complete — 40 tests GREEN |
 | Settings surface | ✅ 46/46 | ✅ Phases 1–4 complete — 34 assertion IDs / 44 test cases GREEN (service 13 / rekey 7 / swap 6 / screen 18) |
 | Remote sync (`commonplace/...` R2 path + MK cookie) | ✅ 31/31 (2026-09-03, `b9baa2f`) | ✅ Phases 1–4 complete (2026-09-03) — 31 tests / 92 assertions GREEN (`COMMONPLACE_BOOK_SYNC_WEB_PHASE1.md`) |
-| Shared key-rotation extension (ADR-026 re-encrypts both books) | ⏸️ Pending | ❌ |
+| Shared key-rotation extension (ADR-026 re-encrypts both books) | 🔜 Flutter Phase 1 blueprint | ❌ |
 | Tag-search blind index | ⏸️ Deferred (both clients) | ❌ |
 
 ## ADR-031 facts (contract to mirror)
@@ -91,9 +91,11 @@ Each slice runs the 4-phase TDD loop (blueprint → RED → GREEN → REFACTOR),
 
 ### Slice 6 — Shared key-rotation extension (follow-on)
 
-**Depends on:** Flutter ADR-026 Commonplace extension (still ⏸️ Pending) + Slices 1–4.
+**Depends on:** Flutter ADR-026 Commonplace extension — 🔜 **Phase 1 blueprint done** (`docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md`, 59 assertions) + Slices 1–4.
 
 - Extend ADR-026 rotation to re-encrypt `commonplace.json` in lockstep with the activity ledger.
+- **Flutter prerequisite:** ADR-026 rotation itself is not yet in Flutter (only C-2 seed replacement). The
+  blueprint therefore also scopes Flutter `deriveMk` + `soft_rotate`/`hard_rotate` + per-version MK selection.
 - **C-2 note:** web `RekeyService` (`rekey_service.js`) currently treats Commonplace as N/A. Once Slices 1–4
   land, extend it to re-key `commonplace.json` in lockstep, mirroring Flutter `RekeyService.commonplaceService`.
 

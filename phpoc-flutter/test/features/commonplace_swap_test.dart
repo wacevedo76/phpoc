@@ -7,6 +7,7 @@ import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/features/commonplace/commonplace_screen.dart';
 import 'package:phpoc_flutter/features/shared/app_scaffold.dart';
 import 'package:phpoc_flutter/features/shared/book_switcher.dart';
+import 'test_helpers.dart';
 
 /// Phase 2 (RED) — Commonplace content swap in AppScaffold (Group R).
 ///
@@ -99,6 +100,7 @@ void main() {
     testWidgets(
         'CPUI-R4: the bottom nav still shows 4 tabs in the Commonplace book',
         (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
       await _pumpScaffold(
         tester,
         page: const SizedBox(),
@@ -129,6 +131,7 @@ void main() {
     testWidgets(
         'CPUI-R6: the active tab is preserved when switching books',
         (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
       // Start on the History tab (index 1) in the ledger book.
       final prefs = AppPreferences.testInstance();
       await prefs.setBookMode(Book.ledger.key);

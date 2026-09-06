@@ -1027,6 +1027,113 @@ void main() {
           reason: 'HistoryScreen must sort date groups newest-first');
     });
   });
+
+  // ═════════════════════════════════════════════════════════════
+  // Group L: HistoryScreen — Adaptive (landscape vs portrait) layout
+  // ═════════════════════════════════════════════════════════════
+
+  group('L: HistoryScreen — Adaptive layout', () {
+    Future<void> pumpSeededHistory(WidgetTester tester) async {
+      final db = AppDatabase.inMemory();
+      final crypto = CryptoService();
+      final storage = _InMemoryStorage();
+      final stagingStore = StagingStore(db);
+      final syncService = SyncService(
+          storage: storage, crypto: crypto, stagingStore: stagingStore);
+      final backupService = LedgerBackupService(db: db);
+
+      await seedTestLedger(
+        backupService: backupService,
+        stagingStore: stagingStore,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appLifecycleProvider.overrideWith((ref) {
+              final notifier = AppLifecycleNotifier();
+              notifier.goToReady();
+              return notifier;
+            }),
+            data_providers.databaseProvider.overrideWith((ref) => db),
+            data_providers.syncServiceProvider.overrideWith((ref) => syncService),
+          ],
+          child: MaterialApp(home: const HistoryScreen()),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+
+      // Clear the default today-date filter so June test-ledger entries show.
+      await _clearCalendarFilter(tester);
+    }
+
+    // L1 — Landscape splits calendar and activities side by side (50/50)
+    testWidgets(
+        'L1: landscape shows calendar and activities side by side (50/50)',
+        (tester) async {
+      setSurfaceSize(tester, const Size(1200, 600));
+      await pumpSeededHistory(tester);
+
+      expect(find.byType(CalendarMonthGrid), findsOneWidget,
+          reason: 'Calendar must render in landscape');
+      expect(find.byType(ListView), findsOneWidget,
+          reason: 'Activities list must render in landscape');
+
+      final calRect = tester.getRect(find.byType(CalendarMonthGrid));
+      final listRect = tester.getRect(find.byType(ListView));
+
+      // Side by side: calendar left, activities right.
+      expect(calRect.center.dx, lessThan(listRect.center.dx),
+          reason: 'Calendar must be to the left of the activities list');
+
+      // Roughly 50/50 split across the 1200-wide surface.
+      expect(calRect.right, lessThanOrEqualTo(600),
+          reason: 'Calendar must stay within the left ~50%');
+      expect(listRect.left, greaterThanOrEqualTo(600),
+          reason: 'Activities must stay within the right ~50%');
+    });
+
+    // L2 — Portrait keeps calendar above activities (stacked)
+    testWidgets(
+        'L2: portrait keeps calendar above activities (stacked)',
+        (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
+      await pumpSeededHistory(tester);
+
+      final calRect = tester.getRect(find.byType(CalendarMonthGrid));
+      final listRect = tester.getRect(find.byType(ListView));
+
+      expect(calRect.center.dy, lessThan(listRect.center.dy),
+          reason: 'Calendar must be above the activities list in portrait');
+      expect(calRect.center.dx, closeTo(listRect.center.dx, 1),
+          reason: 'Calendar and activities must share one column in portrait');
+    });
+
+    // L3 — Landscape shows a scrollbar on the activities list
+    testWidgets('L3: landscape activities list has a scrollbar',
+        (tester) async {
+      setSurfaceSize(tester, const Size(1200, 600));
+      await pumpSeededHistory(tester);
+
+      expect(find.byType(Scrollbar), findsOneWidget,
+          reason: 'Landscape activities list must show a scrollbar');
+      expect(find.byType(ListView), findsOneWidget,
+          reason: 'Activities list must still render alongside the scrollbar');
+    });
+
+    // L4 — Portrait has no scrollbar on the activities list
+    testWidgets('L4: portrait activities list has no scrollbar',
+        (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
+      await pumpSeededHistory(tester);
+
+      expect(find.byType(Scrollbar), findsNothing,
+          reason: 'Portrait activities list must not show a scrollbar');
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

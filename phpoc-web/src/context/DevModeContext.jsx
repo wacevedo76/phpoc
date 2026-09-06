@@ -919,36 +919,43 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
     // Verify genesis seal (I-17: genesis uses block_hash, pre-I-17 uses day_hash)
     try {
       const { jsonSort } = await import('../ledger/utils.js');
+      const { selectSealFields } = await import('../ledger/seal_fields.js');
       const hashKey = genesisBlock.block_hash ? 'block_hash' : 'day_hash';
-      // Must match Flutter/CLI seal payload:
-      //   Exclude all hash fields (block_hash, day_hash, month_hash, year_hash)
-      //   and signature, identity_seal, format_version, key_version.
+
+      // Canonical ADR-029/029a closed-set payload (mirror of Python
+      // select_seal_fields/compute_seal): only the per-type whitelist fields
+      // that are present — {type, day_index, date, prev_hash, entries,
+      // original_hash} for genesis — serialized with jsonSort(). Fields outside
+      // the row (identity, identity_seal, signature, format_version, key_version,
+      // hash keys) are NEVER sealed.
+      const checkData = selectSealFields(genesisBlock);
+      const sealDataCanonical = jsonSort(checkData);
+
+      // Backward-compat fallbacks for legacy ledgers sealed with the old
+      // open-set or Flutter-order payloads (pre-ADR-029a). Canonical is tried
+      // FIRST; these remain only as tolerance for old remote ledgers.
       const HASH_FIELDS = new Set(['block_hash', 'day_hash', 'month_hash', 'year_hash']);
-      const checkData = {};
+      const legacyCheckData = {};
       for (const [k, v] of Object.entries(genesisBlock)) {
         if (!HASH_FIELDS.has(k) && k !== 'signature' &&
             k !== 'identity_seal' && k !== 'format_version' && k !== 'key_version') {
-          checkData[k] = v;
+          legacyCheckData[k] = v;
         }
       }
-
-      // Try multiple serialization formats for cross-client compatibility:
-      // 1. Flutter/Dart: json.encode() — compact, type/day_index/date/prev_hash/entries order
-      // 2. Python/CLI:   json.dumps(obj, sort_keys=True) — sorted keys, ": " ", "
-      // 3. Compact-sorted: JSON.stringify with sorted keys (intermediate format)
 
       // Flutter genesis seal uses exact key order: type, day_index, date, prev_hash, entries
       const FLUTTER_ORDER = ['type', 'day_index', 'date', 'prev_hash', 'entries'];
       const flutterCheckData = {};
       for (const k of FLUTTER_ORDER) {
-        if (k in checkData) flutterCheckData[k] = checkData[k];
+        if (k in legacyCheckData) flutterCheckData[k] = legacyCheckData[k];
       }
       const sealDataFlutter = JSON.stringify(flutterCheckData);
-      const sealDataPython = jsonSort(checkData);
-      const sealDataCompactSorted = JSON.stringify(checkData, Object.keys(checkData).sort());
+      const sealDataLegacySorted = jsonSort(legacyCheckData);
+      const sealDataCompactSorted = JSON.stringify(legacyCheckData, Object.keys(legacyCheckData).sort());
 
-      let valid = crypto.verifySeal(sealDataFlutter, genesisBlock[hashKey], masterKey);
-      if (!valid) valid = crypto.verifySeal(sealDataPython, genesisBlock[hashKey], masterKey);
+      let valid = crypto.verifySeal(sealDataCanonical, genesisBlock[hashKey], masterKey);
+      if (!valid) valid = crypto.verifySeal(sealDataFlutter, genesisBlock[hashKey], masterKey);
+      if (!valid) valid = crypto.verifySeal(sealDataLegacySorted, genesisBlock[hashKey], masterKey);
       if (!valid) valid = crypto.verifySeal(sealDataCompactSorted, genesisBlock[hashKey], masterKey);
       if (!valid) {
         throw new Error('Seal verification failed');

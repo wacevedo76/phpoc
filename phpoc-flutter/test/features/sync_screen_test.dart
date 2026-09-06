@@ -781,7 +781,7 @@ void main() {
 
     // S3.2
     testWidgets('S3.2: remote cookie mismatch via the forced path still yields '
-        'reauthNeeded and clears the local cookie', (tester) async {
+        'reauthNeeded and preserves the local cookie', (tester) async {
       // A real (un-spied) service with a mismatched remote cookie: the forced
       // reconcile must still detect the mismatch and require re-auth.
       final storage = _TestStorage();
@@ -806,8 +806,12 @@ void main() {
       final result = await realSvc.checkAndSync(skipReadOnlyFastPath: true);
       expect(result, SyncCheckResult.reauthNeeded,
           reason: 'Forced reconcile must not weaken cookie/reauth security');
-      expect(await storage.get('cookie'), isNull,
-          reason: 'Mismatch must destroy the stale local cookie');
+      final cookie = await storage.get('cookie');
+      expect(cookie, isNotNull,
+          reason: 'Mismatch must preserve the local cookie so the competing '
+              'owner stays detectable on the next sync (§12.3-A1 / I1)');
+      expect((cookie as Map)['device_specifier'], 'aaaa',
+          reason: 'Preserved cookie must retain its original specifier');
       await db.close();
     });
 

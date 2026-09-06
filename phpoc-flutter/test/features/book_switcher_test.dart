@@ -6,6 +6,7 @@ import 'package:phpoc_flutter/data/storage/preferences.dart';
 import 'package:phpoc_flutter/data/storage/providers.dart' as data_providers;
 import 'package:phpoc_flutter/features/shared/app_scaffold.dart';
 import 'package:phpoc_flutter/features/shared/book_switcher.dart';
+import 'test_helpers.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // Commonplace Book Switcher — Phase 1 blueprint assertions (13 tests)
@@ -163,6 +164,7 @@ void main() {
 
     testWidgets('BS-D2: bottom nav still has 4 tabs when switcher present',
         (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
       await _pumpScaffoldInRouter(tester, const SizedBox());
       final navBar =
           tester.widget<NavigationBar>(find.byType(NavigationBar));

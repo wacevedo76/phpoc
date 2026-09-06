@@ -140,16 +140,21 @@ model). Staging rows for the Commonplace book sync like ledger staging rows.
 
 **Unblock criteria:** Commonplace UI wiring (add/commit/read) is done so there is content to sync.
 
-### ⏸️ Commonplace shared key-rotation extension — ADR-026
+### 🟠 Commonplace shared key-rotation extension — ADR-026
 
-**Status:** ⏸️ Pending.
+**Status:** 🟠 Flutter Phase 1 (test-exploration blueprint) DONE — `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (59 assertions, groups A–E). Phase 2 (RED) pending.
 
 **What:** Extend the existing key-rotation workflow (ADR-026) so a rotation **also re-encrypts the Commonplace
 chain(s)**, not just the activity ledger. The Commonplace chain already records the seed's `key_version` in its
 genesis (CP-A10), so it participates in the same rotation path.
 
-**Unblock criteria:** Commonplace chain + UI are functional; rotation code is ready to generalize from
-ledger-only to both sealed chains.
+**Flutter prerequisite (larger than the extension):** Flutter has **no ADR-026 rotation at all** — only the C-2
+raw-seed replacement (`RekeyService.rekey()`, ADR-032, which already re-encrypts `commonplace.json` with no
+`key_version` bump). This slice therefore also delivers Flutter `deriveMk(seed, version)` + `soft_rotate`/`hard_rotate`
+(new `KeyRotationService`) + per-version MK selection in `LedgerChain.verify()`/`CommonplaceChain.verify()`.
+
+**Unblock criteria:** (1) resolve blueprint D-ROT-1 (`key_version` base: canonical v0-raw/v≥1-HMAC vs Flutter's
+hardcoded v1); (2) Phase 2–4 TDD on the 59 assertions; (3) then the Web port mirrors it (Slice 6).
 
 ### ⏸️ Commonplace tag-search blind index
 

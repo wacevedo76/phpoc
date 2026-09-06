@@ -506,7 +506,12 @@ class SyncService {
             _lastPushAt = DateTime.now().millisecondsSinceEpoch;
             return SyncCheckResult.ready;
           } else {
-            await _cookie.destroyLocally(storage);
+            // A1: specifier mismatch — another device claimed staging.
+            // DO NOT destroy the local cookie: preserving it is what lets the
+            // next checkAndSync re-detect the mismatch and return
+            // REAUTH_NEEDED again (§12.3-A1 / invariant I1 — user must
+            // consent). The cookie is only refreshed in reconcileAndClaim()
+            // after an explicit re-authentication.
             return SyncCheckResult.reauthNeeded;
           }
         }
@@ -538,6 +543,18 @@ class SyncService {
   }
 
   Future<void> initialPull() async {
+    await _reconcileAndClaimRowLevel();
+  }
+
+  /// Claim staging ownership after an explicit re-authentication.
+  ///
+  /// Mirrors the CLI `_reconcile_and_claim()` post-auth contract: the caller
+  /// routes here after [checkAndSync] returns [SyncCheckResult.reauthNeeded]
+  /// and the user has re-entered the passphrase. Pulls the remote ledger first
+  /// (ADR-030), then reconciles staging rows and (re)claims the device cookie.
+  Future<void> reconcileAndClaim() async {
+    if (transport == null) return;
+    await _reconcileLedgerOnHandoff();
     await _reconcileAndClaimRowLevel();
   }
 

@@ -263,7 +263,30 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         setState(() => _isSyncing = false);
         final reauthOk = await _promptReauth();
         if (reauthOk == true && mounted) {
-          _syncNow();
+          // Explicit re-auth succeeded → claim staging ownership directly
+          // (mirrors the CLI "_reconcile_and_claim()" post-auth contract).
+          // Re-running checkAndSync here would loop: the local cookie is now
+          // preserved on mismatch, so the gate keeps returning REAUTH_NEEDED
+          // until reconcileAndClaim() refreshes the cookie.
+          try {
+            await sync.reconcileAndClaim();
+            if (mounted) {
+              setState(() {
+                _status = SyncCheckResult.ready;
+                _isSyncing = false;
+                _lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+              });
+            }
+          } catch (_) {
+            if (mounted) {
+              setState(() {
+                _isSyncing = false;
+                _status = SyncCheckResult.offline;
+                _errorMessage = 'Sync failed — could not reach remote';
+              });
+            }
+          }
+          if (mounted) await _refreshStatus();
         }
         return;
       }

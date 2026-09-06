@@ -14,6 +14,7 @@ import 'package:phpoc_flutter/features/shared/app_scaffold.dart';
 import 'package:phpoc_flutter/features/shared/book_switcher.dart';
 import 'package:phpoc_flutter/services/auth_service.dart';
 import 'package:phpoc_flutter/theme/app_theme.dart';
+import 'test_helpers.dart';
 
 /// Phase 2 (RED) — Commonplace Book Settings screen + shell routing.
 ///
@@ -221,6 +222,7 @@ void main() {
 
     testWidgets('CPS-S3: with Book.commonplace active, the Settings tab is '
         'selected (index 3)', (tester) async {
+      setSurfaceSize(tester, const Size(600, 800));
       await _pumpScaffold(
         tester,
         location: '/settings',

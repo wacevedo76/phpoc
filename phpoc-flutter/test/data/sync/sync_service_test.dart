@@ -1459,7 +1459,7 @@ void main() {
 
     // M4
     test('M4: mismatch — valid local + different remote specifier → '
-        'destroyLocal → REAUTH_NEEDED', () async {
+        'preserve cookie → REAUTH_NEEDED', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
 
@@ -1493,8 +1493,8 @@ void main() {
     });
 
     // M5
-    test('M5: mismatch — verify cookie removed from storage after '
-        'destroyLocal', () async {
+    test('M5: mismatch — cookie preserved and re-detected on the next sync '
+        '(no silent reclaim)', () async {
       final storage = _FakeStorage();
       final crypto = await _makeCrypto();
 
@@ -1524,13 +1524,28 @@ void main() {
         SyncCheckResult.reauthNeeded,
         reason: 'Mismatched remote cookie must require reauth',
       );
+
+      // The cookie must be PRESERVED (not destroyed) — it is the only memory
+      // of the competing owner, and destroying it would let the next periodic
+      // tick auto-reclaim staging without user consent (§12.3-A1 / I1).
       final cookie = await storage.get('cookie');
+      expect(cookie, isNotNull, reason: 'Mismatch must preserve the cookie');
       expect(
-        cookie,
-        isNull,
+        (cookie as Map)['device_specifier'],
+        _knownSpecifier,
+        reason: 'Preserved cookie must retain its original specifier',
+      );
+
+      // Regression: a SECOND checkAndSync must re-detect the mismatch and
+      // return REAUTH_NEEDED again — it must NOT auto-reclaim (no silent
+      // reconcile-and-claim, which would have returned READY).
+      final second = await svc.checkAndSync(skipReadOnlyFastPath: true);
+      expect(
+        second,
+        SyncCheckResult.reauthNeeded,
         reason:
-            'Mismatch must destroy local cookie — stale cookie left '
-            'behind would carry wrong device identity',
+            'Mismatch must stay detectable on subsequent syncs until the '
+            'user re-authenticates and calls reconcileAndClaim()',
       );
     });
 

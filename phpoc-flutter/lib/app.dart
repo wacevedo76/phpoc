@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'data/storage/preferences.dart';
@@ -5,6 +6,21 @@ import 'data/storage/providers.dart' show periodicSyncCoordinatorProvider;
 import 'features/shared/book_switcher.dart' show Book, bookProvider;
 import 'routing/app_router.dart';
 import 'theme/app_theme.dart';
+
+/// Scroll behavior that accepts mouse (wheel) and trackpad input in addition
+/// to touch. Flutter's default Android [ScrollBehavior] only recognizes
+/// touch-like devices, so wheel-scrolling on the desktop emulator does
+/// nothing. This makes lists scroll with the mouse wheel during development
+/// and on desktop targets without affecting phone touch scrolling.
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        ...super.dragDevices,
+        PointerDeviceKind.mouse,
+      };
+}
 
 /// Base notifier for a persisted [ThemeVariant]. The Ledger and Commonplace
 /// themes share the same load/set/parse behaviour (ADR-031 per-book theme);
@@ -100,6 +116,7 @@ class PhpocApp extends ConsumerWidget {
       title: 'PH Ledger',
       theme: AppTheme.build(variant),
       themeMode: ThemeMode.light, // single-theme — variant selects palette
+      scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
       debugShowCheckedModeBanner: false,
     );

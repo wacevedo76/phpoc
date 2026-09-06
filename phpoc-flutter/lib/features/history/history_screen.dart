@@ -25,6 +25,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   String? _selectedCalendarDate;
   int? _expandedIndex;
   int _sortMode = 0; // 0 = by time, 1 = by duration
+  final ScrollController _listScrollController = ScrollController();
 
   int _calendarMonth;
   int _calendarYear;
@@ -39,6 +40,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   void initState() {
     super.initState();
     _loadEntries();
+  }
+
+  @override
+  void dispose() {
+    _listScrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadEntries() async {
@@ -253,66 +260,106 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   Widget _buildBody() {
     final dateGrouped = _buildDateGroups();
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
 
-    return Column(
-      children: [
-        if (_rangeFilteredEntries.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: CalendarMonthGrid(
-              month: _calendarMonth,
-              year: _calendarYear,
-              datesWithEntries: _datesWithEntries(),
-              selectedDate: _selectedCalendarDate,
-              onDateSelected: _onCalendarDateSelected,
-              onPreviousMonth: _onPreviousMonth,
-              onNextMonth: _onNextMonth,
-              onYearChanged: _onYearChanged,
-            ),
+    // Landscape: calendar (left) and activities (right) side by side,
+    // each taking 50% of the remaining width. When there are no entries,
+    // fall back to the full-width layout so the empty state isn't stranded
+    // in one half.
+    if (isLandscape && _rangeFilteredEntries.isNotEmpty) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: SingleChildScrollView(child: _buildCalendar()),
           ),
-        if (_filterFrom != null || _selectedCalendarDate != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: Column(
               children: [
-                if (_filterFrom != null && _filterTo != null) ...[
-                  Chip(
-                    label: Text(
-                      '${FormatUtils.dateShort(_filterFrom!)} \u2013 ${FormatUtils.dateShort(_filterTo!)}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    onDeleted: _clearRangeFilter,
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                if (_selectedCalendarDate != null)
-                  Chip(
-                    label: Text(
-                      _formatCalendarChipLabel(_selectedCalendarDate!),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    onDeleted: _clearCalendarFilter,
-                  ),
-                const Spacer(),
-                Text(
-                  '${_filtered.length} entries',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                if (_filterFrom != null || _selectedCalendarDate != null)
+                  _buildFilterBar(),
+                Expanded(
+                    child: _buildListOrEmpty(dateGrouped, scrollbar: true)),
               ],
             ),
           ),
-        Expanded(
-          child: _filtered.isEmpty
-              ? Center(
-                  child: (_filterFrom != null ||
-                          _selectedCalendarDate != null)
-                      ? _buildFilteredEmpty()
-                      : _buildEmpty(),
-                )
-              : _buildEntryList(dateGrouped),
-        ),
+        ],
+      );
+    }
+
+    // Portrait (and empty-landscape fallback): calendar, filter bar,
+    // and list stacked vertically.
+    return Column(
+      children: [
+        if (_rangeFilteredEntries.isNotEmpty) _buildCalendar(),
+        if (_filterFrom != null || _selectedCalendarDate != null)
+          _buildFilterBar(),
+        Expanded(child: _buildListOrEmpty(dateGrouped)),
       ],
     );
+  }
+
+  Widget _buildCalendar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: CalendarMonthGrid(
+        month: _calendarMonth,
+        year: _calendarYear,
+        datesWithEntries: _datesWithEntries(),
+        selectedDate: _selectedCalendarDate,
+        onDateSelected: _onCalendarDateSelected,
+        onPreviousMonth: _onPreviousMonth,
+        onNextMonth: _onNextMonth,
+        onYearChanged: _onYearChanged,
+      ),
+    );
+  }
+
+  Widget _buildFilterBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          if (_filterFrom != null && _filterTo != null) ...[
+            Chip(
+              label: Text(
+                '${FormatUtils.dateShort(_filterFrom!)} \u2013 ${FormatUtils.dateShort(_filterTo!)}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              onDeleted: _clearRangeFilter,
+            ),
+            const SizedBox(width: 8),
+          ],
+          if (_selectedCalendarDate != null)
+            Chip(
+              label: Text(
+                _formatCalendarChipLabel(_selectedCalendarDate!),
+                style: const TextStyle(fontSize: 12),
+              ),
+              onDeleted: _clearCalendarFilter,
+            ),
+          const Spacer(),
+          Text(
+            '${_filtered.length} entries',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListOrEmpty(List<_DateGroup> dateGrouped,
+      {bool scrollbar = false}) {
+    if (_filtered.isEmpty) {
+      return Center(
+        child: (_filterFrom != null || _selectedCalendarDate != null)
+            ? _buildFilteredEmpty()
+            : _buildEmpty(),
+      );
+    }
+    return _buildEntryList(dateGrouped, scrollbar: scrollbar);
   }
 
   String _formatCalendarChipLabel(String dateStr) {
@@ -323,7 +370,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     return dateStr;
   }
 
-  Widget _buildEntryList(List<_DateGroup> groups) {
+  Widget _buildEntryList(List<_DateGroup> groups, {bool scrollbar = false}) {
     final flatItems = <_FlatItem>[];
     for (final group in groups) {
       flatItems.add(_FlatItem.header(group.label));
@@ -332,7 +379,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       }
     }
 
-    return ListView.builder(
+    final list = ListView.builder(
+      controller: _listScrollController,
       itemCount: flatItems.length,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       itemBuilder: (_, index) {
@@ -353,6 +401,13 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         return _buildEntryTile(globalIndex >= 0 ? globalIndex : index,
             entry: item.entry);
       },
+    );
+
+    if (!scrollbar) return list;
+    return Scrollbar(
+      controller: _listScrollController,
+      thumbVisibility: true,
+      child: list,
     );
   }
 
