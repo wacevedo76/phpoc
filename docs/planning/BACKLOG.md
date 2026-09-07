@@ -142,7 +142,7 @@ model). Staging rows for the Commonplace book sync like ledger staging rows.
 
 ### 🟠 Commonplace shared key-rotation extension — ADR-026 (amended by ADR-026a)
 
-**Status:** 🟠 Flutter Phase 1 (test-exploration blueprint) DONE — `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (59 assertions, groups A–E). **D-ROT-1 resolved by ADR-026a (2026-09-07)**; blueprint must be re-scoped (drop soft rotation + per-block `key_version` + per-version `verify()`) before Phase 2 (RED).
+**Status:** 🟠 Flutter Phase 1 (test-exploration blueprint) DONE — `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (**48 assertions, groups A/C/D/E — re-scoped to hard-only**). **D-ROT-1 resolved by ADR-026a (2026-09-07)**; blueprint re-scoped (soft rotation + per-block `key_version` + per-version `verify()` dropped) → next Phase 2 (RED).
 
 **What:** Extend the key-rotation workflow (ADR-026, amended by ADR-026a — **hard-only**, `key_version` out-of-band)
 so a rotation **also re-encrypts the Commonplace chain(s)**, not just the activity ledger. The Commonplace chain
@@ -154,9 +154,9 @@ raw-seed replacement (`RekeyService.rekey()`, ADR-032, which already re-encrypts
 (new `KeyRotationService`) + Commonplace lockstep re-encrypt. Per-version MK selection in `verify()` is **dropped**
 (ADR-026a: single-MK verify).
 
-**Unblock criteria:** (1) ~~resolve D-ROT-1~~ ✅ **DONE (ADR-026a)**; (2) re-scope the 59 assertions to hard-only
-(drop Group B soft-rotation, C3/D1/D6 key_version bumps, E2/E5/E6 soft-recovery) then Phase 2–4 TDD; (3) then the
-Web port mirrors it (Slice 6).
+**Unblock criteria:** (1) ~~resolve D-ROT-1~~ ✅ **DONE (ADR-026a)**; (2) ~~re-scope the 59 assertions to hard-only~~
+✅ **DONE (48 assertions, groups A/C/D/E — Group B dropped, C3/D1/D6/E2/E5/E6 key_version/soft steps removed)** then
+Phase 2–4 TDD; (3) then the Web port mirrors it (Slice 6).
 
 ### ⏸️ Commonplace tag-search blind index
 

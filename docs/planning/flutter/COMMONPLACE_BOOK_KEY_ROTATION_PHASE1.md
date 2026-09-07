@@ -2,10 +2,10 @@
 
 > **Plan:** this file — the **shared key-rotation extension** slice (Commonplace roadmap Slice 6)
 > **ADR:** ADR-026 (versioned MKs), **ADR-026a (`key_version` out-of-band, hard-only rotation — resolves D-ROT-1)**, ADR-031 (Commonplace shared MK), ADR-032 (C-2 seed replacement — orthogonal)
-> **Reference (Python):** `security/crypto.py::derive_mk` + `phpoc_cli/rotate_keys.py` (`RotateKeysCommand.soft_rotate`/`hard_rotate`), `docs/planning/I01_KEY_ROTATION_PHASE1.md`, `docs/planning/I01A_ROTATEKEYS_EXECUTION_PHASE1.md`
+> **Reference (Python):** `security/crypto.py::derive_mk` + `phpoc_cli/rotate_keys.py` (`RotateKeysCommand.hard_rotate`; `soft_rotate` superseded by ADR-026a), `docs/planning/I01_KEY_ROTATION_PHASE1.md`, `docs/planning/I01A_ROTATEKEYS_EXECUTION_PHASE1.md`
 > **Reference (Web):** `phpoc-web/src/crypto/index.js::deriveMk` + `CryptoManager` `keyVersion` (`phpoc-web/test/i01_key_rotation_web_test.mjs`)
 > **Purpose:** Blueprint of all test assertions needed to (1) implement **ADR-026 versioned-MK rotation in Flutter** (the missing prerequisite) and (2) extend it to **re-encrypt the Commonplace chain in lockstep** — the Flutter half of Commonplace Slice 6.
-> **Status:** 🔜 Phase 1 (test exploration)
+> **Status:** 🔜 Phase 1 (test exploration — **re-scoped to hard-only per ADR-026a, 2026-09-07**)
 > **Next Phase:** Phase 2 (RED: test definition)
 
 ## Scope & Decision
@@ -17,21 +17,12 @@ Therefore this slice is scoped in two coupled halves:
 1. **Flutter ADR-026 key rotation** — add versioned-MK derivation + **hard-only** rotation orchestration (mirroring Python `RotateKeysCommand.hard_rotate`). This is the genuinely-missing piece.
 2. **Commonplace lockstep** — extend that rotation to re-encrypt `commonplace.json` in the same operation (generalizing the existing `RekeyService._buildRebuiltCommonplace` from raw-seed re-key to versioned rotation).
 
-> **⚠️ Re-scoped by ADR-026a (Decided 2026-09-07).** This Phase 1 blueprint was written against
-> ADR-026's original design (soft + hard rotation, per-block `key_version`, per-version `verify()`).
-> ADR-026a supersedes that: `key_version` is **out-of-band derivation metadata** (not a ledger field),
-> rotation is **hard-only**, and `verify()` takes a **single** MK. **Phase 2 (RED) must apply these
-> changes to the assertion groups before writing tests:**
-> - **Group A** (`deriveMk`) — unchanged (v0 raw / v≥1 HMAC still correct).
-> - **Group B** (soft rotation) — **dropped entirely** (B1–B14).
-> - **Group C** (hard rotation) — survives, but **C3 ("updates `key_version` on every block") is
->   dropped** — blocks never store `key_version`.
-> - **Group D** (Commonplace lockstep) — survives, but **D1/D6 (bump `key_version`) are dropped**;
->   lockstep re-encrypt (D5/D7/D8) and atomicity (D10) survive.
-> - **Group E** (parity/recovery/edges) — **E2/E5/E6 (soft-rotation recovery/multi-rotation/idempotency)
->   are dropped**; E4 (legacy Flutter `key_version=1` raw seed → v=0) survives; E9 (seal-whitelist)
->   becomes trivially true (no `key_version` is ever written).
-> - The "per-version MK selection" rationale on B10/C13/D9/E9 is **dropped** — single-MK `verify()`.
+> **Re-scoped to hard-only (2026-09-07, ADR-026a).** The original 59-assertion blueprint assumed soft + hard
+> rotation, per-block `key_version`, and per-version MK selection in `verify()`. ADR-026a supersedes that:
+> `key_version` is **out-of-band derivation metadata** (not a ledger field), rotation is **hard-only**, and
+> `verify()` takes a **single** MK. This file now reflects that: **Group B (soft rotation) is removed**, its
+> still-relevant steps (mutable-state re-encryption, auth gate, integrity check, offline, cookie rotation)
+> folded into Group C; all `key_version`-write and per-version-verify assertions are dropped.
 
 > **Note:** `ROADMAP.md` currently marks this slice "Flutter done ✅ via Settings slice 2026-08-24". That conflates the C-2 re-key (done) with ADR-026 rotation (not done). This blueprint corrects that; `ROADMAP.md`/`BACKLOG.md` should be reconciled.
 
@@ -61,14 +52,14 @@ One capability Flutter **currently lacks** and must gain (asserted in this bluep
 ## Divergences & Design Notes (resolved before Phase 2)
 
 - **D-ROT-1 — `key_version` base. ✅ RESOLVED by ADR-026a (2026-09-07).** `key_version` is **out-of-band derivation metadata, not a ledger field**: v=0 = raw seed, v≥1 = HMAC-derived (`derive_mk`). Rotation is **hard-only**; soft rotation is dropped. A legacy Flutter `key_version=1`-but-raw-seed chain is treated as v=0 (raw seed). Blocks never store `key_version`, so there is no per-block relabel. See `docs/design/ARCHITECTURAL_DECISIONS.md` ADR-026a.
-- **D-ROT-2 — `recovery_seed_enc` is PDK-encrypted, not MK-encrypted.** Rotation (same seed, same passphrase) leaves `recovery_seed_enc` **unchanged**; only `identity_secret_enc_fallback` (MK-encrypted) is re-encrypted. The C-2 re-key re-encrypts `recovery_seed_enc` only because it also mints a new seed/passphrase. This distinction is asserted in B3/D3.
-- **D-ROT-3 — `key_version` is NOT in the ADR-029a seal whitelist.** Bumping `key_version` is seal-neutral; the block hash changes **only** because the seal sub-key (`HMAC(MK_vN, "integrity-key-salt")`) changes. Asserted in E10.
-- **D-ROT-4 — `format_version`.** Python ADR-026 assumes `key_version` support requires `format_version ≥ 0.5.0`; Flutter already writes `key_version` at `0.4.0`. Do **not** force a format bump in Flutter (D9) — leave `format_version` unchanged unless a later cross-client decision requires it.
-- **D-ROT-5 — API placement.** New `KeyRotationService` (`lib/services/key_rotation_service.dart`) mirrors Python `RotateKeysCommand`; the C-2 `RekeyService` stays as-is. Phase 4 will DRY the shared per-`_enc` re-encrypt + seal helpers between the two.
+- **D-ROT-2 — `recovery_seed_enc` is PDK-encrypted, not MK-encrypted.** Rotation (same seed, same passphrase) leaves `recovery_seed_enc` **unchanged**; only `identity_secret_enc_fallback` (MK-encrypted) is re-encrypted. The C-2 re-key re-encrypts `recovery_seed_enc` only because it also mints a new seed/passphrase. This distinction is asserted in C6/D2.
+- **D-ROT-3 — `key_version` is not a ledger field (ADR-026a).** Since `key_version` is never written to blocks, there is no seal-whitelist interaction and no "seal-neutral bump" to reason about. The block hash changes **only** because the seal sub-key (`HMAC(MK_vN, "integrity-key-salt")`) changes. Asserted in E5.
+- **D-ROT-4 — `format_version`.** Flutter currently writes `key_version` at format `0.4.0`. Under ADR-026a Flutter **stops writing `key_version`** entirely (no per-block field), with **no** format bump required (D9) — leave `format_version` unchanged unless a later cross-client decision requires it.
+- **D-ROT-5 — API placement.** New `KeyRotationService` (`lib/services/key_rotation_service.dart`) mirrors Python `RotateKeysCommand.hard_rotate`; the C-2 `RekeyService` stays as-is. Phase 4 will DRY the shared per-`_enc` re-encrypt + seal helpers between the two.
 
 ## Test Groups
 
-### Group A: versioned-MK derivation (`deriveMk`) — ~9 tests
+### Group A: versioned-MK derivation (`deriveMk`) — 9 tests
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
@@ -82,106 +73,98 @@ One capability Flutter **currently lacks** and must gain (asserted in this bluep
 | A8 | `deriveMk(seed, 1)` is not derivable from `deriveMk(seed, 2)` without the seed (domain separation) | Non-invertibility | HMAC is a PRF — an attacker with MK_v2 cannot compute MK_v1/v3 |
 | A9 | versioned MK feeds sub-key derivation — `deriveSealKey(MK_v1) != deriveSealKey(MK_v2)` | Sub-key rotation | Seal/blob/index/field/cookie keys must change with the MK version or rotation is meaningless |
 
-### Group B: soft rotation orchestration (activity ledger) — ~14 tests (⚠️ DROPPED — ADR-026a)
+### Group B — soft rotation (activity ledger) — REMOVED (ADR-026a)
+
+Soft rotation (bump genesis `key_version`, leave day/summary blocks under their old version, per-version
+`verify()`) is **dropped** — ADR-026a makes rotation hard-only and removes per-block `key_version`. Its
+still-relevant steps are folded into **Group C**: mutable-state re-encryption (identity fallback, staging,
+blind index, cookie, genesis re-seal) is now an explicit part of the single hard-rotation operation, alongside
+the full entry re-encryption.
+
+### Group C: hard rotation orchestration (activity ledger) — 24 tests
+
+Phases: **gates → mutable-state re-encryption → full chain re-encryption → backup → edges**.
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
-| B1 | `softRotate()` bumps genesis `key_version` N → N+1 on disk | Version increment persisted | The defining property of rotation (D4) |
-| B2 | re-encrypts `identity_secret_enc_fallback` under MK_v(N+1) — old MK can't decrypt, new MK decrypts to the same plaintext | Identity envelope rotation | Identity secret is MK-encrypted and must move to the new key |
-| B3 | leaves `recovery_seed_enc` **unchanged** | PDK-vs-MK distinction | The seed envelope is passphrase-encrypted, not MK-encrypted (D-ROT-2) |
-| B4 | re-encrypts staging entries under the new MK (old can't, new can) | Staging re-encryption | All mutable MK-encrypted state moves to MK_v(N+1) |
-| B5 | re-encrypts the blind index under the new index key | Index re-encryption | Index is a derived cache encrypted with a versioned sub-key |
-| B6 | rotates the device cookie (fresh specifier) | Cookie rotation | Post-rotation device identity must be regenerated |
-| B7 | re-seals genesis under MK_v(N+1) — old seal fails verify, new passes | Genesis re-seal | block_hash must reflect the new seal sub-key |
-| B8 | recomputes genesis `identity_seal` over the new block_hash | Identity MAC update | The MAC binds the block hash, which changed |
-| B9 | leaves day/summary blocks untouched (same `key_version`, ciphertext, seals) | Block preservation | D5 — soft rotation is non-destructive |
-| B10 | `LedgerChain.verify()` passes on the mixed-version chain (old vN blocks + new v(N+1) genesis) | Post-rotation integrity | Requires per-version MK selection (new capability) |
-| B11 | session MK cache is populated with MK_v(N+1) after rotation | Session update | Subsequent encrypt/seal uses the new key |
-| B12 | passphrase re-entry gate — wrong passphrase → no mutation | Auth gate | Rotation re-verifies ownership before any write |
-| B13 | pre-rotation integrity check — corrupt chain → abort with no partial write | Pre-flight safety | Never rotate a corrupted chain (D10) |
-| B14 | empty staging + no transport → completes locally (offline) | Offline rotation | D6 — rotation must not require network |
+| C1 | `rotate()` re-verifies ownership — wrong passphrase → no mutation | Auth gate | Rotation re-verifies ownership before any write (D2) |
+| C2 | pre-rotation integrity check — corrupt chain → abort with no partial write | Pre-flight safety | Never rotate a corrupted chain (D10) |
+| C3 | rotation with no cached MK (locked session) throws / returns false | Auth gate | Cannot rotate without a real master key |
+| C4 | empty staging + no transport → completes locally (offline) | Offline rotation | D6 — rotation must not require network |
+| C5 | re-encrypts `identity_secret_enc_fallback` under MK_v(N+1) — old MK can't decrypt, new MK decrypts to the same plaintext | Identity envelope rotation | Identity secret is MK-encrypted and must move to the new key |
+| C6 | leaves `recovery_seed_enc` **unchanged** | PDK-vs-MK distinction | Seed envelope is passphrase-encrypted, not MK-encrypted (D-ROT-2) |
+| C7 | re-encrypts staging entries under the new MK (old can't, new can) | Staging re-encryption | All mutable MK-encrypted state moves to MK_v(N+1) |
+| C8 | re-encrypts the blind index under the new index key | Index re-encryption | Index is a derived cache encrypted with a versioned sub-key |
+| C9 | rotates the device cookie (fresh specifier) | Cookie rotation | Post-rotation device identity must be regenerated |
+| C10 | re-seals genesis under MK_v(N+1) — old seal fails verify, new passes | Genesis re-seal | block_hash must reflect the new seal sub-key |
+| C11 | recomputes genesis `identity_seal` over the new block_hash | Identity MAC update | The MAC binds the block hash, which changed |
+| C12 | updates the in-memory MK to MK_v(N+1) after rotation | Session update | Subsequent encrypt/seal uses the new key |
+| C13 | re-encrypts every day-block entry `_enc` field under MK_v(N+1) | Full entry re-encryption | All ciphertext moves to the new key |
+| C14 | recomputes every ciphertext-bound entry `hash` | Entry hash update | Ciphertext changed → entry hash changed |
+| C15 | recomputes every block seal under the new seal key | Block seal update | All block hashes move to MK_v(N+1) |
+| C16 | recomputes every `identity_seal` | Identity MAC update | Block content changed → MAC recomputed |
+| C17 | re-links every `prev_hash` to the predecessor's **new** seal | Chain re-link | Seal change cascades; linkage must follow |
+| C18 | `content_hash` is **unchanged** after hard rotation | Content-hash invariance | content_hash is over plaintext (ADR-005), survives re-encryption |
+| C19 | old MK_v(N) cannot decrypt any active-chain entry after hard rotation | Old-MK invalidation | Security property of full rotation |
+| C20 | `LedgerChain.verify()` passes on the rewritten chain (single MK) | Post-rotation integrity | Single-MK chain verifies (ADR-026a) |
+| C21 | creates a timestamped backup of the pre-rotation chain before writing | Backup | D5 — destructive rewrite requires a backup |
+| C22 | backup independently verifies with the **old** MK | Backup integrity | Backup must be a complete recoverable chain |
+| C23 | backup includes staging + index + cookie (not just the ledger) | Complete backup | Recovery needs all mutable state |
+| C24 | genesis-only chain (no day blocks) completes hard rotation | Empty-chain edge | Rotating an empty ledger succeeds (only mutable state) |
 
-### Group C: hard rotation orchestration (activity ledger) — ~14 tests
-
-| ID | Assertion | Purpose | Rationale |
-|----|-----------|---------|-----------|
-| C1 | `hardRotate()` includes all soft steps (genesis/staging/index/cookie) | Soft subsumption | Hard rotation = soft + full rewrite |
-| C2 | re-encrypts every day-block entry `_enc` field under MK_v(N+1) | Full entry re-encryption | All ciphertext moves to the new key |
-| C3 | updates `key_version` on **every** block (genesis + day + summaries) to N+1 | Uniform version | After hard rotation the chain is single-version (D1) |
-| C4 | recomputes every ciphertext-bound entry `hash` | Entry hash update | Ciphertext changed → entry hash changed |
-| C5 | recomputes every block seal under the new seal key | Block seal update | All block hashes move to MK_v(N+1) |
-| C6 | recomputes every `identity_seal` | Identity MAC update | Block content changed → MAC recomputed |
-| C7 | re-links every `prev_hash` to the predecessor's **new** seal | Chain re-link | Seal change cascades; linkage must follow |
-| C8 | `content_hash` is **unchanged** after hard rotation | Content-hash invariance | content_hash is over plaintext (ADR-005), survives re-encryption |
-| C9 | creates a timestamped backup of the pre-rotation chain before writing | Backup | D5 — destructive rewrite requires a backup |
-| C10 | backup independently verifies with the **old** MKs | Backup integrity | Backup must be a complete recoverable chain |
-| C11 | backup includes staging + index + cookie (not just the ledger) | Complete backup | Recovery needs all mutable state |
-| C12 | old MK_v(N) cannot decrypt any active-chain entry after hard rotation | Old-MK invalidation | Security property of full rotation |
-| C13 | `LedgerChain.verify()` passes on the rewritten chain | Post-rotation integrity | Single-version chain verifies |
-| C14 | genesis-only chain (no day blocks) completes hard rotation | Empty-chain edge | Rotating an empty ledger succeeds (only mutable state) |
-
-### Group D: Commonplace lockstep rotation — ~12 tests
+### Group D: Commonplace lockstep rotation — 9 tests
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
-| D1 | soft rotation also bumps the Commonplace genesis `key_version` N → N+1 | Version parity | Both chains share one rotation event |
-| D2 | soft rotation re-encrypts Commonplace genesis `identity_secret_enc_fallback` (if present) under MK_v(N+1) | Identity envelope parity | Mirrors B2 for the second chain |
-| D3 | leaves Commonplace `recovery_seed_enc` **unchanged** (PDK-encrypted) | PDK-vs-MK distinction | Mirrors B3 (D-ROT-2) |
-| D4 | soft rotation leaves Commonplace day blocks untouched | Block preservation | D5 — soft is non-destructive on both books |
-| D5 | hard rotation re-encrypts every Commonplace entry `_enc` field under MK_v(N+1) | Full entry re-encryption | Mirrors C2 for `commonplace` blocks |
-| D6 | hard rotation updates `key_version` on every Commonplace block to N+1 | Uniform version | Mirrors C3 |
-| D7 | hard rotation recomputes Commonplace `content_hash` (invariant) + entry `hash` + seals | Hash/seal recompute | Mirrors C4/C5/C8 |
-| D8 | hard rotation re-links Commonplace `prev_hash` to the new predecessor seal | Chain re-link | Mirrors C7 |
-| D9 | after rotation, `CommonplaceChain.verify()` passes (per-version MK selection) | Post-rotation integrity | Requires the same new verify capability as B10 |
-| D10 | a Commonplace build/store failure aborts **before** any ledger write (both chains unmodified) | Atomicity | Mirrors CPS-R6 — no partial cross-chain rotation |
-| D11 | rotation result surfaces Commonplace block/entry re-encrypt counts | User feedback | Mirrors `RekeyResult.commonplaceBlocksReencrypted` |
-| D12 | one rotation re-encrypts **both** books with **no** separate Commonplace passphrase | Shared rotation | ADR-031 §7 — one seed, one rotation, both books |
+| D1 | hard rotation re-encrypts Commonplace genesis `identity_secret_enc_fallback` (if present) under MK_v(N+1) | Identity envelope parity | Mirrors C5 for the second chain |
+| D2 | leaves Commonplace `recovery_seed_enc` **unchanged** (PDK-encrypted) | PDK-vs-MK distinction | Mirrors C6 (D-ROT-2) |
+| D3 | hard rotation re-encrypts every Commonplace entry `_enc` field under MK_v(N+1) | Full entry re-encryption | Mirrors C13 for `commonplace` blocks |
+| D4 | hard rotation recomputes Commonplace `content_hash` (invariant) + entry `hash` + seals | Hash/seal recompute | Mirrors C14/C15/C18 |
+| D5 | hard rotation re-links Commonplace `prev_hash` to the new predecessor seal | Chain re-link | Mirrors C17 |
+| D6 | after rotation, `CommonplaceChain.verify()` passes (single MK) | Post-rotation integrity | Single-MK verify (ADR-026a) |
+| D7 | a Commonplace build/store failure aborts **before** any ledger write (both chains unmodified) | Atomicity | Mirrors CPS-R6 — no partial cross-chain rotation |
+| D8 | rotation result surfaces Commonplace block/entry re-encrypt counts | User feedback | Mirrors `RekeyResult.commonplaceBlocksReencrypted` |
+| D9 | one rotation re-encrypts **both** books with **no** separate Commonplace passphrase | Shared rotation | ADR-031 §7 — one seed, one rotation, both books |
 
-### Group E: cross-client parity, recovery, edges — ~10 tests
+### Group E: cross-client parity, recovery, edges — 6 tests
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
 | E1 | `deriveMk` output is byte-identical to Python `derive_mk` and Web `deriveMk` on a canonical vector seed | 3-way parity | Cross-client chains must share MK derivation |
-| E2 | after soft rotation, recovery from seed re-derives all MKs (v1..N+1) and verifies | Recovery after soft | D8 — seed recovers mixed-version chains |
-| E3 | after hard rotation, recovery from seed re-derives all MKs and verifies | Recovery after hard | D8 |
-| E4 | a legacy Flutter chain (`key_version=1`, raw seed) rotates correctly on its **first** rotation | Backward compat | D9 + D-ROT-1 resolution |
-| E5 | two consecutive soft rotations (v→v+1→v+2) yield a verifiable 3-version chain | Multi-rotation | Realistic yearly-rotation accumulation |
-| E6 | double soft rotation with the same target version no-ops / returns false | Idempotency | Prevents accidental double-rotation |
-| E7 | hard rotation with an undecryptable entry → abort, chain untouched | Corruption safety | No half-rewritten chain on disk |
-| E8 | rotation with no cached MK (locked session) throws / returns false | Auth gate | Cannot rotate without a real master key |
-| E9 | `key_version` is **not** part of the ADR-029a seal whitelist (bump is seal-neutral) | Seal-whitelist contract | The seal changes only via MK→seal-key (D-ROT-3) |
-| E10 | post-rotation, the Web/Python clients can still verify a Flutter-rotated chain (hermetic fixture, no live R2) | Cross-client convergence | The rotation must produce a canonical format |
+| E2 | after hard rotation, recovery from seed re-derives the new MK and verifies | Recovery after hard | D8 — seed recovers the rotated chain |
+| E3 | a legacy Flutter chain (`key_version=1`, raw seed) verifies as v=0 and rotates correctly | Backward compat | D9 + D-ROT-1 resolution |
+| E4 | hard rotation with an undecryptable entry → abort, chain untouched | Corruption safety | No half-rewritten chain on disk |
+| E5 | after rotation, **no** block (genesis/day/summary) carries a `key_version` field | Out-of-band contract | `key_version` is not a ledger field (ADR-026a); no seal-whitelist interaction |
+| E6 | post-rotation, the Web/Python clients can still verify a Flutter-rotated chain (hermetic fixture, no live R2) | Cross-client convergence | The rotation must produce a canonical format |
 
 ## Summary
 
 | Group | Area | Tests | Key coverage |
 |-------|------|-------|--------------|
 | A | versioned-MK derivation (`deriveMk`) | 9 | v0/v1/v2 derivation, determinism, validation, domain separation, sub-key rotation |
-| B | ~~soft rotation (ledger)~~ **dropped — ADR-026a** | 14 | genesis bump, identity fallback, staging/index/cookie, re-seal/MAC, block preservation, mixed-version verify, auth/offline/empty edges |
-| C | hard rotation (ledger) | 14 | full re-encrypt, ~~uniform version~~ (C3 dropped), hash/seal/MAC/prev_hash recompute, content_hash invariance, backup, old-MK invalidation, empty chain |
-| D | Commonplace lockstep | 12 | ~~both-chain version bump~~ (D1/D6 dropped), lockstep re-encrypt, atomicity, shared rotation (no second passphrase) |
-| E | parity + recovery + edges | 10 | 3-way `deriveMk` parity, ~~recovery/soft-multi-rotation/idempotency~~ (E2/E5/E6 dropped), backward compat (E4), seal-whitelist contract, cross-client verify |
-| **Total** | | **59 → ~45 after ADR-026a re-scope** | |
+| B | ~~soft rotation (ledger)~~ | — | **REMOVED (ADR-026a)** — still-relevant steps folded into Group C |
+| C | hard rotation (ledger) | 24 | gates (passphrase/integrity/MK/offline), mutable-state re-encrypt, full entry re-encrypt, backup, edges |
+| D | Commonplace lockstep | 9 | lockstep re-encrypt, single-MK verify, atomicity, shared rotation (no second passphrase) |
+| E | parity + recovery + edges | 6 | 3-way `deriveMk` parity, hard-recovery, legacy v1→v0, corruption safety, out-of-band contract, cross-client verify |
+| **Total** | | **48** | |
 
 ### Design Directives Checklist
 
-> *(Pre-ADR-026a — applies to the original 59 assertions. After re-scope: drop B9/B10/B14/D4/D9, E2/E3/E5/E6, C3/D1/D6, and the per-version-verify rationale; see the re-scope banner above.)*
-
-- **D2 (Zero-Knowledge):** old data decryptable after rotation — seed re-derives all MKs (E2/E3)
-- **D4 (Chain of Trust):** seals + MACs verify across versions (B10, C13, D9, E9)
-- **D5 (Append-Only):** soft preserves blocks (B9/D4); hard backs up first (C9–C11)
-- **D6 (Local-First):** rotation works offline (B14)
-- **D8 (Recoverability):** seed recovers everything after soft/hard rotation (E2/E3)
-- **D9 (Backward Compat):** legacy Flutter chains rotate (E4); `format_version` untouched (D-ROT-4)
-- **D10 (Testing Integrity):** chain integrity asserted after every rotation (B10/B13/C13/D9/E7)
+- **D2 (Zero-Knowledge):** old data decryptable after rotation — seed re-derives the MKs (E2)
+- **D4 (Chain of Trust):** seals + MACs verify across the rotation (C20, D6)
+- **D5 (Append-Only):** hard rotation backs up first (C21–C23)
+- **D6 (Local-First):** rotation works offline (C4)
+- **D8 (Recoverability):** seed recovers everything after hard rotation (E2)
+- **D9 (Backward Compat):** legacy Flutter `key_version=1`-raw chains read as v=0 (E3); `format_version` untouched (D-ROT-4)
+- **D10 (Testing Integrity):** chain integrity asserted before and after rotation (C2/C20/D6/E4)
 
 ### Files in Scope
 
 | File | Change | Tests |
 |------|--------|-------|
 | `phpoc-flutter/lib/core/crypto/crypto_service.dart` (+ native variant) | Add `deriveMk(seed, version)` (pure-Dart HMAC; no FFI needed) | A1–A9, E1 |
-| `phpoc-flutter/lib/services/key_rotation_service.dart` | **New:** `hardRotate()` / `rotate()` + `RotationResult` (~~`softRotate()`~~ dropped — ADR-026a) | C (~~B~~ dropped) |
-| `phpoc-flutter/lib/data/ledger/chain.dart` | ~~Per-version MK selection in `verify()`~~ (dropped — single-MK verify); remove `keyVersion` passthrough | ~~B10, C13, E9~~ |
-| `phpoc-flutter/lib/data/commonplace/commonplace_chain.dart` | ~~Per-version MK selection in `verify()`~~ (dropped — single-MK verify) | ~~D9~~ |
+| `phpoc-flutter/lib/services/key_rotation_service.dart` | **New:** `hardRotate()` / `rotate()` + `RotationResult` | C |
+| `phpoc-flutter/lib/data/ledger/chain.dart` | Remove `key_version` writes + the `blockKv > genesisKv` invariant (single-MK verify, ADR-026a) | C20, E5 |
+| `phpoc-flutter/lib/data/commonplace/commonplace_chain.dart` | Remove the `key_version` invariant (single-MK verify) | D6, E5 |
 | `phpoc-flutter/lib/services/key_rotation_service.dart` (Commonplace) | `_rotateCommonplace` lockstep (generalize `RekeyService._buildRebuiltCommonplace`) | D |
-| `phpoc-flutter/test/services/key_rotation_service_test.dart` | **New:** A–E test groups (re-scoped per ADR-026a) | 59 → ~45 |
+| `phpoc-flutter/test/services/key_rotation_service_test.dart` | **New:** A/C/D/E test groups | 48 |
