@@ -1,7 +1,7 @@
 # Flutter ADR-026 Key Rotation + Commonplace Extension — Test Exploration (Phase 1)
 
 > **Plan:** this file — the **shared key-rotation extension** slice (Commonplace roadmap Slice 6)
-> **ADR:** ADR-026 (versioned MKs), ADR-031 (Commonplace shared MK), ADR-032 (C-2 seed replacement — orthogonal)
+> **ADR:** ADR-026 (versioned MKs), **ADR-026a (`key_version` out-of-band, hard-only rotation — resolves D-ROT-1)**, ADR-031 (Commonplace shared MK), ADR-032 (C-2 seed replacement — orthogonal)
 > **Reference (Python):** `security/crypto.py::derive_mk` + `phpoc_cli/rotate_keys.py` (`RotateKeysCommand.soft_rotate`/`hard_rotate`), `docs/planning/I01_KEY_ROTATION_PHASE1.md`, `docs/planning/I01A_ROTATEKEYS_EXECUTION_PHASE1.md`
 > **Reference (Web):** `phpoc-web/src/crypto/index.js::deriveMk` + `CryptoManager` `keyVersion` (`phpoc-web/test/i01_key_rotation_web_test.mjs`)
 > **Purpose:** Blueprint of all test assertions needed to (1) implement **ADR-026 versioned-MK rotation in Flutter** (the missing prerequisite) and (2) extend it to **re-encrypt the Commonplace chain in lockstep** — the Flutter half of Commonplace Slice 6.
@@ -14,8 +14,24 @@
 
 Therefore this slice is scoped in two coupled halves:
 
-1. **Flutter ADR-026 key rotation** — add versioned-MK derivation + `soft_rotate`/`hard_rotate` orchestration (mirroring Python `RotateKeysCommand`). This is the genuinely-missing piece.
+1. **Flutter ADR-026 key rotation** — add versioned-MK derivation + **hard-only** rotation orchestration (mirroring Python `RotateKeysCommand.hard_rotate`). This is the genuinely-missing piece.
 2. **Commonplace lockstep** — extend that rotation to re-encrypt `commonplace.json` in the same operation (generalizing the existing `RekeyService._buildRebuiltCommonplace` from raw-seed re-key to versioned rotation).
+
+> **⚠️ Re-scoped by ADR-026a (Decided 2026-09-07).** This Phase 1 blueprint was written against
+> ADR-026's original design (soft + hard rotation, per-block `key_version`, per-version `verify()`).
+> ADR-026a supersedes that: `key_version` is **out-of-band derivation metadata** (not a ledger field),
+> rotation is **hard-only**, and `verify()` takes a **single** MK. **Phase 2 (RED) must apply these
+> changes to the assertion groups before writing tests:**
+> - **Group A** (`deriveMk`) — unchanged (v0 raw / v≥1 HMAC still correct).
+> - **Group B** (soft rotation) — **dropped entirely** (B1–B14).
+> - **Group C** (hard rotation) — survives, but **C3 ("updates `key_version` on every block") is
+>   dropped** — blocks never store `key_version`.
+> - **Group D** (Commonplace lockstep) — survives, but **D1/D6 (bump `key_version`) are dropped**;
+>   lockstep re-encrypt (D5/D7/D8) and atomicity (D10) survive.
+> - **Group E** (parity/recovery/edges) — **E2/E5/E6 (soft-rotation recovery/multi-rotation/idempotency)
+>   are dropped**; E4 (legacy Flutter `key_version=1` raw seed → v=0) survives; E9 (seal-whitelist)
+>   becomes trivially true (no `key_version` is ever written).
+> - The "per-version MK selection" rationale on B10/C13/D9/E9 is **dropped** — single-MK `verify()`.
 
 > **Note:** `ROADMAP.md` currently marks this slice "Flutter done ✅ via Settings slice 2026-08-24". That conflates the C-2 re-key (done) with ADR-026 rotation (not done). This blueprint corrects that; `ROADMAP.md`/`BACKLOG.md` should be reconciled.
 
@@ -31,18 +47,20 @@ Seed (32 raw bytes) ── derive_mk(seed, version) ──> MK_vN (versioned)
 
 Rotation moves the ledger from MK_vN to MK_v(N+1) **without changing the seed or the passphrase**:
 
-- **Soft rotate** (default): bump genesis `key_version`, re-encrypt MK-encrypted mutable state (`identity_secret_enc_fallback`, staging, blind index), rotate the device cookie, re-seal + re-MAC genesis. **Day/summary blocks are untouched** (stay under their original `key_version`).
-- **Hard rotate** (`--full`): all soft steps **plus** a full chain rewrite — re-encrypt every entry under MK_v(N+1), bump every block's `key_version`, re-seal, re-MAC, re-link `prev_hash`, backup first.
+- **Hard rotate** (the only rotation mode — soft rotation was dropped by ADR-026a): re-encrypt every entry under MK_v(N+1), re-seal, re-MAC, re-link `prev_hash`, backup first. `key_version` is **never** written to blocks — it is out-of-band metadata.
 - **Commonplace lockstep** (this slice): the same rotation also re-encrypts `commonplace.json` (its genesis + day blocks) so both books stay decryptable under one seed.
 
-Two capabilities Flutter **currently lacks** and must gain (asserted in this blueprint):
+One capability Flutter **currently lacks** and must gain (asserted in this blueprint):
 
 1. `CryptoService.deriveMk(seed, version)` — versioned MK derivation (today `deriveMasterKey(seed)` returns the raw seed with **no version**).
-2. Per-version MK selection in `LedgerChain.verify()` / `CommonplaceChain.verify()` — today `verify()` reads `key_version` only as an invariant (`blockKv > genesisKv → false`); it never derives a per-block MK. Multi-version chains cannot verify without this.
+
+> **Note (ADR-026a):** the originally-planned second capability — per-version MK selection in
+> `LedgerChain.verify()` / `CommonplaceChain.verify()` — is **dropped**. `verify()` takes a single
+> MK; blocks carry no `key_version`, so the existing `blockKv > genesisKv` invariant is removed.
 
 ## Divergences & Design Notes (resolved before Phase 2)
 
-- **D-ROT-1 — `key_version` base (open decision).** Python/Web treat `key_version=0` = raw seed, `v>=1` = HMAC-derived (`derive_mk`). Flutter hardcodes `key_version=1` with raw-seed-as-MK everywhere (`block.dart:21`, `chain.dart:94/127`, `commonplace_chain.dart:91/129`). `C2_CLI_CLIENT_VERIFY_PHASE1.md` already logged this as divergence R4. **Proposed resolution:** adopt the canonical `v=0`-raw / `v>=1`-HMAC convention for *new* Flutter chains and treat a legacy Flutter `key_version=1`-but-raw-seed chain as raw-seed (v=0) on first rotation (i.e. first rotation writes `key_version=1` with HMAC-derived MK_v1). Needs explicit sign-off (likely a short ADR-026 amendment note).
+- **D-ROT-1 — `key_version` base. ✅ RESOLVED by ADR-026a (2026-09-07).** `key_version` is **out-of-band derivation metadata, not a ledger field**: v=0 = raw seed, v≥1 = HMAC-derived (`derive_mk`). Rotation is **hard-only**; soft rotation is dropped. A legacy Flutter `key_version=1`-but-raw-seed chain is treated as v=0 (raw seed). Blocks never store `key_version`, so there is no per-block relabel. See `docs/design/ARCHITECTURAL_DECISIONS.md` ADR-026a.
 - **D-ROT-2 — `recovery_seed_enc` is PDK-encrypted, not MK-encrypted.** Rotation (same seed, same passphrase) leaves `recovery_seed_enc` **unchanged**; only `identity_secret_enc_fallback` (MK-encrypted) is re-encrypted. The C-2 re-key re-encrypts `recovery_seed_enc` only because it also mints a new seed/passphrase. This distinction is asserted in B3/D3.
 - **D-ROT-3 — `key_version` is NOT in the ADR-029a seal whitelist.** Bumping `key_version` is seal-neutral; the block hash changes **only** because the seal sub-key (`HMAC(MK_vN, "integrity-key-salt")`) changes. Asserted in E10.
 - **D-ROT-4 — `format_version`.** Python ADR-026 assumes `key_version` support requires `format_version ≥ 0.5.0`; Flutter already writes `key_version` at `0.4.0`. Do **not** force a format bump in Flutter (D9) — leave `format_version` unchanged unless a later cross-client decision requires it.
@@ -64,7 +82,7 @@ Two capabilities Flutter **currently lacks** and must gain (asserted in this blu
 | A8 | `deriveMk(seed, 1)` is not derivable from `deriveMk(seed, 2)` without the seed (domain separation) | Non-invertibility | HMAC is a PRF — an attacker with MK_v2 cannot compute MK_v1/v3 |
 | A9 | versioned MK feeds sub-key derivation — `deriveSealKey(MK_v1) != deriveSealKey(MK_v2)` | Sub-key rotation | Seal/blob/index/field/cookie keys must change with the MK version or rotation is meaningless |
 
-### Group B: soft rotation orchestration (activity ledger) — ~14 tests
+### Group B: soft rotation orchestration (activity ledger) — ~14 tests (⚠️ DROPPED — ADR-026a)
 
 | ID | Assertion | Purpose | Rationale |
 |----|-----------|---------|-----------|
@@ -139,13 +157,15 @@ Two capabilities Flutter **currently lacks** and must gain (asserted in this blu
 | Group | Area | Tests | Key coverage |
 |-------|------|-------|--------------|
 | A | versioned-MK derivation (`deriveMk`) | 9 | v0/v1/v2 derivation, determinism, validation, domain separation, sub-key rotation |
-| B | soft rotation (ledger) | 14 | genesis bump, identity fallback, staging/index/cookie, re-seal/MAC, block preservation, mixed-version verify, auth/offline/empty edges |
-| C | hard rotation (ledger) | 14 | full re-encrypt, uniform version, hash/seal/MAC/prev_hash recompute, content_hash invariance, backup, old-MK invalidation, empty chain |
-| D | Commonplace lockstep | 12 | both-chain version bump, lockstep re-encrypt, atomicity, shared rotation (no second passphrase) |
-| E | parity + recovery + edges | 10 | 3-way `deriveMk` parity, recovery, backward compat, idempotency, seal-whitelist contract, cross-client verify |
-| **Total** | | **59** | |
+| B | ~~soft rotation (ledger)~~ **dropped — ADR-026a** | 14 | genesis bump, identity fallback, staging/index/cookie, re-seal/MAC, block preservation, mixed-version verify, auth/offline/empty edges |
+| C | hard rotation (ledger) | 14 | full re-encrypt, ~~uniform version~~ (C3 dropped), hash/seal/MAC/prev_hash recompute, content_hash invariance, backup, old-MK invalidation, empty chain |
+| D | Commonplace lockstep | 12 | ~~both-chain version bump~~ (D1/D6 dropped), lockstep re-encrypt, atomicity, shared rotation (no second passphrase) |
+| E | parity + recovery + edges | 10 | 3-way `deriveMk` parity, ~~recovery/soft-multi-rotation/idempotency~~ (E2/E5/E6 dropped), backward compat (E4), seal-whitelist contract, cross-client verify |
+| **Total** | | **59 → ~45 after ADR-026a re-scope** | |
 
 ### Design Directives Checklist
+
+> *(Pre-ADR-026a — applies to the original 59 assertions. After re-scope: drop B9/B10/B14/D4/D9, E2/E3/E5/E6, C3/D1/D6, and the per-version-verify rationale; see the re-scope banner above.)*
 
 - **D2 (Zero-Knowledge):** old data decryptable after rotation — seed re-derives all MKs (E2/E3)
 - **D4 (Chain of Trust):** seals + MACs verify across versions (B10, C13, D9, E9)
@@ -160,8 +180,8 @@ Two capabilities Flutter **currently lacks** and must gain (asserted in this blu
 | File | Change | Tests |
 |------|--------|-------|
 | `phpoc-flutter/lib/core/crypto/crypto_service.dart` (+ native variant) | Add `deriveMk(seed, version)` (pure-Dart HMAC; no FFI needed) | A1–A9, E1 |
-| `phpoc-flutter/lib/services/key_rotation_service.dart` | **New:** `softRotate()` / `hardRotate()` / `rotate()` + `RotationResult` | B, C |
-| `phpoc-flutter/lib/data/ledger/chain.dart` | Per-version MK selection in `verify()` (+ `buildDayBlock` `keyVersion` passthrough) | B10, C13, E9 |
-| `phpoc-flutter/lib/data/commonplace/commonplace_chain.dart` | Per-version MK selection in `verify()` | D9 |
+| `phpoc-flutter/lib/services/key_rotation_service.dart` | **New:** `hardRotate()` / `rotate()` + `RotationResult` (~~`softRotate()`~~ dropped — ADR-026a) | C (~~B~~ dropped) |
+| `phpoc-flutter/lib/data/ledger/chain.dart` | ~~Per-version MK selection in `verify()`~~ (dropped — single-MK verify); remove `keyVersion` passthrough | ~~B10, C13, E9~~ |
+| `phpoc-flutter/lib/data/commonplace/commonplace_chain.dart` | ~~Per-version MK selection in `verify()`~~ (dropped — single-MK verify) | ~~D9~~ |
 | `phpoc-flutter/lib/services/key_rotation_service.dart` (Commonplace) | `_rotateCommonplace` lockstep (generalize `RekeyService._buildRebuiltCommonplace`) | D |
-| `phpoc-flutter/test/services/key_rotation_service_test.dart` | **New:** A–E test groups | 59 |
+| `phpoc-flutter/test/services/key_rotation_service_test.dart` | **New:** A–E test groups (re-scoped per ADR-026a) | 59 → ~45 |

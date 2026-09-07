@@ -120,12 +120,29 @@ def decrypt_field(ciphertext_hex, mk_hex):
 
 
 def verify_content_hash(data, expected_hash, mk_hex):
-    """Mirror Flutter verifyContentHash (helpers.dart)."""
-    canonical = _build_canonical_map(data, mk_hex)
-    canonical.pop('content_hash', None)
-    if hashlib.sha256(json_sort(canonical).encode()).hexdigest() == expected_hash:
+    """Mirror Flutter verifyContentHash (helpers.dart).
+
+    Accepts, in order:
+      1. Canonical — KEEP the `_enc` suffix on decrypted fields (plaintext
+         stays a STRING), compact `jsonSort`. This is what Flutter's
+         `computeContentHash` and Python/Web emit today (PHPSPEC §5.5/§6.1).
+      2. Legacy v0.4.0+ Flutter — STRIP the `_enc` suffix, compact `jsonSort`.
+      3. Legacy indent=2 — STRIP the `_enc` suffix, `jsonSortIndent2`.
+    """
+    # 1. Canonical: KEEP `_enc` suffix (PHPSPEC §5.5/§6.1), compact jsonSort.
+    kept = _build_canonical_map(data, mk_hex, keep_enc_suffix=True)
+    kept.pop('content_hash', None)
+    if hashlib.sha256(json_sort(kept).encode()).hexdigest() == expected_hash:
         return True
-    if hashlib.sha256(_json_sort_pretty(canonical).encode()).hexdigest() == expected_hash:
+
+    # 2. Legacy v0.4.0+ Flutter: STRIP `_enc` suffix, compact jsonSort.
+    stripped = _build_canonical_map(data, mk_hex)
+    stripped.pop('content_hash', None)
+    if hashlib.sha256(json_sort(stripped).encode()).hexdigest() == expected_hash:
+        return True
+
+    # 3. Legacy indent=2 fallback (stripped form).
+    if hashlib.sha256(_json_sort_pretty(stripped).encode()).hexdigest() == expected_hash:
         return True
     return False
 
@@ -137,12 +154,20 @@ def _sort_list(vals):
         return sorted(vals, key=str)
 
 
-def _build_canonical_map(data, mk_hex):
+def _build_canonical_map(data, mk_hex, keep_enc_suffix=False):
+    """Decrypt `_enc` fields and sort list values for deterministic hashing.
+
+    When `keep_enc_suffix` is true the `_enc` suffix is RETAINED on the key of a
+    decrypted field (canonical form, PHPSPEC §5.5/§6.1); when false the suffix is
+    STRIPPED (legacy v0.4.0+ Flutter form). Mirrors Flutter
+    `_buildCanonicalMap(data, decryptFn, {keepEncSuffix})`.
+    """
     canonical = {}
     for key, value in data.items():
         k = key
         if key.endswith('_enc') and isinstance(value, str) and value:
-            k = key[:-4]
+            if not keep_enc_suffix:
+                k = key[:-4]
             try:
                 value = decrypt_field(value, mk_hex).decode('utf-8')
             except Exception:

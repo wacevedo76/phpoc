@@ -1870,6 +1870,101 @@ that MK_v1 cannot derive the keys used by MK_v2.
 - I-06 (content_hash required) ✅ — prerequisite; hard rotation relies on verifiable content_hash
 - BACKLOG §I-01 — the issue this ADR addresses
 
+## ADR-026a: `key_version` Is Out-of-Band Derivation Metadata, Not a Ledger Field (Amends ADR-026 — Resolves D-ROT-1)
+
+**Date:** 2026-09-07
+**Status:** ✅ Decided (2026-09-07)
+**Amends:** ADR-026 (§1 versioned derivation → re-framed out-of-band; §2 `key_version` field → removed; §4 multi-MK cache → single MK; §5 dual-mode → hard-only; §7 per-block verify → single-MK verify)
+**Resolves:** D-ROT-1 (key_version base convention) — open decision in `COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md`
+
+### Context
+
+ADR-026 (2026-07-17), implementing flaw I-01 ("No Key Rotation — One Key Forever"), proposed storing `key_version` **as a per-block ledger field** (genesis + day + summary blocks) to enable **soft rotation** — blocks encrypted under different key versions coexisting in one chain. That was the flaw docs' original recommendation: *"Add `key_version` field to blocks … allow blocks encrypted under different key versions to coexist in the chain"* (`ISSUES_TO_ADDRESS.md` I-01; `PHPSPEC-Design_Flaws.md` §5).
+
+Three later developments reversed the per-block part without being recorded as a decision:
+
+1. **Canonical format (I-07 / ADR-029/029a)** established that version/metadata fields are genesis-only and seal-excluded. `format_version` was removed from day blocks; the same treatment was extended to `key_version` in the re-key notes: *"No per-block `key_version`/`format_version`. Both are metadata-only (I-07)"* (`C2_SEED_REKEY_WEB_PHASE1.md`); *"migrated day blocks carry NO `format_version`/`key_version` (only genesis does)"* (`CANONICAL_SEALFIELD_MIGRATOR_PHASE1.md`).
+
+2. **PHPSPEC as-built never defines `key_version` as a field.** No block schema lists it (§4.1–§4.6); §5.6's `verify(ledger, master_key, identity_secret)` accepts a **single** `master_key` and never reads a version from the chain; §5.2 mentions `key_version` only as seal-excluded metadata.
+
+3. **The only shipped key-evolution operation is a full rewrite.** C-2 seed replacement (ADR-032) re-encrypts every `_enc` field under the new MK and leaves `key_version` unchanged. Soft rotation ("coexistence") was designed-for but never built — per-block `key_version` has therefore never actually been exercised.
+
+Result: a three-way divergence. Design docs (ADR-026 §2/§5/§7; `SYSTEM_ARCHITECTURE.md` "genesis + day blocks") and code (Flutter per-block `key_version … DEFAULT 1`; Python `chain.py` optional day-block write + per-block read) assume per-block `key_version`, while the authoritative spec treats it as out-of-band. This ADR records the reconciliation.
+
+### Decision
+
+**`key_version` is out-of-band derivation metadata — it is not a ledger field.** Three parts.
+
+#### 1. Base convention (D-ROT-1) is a derivation rule, not a chain field
+
+```python
+def derive_mk(seed: bytes, version: int) -> bytes:
+    if version == 0:
+        return seed                          # raw seed IS the MK (pre-rotation)
+    return hmac.new(seed, f"phpoc:mk:v{version}".encode(), hashlib.sha256).digest()
+```
+
+- **v=0 → raw seed bytes** (`master_key = base64.b64decode(seed)`). Default, and the only rule any shipped client exercises today (MAP.md invariant #2).
+- **v≥1 → HMAC-SHA256(seed, "phpoc:mk:v{N}")**, applied only after an explicit rotation bumps the version (PHPSPEC §2.3).
+- The version is **supplied to `verify()`/`derive_mk` out-of-band** (caller / `AppPreferences` / CLI flag), defaulting to **0**. It is **never read from a block** — matching PHPSPEC §2.3 and §5.6.
+
+#### 2. Per-block `key_version` field is removed; soft rotation is dropped
+
+- `key_version` is **not stored in the ledger at all** — not on genesis, day, or summary blocks. PHPSPEC §4.1–§4.6 define no such field; `format_version` (genesis-only, §4.1) remains the sole ledger version marker.
+- Implementations that currently emit it stop doing so: Python `chain.py` (optional day-block `key_version` + per-block read in `verify()`), Flutter (per-block `key_version … DEFAULT 1`), and the C-2 re-key passthrough (ADR-032).
+- **Soft rotation is dropped.** Without per-block `key_version`, the chain cannot record which MK each historical block used, so blocks under different versions cannot coexist in one chain. Rotation is **hard-only**: a full re-encryption rewrite under the new MK (the only mode actually shipped — ADR-032/C-2).
+
+#### 3. Legacy Flutter `key_version=1` raw-seed chains read as v=0
+
+Flutter stamped `key_version = 1` while using the raw seed as MK — a Phase-B artifact the spec never defined. Under the base convention this is **semantically v=0**:
+
+- New Flutter chains adopt the canonical convention and **stop writing per-block `key_version`** (and stop stamping a raw-seed chain as `1`).
+- Existing Flutter chains stamped `1` are read as **v=0 (raw seed)**. No per-block relabel is needed — there is no per-block field to relabel once the field is dropped.
+
+### Rationale
+
+- **The spec is the anchor.** PHPSPEC §4.1–§4.6 define no `key_version` field; §5.6 verifies under a single MK. Keeping `key_version` out of the ledger matches the format contract rather than the older ADR-026 prose.
+- **Per-block `key_version` was never exercised.** The flaw docs wanted soft-rotation coexistence, but every shipped key change is a full rewrite (C-2 re-key; hard rotation), so the field carried no real information.
+- **D8 (Recoverability):** the seed stays the single root; a recoverer derives the MK directly (v=0 raw) with no chain-side version indirection.
+- **D9 (Backward Compat):** existing ledgers are unaffected — raw-seed ledgers already verify as v=0; the change only stops *writing* a field the spec never required.
+- **Rejected:** reintroducing per-block `key_version` to preserve soft rotation. It contradicts PHPSPEC §5.6's single-MK verify and was never built; it can be revisited (with an out-of-band block→version registry) only if a real soft-rotation need materializes.
+
+### Decision Checklist
+
+- [x] D1 — user retains control; nothing leaves the device
+- [x] D2 — zero-knowledge preserved; MK derived client-side from the seed
+- [x] D3 — no new core dependency (HMAC is an existing primitive)
+- [x] D4 — chain of trust intact; seals/content-hashes unaffected (`key_version` was already seal-excluded, §5.2)
+- [x] D5 — append-only; hard rotation is the existing backup-then-rewrite migration, never in-place edit
+- [x] D6 — fully offline; derivation and verify are local
+- [x] D7 — compartmentalization unchanged; sub-keys still derive from the MK
+- [x] D8 — seed + genesis still recover everything (v=0 raw path)
+- [x] D9 — backward compatible; no breaking change to existing ledgers
+- [x] D10 — covered by the cross-client raw-seed harness; the keep-`_enc` content-hash gap is separately fixed in `scripts/verify_ledger.py`
+- [x] D11 — staging/ledger separation unaffected
+
+### Consequences
+
+- **Positive:**
+  - The three-way divergence (spec vs. ADR-026 vs. code) is resolved — the spec wins.
+  - The legacy Flutter `key_version=1`-raw ambiguity collapses to "read as v=0" with no per-block relabel machinery.
+  - `verify()` remains the single-MK algorithm (PHPSPEC §5.6); no per-block version lookup.
+- **Negative:**
+  - ADR-026 soft rotation is formally dropped; rotation is hard-only unless a future ADR reintroduces per-block versioning with an out-of-band registry.
+  - Doc corrections required: ADR-026 §2/§5/§7 and `SYSTEM_ARCHITECTURE.md` ("key_version in genesis + day blocks") still assert the per-block field.
+- **Open question:**
+  - Where is the current version tracked out-of-band once v≥1 rotation is wired? Proposal: an `AppPreferences`/identity-file counter (default 0) passed to `derive_mk`/`verify` at the call site — never a chain field. Revisit when hard rotation is actually wired into a client.
+
+### Related
+
+- ADR-026 (amended — versioned derivation kept out-of-band; per-block field + soft rotation dropped)
+- ADR-032 (C-2 re-key — raw-seed MK, `key_version` unchanged, full rewrite)
+- ADR-029/029a (closed seal whitelist — `key_version` excluded)
+- I-01 (`ISSUES_TO_ADDRESS.md`) / `PHPSPEC-Design_Flaws.md` §5 — the origin proposal ADR-026 adopted
+- PHPSPEC §2.3 (raw-seed = v0 contract), §5.2 (seal-excluded metadata), §5.6 (single-MK verify)
+- `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (D-ROT-1)
+- `scripts/verify_ledger.py` (keep-`_enc` content-hash fix — companion)
+
 ## ADR-027: Flutter Navigation — go_router
 
 **Date:** 2026-07-17

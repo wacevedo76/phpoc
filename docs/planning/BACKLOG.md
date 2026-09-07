@@ -21,7 +21,7 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 
 | Point | Planning doc | Status |
 |-------|--------------|--------|
-| P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🟢 Slices 1–3 done (chain/engine/storage + Book Switcher + UI wiring, Phases 1–4); Slices 4–6 pending |
+| P1 — Commonplace Book (missing on Web) | `COMMONPLACE_BOOK_WEB_ROADMAP.md` | 🟢 Slices 1–3 done (chain/engine/storage + Book Switcher + UI wiring, Phases 1–4); Slices 4–6 pending — Slice 6 (key-rotation extension) re-scoped by ADR-026a (hard-only, `key_version` out-of-band) |
 | P2 — C-2 cross-client verification (Phase D) | `C2_CROSS_CLIENT_VERIFY_PHASE1.md` | ✅ Complete (2026-08-28) |
 | P3 — Web staging "Option A" refactor | `WEB_STAGING_OPTION_A_PHASE1.md` | 🔜 Deferred |
 | P4 — Web vitest harness hygiene | `WEB_VITEST_HARNESS_PHASE1.md` | ✅ Complete (2026-08-28) |
@@ -32,12 +32,12 @@ staging sync, per-field encryption, ADR-029/029a seal) are out of scope there.
 
 **Plan (roadmap):** `docs/planning/C2_SEED_REKEY_WEB_CLI_ROADMAP.md`
 **Reference:** Flutter `docs/planning/flutter/SEED_REKEY_C2_PHASE1.md` (✅ 4-phase TDD COMPLETE — `rekey_service_test.dart` 28/28, Settings Group S 6/6, suite 2010/2010)
-**ADR:** ADR-026 (versioned MK), ADR-001 (sovereign key)
+**ADR:** ADR-026 (versioned MK, amended by ADR-026a), ADR-001 (sovereign key)
 **Status:** 🟡 **IN PROGRESS** — Web ✅ **COMPLETE (4-phase TDD, 2026-08-24)** (`RekeyService` 28/28 + Settings Security & Recovery UI 6/6 + `DevModeContext.rekey`); **cross-client (Phase D) ✅ COMPLETE (2026-08-28)** — hermetic Web↔Flutter matrix GREEN (18/18 each direction, 46 Flutter cross-client+re-key tests, suite 2115/0); **CLI (Phase A) ✅ 4-phase TDD COMPLETE (2026-08-29)** — `docs/planning/C2_CLI_SEED_REKEY_PHASE1.md` (34 assertions: R11/B5/M6/P6/C6; option (a-CLI) new seed + version bump via `derive_mk(new_seed,new_version)`); `renew_seed`/`mint_new_seed`/`seed_fingerprint` + `ph rekey-seed` in `main.py`; 34/34 `test_rekey_seed.py` GREEN; Phase 4 REFACTOR DRY'd the per-`_enc` loop + split `renew_seed` into phase helpers; full Python suite 2649 pass/1 skip/0 fail; transport adapter gap RESOLVED (2026-08-29, re-key remote push now via `RemoteStagingSync`/`RemoteLedgerSync` on the real `AbstractStagingTransport` contract). This is the only operation that genuinely nullifies the **pre-existing leaked seed** (git-history leak, commits `a5b124e`/`08235f8`).
 
 **What:** Bring the C-2 **seed replacement** (mint a FRESH random seed → full re-key of vault + chain + staging + blind index + device cookie under the new Master Key → push to R2 → rotate cookie specifier) to `phpoc-web` and `phpoc-cli`. After re-key, the **old seed no longer decrypts** any data — a leaked/compromised seed is nullified.
 
-**Gap today:** CLI `ph rotate-keys`/`--full` only bumps `key_version` under the **SAME** seed (ADR-026 rotation) — it does **NOT** replace the seed. Web has `deriveMk(seed,version)` + `generateSeed()` primitives but no `RekeyService`/UI. Flutter is the only client with true seed-replacement.
+**Gap today:** CLI `ph rotate-keys`/`--full` only bumps `key_version` under the **SAME** seed (ADR-026 rotation) — it does **NOT** replace the seed. Web has `deriveMk(seed,version)` + `generateSeed()` primitives but no `RekeyService`/UI. Flutter is the only client with true seed-replacement. *(ADR-026 soft/hard rotation superseded by ADR-026a — hard-only, `key_version` out-of-band.)*
 
 **Phases (4-phase TDD per client, reference-mirrored):**
 - **Phase A (CLI):** extend `RotateKeysCommand` with `--renew-seed` (mint new seed → `derive_mk(new_seed,new_version)` → re-key via `hard_rotate` core → rewrite seed vault/`recovery_seed_enc` under the PDK → staging+index+cookie → push R2 → cookie rotation); wire `ph rekey-seed` into `main.py` (`require_auth`-gated, two-secret confirmation, one-shot reveal). Test port R/B/M/P + CLI Group C. **✅ 4-phase TDD COMPLETE (2026-08-29):** `docs/planning/C2_CLI_SEED_REKEY_PHASE1.md` — 34 assertions (R11/B5/M6/P6/C6); `renew_seed`/`mint_new_seed`/`seed_fingerprint` + `ph rekey-seed` (34/34 `test_rekey_seed.py` GREEN); Phase 4 REFACTOR DRY'd the per-`_enc` loop (`_enc_fields`/`_decrypt_crypto_for_version`/`_prevalidate_entries_decryptable`/`_reencrypt_entry_data`) + split `renew_seed` into `_prepare_rekey`/`_rebuild_rekeyed_blocks`/`_persist_rekeyed_state`/`_push_rekeyed_state`. **Transport adapter gap RESOLVED (2026-08-29):** re-key remote push now routes through `RemoteStagingSync`/`RemoteLedgerSync` on the real `AbstractStagingTransport.push(path,data)`/`pull(path)` contract; `_RekeyTransportSpy` + P1–P6 + I6 updated.
@@ -140,21 +140,23 @@ model). Staging rows for the Commonplace book sync like ledger staging rows.
 
 **Unblock criteria:** Commonplace UI wiring (add/commit/read) is done so there is content to sync.
 
-### 🟠 Commonplace shared key-rotation extension — ADR-026
+### 🟠 Commonplace shared key-rotation extension — ADR-026 (amended by ADR-026a)
 
-**Status:** 🟠 Flutter Phase 1 (test-exploration blueprint) DONE — `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (59 assertions, groups A–E). Phase 2 (RED) pending.
+**Status:** 🟠 Flutter Phase 1 (test-exploration blueprint) DONE — `docs/planning/flutter/COMMONPLACE_BOOK_KEY_ROTATION_PHASE1.md` (59 assertions, groups A–E). **D-ROT-1 resolved by ADR-026a (2026-09-07)**; blueprint must be re-scoped (drop soft rotation + per-block `key_version` + per-version `verify()`) before Phase 2 (RED).
 
-**What:** Extend the existing key-rotation workflow (ADR-026) so a rotation **also re-encrypts the Commonplace
-chain(s)**, not just the activity ledger. The Commonplace chain already records the seed's `key_version` in its
-genesis (CP-A10), so it participates in the same rotation path.
+**What:** Extend the key-rotation workflow (ADR-026, amended by ADR-026a — **hard-only**, `key_version` out-of-band)
+so a rotation **also re-encrypts the Commonplace chain(s)**, not just the activity ledger. The Commonplace chain
+shares the seed→MK derivation but stores **no** `key_version` (CP-A10 re-scoped: no per-block/genesis version stamp).
 
 **Flutter prerequisite (larger than the extension):** Flutter has **no ADR-026 rotation at all** — only the C-2
 raw-seed replacement (`RekeyService.rekey()`, ADR-032, which already re-encrypts `commonplace.json` with no
-`key_version` bump). This slice therefore also delivers Flutter `deriveMk(seed, version)` + `soft_rotate`/`hard_rotate`
-(new `KeyRotationService`) + per-version MK selection in `LedgerChain.verify()`/`CommonplaceChain.verify()`.
+`key_version` bump). This slice therefore delivers Flutter `deriveMk(seed, version)` + **hard-only** rotation
+(new `KeyRotationService`) + Commonplace lockstep re-encrypt. Per-version MK selection in `verify()` is **dropped**
+(ADR-026a: single-MK verify).
 
-**Unblock criteria:** (1) resolve blueprint D-ROT-1 (`key_version` base: canonical v0-raw/v≥1-HMAC vs Flutter's
-hardcoded v1); (2) Phase 2–4 TDD on the 59 assertions; (3) then the Web port mirrors it (Slice 6).
+**Unblock criteria:** (1) ~~resolve D-ROT-1~~ ✅ **DONE (ADR-026a)**; (2) re-scope the 59 assertions to hard-only
+(drop Group B soft-rotation, C3/D1/D6 key_version bumps, E2/E5/E6 soft-recovery) then Phase 2–4 TDD; (3) then the
+Web port mirrors it (Slice 6).
 
 ### ⏸️ Commonplace tag-search blind index
 
@@ -583,13 +585,13 @@ Both rated Critical in the flaw documents — they undermine the protocol's core
 
 **Why:** One MK protects everything forever. Compromise = permanent, catastrophic, no remediation path.
 **Flaw doc severity:** Critical — the single biggest architectural gap in the protocol.
-**Status:** ✅ Phases 1-4 complete (2026-07-17). ADR-026 implemented: `derive_mk()` + versioned `CryptoManager` in crypto.py, multi-version `verify()`/`verify_block()` with `get_mk_for_version` in chain.py, `get_mk()`/`key_version`/`_keys` in auth.py, `RotateKeysCommand` skeleton in phpoc_cli/rotate_keys.py, JS `deriveMk()` + `CryptoManager` in phpoc-web. 95/95 PY + 13/13 JS GREEN. 5 Phase-4 improvements.
+**Status:** ✅ Phases 1-4 complete (2026-07-17). ADR-026 implemented: `derive_mk()` + versioned `CryptoManager` in crypto.py, multi-version `verify()`/`verify_block()` with `get_mk_for_version` in chain.py, `get_mk()`/`key_version`/`_keys` in auth.py, `RotateKeysCommand` skeleton in phpoc_cli/rotate_keys.py, JS `deriveMk()` + `CryptoManager` in phpoc-web. 95/95 PY + 13/13 JS GREEN. 5 Phase-4 improvements. **Amended by ADR-026a (2026-09-07):** per-block `key_version` + soft rotation dropped; `key_version` is out-of-band derivation metadata (not a ledger field).
 
-**Required:** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
+**Required (original, superseded by ADR-026a):** `key_version` field on blocks, re-encryption workflow, coexistence of blocks under different key versions.
 
 | Deliverable | What |
 |-------------|------|
-| ~~ADR~~ | ✅ ADR-026: versioned MKs, per-block key_version, soft+hard rotation |
+| ~~ADR~~ | ✅ ADR-026: versioned MKs, per-block key_version, soft+hard rotation — **amended by ADR-026a** (hard-only, `key_version` out-of-band) |
 | `domain/ledger/engine.py` | Key version field + multi-version verification |
 | `security/crypto.py` | Re-encrypt entry with new MK |
 | Migration | Re-encrypt existing chain under new key |
@@ -606,7 +608,9 @@ cannot actually be rotated — it's all infrastructure and no action.
 **Status:** ✅ Phases 1-4 complete (141/141 PY). **Depends on:** I-01 (crypto foundation) ✅.
 **Blocks:** I-09 (device attribution needs rotation to re-derive device IDs).
 
-**Soft rotation deliverables:**
+> **Amended by ADR-026a (2026-09-07):** soft rotation is **dropped** (rotation is hard-only); `key_version` is out-of-band metadata and is **not** written to blocks — so "increment `key_version`" / "update `key_version` on all blocks" below no longer apply.
+
+**Soft rotation deliverables (dropped by ADR-026a):**
 - Re-authenticate and verify chain integrity
 - Derive new MK (key_version = current + 1)
 - Re-encrypt `identity_secret_enc_fallback` with new MK
@@ -615,10 +619,10 @@ cannot actually be rotated — it's all infrastructure and no action.
 - Re-derive device cookie with new MK
 - Re-seal genesis with new MK (increment `key_version`)
 
-**Hard rotation (`--full`) adds:**
+**Hard rotation (`--full`) adds (now the only rotation mode — ADR-026a):**
 - Create backup of current chain
 - Re-encrypt every entry in every day block
-- Update `key_version` on all blocks
+- ~~Update `key_version` on all blocks~~ (dropped — `key_version` is not a block field, ADR-026a)
 - Recompute all seals, MACs, and `prev_hash` links
 
 **Files:** `phpoc_cli/rotate_keys.py` (main), `security/auth.py` (`_keys` population),

@@ -117,14 +117,15 @@ using PBKDF2-HMAC-SHA256 at 600,000 iterations (ADR-004) and stored as
 **Per-user salt (I-05):** PBKDF2 salt is derived from `SHA-256(identity_pub_key)[:16]`
 instead of a fixed constant — prevents cross-user rainbow tables.
 
-**Session caching:** Derived MKs (v1 through current genesis `key_version`) are cached
-in `/dev/shm/phpoc_session` (CLI) or memory (web) for the session duration (ADR-014).
-Cleared on logout, reboot, or TTL expiry.
+**Session caching:** Derived MKs (the current out-of-band key version — v=0 raw seed,
+v≥1 HMAC-derived) are cached in `/dev/shm/phpoc_session` (CLI) or memory (web) for the
+session duration (ADR-014). Cleared on logout, reboot, or TTL expiry.
 
-**Key rotation (ADR-026):** `derive_mk(seed, version)` produces versioned master keys.
-Soft rotation increments `key_version` and re-encrypts staging, index, cookie, and
-genesis identity envelope — O(1), existing blocks untouched. Hard rotation (`--full`)
-re-encrypts every entry in every block — O(N), full chain rewrite with backup.
+**Key rotation (ADR-026, amended by ADR-026a):** `derive_mk(seed, version)` produces
+versioned master keys — v=0 is the raw seed, v≥1 is HMAC-SHA256(seed, `"phpoc:mk:v{N}"`).
+Rotation is **hard-only**: re-encrypt every entry under the new MK and rewrite the whole
+chain (backup first). `key_version` is out-of-band derivation metadata, not a ledger
+field — blocks carry no version stamp.
 
 **Identity secret:** A random 32-byte value, encrypted with the current MK and stored
 in genesis as `identity_secret_enc_fallback` (ADR-003). Version-independent — identity
@@ -167,16 +168,16 @@ Each block contains:
 - `day_hash` / `month_hash` / `year_hash`: Block content hash (excludes `signature`)
 - `signature` → `identity_seal`: HMAC-SHA256 identity seal over block hash (I-04 renamed)
 - `format_version`: In genesis only — enables version-aware tooling (ADR-011)
-- `key_version`: In genesis + day blocks — tracks which MK version encrypted entries (ADR-026)
+- `key_version`: **Not a ledger field** (removed by ADR-026a) — out-of-band derivation metadata; v=0 raw seed, v≥1 HMAC-SHA256(seed, `"phpoc:mk:v{N}"`)
 
 ### 3.2 Block Types
 
 | Block | Contains | Frequency |
 |-------|----------|-----------|
-| **Genesis** | Seed encryption, identity fallback, format_version, key_version, prev_hash=0 | 1 per ledger |
+| **Genesis** | Seed encryption, identity fallback, format_version, prev_hash=0 | 1 per ledger |
 | **Year Summary** | year_hash, entry count, date range | 1 per year |
 | **Month Summary** | month_hash, entry count, date range | 1 per active month |
-| **Day** | Array of encrypted entries, day_hash, key_version | 1 per active day |
+| **Day** | Array of encrypted entries, day_hash | 1 per active day |
 
 ### 3.3 Content Hash
 
@@ -196,7 +197,7 @@ hardcoded-field content hashes alongside the extensible algorithm.
 2. Each block's `prev_hash` must match predecessor's computed hash
 3. Each block's `identity_seal` must verify against the identity secret
 4. Each day block's entries must pass content_hash + MAC verification
-5. `key_version` per block determines which MK to use for decryption and seal verification
+5. A single master key (the current out-of-band version) is used for decryption and seal verification — blocks carry no per-block `key_version` (ADR-026a)
 6. Missing blocks or failed checks → verification failure (tamper detected)
 
 **Partial traversal:** Summary blocks enable verifying a single day without reading
@@ -681,7 +682,7 @@ directives, and the project map.
 
 ### Data Format
 
-1. **Master Key** = `derive_mk(seed, key_version)` — 32 bytes, HMAC-SHA256 versioned
+1. **Master Key** = `derive_mk(seed, version)` — 32 bytes; v=0 raw seed, v≥1 HMAC-SHA256(seed, `"phpoc:mk:v{N}"`) — out-of-band version (ADR-026a)
 2. **Encryption** = AES-256-CTR + HMAC-SHA256 auth tag (encrypt-then-MAC)
 3. **_enc suffix convention:** Any field may be encrypted by appending `_enc` —
    no hardcoded field lists (ADR-013)
@@ -695,8 +696,8 @@ directives, and the project map.
 
 ### Identity & Recovery
 
-9. **Seed is root:** Recovery Seed → versioned MKs → all sub-keys. Seed recovers
-   everything (ADR-001, ADR-026).
+9. **Seed is root:** Recovery Seed → master key (v=0 raw / v≥1 HMAC) → all sub-keys. Seed recovers
+   everything (ADR-001, ADR-026, ADR-026a).
 10. **Identity secret** is random, version-independent, encrypted with current MK,
     stored in genesis as in-ledger fallback (ADR-003).
 11. **Device ID** = `HMAC(MK, device_local_secret)` with client suffix (`-cli`/`-web`).
