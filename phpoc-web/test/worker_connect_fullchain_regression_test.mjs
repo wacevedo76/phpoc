@@ -32,6 +32,13 @@ import { bytesToBase64 } from '../src/sync/base64.js';
 import { WorkerImportSource } from '../src/sync/remote_import.js';
 import { LocalCache } from '../src/sync/local_cache.js';
 import { canonicalRowToDTO } from '../src/sync/entry_dto.js';
+import * as syncModule from '../src/sync/sync.js';
+import { mergeRows } from '../src/sync/row_sync.js';
+
+// C1 (cross-client staging convergence): route the staging restore through the
+// shared `rowsFromRemoteBlob` + `mergeRows` converter (mirrors the target
+// connectToWorker). Exported in Phase 3; undefined (RED) in Phase 2.
+const rowsFromRemoteBlob = syncModule.rowsFromRemoteBlob;
 
 const t = new TestHelpers();
 
@@ -271,44 +278,18 @@ async function connectFullChain({ transport, crypto }) {
   }
 
   // Keep only genuinely-uncommitted rows from the remote staging blob.
+  // C1 (cross-client staging convergence): route through the shared
+  // rowsFromRemoteBlob + mergeRows([], rows) — no active-row skip.
   const pendingRows = [];
   const raw = await transport.pull('staging/blob');
   if (raw) {
     const b64 = bytesToBase64(raw);
     const json = crypto.deobfuscateBlob(b64, masterKey);
-    const rows = JSON.parse(json).entries || [];
-    for (const row of rows) {
-      const status = row.activity_status || row.is_active;
-      if (status === 'active' || row.is_active === true) continue;
-      if (row.committed === true) continue; // skip committed display cache
-      // Normalize row → canonical staging row → DTO (mirrors connectToWorker).
-      const canonical = {
-        activity_id: row.activity_id,
-        activity_status: row.activity_status,
-        updated_at: row.updated_at,
-        committed: false,
-      };
-      if (row.activity && typeof row.activity === 'string') {
-        canonical.activity = row.activity;
-      } else {
-        canonical.activity = JSON.stringify({
-          entry_id: row.entry_id || row.activity_id,
-          title: row.title,
-          start_epoch: row.start_epoch,
-          end_epoch: row.end_epoch,
-          duration: row.duration,
-          is_active: row.is_active ?? false,
-          is_paused: row.is_paused ?? false,
-          pauses: row.pauses || [],
-          tags: row.tags || [],
-          comment: row.comment || null,
-          media: row.media || [],
-          device_uuid: row.device_uuid || '',
-          end_device_uuid: row.end_device_uuid || '',
-          metadata: row.metadata || {},
-        });
-      }
-      const dto = canonicalRowToDTO(canonical);
+    const rows = rowsFromRemoteBlob(JSON.parse(json), Date.now());
+    const merged = mergeRows([], rows);
+    for (const mrow of merged) {
+      if (mrow.committed) continue; // skip committed display cache
+      const dto = canonicalRowToDTO(mrow);
       if (dto) pendingRows.push(dto);
     }
   }

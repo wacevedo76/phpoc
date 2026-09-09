@@ -374,5 +374,5 @@ These are explicit design choices from the implementation plan. Each maps to spe
 - `STAGING_ACTIVITY_ID_IMPLEMENTATION_AND_EXECUTION_PLAN.md` — Parent plan with design decisions and phases
 - `ONBOARDING_SPEEDUP_TESTS.md` — Ledger hash index test catalog (architectural template)
 - `docs/spec/PHPSPEC.md` — Format specification (§4.5 entry fields, §8 staging area)
-- `docs/design/TOP_LEVEL_DIRECTIVES.md` — Binding design directives D1–D10
+- `docs/design/TOP_LEVEL_DIRECTIVES.md` — Binding design directives D1–D11
 - `SESSION_HANDOFF.md` — Current session state and next steps

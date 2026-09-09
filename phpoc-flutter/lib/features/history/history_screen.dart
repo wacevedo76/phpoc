@@ -32,9 +32,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
 
   _HistoryScreenState()
       : _calendarMonth = DateTime.now().month,
-        _calendarYear = DateTime.now().year,
-        _selectedCalendarDate = FormatUtils.epochToDateStr(
-            DateTime.now().millisecondsSinceEpoch);
+        _calendarYear = DateTime.now().year;
+  // NOTE: _selectedCalendarDate defaults to null so History shows the full
+  // chronological list on first open (and right after a cloud restore) instead
+  // of filtering to today and hiding the rest of the ledger.
 
   @override
   void initState() {
@@ -112,6 +113,25 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       _selectedCalendarDate = null;
       _applyFilters();
     });
+  }
+
+  /// Clear both the date-range and calendar-date filters. Used by the
+  /// filtered-empty state's "Clear filter" button, which can be reached via
+  /// either filter path (the old button only cleared the range filter and left
+  /// a selected calendar date stuck).
+  void _clearAllFilters() {
+    final hadRange = _filterFrom != null || _filterTo != null;
+    setState(() {
+      _filterFrom = null;
+      _filterTo = null;
+      _selectedCalendarDate = null;
+    });
+    if (hadRange) {
+      // The loaded entry set was range-limited; reload to expand it.
+      _loadEntries();
+    } else {
+      _applyFilters();
+    }
   }
 
   Future<void> _pickDateRange() async {
@@ -437,7 +457,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         Text('No entries for this period',
             style: Theme.of(context).textTheme.bodyLarge),
         const SizedBox(height: 4),
-        TextButton(onPressed: _clearRangeFilter, child: const Text('Clear filter')),
+        TextButton(onPressed: _clearAllFilters, child: const Text('Clear filter')),
       ],
     );
   }

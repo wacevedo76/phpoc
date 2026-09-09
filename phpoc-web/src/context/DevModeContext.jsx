@@ -21,6 +21,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SyncService, SyncResult, IndexedDBBackend, SessionStorageBackend, createTransportFromDeployment, GenesisGate, WorkerImportSource, HttpTransport, LocalCache } from '@sync/index.js';
 import { canonicalRowToDTO } from '../sync/entry_dto.js';
+import { rowsFromRemoteBlob } from '../sync/sync.js';
+import { mergeRows } from '../sync/row_sync.js';
 import { createAutoSync } from '../hooks/useAutoSync.js';
 import { createCookieMonitor } from '../hooks/useCookieMonitor.js';
 import { exportLedger, exportLedgerFull } from '../services/ledger_export.js';
@@ -1002,46 +1004,17 @@ export function DevModeProvider({ children, defaultDevMode = true }) {
         const stagingB64 = bytesToBase64(stagingRaw);
         const stagingJson = crypto.deobfuscateBlob(stagingB64, masterKey);
         const stagingData = JSON.parse(stagingJson);
-        const rawRows = stagingData.entries || [];
-        for (const row of rawRows) {
-          // Skip active (in-progress) entries
-          const status = row.activity_status || row.is_active;
-          if (status === 'active' || row.is_active === true) continue;
-          // Skip rows already sealed into the ledger (committed display cache)
-          if (row.committed === true) continue;
 
-          // Normalize to a canonical staging row ({activity_id, activity, ...}).
-          // Flutter rows store the fields in an `activity` JSON string; web rows
-          // carry them flat. Both convert to a proper DTO via canonicalRowToDTO,
-          // which LocalCache.writeEntries persists in spec format ({hash, data}).
-          const canonical = {
-            activity_id: row.activity_id,
-            activity_status: row.activity_status,
-            updated_at: row.updated_at,
-            committed: row.committed || false,
-          };
-          if (row.activity && typeof row.activity === 'string') {
-            canonical.activity = row.activity;
-          } else {
-            // Web flat row → synthesize an activity JSON blob for canonicalRowToDTO
-            canonical.activity = JSON.stringify({
-              entry_id: row.entry_id || row.activity_id,
-              title: row.title,
-              start_epoch: row.start_epoch,
-              end_epoch: row.end_epoch,
-              duration: row.duration,
-              is_active: row.is_active ?? false,
-              is_paused: row.is_paused ?? false,
-              pauses: row.pauses || [],
-              tags: row.tags || [],
-              comment: row.comment || null,
-              media: row.media || [],
-              device_uuid: row.device_uuid || '',
-              end_device_uuid: row.end_device_uuid || '',
-              metadata: row.metadata || {},
-            });
-          }
-          const dto = canonicalRowToDTO(canonical);
+        // C1: route through the shared sync-path converter so active rows are
+        // imported (no ad-hoc active skip). rowsFromRemoteBlob → mergeRows([], rows)
+        // (fresh restore = empty local) → canonicalRowToDTO → committed-filter.
+        const rows = rowsFromRemoteBlob(stagingData, Date.now());
+        const merged = mergeRows([], rows);
+        for (const mrow of merged) {
+          // Skip rows already sealed into the ledger (committed display cache) —
+          // History sources committed entries from ledger:blocks directly.
+          if (mrow.committed) continue;
+          const dto = canonicalRowToDTO(mrow);
           if (dto) pendingRows.push(dto);
         }
         console.log('[connectToWorker] kept', pendingRows.length, 'uncommitted staging entries');

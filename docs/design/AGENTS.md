@@ -4,7 +4,7 @@
 Architectural Decision Records (ADRs), design goals, cross-platform architecture, multi-device session design, auth gate workflow specifications, and top-level directives that govern all design and code changes.
 
 ## Ownership
-- `ARCHITECTURAL_DECISIONS.md` — ADR log (ADR-001 through ADR-033)
+- `ARCHITECTURAL_DECISIONS.md` — ADR log (ADR-001 through ADR-034)
 - `CROSS_PLATFORM_ARCHITECTURAL_DECISIONS.md` — Cross-platform architecture decisions
 - `DESIGN_GOALS.md` — Architectural mandates and design goals
 - `SYSTEM_ARCHITECTURE.md` — Comprehensive system architecture: key hierarchy, chain structure, staging pipeline, transport layer, multi-device sync, cross-platform strategy, crypto core, web app, CLI (synthesizes ADRs + directives + design goals)
@@ -17,6 +17,7 @@ Architectural Decision Records (ADRs), design goals, cross-platform architecture
 - `FLUTTER_AXIOMS.md` — 31 axioms for Flutter app development organized into 6 categories: Protocol (A1–A8), Architecture (B1–B6), State Management (C1–C5), Data (D1–D6), Development (E1–E6), Decision (F1–F6). Quick-reference card with 20 yes/no checks before writing code. (2026-07-17)
 - `TOP_LEVEL_DIRECTIVES.md` — Binding principles (D1–D11) read first for every architectural discussion. Referenced by `SESSION_HANDOFF.md`.
 - `CANONICAL_SEAL-FIELD_Design.md` — Cross-client block-seal field-set convergence design (**ADR-029 adopted**: closed 6-field whitelist incl. `original_hash`)
+- `STAGING_CHANGE_DETECTION_DESIGN.md` — **ADR-034 adopted**: `staging_hash` + `seq` (merged with convergence-plan C4) in the device cookie for cheap remote-change detection + stale-write CAS, plus event-driven reconciliation (login/reauth/reads/mutations). Implementation + parity vectors pending.
 
 ## Local Contracts
 - **TOP_LEVEL_DIRECTIVES.md is the first read-in for every architectural discussion.** All ADRs, design goals, axioms, and workflow specs must be consistent with D1–D11.

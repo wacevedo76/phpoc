@@ -352,5 +352,5 @@ verify: sha256(reEncrypted) == sha256(encryptedBytes)
 - `STAGING_ACTIVITY_ID_TESTS.md` — Full test catalog (116 tests, 10 categories)
 - `ONBOARDING_UNLOCK_REAUTH_SPEEDUP_STRATEGY.md` — Ledger hash index architecture (mirrored design)
 - `docs/spec/PHPSPEC.md` — Format specification (§4.5 entry fields, §8 staging)
-- `docs/design/TOP_LEVEL_DIRECTIVES.md` — D1–D10 binding constraints
+- `docs/design/TOP_LEVEL_DIRECTIVES.md` — D1–D11 binding constraints
 - `docs/design/ARCHITECTURAL_DECISIONS.md` — ADR-024 (ledger hash index)

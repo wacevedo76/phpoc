@@ -185,16 +185,14 @@ int _epochFromStamp(dynamic stamp) {
   return 0;
 }
 
-/// Clear the HistoryScreen's default today-date calendar filter so that the
-/// June test-ledger entries are visible (the screen boots selecting "today",
-/// which hides past entries). Dismisses the deleteable filter Chip.
+/// Dismiss any active date-filter Chip. The HistoryScreen now boots with no
+/// date filter (the full chronological list is shown), so past test-ledger
+/// entries are already visible; this helper is a safe no-op unless a filter
+/// chip is present (e.g. after tapping a calendar day).
 Future<void> _clearCalendarFilter(WidgetTester tester) async {
-  final chip = find.byType(Chip);
-  if (chip.evaluate().isEmpty) return;
-  await tester.tap(find.descendant(
-    of: chip,
-    matching: find.byTooltip('Delete'),
-  ));
+  final delete = find.byTooltip('Delete');
+  if (delete.evaluate().isEmpty) return;
+  await tester.tap(delete.first);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
 }
@@ -434,8 +432,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
-      // HistoryScreen defaults to selecting "today"; the June test-ledger
-      // entries are in the past, so clear the calendar filter chip first.
+      // The screen boots with no date filter (full list), so no clearing is
+      // needed; _clearCalendarFilter is a defensive no-op here.
       await _clearCalendarFilter(tester);
 
       // HistoryScreen filters to is_active != true only.
@@ -485,7 +483,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
-      // Clear the default today-date filter so the June ledger shows.
+      // No date filter on boot; June ledger is already visible.
       await _clearCalendarFilter(tester);
 
       // Verify known entry titles from the test ledger
@@ -532,7 +530,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
-      // Clear the default today-date filter so the June ledger shows.
+      // No date filter on boot; June ledger is already visible.
       await _clearCalendarFilter(tester);
 
       // Block 1 first entry has tags: ["coding", "work"]
@@ -1066,7 +1064,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
-      // Clear the default today-date filter so June test-ledger entries show.
+      // No date filter on boot; June test-ledger entries already show.
       await _clearCalendarFilter(tester);
     }
 

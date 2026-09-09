@@ -2847,3 +2847,105 @@ ended state wins over `active`/`paused` copies from any other device, regardless
 - `docs/planning/flutter/CROSS_DEVICE_END_PROPAGATION_PHASE1.md` (Flutter reference, Group K)
 - ADR-025 (row-level staging sync, LWW model)
 - PHPSPEC §8.1 (row schema), §8.5 (merge strategy)
+
+---
+
+## ADR-034: Staging Change Detection + Cookie Write-Arbitration — `staging_hash` + `seq` in the Device Cookie
+
+**Date:** 2026-09
+**Status:** ✅ Decided (2026-09) — design doc `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md`; implementation not started.
+**Amended (2026-09):** merged with the previously-separate convergence-plan C4 (`seq` + Worker CAS) so the device cookie is migrated **once** — `staging_hash` (change detection) and `seq` (write arbitration) land in the same schema change.
+
+### Context
+
+Detecting "did another device change remote staging?" currently requires pulling the ~64 KB
+staging blob and merging, or consulting `staging/hash_index.json`
+(`[{activity_id, activity_status}]`), which is **coarse** — it misses content edits
+(title/tags/times) that leave the status unchanged. The device cookie (ADR-022) already gives a
+~100-byte "who owns staging" token but carries no content signal, and continuous timer polling
+for remote drift is a battery/request cost with no sub-second need (staging changes are
+human-paced).
+
+### Decision
+
+1. Add a **`staging_hash`** field (SHA-256, 64-hex) to the **remote** device cookie, and a
+   **`last_seen_hash`** mirror to the **local** cookie — a ~200-byte, no-decrypt "has remote
+   staging changed since I last reconciled?" signal.
+2. **Hash scope = canonical plaintext rows** (PHPSPEC §8.1 canonical form, sorted by
+   `activity_id`, compact-JSON, `sort_keys`), covering every field including `updated_at`,
+   excluding `committed` rows. This is the confirmed choice: the cookie carries **no
+   user-identifiable content** (a digest reveals only "content changed"), and plaintext-canonical
+   is the only representation that is deterministic, key-independent (survives `rekey_seed`), and
+   byte-identical across CLI/Web/Flutter. Encrypted bytes are **rejected** (random salt/nonce ⇒
+   every re-push of identical content yields a different digest ⇒ unusable for change detection).
+3. **Reauth gate stays on `device_specifier`** (ADR-022). `staging_hash` is a change signal, not
+   an auth decision; `device_uuid` remains informational.
+4. **Event-driven, not timer-driven.** The check fires on login/unlock, reauth, every staging
+   mutation, and reads (CLI `list/view/tags`; Web screen mount; Flutter screen build). No polling.
+5. **Every client checks-and-pushes on every mutation** (CLI included; previously local-only), so
+   remote stays current and any client can reconcile at any event.
+6. **Merge semantics are unchanged** (ADR-025 LWW, ADR-033 terminal-state, committed-filter,
+   ADR-030 ledger-auto-pull on handoff). "Remote is source of truth" means *where you reconcile*
+   (lazily, at interaction time), not "remote wins conflicts."
+7. **Unify existing hashes:** `staging_hash` absorbs the CLI F3 `.last_push_hash` and the Web
+   Tier-1 encrypted-hash-index SHA — one canonical digest instead of three ad-hoc ones.
+8. **Merge the write-arbitration field into the same migration (`seq` + Worker CAS).** The
+   previously-separate convergence-plan C4 (`CROSS_CLIENT_STAGING_CONVERGENCE_PLAN.md`) — a
+   monotonic `seq` on the cookie + Worker stale-write rejection — is **folded into this cookie
+   migration** rather than shipped as an independent schema change. Final cookie shapes:
+   remote `{device_uuid, device_specifier, staging_hash, seq}`, local
+   `{device_specifier, creation_time, last_seen_hash, last_seen_seq}`. `staging_hash` answers
+   *"did content change?"* (read cost); `seq` answers *"which write is current?"* (race
+   protection).
+
+### Rationale
+
+- **Correctness of change detection (the crux):** a change-detection digest must be
+  *deterministic* (same content → same hash). Random-nonce obfuscation makes encrypted-byte
+  hashing non-deterministic; canonical plaintext is the only option satisfying determinism +
+  key-independence + cross-client parity (§4.2 of the design doc).
+- **Cheap:** the read fast-path compares two stored digests — no MK, no decrypt, no 64 KB pull
+  unless the hash changed.
+- **D1/D2:** the hash is a plaintext SHA-256 digest revealing only "changed," not content; the
+  server stays blind.
+- **D3:** SHA-256 + canonical JSON use stdlib `hashlib`/`json` only.
+- **D6:** mutations still succeed offline (fail-open); the stale remote hash heals via merge on
+  the next event.
+- **D8/D9:** key-independent hash survives seed replacement/re-key; `staging_hash` is optional,
+  so old clients are tolerated (treated as "unknown → full pull+merge").
+- **D10:** parity vectors V1–V4 (canonical serialization, digest, key-independence,
+  change-sensitivity) are required before adoption is considered complete.
+- **D11:** the hash covers non-committed staging only; the ledger is untouched.
+
+### Consequences
+
+- **Cookie size** grows ~110 → ~200+ bytes (remote, +`staging_hash` +`seq`); the local cookie
+  gains two fields (`last_seen_hash`, `last_seen_seq`).
+- **Behavioral:** per-mutation push means CLI `capture/end/pause/unpause` now do network I/O
+  (previously local-only); fail-open preserves offline persistence.
+- **Specifier lifecycle cleanup:** the specifier is now regenerated only on ownership handoff,
+  not on every `push_to_remote` (prevents churn under per-mutation pushes).
+- **Accepted tradeoffs:** (1) CLI and Web on one machine carry different specifiers, so
+  alternating between them prompts reauth each switch (per-client auth by design); (2) an open,
+  untouched client does not live-reflect a peer's change until its next interaction (accepted in
+  favor of no polling).
+- **Worker:** the only Worker-side change is the **CAS guard** — reject a cookie PUT whose
+  `seq` is present and `<=` the stored `seq` (HTTP `409`), and treat a legacy cookie without
+  `seq` as last-write-wins (D9, CAS applies only when the incoming cookie carries `seq`). The
+  hash itself stays blind (no decrypt). The cookie path must honor `If-None-Match → 304` for the
+  cheap-poll premise to hold.
+- **Write-arbitration semantics (`seq`):** a single monotonic counter on the cookie *object*
+  (the cookie is a single-owner singleton, so one global counter suffices — resolves the
+  previously-open D-C4-1). A writer sets `seq = last_seen_seq + 1` (from its last pull/claim);
+  a `409` triggers re-pull + re-merge + one retry (or reauth if ownership changed).
+- **Not started:** implementation + parity vectors are the next step.
+
+### Related
+
+- `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` (full spec)
+- `docs/planning/CROSS_CLIENT_STAGING_CONVERGENCE_PLAN.md` (C4 `seq`+CAS merged into this ADR),
+  `docs/planning/STAGING_CHANGE_DETECTION_PLAN.md` (implementation plan)
+- ADR-022 (device cookie), ADR-024 (hash index fast path), ADR-025 (row-level staging),
+  ADR-030 (ledger auto-pull on handoff), ADR-033 (terminal-state rule)
+- `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12,
+  `docs/reference/DEVICE_COOKIE_AND_STAGING_DATABASE_SCHEMA.md`

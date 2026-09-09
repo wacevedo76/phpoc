@@ -398,7 +398,7 @@ _sync_ledger_blocks():
 
 ### Architecture & Design
 - **ADR-015 through ADR-025**: `docs/design/ARCHITECTURAL_DECISIONS.md` — all staging/sync ADRs
-- **Top-Level Directives D1–D10**: `docs/design/TOP_LEVEL_DIRECTIVES.md` — binding constraints
+- **Top-Level Directives D1–D11**: `docs/design/TOP_LEVEL_DIRECTIVES.md` — binding constraints
 - **CCS Implementation Plan**: `docs/planning/CROSS_CLIENT_REMOTE-LOCAL_STAGING_SYNC-RECONCILIATION_PLAN.md` — phased implementation plan, scorecard, dependency graph
 - **Device Cookie & Staging DB Schema**: `docs/reference/DEVICE_COOKIE_AND_STAGING_DATABASE_SCHEMA.md` — cookie format, database schema per-client
 - **Cross-Device Staging Workflow**: `docs/design/workflows/Cross_Device_Staging-Workflow.md`

@@ -92,39 +92,54 @@ const DEFAULT_COOKIE_TTL = 30; // minutes
  *
  * Handles both formats produced by the remote:
  *   - canonical: `{activity_id, activity_status, activity, updated_at, committed}`
+ *     (Flutter and post-CCS-2 web). Flat web rows (activity_id + no `activity`
+ *     string) are converted through the shared `dtoToCanonicalRow` converter so
+ *     `activity_status` derives from is_active/is_paused and fields keep full
+ *     fidelity.
  *   - legacy:    `{hash, data: {_enc}}` (older pushRemoteBlob format) — bridged
  *     through rawEntryToDTO → dtoToCanonicalRow (activity_id falls back to entry_id).
  *
  * Rows missing both activity_id and entry_id are dropped (defensive).
+ * Active rows are NOT skipped — status is preserved so `mergeRows` +
+ * `canonicalRowToDTO` render in-progress work (cross-client staging C1).
  *
  * @param {{entries: Array, device_id?: string}} remoteBlob - Decrypted remote blob.
  * @param {number} now - Timestamp used to backfill missing updated_at.
  * @returns {Array<{activity_id: string, activity_status: string, activity: string, updated_at: number, committed: boolean}>}
- * @private
  */
-function _rowsFromRemoteBlob(remoteBlob, now) {
+export function rowsFromRemoteBlob(remoteBlob, now) {
   const entries = (remoteBlob && remoteBlob.entries) || [];
   const first = entries[0];
   // Canonical rows expose activity_id at row level with no {data} wrapper.
   const isCanonical = !!first && typeof first.activity_id === 'string' && !first.data;
+  const deviceId = (remoteBlob && remoteBlob.device_id) || '';
 
   if (isCanonical) {
     return entries
       .filter((r) => r && (r.activity_id || r.entry_id))
-      .map((r) => ({
-        activity_id: r.activity_id || r.entry_id || '',
-        activity_status: r.activity_status || 'active',
-        activity: r.activity || '{}',
-        updated_at: r.updated_at ?? now,
-        committed: r.committed || false,
-      }));
+      .map((r) => {
+        // Flutter/post-CCS-2 canonical rows already carry the activity string.
+        if (typeof r.activity === 'string' && r.activity) {
+          return {
+            activity_id: r.activity_id || r.entry_id || '',
+            activity_status: r.activity_status || 'active',
+            activity: r.activity,
+            updated_at: r.updated_at ?? now,
+            committed: r.committed || false,
+          };
+        }
+        // Flat web row (activity_id + flat fields, no activity string): reuse
+        // the shared DTO→canonical converter — the same one the legacy branch
+        // uses — so activity_status derives from is_active/is_paused.
+        return dtoToCanonicalRow(r, deviceId, now);
+      });
   }
 
   // Legacy {hash, data} format — decrypt-order via rawEntryToDTO before row conversion.
   return entries
     .map((raw) => rawEntryToDTO(raw))
     .filter(Boolean)
-    .map((dto) => dtoToCanonicalRow(dto, (remoteBlob && remoteBlob.device_id) || '', now));
+    .map((dto) => dtoToCanonicalRow(dto, deviceId, now));
 }
 
 export class SyncService {
@@ -986,7 +1001,7 @@ export class SyncService {
    */
   async _mergeRemoteIntoLocal(remoteBlob, localEntries, localDeviceUuid) {
     const now = Date.now();
-    const remoteRows = _rowsFromRemoteBlob(remoteBlob, now);
+    const remoteRows = rowsFromRemoteBlob(remoteBlob, now);
 
     // Local DTOs → canonical rows (merged against the same key space).
     const localRows = localEntries

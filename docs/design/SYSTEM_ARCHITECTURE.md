@@ -4,8 +4,9 @@
 > overview of the full PHPOC system — from key derivation to cross-platform strategy.
 > **Status:** Living document. Updated as architecture evolves.
 
-This document synthesizes the 11 top-level directives (D1–D11), 26 Architectural
-Decision Records (ADR-001 through ADR-026), cross-platform strategy, and reference
+This document synthesizes the 11 top-level directives (D1–D11), 36 Architectural
+Decision Records (ADR-001 through ADR-034, plus amendments ADR-026a and ADR-029a),
+cross-platform strategy, and reference
 implementations into one coherent system description. It is the map; the ADRs,
 PHPSPEC.md, and source code are the territory.
 
