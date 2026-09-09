@@ -31,6 +31,7 @@ Every change is either **client-local** (no contract change) or a **protocol cha
 - **Verify:** existing `tests/test_phase6a_staging_equivalence.py` + `cross_client_web_test.mjs` (no new vectors needed; it removes a divergence).
 
 ### C2 — Web foreground/focus pull (client-local, event-driven)
+- **C2 COMPLETE (2026-09-09, 4-phase TDD):** `C2_WEB_FOCUS_PULL_PHASE1.md` — 25 assertions (groups A–F: event triggers 6, guards 3, re-entrancy/coalescing 4, result/error 6, cleanup 4, non-blocking 2). New `useFocusPull`/`createFocusPull` hook (`phpoc-web/src/hooks/useFocusPull.js`) reuses `checkAndSync()` verbatim (no new protocol, no auto-claim); event-driven + single-flight/coalesced re-run. Tests: `phpoc-web/test/focus_pull_hook_test.mjs` 49/49 GREEN.
 - Add an **event-driven** `checkAndSync`-based pull on `visibilitychange`/`focus` (and screen
   mount) so an idle Web session converges to remote when the user returns to the tab. Per
   ADR-034 decision 4 this is **event-triggered, not a periodic timer** — the continuous-poll variant
