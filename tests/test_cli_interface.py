@@ -59,7 +59,7 @@ class TestGroupA_NormalPaths(unittest.TestCase):
         self.mock_staging.check_and_sync.return_value = SyncCheckResult.READY
 
         with patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            result = self.cli._sync_before_command()
+            result = self.cli._sync_before_command(observe=False)
 
         self.assertTrue(result)
         self.mock_staging.check_and_sync.assert_called_once_with(timeout_ms=500)
@@ -74,7 +74,7 @@ class TestGroupA_NormalPaths(unittest.TestCase):
         self.mock_staging.check_and_sync.return_value = SyncCheckResult.OFFLINE
 
         with patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            result = self.cli._sync_before_command()
+            result = self.cli._sync_before_command(observe=False)
 
         self.assertTrue(result)
         mock_dedup.assert_not_called()
@@ -116,7 +116,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         mock_auth.get_key.return_value = b'\x01' * 32
         self.cli._auth = mock_auth
 
-        result = self.cli._sync_before_command(require_auth=False)
+        result = self.cli._sync_before_command(require_auth=False, observe=False)
 
         self.assertTrue(result)
         # P4: auth.login() must NOT be called — read commands are non-blocking
@@ -128,7 +128,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         """B2: Even without a cached auth, read commands proceed with
         local data. No passphrase prompt, no abort."""
         # No _auth set — simulates NoAuthCryptoManager scenario
-        result = self.cli._sync_before_command(require_auth=False)
+        result = self.cli._sync_before_command(require_auth=False, observe=False)
 
         self.assertTrue(result)
 
@@ -148,7 +148,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         with patch('phpoc_cli.interface.CryptoManager', create=True) as mock_cm, \
              patch('phpoc_cli.interface.StagingService', create=True) as mock_ss, \
              patch('phpoc_cli.interface.LedgerEngine', create=True) as mock_le:
-            self.cli._sync_before_command(require_auth=False)
+            self.cli._sync_before_command(require_auth=False, observe=False)
 
         # No new CryptoManager, StagingService, or LedgerEngine created
         mock_cm.assert_not_called()
@@ -170,7 +170,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         self.cli._auth = mock_auth
         original_staging = self.cli._staging
 
-        self.cli._sync_before_command(require_auth=False)
+        self.cli._sync_before_command(require_auth=False, observe=False)
 
         # _reconcile_and_claim must NOT be called on the staging service
         original_staging._reconcile_and_claim.assert_not_called()
@@ -187,7 +187,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         self.cli._auth = mock_auth
 
         with patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            self.cli._sync_before_command(require_auth=False)
+            self.cli._sync_before_command(require_auth=False, observe=False)
 
         mock_dedup.assert_not_called()
 
@@ -202,7 +202,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         mock_auth.get_key.return_value = mk
         self.cli._auth = mock_auth
 
-        result = self.cli._sync_before_command(require_auth=False)
+        result = self.cli._sync_before_command(require_auth=False, observe=False)
 
         self.assertTrue(result)
 
@@ -219,7 +219,7 @@ class TestGroupB_REAUTH_AutoHandle(unittest.TestCase):
         self.cli._auth = mock_auth
 
         with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
-            self.cli._sync_before_command(require_auth=False)
+            self.cli._sync_before_command(require_auth=False, observe=False)
 
         output = mock_stdout.getvalue()
         # P4: non-blocking notification about showing local data
@@ -828,8 +828,13 @@ class _BaseCacheIntegration(unittest.TestCase):
         self.mock_staging = MagicMock()
         self.mock_ledger_engine = MagicMock()
         self.mock_crypto = MagicMock()
+        self.mock_config = MagicMock()
+        # Route read commands through check_and_sync (legacy fast-path) so the
+        # F2 cache-display tests exercise _sync_remote_ledger_and_dedup.
+        self.mock_config.get.return_value = "manual"
         self.cli = CLIInterface(
-            self.mock_staging, self.mock_ledger_engine, self.mock_crypto
+            self.mock_staging, self.mock_ledger_engine, self.mock_crypto,
+            config=self.mock_config,
         )
         # Configure staging for sync
         self.mock_staging._remote = MagicMock()

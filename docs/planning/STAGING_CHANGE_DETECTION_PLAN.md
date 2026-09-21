@@ -1,6 +1,6 @@
 # Staging Change Detection + Cookie CAS (`staging_hash` + `seq`) — Cross-Client Implementation Plan
 
-> **Status:** 🔜 **Planned** — design adopted as **ADR-034** (merged with convergence-plan C4); no code changes yet.
+> **Status:** 🟢 **P0 complete** — design adopted as **ADR-034** (merged with convergence-plan C4); **P0 (shared helper + V1/V2 parity vectors) landed via 4-phase TDD (2026-09).** P1–P5 remain.
 > **Spec / design:** `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` (decisions DS1–DS9, canonical §4, `seq`+CAS §3a, invariants §9).
 > **ADR:** ADR-034 (`docs/design/ARCHITECTURAL_DECISIONS.md`).
 > **Scope:** CLI (Python), Web (JS), Flutter (Dart), **Worker** — implement the `staging_hash` +
@@ -273,6 +273,10 @@ digest) consumed by all three clients to prove byte-parity:
 1. **P0 — shared helper + parity vectors (V1/V2).** Land `compute_staging_hash` in all three
    clients and prove byte-parity on a frozen fixture *before* any wiring. This is the
    ADR-034 §4.4 gate ("parity vectors required before adoption is complete").
+   **Phases 1–4 COMPLETE (2026-09):** `STAGING_HASH_PARITY_PHASE1.md` (22 assertions, groups A–G).
+   GREEN all three clients (Python 11/1skip · Web `node --test` 5/5 · Flutter 6/6) + regressions clean
+   (Python 2741/2skip · Web vitest 181/1skip · `flutter analyze`/`dart analyze` clean). Phase 4 extracted
+   Web's inlined SHA-256 into `phpoc-web/src/crypto/sha256.js`. **✅ DONE.**
 2. **P1 — cookie schema + CAS** (remote `staging_hash` + `seq`, local `last_seen_hash` +
    `last_seen_seq`) with backward-compat parse tolerance (group E), plus the **Worker CAS guard**
    (group J).

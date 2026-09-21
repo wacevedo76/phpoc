@@ -12,7 +12,7 @@ maintain **behavioral parity** with the Python reference (`domain/ledger/chain.p
 - `lib/data/ledger/` — chain engine: `chain.dart` (`LedgerChain`), `sealable_chain.dart` (ADR-029/029a mixin), `helpers.dart`, `engine.dart`, `index_manager.dart`, `merge.dart`, `summary_policy.dart`, `store_adapters.dart`
 - `lib/data/commonplace/` — Commonplace Book chain/engine/storage/service (ADR-031)
 - `lib/data/storage/` — drift/SQLite database, DAOs, migrations, preferences, secure preferences
-- `lib/data/sync/` — staging (row-level) store, merge engine, hash index, device cookie, genesis gate, sync service, transport
+- `lib/data/sync/` — staging (row-level) store, merge engine, hash index, device cookie, genesis gate, sync service, transport, `staging_hash.dart` (ADR-034 P0 canonical-row bridge `dtoToCanonicalRow` + `computeStagingHash`)
 - `lib/services/` — application services: `auth_service`, `onboarding_service`, `ledger_push_service`, `ledger_pull_service`, `ledger_backup_service`, `rekey_service` (C-2 seed re-key), `import_service`, `staging_seed_helpers`, `pull_stage_functions`
 - `lib/features/` — screens by area (auth, onboarding, landing, dashboard, history, sync, settings, import, commonplace, shared widgets)
 - `lib/routing/` — go_router app router
@@ -46,6 +46,13 @@ maintain **behavioral parity** with the Python reference (`domain/ledger/chain.p
   identity secret; `content_hash` and `key_version` unchanged.
 - **No secrets in repo.** Test creds come from `TEST_CREDENTIALS.md` (repo root, gitignored). Never
   duplicate credentials in source or tests.
+- **ADR-034 staging_hash parity (P0):** `lib/data/sync/staging_hash.dart` `computeStagingHash` must stay
+  byte-identical to Python `compute_staging_hash` (`domain/staging/row_merge.py`) and Web
+  `computeStagingHash` (`remote_sync.js`). The `activity` map is built in the pinned key order
+  (title, start_epoch, end_epoch, duration, tags, comment, media, entry_id, is_active, is_paused,
+  pauses, metadata, device_uuid, end_device_uuid, block_index); `comment` ''→null; digest = SHA-256 of
+  `encodeValueNoSpaces` over non-committed rows sorted by `activity_id`. Guarded by
+  `test/data/sync/staging_hash_test.dart`. Spec: `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` §4.1.
 - **Live ledger protection:** never read/write `~/.local/share/phpoc/`. Mock/fixture data goes to
   `/tmp/`, `testdata/`, or a user-provided path.
 

@@ -1,6 +1,6 @@
 # Plan: Cross-Client Staging Convergence (Web ↔ Flutter ↔ CLI)
 
-> **Status:** 🔜 Planning
+> **Status:** 🟡 In progress — C1 ✅, C2 ✅, C3 ✅ (4-phase complete, observe mode shipped CLI-first); C4 merged into ADR-034
 > **Created:** 2026-09-06
 > **Scope:** Make remote staging converge bidirectionally across all three clients so a row written on one device becomes visible on the others without claiming ownership, and eliminate the cookie handoff race.
 > **Contract anchor:** `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12 (binding state machine) + §12.9 matrix; invariants I2/I3 (byte compatibility), I7 (no network on read-only), D1–D11.
@@ -49,6 +49,9 @@ Every change is either **client-local** (no contract change) or a **protocol cha
   read-only commands stay cheap and only hit the network on actual change.
 - Implement in the CLI first: extract the pull+merge half of `_reconcile_and_claim` (`service.py:897`) into a shared helper reused by observe and claim. This **extends** `CLI_READONLY_STAGING_SYNC.md` (currently CLI-only) to a unified spec-level mode, then parity-port to Web (`_reconcileDifferentDevice`, `sync.js:909`) and Flutter (`_reconcileAndClaimRowLevel`, `sync_service.dart:648`).
 - **Offline-lenient (D6):** a failed observe pull degrades to `READY`/local-only, never an error.
+- **Resolved (2026-09-09, blueprint `C3_READ_ONLY_OBSERVE_PHASE1.md`):** D-C3-1 → config `staging.observe_mode` (`"auto"` default / `"manual"`) + `--observe` flag; R-C3-1 → injected `staging_hash_provider` seam + full-pull stepping-stone provider (swap in canonical hash on ADR-034 P0 with no observe-side change); A-C3-2 → shared `_pull_and_merge` converges on canonical `merge_rows`, `_reconcile_and_claim` refactored to the same helper (one merge semantics; claim path deliberately changes, B6 re-scoped to canonical-consistent outcome).
+- **✅ Phase 3 (GREEN) DONE (2026-09):** `observe()` + `_pull_and_merge()` + `_read_last_seen_hash()`/`_write_last_seen_hash()` landed in `domain/staging/service.py` (fail-open READY, hash-gated blob pull, no push / no cookie claim / no TTL refresh); `_reconcile_and_claim` now calls `_pull_and_merge`; `_merge_remote_into_local` `remote_won_ids` uses `MergeEngine._remote_wins` (terminal-state LWW); `ConfigManager.DEFAULTS["staging"]["observe_mode"]="auto"`; `CLIInterface(config=…)` + `_should_observe()` routing (reads auto-observe, writes `check_and_sync`); `main.py` passes `config=CONFIG` to all 7 `CLIInterface` sites; re-scoped `test_cli_interface.py` A2/A3+B1–B7 + `test_p4_cli_ux_polish.py` E1/E4 to `observe=False` and `_BaseCacheIntegration` to `"manual"` mode. 273 C3-related tests GREEN. **→ Phase 4 (REFACTOR) next.**
+- **✅ Phase 4 (REFACTOR) DONE (2026-09):** code review + two fixes in `domain/staging/service.py` — (1) dead code removed from `_reconcile_and_claim` (unused `remote_device_uuid`/`remote_cookie_specifier`/`local_device_uuid` locals and the `DeviceCookie.parse_remote` block; `pull_cookie` reduced to a reachability probe per the Bug-3a always-pull+merge behavior); (2) `_touch_local_cookie` now preserves existing META_FILE keys (esp. `last_seen_hash`) instead of rewriting to `{device_specifier, creation_time}` — prevents observe's cheap-read baseline from being lost on local writes. Regression test `test_A9_local_write_preserves_last_seen_hash` added (`tests/test_staging_observe.py` 32/32). **Group F spec docs closed:** `CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12.3.1 OBSERVE branch + §12.4 OBSERVE rows, I7 re-worded (cheap hash-gated cookie GET, not network-free), PHPSPEC §8.10 (device cookie + observe mode + observe→claim I1), `CLI_READONLY_STAGING_SYNC.md` generalized. **C3 COMPLETE → C4 (ADR-034).**
 - **Verify:** PHPSPEC §8 + §12 update, CLI tests, Web + Flutter parity tests, CCS-5-style cross-client pass.
 
 ### C4 — Device cookie `seq` + Worker CAS — **MERGED into ADR-034 (2026-09)**
@@ -71,7 +74,7 @@ The §12.9 matrix all-GREEN across CLI/Web/Flutter + Worker, with byte-identical
 
 ## Open decisions
 
-- **D-C3-1:** Is observe mode opt-in per command (CLI) / always-on for idle sessions (Web/Flutter), or gated by a `staging_hash` change check only? (I7 tension.)
+- **D-C3-1:** ~~Is observe mode opt-in per command (CLI) / always-on for idle sessions (Web/Flutter), or gated by a `staging_hash` change check only? (I7 tension.)~~ **RESOLVED (2026-09-09):** both modes via config `staging.observe_mode` — `"auto"` (default) → read commands observe; `"manual"` → today's fast path unless the user passes a new `--observe` flag. Web/Flutter stay always-on idle (focus/visibility/tick). Blueprint: `C3_READ_ONLY_OBSERVE_PHASE1.md`.
 - ~~**D-C4-1:** Cookie `seq` semantics — per-device monotonic vs. global; CAS response shape for stale writes.~~ **RESOLVED (ADR-034 §3a):** single global counter on the cookie object; `409` + re-pull + re-merge + one retry.
 
 ## Relation to existing plans

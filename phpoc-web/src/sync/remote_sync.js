@@ -32,6 +32,8 @@
 
 import { base64ToBytes, bytesToBase64 } from './base64.js';
 import { REMOTE_STAGING_BLOB, REMOTE_DEVICE_COOKIE } from './keys.js';
+import { jsonSortNoSpaces } from '../ledger/utils.js';
+import { sha256Hex } from '../crypto/sha256.js';
 
 /**
  * Derive activity_status from a legacy staging DTO's flags.
@@ -78,6 +80,25 @@ export function dtoToCanonicalRow(e, deviceId, now) {
     updated_at: e.updated_at ?? now,
     committed: e.committed || false,
   };
+}
+
+/**
+ * Compute the key-independent staging hash (ADR-034 §4.1).
+ *
+ * SHA-256 of the canonical-array JSON over non-committed rows, sorted
+ * ascending by `activity_id`. Byte-identical to Python
+ * `domain/staging/row_merge.compute_staging_hash` and Flutter
+ * `data/sync/staging_hash.dart computeStagingHash`.
+ *
+ * @param {Array} rows - Canonical staging rows (5-field PHPSPEC §8.1 form
+ *   produced by {@link dtoToCanonicalRow}). Committed rows are excluded.
+ * @returns {string} 64-char lowercase hex SHA-256 digest.
+ */
+export function computeStagingHash(rows) {
+  const uncommitted = (rows || []).filter((r) => r && !r.committed);
+  uncommitted.sort((a, b) =>
+    a.activity_id < b.activity_id ? -1 : a.activity_id > b.activity_id ? 1 : 0);
+  return sha256Hex(jsonSortNoSpaces(uncommitted));
 }
 
 /**

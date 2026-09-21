@@ -98,13 +98,33 @@ class CLIInterface:
         staging_service: StagingService,
         ledger_engine: LedgerEngine,
         crypto: AbstractCryptoManager,
+        config=None,
     ):
         self._staging = staging_service
         self._ledger_engine = ledger_engine
         self._crypto = crypto
+        self._config = config
         self._reauth_notified = False
 
-    def _sync_before_command(self, require_auth: bool = False) -> bool:
+    def _should_observe(self, observe: Optional[bool]) -> bool:
+        """Resolve whether a read command should route through observe.
+
+        An explicit ``observe`` flag wins; otherwise consult
+        ``staging.observe_mode`` (default "auto").
+        """
+        if observe is not None:
+            return bool(observe)
+        mode = "auto"
+        if self._config is not None:
+            try:
+                mode = self._config.get("staging.observe_mode", "auto")
+            except Exception:
+                mode = "auto"
+        return mode == "auto"
+
+    def _sync_before_command(
+        self, require_auth: bool = False, observe: Optional[bool] = None
+    ) -> bool:
         """Sync staging with remote before executing a command.
 
         Checks device cookie for fast-path (same device, same session).
@@ -132,6 +152,15 @@ class CLIInterface:
         """
         if self._staging._remote is None:
             return True  # No remote configured — nothing to sync
+
+        # Read commands (require_auth=False) route through observe when
+        # staging.observe_mode == "auto" (or --observe forces it). Writes
+        # (require_auth=True) always use check_and_sync.
+        use_observe = (not require_auth) and self._should_observe(observe)
+        if use_observe:
+            # Fail-open read-only refresh: no passphrase prompt, no ledger pull.
+            self._staging.observe(timeout_ms=500)
+            return True
 
         result = self._staging.check_and_sync(timeout_ms=500)
 

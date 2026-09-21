@@ -700,7 +700,7 @@ def main():
         staging_store=staging_store,
         identity_secret=None,
     )
-    cli = CLIInterface(staging_service, ledger_engine, crypto)
+    cli = CLIInterface(staging_service, ledger_engine, crypto, config=CONFIG)
     cli._auth = auth  # For _sync_before_command auto-handle re-auth
 
     # Phase B: Replay any pending WAL (crash-safe deferred push) before commands.
@@ -731,7 +731,7 @@ def main():
                 staging_store=staging_service._local._store,
                 identity_secret=None,
             )
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
 
         if args.subcommand == "oneoff":
             title = args.title
@@ -781,7 +781,7 @@ def main():
                 staging_store=staging_service._local._store,
                 identity_secret=None,
             )
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
             crypto = fresh_crypto
             sync_orchestrator = SyncOrchestrator(
                 staging_service=staging_service,
@@ -975,7 +975,7 @@ def main():
             fresh_crypto, staging_service = _reauth_staging(
                 auth, transport, device_id_provider, CONFIG, CONFIG_DIR)
             ledger = LedgerDomain(fresh_crypto, store)
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
 
         _handle_modify(ledger, args.index)
     elif args.command == "remove":
@@ -985,7 +985,7 @@ def main():
             fresh_crypto, staging_service = _reauth_staging(
                 auth, transport, device_id_provider, CONFIG, CONFIG_DIR)
             ledger = LedgerDomain(fresh_crypto, store)
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
 
         _handle_remove(ledger, args.index, args.yes)
     elif args.command == "review":
@@ -1002,7 +1002,7 @@ def main():
                 staging_store=staging_service._local._store,
                 identity_secret=None,
             )
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
 
         _handle_review(ledger, cli)
     elif args.command == "revert":
@@ -1019,7 +1019,7 @@ def main():
                 staging_store=staging_service._local._store,
                 identity_secret=None,
             )
-            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto)
+            cli = CLIInterface(staging_service, ledger_engine, fresh_crypto, config=CONFIG)
 
         if args.list:
             print("\n=== Ledger Summary ===")

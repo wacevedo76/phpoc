@@ -647,6 +647,38 @@ same inputs. This is the formal specification to code against.
          └────────────────────────────────────────────────────┘
 ```
 
+### 12.3.1 OBSERVE Branch (read-only observe mode — C3)
+
+Read commands (`ph view` / `ph list` / `ph tags`) must converge to remote **without**
+claiming ownership — a device that does not own the cookie still sees the latest data.
+`observe()` is the read-only counterpart to `check_and_sync()`:
+
+```
+observe():
+  1. No remote configured? → READY (local-only)
+  2. NETWORK: pull remote cookie (~200 B, no decrypt)
+       unreachable → READY (local-only, fail-open)                [D6]
+  3. HASH compare: remote.staging_hash vs local.last_seen_hash
+       EQUAL     → no staging change → READY (skip blob pull)
+       DIFFERENT → staging changed → continue
+       MISSING   → legacy client / first run → treat as "changed"  [D9]
+  4. PULL blob + merge_rows into local (NO push, NO cookie claim)
+  5. set local.last_seen_hash = remote.staging_hash → READY
+```
+
+Three binding properties separate OBSERVE from RECONCILE AND CLAIM (§12.3):
+
+1. **No push** — after merging, the observer does **not** push the blob back.
+2. **No cookie claim** — the observer never creates, destroys, or pushes a device cookie;
+   the remote `device_specifier` stays with its writer (I1).
+3. **No TTL refresh** — observation never bumps the local cookie `creation_time`; a
+   forever-reading client still re-authenticates after 30 min.
+
+The change-detection hash is injected via a `staging_hash_provider` seam in the CLI-first
+slice (R-C3-1): until the canonical `staging_hash` lands (ADR-034 P0), the provider is a
+full-pull stub that always reports "changed." Read commands route through `observe()` under
+`staging.observe_mode == "auto"` (default), or via `--observe` under `"manual"`.
+
 ### 12.4 Decision Table
 
 Each gate is an atomic decision. The outcome must be identical across all clients.
@@ -672,6 +704,11 @@ Each gate is an atomic decision. The outcome must be identical across all client
 | **R6** | Local rows | Build blob, obfuscate, push | `void` | Uses `staging/blob` path |
 | **R7** | Local rows | Build hash index, push | `void` | Uses `staging/hash_index.json` path |
 | **R8** | Device ID | Create cookie (local + remote) | `void` | Fresh specifier; non-critical failure |
+| **O1** | Remote config | Remote configured? | `skip→READY` / `continue` | Observe skips all network when no transport |
+| **O2** | Remote cookie | Reachable? | `READY(local-only)` / `continue` | Fail-open — never OFFLINE/REAUTH_NEEDED |
+| **O3** | `staging_hash` vs `last_seen_hash` | Changed? | `READY(skip pull)` / `continue` | Hash gates the expensive blob pull |
+| **O4** | Remote blob + local rows | Pull + `merge_rows` | `READY` | No push, no cookie claim, no TTL refresh |
+| **O5** | `staging_hash` | Record baseline | `last_seen_hash` | Written only after a successful merge |
 
 ### 12.5 Merge Algorithm (Abstract)
 
@@ -754,7 +791,7 @@ HASH_INDEX_FAST_PATH():
 | I4 | Merge is deterministic given same inputs | Unit tests with known input pairs |
 | I5 | Blob key mismatch → never overwrite remote | R1 returns OFFLINE on BLOB_KEY_MISMATCH |
 | I6 | Committed entries filtered before push | R4 executes after R3, before R6 |
-| I7 | No network on read-only (no pending writes) | F1 returns READY with zero network calls |
+| I7 | Read-only is cheap (hash-gated cookie GET), not network-free | F1 returns READY with zero network calls; OBSERVE does one ~200 B cookie GET and pulls the blob only on a `staging_hash` change |
 | I8 | activity_id preserved across staging→ledger lifecycle | Same ID in staging row and committed block entry |
 | I9 | Worker never decrypts blob or hash index | SHA-256 computed over encrypted bytes |
 | I10 | Remote paths are constants, not inline strings | All clients use same path values |
@@ -790,3 +827,10 @@ for R4/R5. **CCS-4 (cross-client E2E)** verified all gates byte-consistent
 across CLI/Web/Flutter: compact canonical `activity` JSON, JS `canonicalRowToDTO`
 block_index preservation, deterministic JS `mergeRows` sort, and canonical
 compact hash index (Flutter `json.encode` already compact — no divergence).
+
+**C3 OBSERVE (read-only observe mode):** CLI-first ✅ (this section, §12.3.1). The
+OBSERVE branch reuses the canonical `merge_rows` helper (`_pull_and_merge`) shared with
+RECONCILE AND CLAIM, so observe and claim have exactly one merge semantics. Web and
+Flutter observe ports are parity/future (blueprint Group E) — their idle triggers
+(focus/visibility/tick) are hash-gated but always-on, independent of the CLI
+`observe_mode` config choice.

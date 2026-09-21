@@ -6,8 +6,9 @@ import 'package:crypto/crypto.dart' as crypto;
 /// SHA-256 hash utility.
 ///
 /// Wraps package:crypto. Must match web's crypto.sha256() output byte-for-byte.
-/// This is a temporary pure-Dart implementation — Phase 2 replaces it with
-/// the Rust FFI bridge via flutter_rust_bridge.
+/// Pure-Dart synchronous SHA-256 — used by the staging-hash parity gate
+/// (`lib/data/sync/staging_hash.dart`) where a deterministic, key-independent
+/// digest must be available without the Rust FFI bridge.
 
 /// Compute SHA-256 hex digest of a UTF-8 string.
 String sha256(String input) {

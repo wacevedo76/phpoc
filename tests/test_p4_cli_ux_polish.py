@@ -840,11 +840,11 @@ class TestGroupE_EdgeCases(unittest.TestCase):
             mock_ss.return_value = mock_ss_instance
 
             # First call
-            self.cli._sync_before_command(require_auth=False)
+            self.cli._sync_before_command(require_auth=False, observe=False)
             first_output = mock_stdout.getvalue()
 
             # Second call — should NOT print the same message again
-            self.cli._sync_before_command(require_auth=False)
+            self.cli._sync_before_command(require_auth=False, observe=False)
             second_output = mock_stdout.getvalue()
 
         # After Phase 3: consecutive calls should not duplicate the
@@ -921,7 +921,7 @@ class TestGroupE_EdgeCases(unittest.TestCase):
             SyncCheckResult.READY
 
         with patch.object(self.cli, '_sync_remote_ledger_and_dedup') as mock_dedup:
-            result = self.cli._sync_before_command(require_auth=False)
+            result = self.cli._sync_before_command(require_auth=False, observe=False)
 
         self.assertTrue(result)
         mock_dedup.assert_called_once()

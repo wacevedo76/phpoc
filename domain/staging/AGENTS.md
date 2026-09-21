@@ -7,7 +7,7 @@ Staging area management for pending activity entries before they are committed t
 - `service.py` — `StagingService`: auth gate, `check_and_sync()`, push, `_merge_remote_into_local()` (canonical-row reconcile, CCS-3)
 - `remote_sync.py` — Blob obfuscation, pull/push, device cookie handling, `SyncCheckResult`
 - `merge_engine.py` — Cross-device merge, deduplication by `entry_id`; `merge_rows()` activity_id LWW + terminal-state rule (ADR-033: "ended" is permanent)
-- `row_merge.py` — `dtoToCanonicalRow` / `canonicalRowToDTO` canonical-row bridge (CCS-3)
+- `row_merge.py` — `dtoToCanonicalRow` / `canonicalRowToDTO` canonical-row bridge (CCS-3); `compute_staging_hash` (ADR-034 P0 parity gate — SHA-256 canonical-array digest, `comment` ''→null)
 - `local_cache.py` — Local staging cache for offline/performance; `plain:` convention; row-mode (canonical) support for `SqliteStagingStore`
 
 ## Local Contracts
@@ -24,6 +24,7 @@ Staging area management for pending activity entries before they are committed t
 - Merge deduplicates by `activity_id` (LWW, local-wins-on-tie) plus the terminal-state rule: when exactly one side is `ended`, the `ended` row wins regardless of `updated_at` (ADR-033); `entry_id` is the legacy fallback — canonical rows consolidate cross-client duplicates
 - Remote blob is obfuscated (not plain JSON)
 - Reconcile at the canonical-row level (`row_merge.py` + `merge_rows`), committing-excluded before persistence
+- `compute_staging_hash` (ADR-034 §4.1): SHA-256 over non-committed canonical rows sorted by `activity_id`, serialized compact + sorted-keys; `comment` normalizes ''→null. Digest must stay byte-identical to Web `computeStagingHash` and Flutter `computeStagingHash` (P0 gate — see `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` §4.1)
 
 ## Verification
 - Tests: `test_phase2_staging_service.py`, `test_phase4_staging_interaction_flow.py`, `test_phase6a_staging_equivalence.py`, `test_staging_sync_optimization.py`, `test_cli_sync_gate_wiring.py` (CCS-3, 60 tests)

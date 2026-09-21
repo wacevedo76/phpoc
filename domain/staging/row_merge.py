@@ -10,9 +10,10 @@ used by the row-level sync-gate (CCS-3).
 Pure functions — no I/O, no side effects, no dependencies beyond builtins.
 """
 
+import hashlib
 import json
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 
 def _canonical_json(obj: Any) -> str:
@@ -76,7 +77,7 @@ def dtoToCanonicalRow(
         "end_epoch": dto.get("end_epoch") if dto.get("end_epoch") is not None else None,
         "duration": dto.get("duration") or 0,
         "tags": dto.get("tags") or [],
-        "comment": dto.get("comment"),
+        "comment": dto.get("comment") or None,
         "media": dto.get("media") or [],
         "entry_id": dto.get("entry_id") or "",
         "is_active": dto.get("is_active") if dto.get("is_active") is not None else False,
@@ -169,3 +170,24 @@ def canonicalRowToDTO(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "source": "remote",
         "hash": "",
     }
+
+
+def compute_staging_hash(rows: List[Dict[str, Any]]) -> str:
+    """Compute the key-independent staging hash (ADR-034 §4.1).
+
+    SHA-256 of the canonical-array JSON over non-committed rows, sorted
+    ascending by ``activity_id``. The digest is byte-identical across CLI
+    (Python), Web (JS), and Flutter (Dart) — the P0 parity gate.
+
+    Args:
+        rows: Canonical staging rows (the 5-field PHPSPEC §8.1 form produced
+            by :func:`dtoToCanonicalRow`). Committed rows are excluded (they
+            have moved to the ledger, D11).
+
+    Returns:
+        64-char lowercase hex SHA-256 digest.
+    """
+    rows = [r for r in rows if not r.get("committed")]
+    rows = sorted(rows, key=lambda r: r["activity_id"])
+    payload = json.dumps(rows, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

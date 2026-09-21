@@ -1,8 +1,18 @@
 # Plan: CLI Read Commands Should Pull Remote Even on Specifier Mismatch
 
-> **Status:** 🔜 Planning
+> **Status:** ✅ Implemented — generalized to the spec-level OBSERVE branch (C3, 2026-09)
 > **Created:** 2026-06-29
+> **Superseded by:** `docs/reference/CROSS_CLIENT_STAGE_SYNCING_REFERENCE.md` §12.3.1 (OBSERVE branch) + PHPSPEC §8.10 (Device Cookie & Observe Mode). Blueprint: `docs/planning/C3_READ_ONLY_OBSERVE_PHASE1.md`.
 > **Problem:** CLI read-only commands (`ph view`, `ph list`, `ph tag`) block entirely when another device holds the staging cookie, instead of silently pulling and showing the latest data.
+>
+> **Resolution note (2026-09):** this plan was promoted from a CLI-only `check_and_sync_readonly()`
+> into the protocol-level `observe()` state-machine branch. The shipped shape differs from the
+> sketch below in three ways: (1) it is hash-gated (`staging_hash` vs `last_seen_hash`, ADR-034) so
+> unchanged staging costs ~200 B + one round-trip, not a full blob pull; (2) it is routed through a
+> shared `_pull_and_merge` helper also used by the claim path (one canonical `merge_rows` semantics);
+> (3) it is config-selectable via `staging.observe_mode` (`"auto"` default / `"manual"` + `--observe`).
+> The method name is `observe()` (not `check_and_sync_readonly()`), and it returns `READY`
+> fail-open — never `REAUTH_NEEDED`.
 
 ---
 

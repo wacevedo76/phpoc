@@ -514,10 +514,11 @@ class StagingService:
             # touches happen within the same system-clock millisecond.
             if now_ms <= old_ms:
                 now_ms = old_ms + 1
-            meta_path.write_text(json.dumps({
-                "device_specifier": specifier,
-                "creation_time": now_ms,
-            }))
+            # Preserve other meta keys (e.g. last_seen_hash written by
+            # observe) — only bump the cookie's specifier and creation_time.
+            local_cookie["device_specifier"] = specifier
+            local_cookie["creation_time"] = now_ms
+            meta_path.write_text(json.dumps(local_cookie))
         except Exception:
             pass  # Non-critical
 
@@ -764,6 +765,123 @@ class StagingService:
         return self._reconcile_and_claim(mk, timeout_ms=timeout_ms)
 
     # ------------------------------------------------------------------
+    # Read-only "observe" mode (C3) — fail-open, no push, no cookie claim
+    # ------------------------------------------------------------------
+
+    def _read_last_seen_hash(self) -> Optional[str]:
+        """Read the last-observed remote staging hash from META_FILE.
+
+        Returns None if the meta file is missing, unreadable, or has no
+        ``last_seen_hash`` key.
+        """
+        meta_path = self._data_dir / META_FILE
+        if not meta_path.exists():
+            return None
+        try:
+            meta = json.loads(meta_path.read_text())
+            return meta.get("last_seen_hash")
+        except (json.JSONDecodeError, OSError, ValueError):
+            return None
+
+    def _write_last_seen_hash(self, hash_hex: str):
+        """Record the last-observed remote hash in META_FILE.
+
+        Preserves existing meta keys (``device_specifier``, ``creation_time``)
+        so observe never bumps the cookie TTL or claims a device. If META_FILE
+        does not exist, writes only ``last_seen_hash`` — an observer never
+        creates a device cookie.
+        """
+        meta_path = self._data_dir / META_FILE
+        try:
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except (json.JSONDecodeError, ValueError):
+                    meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+            else:
+                meta = {}
+            meta["last_seen_hash"] = hash_hex
+            meta_path.write_text(json.dumps(meta))
+        except Exception:
+            logger.debug("Could not write last_seen_hash", exc_info=True)
+
+    def _pull_and_merge(
+        self, master_key: bytes, timeout_ms: Optional[int] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Pull the remote blob and merge into local (canonical rows).
+
+        No push and no cookie side effects. Returns the merged uncommitted
+        DTO list, ``None`` on ``BLOB_KEY_MISMATCH`` (local untouched), and
+        propagates unreachable-transport exceptions (e.g. ``TimeoutError``).
+        """
+        remote_blob = self._remote.pull(master_key=master_key, timeout_ms=timeout_ms)
+        if remote_blob is BLOB_KEY_MISMATCH:
+            return None
+        return self._merge_remote_into_local(remote_blob, timeout_ms=timeout_ms)
+
+    @trace
+    def observe(
+        self,
+        timeout_ms: Optional[int] = None,
+        staging_hash_provider=None,
+    ) -> SyncCheckResult:
+        """Read-only observe: refresh local staging from remote without claiming.
+
+        Fail-open — always returns ``READY`` (never ``REAUTH_NEEDED``). State
+        machine order:
+
+          1. No remote → READY.
+          2. Pull remote cookie (fail-open READY on unreachable/error).
+          3. Compare injected remote hash vs local ``last_seen_hash``.
+             Unchanged → READY (no blob pull).
+          4. Changed/unknown → ``_pull_and_merge`` (blob pull + canonical merge).
+          5. Record ``last_seen_hash`` only after a successful merge.
+          6. READY.
+
+        Never pushes the blob, never claims/pushes the device cookie, and never
+        refreshes the local cookie TTL.
+        """
+        if self._remote is None:
+            return SyncCheckResult.READY
+
+        # Pull remote cookie first (even for an unchanged hash) so the
+        # reachability signal is captured; any failure degrades to READY.
+        try:
+            self._remote.pull_cookie(timeout_ms=timeout_ms)
+        except Exception:
+            return SyncCheckResult.READY
+
+        remote_hash = None
+        if staging_hash_provider is not None:
+            try:
+                remote_hash = staging_hash_provider()
+            except Exception:
+                remote_hash = None
+
+        last_seen = self._read_last_seen_hash()
+        if remote_hash is not None and last_seen is not None and remote_hash == last_seen:
+            return SyncCheckResult.READY
+
+        # Changed (or unknown) hash → pull + merge.
+        mk = getattr(self._crypto, "master_key", None)
+        if not (isinstance(mk, bytes) and len(mk) == 32):
+            # No valid master key — cannot decrypt the remote blob. Fail-open.
+            return SyncCheckResult.READY
+
+        try:
+            merged = self._pull_and_merge(mk, timeout_ms=timeout_ms)
+        except Exception:
+            # Unreachable / decode failure — fail-open, local-only READY.
+            return SyncCheckResult.READY
+
+        if merged is not None and remote_hash is not None:
+            self._write_last_seen_hash(remote_hash)
+
+        return SyncCheckResult.READY
+
+    # ------------------------------------------------------------------
     # Reconcile and claim (shared by check_and_sync auth gate + ph login)
     # ------------------------------------------------------------------
 
@@ -902,14 +1020,9 @@ class StagingService:
         For local-only (no remote transport), creates a device cookie for
         TTL tracking and returns READY.
 
-        For remote-enabled:
-          * Same device that last wrote -> push local blob (authoritative)
-            and touch the local cookie (update creation_time, keep specifier,
-            no remote cookie push) — Case A.
-
-          * Different device / first time  -> pull remote blob, reconcile
-            (merge remote entries into local), push merged blob, then create
-            a fresh device cookie (new specifier, local + remote) — Case B.
+        For remote-enabled: always pull + merge the remote blob into local
+        (regardless of same/different device — Bug 3a), push the merged blob,
+        then create a fresh device cookie (new specifier, local + remote).
 
         Args:
             master_key: 32-byte master key for blob ops and identity.
@@ -924,57 +1037,31 @@ class StagingService:
             DeviceCookie.create_local(self._data_dir)
             return SyncCheckResult.READY
 
-        # Pull remote cookie to discover which device last wrote
+        # Reachability probe: pull the remote cookie so an unreachable
+        # transport maps to OFFLINE (rather than a raised error).
         try:
-            remote_cookie_raw = self._remote.pull_cookie(timeout_ms=timeout_ms)
+            self._remote.pull_cookie(timeout_ms=timeout_ms)
         except Exception as e:
             if "Timeout" in str(e):
                 raise
             return SyncCheckResult.OFFLINE
 
-        remote_device_uuid = ""
-        remote_cookie_specifier = ""
-        if remote_cookie_raw is not None:
-            remote_cookie = DeviceCookie.parse_remote(remote_cookie_raw)
-            if remote_cookie:
-                remote_device_uuid = remote_cookie.get("device_uuid", "")
-                remote_cookie_specifier = remote_cookie.get("device_specifier", "")
-
-        local_device_uuid = self._get_device_id() or ""
-
         # Bug 3a fix: Always pull + merge, even for same device UUID.
         # Same-device doesn't mean local-is-authoritative — the remote
         # may have entries from a different client. Client-type suffix
         # ({uuid}-cli vs {uuid}-web) guarantees distinct identities.
-        try:
-            remote_blob = self._remote.pull(master_key=master_key, timeout_ms=timeout_ms)
-        except Exception:
-            return SyncCheckResult.OFFLINE
-
-        # If remote blob exists but can't be decrypted (wrong master key),
-        # DON'T overwrite it — abort and signal OFFLINE.
-        if remote_blob is BLOB_KEY_MISMATCH:
+        #
+        # Canonical pull + merge via _pull_and_merge (no push, no cookie
+        # side effects). Returns None on BLOB_KEY_MISMATCH (data-loss guard)
+        # — abort OFFLINE with local state untouched. Unreachable transports
+        # raise TimeoutError (propagated to the caller).
+        merged = self._pull_and_merge(master_key, timeout_ms=timeout_ms)
+        if merged is None:
             logger.warning(
                 "Remote staging blob exists but cannot be decrypted "
                 "(wrong master key). Aborting to avoid data loss."
             )
             return SyncCheckResult.OFFLINE
-
-        if remote_blob is not None and "entries" in remote_blob:
-            try:
-                local_entries = self._local.read_entries()
-                remote_dtos = self._remote_entries_to_dtos(
-                    remote_blob.get("entries", [])
-                )
-                merged = self._merge.merge(
-                    local_entries, remote_dtos
-                )
-                # Filter out entries already committed by another client
-                merged = [e for e in merged if not e.get("committed")]
-                self._local.write_entries(merged)
-            except Exception:
-                # Merge failure — push local as-is
-                pass
 
         # Push the (merged or local) blob to remote
         self.push_blob_only(master_key=master_key)
@@ -1055,9 +1142,7 @@ class StagingService:
             if not aid:
                 continue
             remote_canon = remote_canon_by_id.get(aid)
-            if remote_canon and (
-                remote_canon.get("updated_at", 0) > local_canon.get("updated_at", 0)
-            ):
+            if remote_canon and self._merge._remote_wins(local_canon, remote_canon):
                 remote_won_ids.add(aid)
 
         # Rebuild DTOs in merged order, dedup by activity_id (first wins).

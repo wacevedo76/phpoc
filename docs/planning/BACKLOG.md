@@ -383,7 +383,7 @@ always wraps in one). Dashboard content intentionally untouched (user decision).
 **Plan:** `docs/planning/STAGING_CHANGE_DETECTION_PLAN.md`
 **ADR:** ADR-034 (`docs/design/ARCHITECTURAL_DECISIONS.md`)
 **Design:** `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` (DS1–DS9, canonical §4, `seq`+CAS §3a, invariants §9)
-**Status:** 🟡 In progress — design adopted; P0 V1/V2 parity-gate blueprint drafted (seed fixture + golden bytes + RED tests, 2026-09). Next = P0 GREEN.
+**Status:** 🟡 In progress — design adopted. **P0 parity gate COMPLETE (4-phase TDD, 2026-09):** `compute_staging_hash` (Python `row_merge.py`, `comment` ''→null) · `computeStagingHash` (Web `remote_sync.js`) · `computeStagingHash` (Flutter `lib/data/sync/staging_hash.dart`) — Python 11/1skip, Web 5/5, Flutter 6/6. **Phase 4 (REFACTOR) DONE:** Web inlined SHA-256 extracted to `src/crypto/sha256.js` (`sha256Hex`). **Next = P1 cookie schema + Worker CAS (`seq` + stale-write guard, §3a).**
 
 **What:** Add a `staging_hash` field (SHA-256 of canonical plaintext non-committed staging rows) to the
 remote device cookie + a `last_seen_hash` mirror to the local cookie, so any client detects remote
@@ -393,9 +393,7 @@ convergence-plan C4), add a monotonic `seq` + Worker CAS stale-write guard. Repl
 Unifies the CLI F3 `.last_push_hash` and Web encrypted-index SHA under one key-independent digest.
 Merge semantics unchanged (ADR-033 terminal-state / LWW / committed-filter).
 
-**Next action:** P0 GREEN — implement `compute_staging_hash` in all three clients + add the
-`comment ''→null` coercion to Python `dtoToCanonicalRow` to flip the V1/V2 RED tests in
-`tests/test_staging_hash_parity.py` (JS V1 already GREEN); then P1 cookie schema + Worker CAS.
+**Next action:** **P1 cookie schema + Worker CAS** — add `staging_hash` (remote) + `last_seen_hash` (local) cookie fields, monotonic `seq`, and Worker stale-write CAS guard (§3a), then mutation/read wiring (P2/P3) and polling removal + hash unification (P4).
 
 **Effort:** ~5.5 days (shared helper + parity vectors, cookie schema ×3 + Worker CAS, mutation/read
 wiring ×3, polling removal + hash unification, cross-client E2E). **Blocks:** nothing.

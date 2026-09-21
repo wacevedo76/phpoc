@@ -1520,6 +1520,50 @@ Prior to the row-level `activity_id` model, two incompatible staging formats exi
 
 These formats are superseded by the canonical format described in §8.1–8.7. New implementations must write the canonical format. Reading legacy formats for backward compatibility is optional and implementation-defined.
 
+### 8.10 Device Cookie & Observe Mode (ADR-034 / C3)
+
+The device cookie (unencrypted; path `staging/blobs/device_cookie.bin`) carries a
+change-detection digest so read commands can converge to remote **without** claiming
+ownership.
+
+**Remote cookie:**
+
+```json
+{
+  "device_uuid": "<UUID4>-<client>",
+  "device_specifier": "<32-hex>",
+  "staging_hash": "<64-hex>"
+}
+```
+
+**Local cookie** (`device_cookie.meta`):
+
+```json
+{
+  "device_specifier": "<32-hex>",
+  "creation_time": 1714000000000,
+  "last_seen_hash": "<64-hex>"
+}
+```
+
+- `staging_hash` = SHA-256 of the canonical plaintext row array (ADR-034 §4) — deterministic,
+  key-independent, byte-identical across clients. **Optional/absent** on legacy clients
+  (treated as "changed"). It reveals only "content changed," never the content itself.
+- `last_seen_hash` = the remote `staging_hash` this device last reconciled to; the comparison
+  baseline for "has remote changed since I last looked."
+
+**Observe mode (C3):** read commands refresh local staging from remote without claiming
+ownership. `observe()` pulls the remote cookie, compares `staging_hash` against
+`last_seen_hash`, and only on a change pulls the blob and merges via the canonical
+`merge_rows` (§8.5). It **never** pushes the blob, **never** creates/destroys/pushes a
+device cookie, and **never** refreshes the cookie TTL (`creation_time`). `observe()` always
+returns `READY` (fail-open) — never `REAUTH_NEEDED`.
+
+**Observe → claim relationship (I1):** observe is strictly a viewer. Ownership — and the
+right to push — is acquired only by the `reconcile_and_claim` path after explicit
+re-authentication. The `device_specifier` (not `staging_hash`) remains the sole
+authorization decision; `staging_hash` never authorizes a write.
+
 ---
 
 ## 9. Implementation Considerations

@@ -66,6 +66,7 @@ class ConfigManager:
         },
         "staging": {
             "blob_size_tier": "64K",
+            "observe_mode": "auto",
         },
     }
 
