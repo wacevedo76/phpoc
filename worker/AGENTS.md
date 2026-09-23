@@ -10,10 +10,13 @@ No decryption or ledger logic — all security is client-side via encryption.
 ## Ownership
 - `src/index.ts` — Worker entry point: CORS, auth routing, generic blob handlers
 - `src/row_level_staging.ts` — Row-level staging types, validation, manifest helpers, HTTP handlers
+- `src/cookie_cas.ts` — Pure `isStaleWrite(incomingSeq, storedSeq)` predicate + `readCookieSeq(body)` extraction helper for the device-cookie stale-write guard (ADR-034 P1)
 - `wrangler.toml` / `wrangler.testing.toml` — Cloudflare Worker config (prod/test)
 - `package.json` — Node.js project manifest (TypeScript, vitest, wrangler)
 - `test/index.test.ts` — 49 blob store integration tests
 - `test/row_level_endpoints.test.ts` — 55 row-level staging integration tests
+- `test/cookie_cas.test.ts` — 9 hermetic tests: `isStaleWrite` (J1–J5) + `readCookieSeq` extraction (4)
+- `test/cookie_cas_live.test.ts` — live device-cookie CAS route tests (J6–J10), require deployed Worker + API key
 
 ## Local Contracts
 - Worker has no knowledge of phpoc encryption, ledger structure, or blob format
@@ -28,8 +31,15 @@ No decryption or ledger logic — all security is client-side via encryption.
 - `DELETE /.../storage/staging/rows/{id}` → 200 | 404
 - Push guard: rejects PUT when `updated_at ≤ existing.updated_at`
 
+### Device-Cookie CAS (ADR-034 P1)
+- Only the path `…/staging/blobs/device_cookie.bin` is guarded; all other blob PUTs stay blind pass-through
+- Guard: parse the incoming cookie body's `seq`; if present and `≤` the stored object's `seq`, return `409` (`{"error":"Conflict: seq is not newer than existing cookie"}`)
+- Absent/unparseable incoming `seq` (legacy cookie) → accepted last-write-wins (D9), so old clients are never broken mid-migration
+- Pure predicate + seq extraction live in `cookie_cas.ts` (`isStaleWrite(incomingSeq?, storedSeq?)`, `readCookieSeq(body?)`); `index.ts` only calls them
+
 ## Work Guidance
 - Keep row-level staging logic in `row_level_staging.ts`
+- Keep the CAS predicate and seq extraction in `cookie_cas.ts` (pure, no I/O)
 - `index.ts` is the thin router — imports handlers, no staging logic inline
 - Don't add ledger logic or decryption here
 

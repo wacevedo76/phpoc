@@ -1,8 +1,10 @@
 """DeviceCookie — random-specifier cookie for cross-device identity check.
 
 Design (your spec):
-  - Remote cookie:  {"device_uuid": "<UUID>", "device_specifier": "<random>"}
-  - Local cookie:   {"device_specifier": "<same random>", "creation_time": "<epoch_ms>"}
+  - Remote cookie:  {"device_uuid": "<UUID>", "device_specifier": "<random>",
+                     "staging_hash": "<64-hex>|null", "seq": <int>}
+  - Local cookie:   {"device_specifier": "<same random>", "creation_time": "<epoch_ms>",
+                     "last_seen_hash": "<64-hex>|null", "last_seen_seq": <int>}
   
   On every staging write, a new random specifier is generated, stored locally,
   and pushed to remote as part of the cookie.
@@ -64,24 +66,45 @@ class DeviceCookie:
         """Generate a random 32-char hex string as the device specifier."""
         return os.urandom(16).hex()
 
+    @staticmethod
+    def _write_meta(data_dir: Path, local_cookie: Dict[str, Any]) -> None:
+        """Write the local cookie (``device_cookie.meta``) to disk.
+
+        Shared by ``create`` and ``create_local`` — the only difference between
+        the two paths is whether a remote cookie is also produced.
+        """
+        meta_path = data_dir / META_FILE
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps(local_cookie))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     @staticmethod
-    def create(device_id: str, data_dir: Path) -> Optional[Dict[str, Any]]:
+    def create(
+        device_id: str,
+        data_dir: Path,
+        staging_hash: Optional[str] = None,
+        seq: int = 0,
+    ) -> Optional[Dict[str, Any]]:
         """Create a new device cookie.
 
-        Writes local cookie (specifier + creation_time) and returns the
-        remote cookie dict to be pushed to R2.
+        Writes local cookie (specifier + creation_time + last_seen_hash +
+        last_seen_seq) and returns the remote cookie dict to be pushed to R2.
 
         Args:
             device_id: This device's UUID string.
             data_dir: Local data directory (~/.local/share/phpoc/).
+            staging_hash: Remote staging content hash at creation time
+                (default null — the mutation flow fills it in P2).
+            seq: Write-arbitration counter (default 0; first mutation bumps
+                to 1 via last_seen_seq + 1).
 
         Returns:
-            Remote cookie dict {"device_uuid": ..., "device_specifier": ...}
-            to be pushed to remote, or None on failure.
+            Remote cookie dict {"device_uuid": ..., "device_specifier": ...,
+            "staging_hash": ..., "seq": ...} to be pushed to remote, or None
+            on failure.
         """
         try:
             specifier = DeviceCookie._generate_specifier()
@@ -91,18 +114,20 @@ class DeviceCookie:
             remote_cookie = {
                 "device_uuid": device_id,
                 "device_specifier": specifier,
+                "staging_hash": staging_hash,
+                "seq": seq,
             }
 
             # Local cookie — local only (JSON)
             local_cookie = {
                 "device_specifier": specifier,
                 "creation_time": epoch_ms,
+                "last_seen_hash": staging_hash,
+                "last_seen_seq": seq,
             }
 
             # Write local cookie
-            meta_path = data_dir / META_FILE
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.write_text(json.dumps(local_cookie))
+            DeviceCookie._write_meta(data_dir, local_cookie)
 
             # Write remote cookie bytes (to be pushed to transport)
             cookie_path = data_dir / COOKIE_FILE
@@ -118,7 +143,11 @@ class DeviceCookie:
             return None
 
     @staticmethod
-    def create_local(data_dir: Path) -> bool:
+    def create_local(
+        data_dir: Path,
+        last_seen_hash: Optional[str] = None,
+        last_seen_seq: int = 0,
+    ) -> bool:
         """Create a local-only device cookie (no remote counterpart).
 
         Used for TTL tracking when no remote transport is configured.
@@ -127,6 +156,8 @@ class DeviceCookie:
 
         Args:
             data_dir: Local data directory (~/.local/share/phpoc/).
+            last_seen_hash: Baseline staging hash mirror (default null).
+            last_seen_seq: Baseline seq mirror (default 0).
 
         Returns:
             True on success, False if the cookie file could not be written.
@@ -137,10 +168,10 @@ class DeviceCookie:
             local_cookie = {
                 "device_specifier": specifier,
                 "creation_time": epoch_ms,
+                "last_seen_hash": last_seen_hash,
+                "last_seen_seq": last_seen_seq,
             }
-            meta_path = data_dir / META_FILE
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.write_text(json.dumps(local_cookie))
+            DeviceCookie._write_meta(data_dir, local_cookie)
             logger.debug(
                 "Local-only device cookie created (spec=%s...)",
                 specifier[:8],
@@ -159,8 +190,9 @@ class DeviceCookie:
             ttl_minutes: How long the cookie is valid (configurable, default 30).
 
         Returns:
-            The local cookie dict {"device_specifier": ..., "creation_time": ...}
-            if valid, None if missing or expired.
+            The full local cookie dict (including the last_seen_hash /
+            last_seen_seq baseline fields) if valid, None if missing or
+            expired.
         """
         meta_path = data_dir / META_FILE
 
@@ -197,13 +229,28 @@ class DeviceCookie:
             raw_bytes: Raw bytes from transport pull of device_cookie.bin.
 
         Returns:
-            Dict {"device_uuid": ..., "device_specifier": ...}
-            or None if parsing fails.
+            The cookie dict verbatim (all fields, including staging_hash/seq
+            when present) or None if parsing fails.
         """
         try:
             return json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
             return None
+
+    @staticmethod
+    def next_seq(last_seen_seq: Optional[int]) -> int:
+        """Increment base for the next cookie seq (ADR-034 P1).
+
+        Args:
+            last_seen_seq: The seq observed at the last pull/claim, or None
+                if the cookie has no seq yet (legacy/absent).
+
+        Returns:
+            1 when last_seen_seq is absent/None, otherwise last_seen_seq + 1.
+        """
+        if last_seen_seq is None:
+            return 1
+        return int(last_seen_seq) + 1
 
     @staticmethod
     def matches(

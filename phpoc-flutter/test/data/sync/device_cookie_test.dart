@@ -196,4 +196,91 @@ void main() {
       expect(await storage.get('cookie'), isNull);
     });
   });
+
+  // ── ADR-034 P1 — cookie schema (staging_hash + seq) ────────────────
+  group('E/J: DeviceCookie — staging_hash + seq schema (ADR-034 P1)', () {
+    // E12
+    test('E12: create() writes remote 4 fields + local 4 fields', () async {
+      final cookie = DeviceCookie();
+      final storage = _FakeStorage();
+
+      final remote = await cookie.create('dev-a', storage);
+
+      expect(remote, isNotNull);
+      for (final k in ['device_uuid', 'device_specifier', 'staging_hash', 'seq']) {
+        expect(remote!.containsKey(k), true, reason: 'remote missing $k');
+      }
+      expect(remote!['staging_hash'], isNull);
+      expect(remote!['seq'], 0);
+
+      final local = await storage.get('cookie');
+      expect(local, isNotNull);
+      for (final k in ['device_specifier', 'creation_time', 'last_seen_hash', 'last_seen_seq']) {
+        expect(local.containsKey(k), true, reason: 'local missing $k');
+      }
+      expect(local['last_seen_hash'], isNull);
+      expect(local['last_seen_seq'], 0);
+    });
+
+    // E13
+    test('E13: isValidLocally() returns map including last_seen_hash + last_seen_seq',
+        () async {
+      final cookie = DeviceCookie();
+      final storage = _FakeStorage();
+
+      await cookie.create('dev-a', storage);
+      final valid = await cookie.isValidLocally(storage);
+
+      expect(valid, isNotNull);
+      expect(valid!.containsKey('last_seen_hash'), true,
+          reason: 'isValidLocally stripped last_seen_hash');
+      expect(valid.containsKey('last_seen_seq'), true,
+          reason: 'isValidLocally stripped last_seen_seq');
+    });
+
+    // E14
+    test('E14: parseRemote() tolerates legacy cookie (absent fields, no throw)', () {
+      final cookie = DeviceCookie();
+      final legacy = Uint8List.fromList(
+        '{"device_uuid":"dev-a","device_specifier":"spec-1"}'.codeUnits,
+      );
+
+      final parsed = cookie.parseRemote(legacy);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['device_uuid'], 'dev-a');
+      expect(parsed['device_specifier'], 'spec-1');
+      expect(parsed.containsKey('staging_hash'), false);
+      expect(parsed.containsKey('seq'), false);
+    });
+
+    // E15
+    test('E15: parseRemote() full cookie verbatim; invalid bytes → null', () {
+      final cookie = DeviceCookie();
+      final hash = List.filled(64, 'h').join();
+      final full = Uint8List.fromList(
+        '{"device_uuid":"dev-a","device_specifier":"spec-1",'
+        '"staging_hash":"$hash","seq":5}'.codeUnits,
+      );
+
+      final parsed = cookie.parseRemote(full);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['staging_hash'], hash);
+      expect(parsed['seq'], 5);
+
+      expect(cookie.parseRemote(Uint8List.fromList([0xFF, 0xFE, 0xFD])), isNull);
+    });
+
+    // J13
+    test('J13: nextSeq(null) → 1, nextSeq(N) → N+1', () {
+      final cookie = DeviceCookie();
+      // `dynamic` so the missing method surfaces as a runtime error (RED),
+      // not a compile error that would mask E12–E15.
+      final dyn = cookie as dynamic;
+      expect(dyn.nextSeq(null), 1);
+      expect(dyn.nextSeq(0), 1);
+      expect(dyn.nextSeq(5), 6);
+    });
+  });
 }

@@ -383,7 +383,7 @@ always wraps in one). Dashboard content intentionally untouched (user decision).
 **Plan:** `docs/planning/STAGING_CHANGE_DETECTION_PLAN.md`
 **ADR:** ADR-034 (`docs/design/ARCHITECTURAL_DECISIONS.md`)
 **Design:** `docs/design/STAGING_CHANGE_DETECTION_DESIGN.md` (DS1–DS9, canonical §4, `seq`+CAS §3a, invariants §9)
-**Status:** 🟡 In progress — design adopted. **P0 parity gate COMPLETE (4-phase TDD, 2026-09):** `compute_staging_hash` (Python `row_merge.py`, `comment` ''→null) · `computeStagingHash` (Web `remote_sync.js`) · `computeStagingHash` (Flutter `lib/data/sync/staging_hash.dart`) — Python 11/1skip, Web 5/5, Flutter 6/6. **Phase 4 (REFACTOR) DONE:** Web inlined SHA-256 extracted to `src/crypto/sha256.js` (`sha256Hex`). **Next = P1 cookie schema + Worker CAS (`seq` + stale-write guard, §3a).**
+**Status:** 🟡 In progress — design adopted. **P0 parity gate COMPLETE (4-phase TDD, 2026-09):** `compute_staging_hash` (Python `row_merge.py`, `comment` ''→null) · `computeStagingHash` (Web `remote_sync.js`) · `computeStagingHash` (Flutter `lib/data/sync/staging_hash.dart`) — Python 11/1skip, Web 5/5, Flutter 6/6. **Phase 4 (REFACTOR) DONE:** Web inlined SHA-256 extracted to `src/crypto/sha256.js` (`sha256Hex`). **P1 cookie schema + Worker CAS COMPLETE (4-phase TDD, 2026-09):** remote `staging_hash`+`seq`, local `last_seen_hash`+`last_seen_seq`, monotonic `next_seq()` ×3, Worker `isStaleWrite` CAS guard + `readCookieSeq` — Python 7/7, Web 6/6, Worker hermetic 9/9, Flutter 29/29; full suites GREEN (Python 2748/2skip). Live J6–J10 deferred (Worker deploy). **Next = P2 mutation/read wiring.**
 
 **What:** Add a `staging_hash` field (SHA-256 of canonical plaintext non-committed staging rows) to the
 remote device cookie + a `last_seen_hash` mirror to the local cookie, so any client detects remote
@@ -393,7 +393,7 @@ convergence-plan C4), add a monotonic `seq` + Worker CAS stale-write guard. Repl
 Unifies the CLI F3 `.last_push_hash` and Web encrypted-index SHA under one key-independent digest.
 Merge semantics unchanged (ADR-033 terminal-state / LWW / committed-filter).
 
-**Next action:** **P1 cookie schema + Worker CAS** — add `staging_hash` (remote) + `last_seen_hash` (local) cookie fields, monotonic `seq`, and Worker stale-write CAS guard (§3a), then mutation/read wiring (P2/P3) and polling removal + hash unification (P4).
+**Next action:** **P2 mutation/read wiring** — fill `staging_hash` on mutation (push-then-hash), read fast-path compare (`last_seen_hash` gate), then polling removal + hash unification (P3/P4).
 
 **Effort:** ~5.5 days (shared helper + parity vectors, cookie schema ×3 + Worker CAS, mutation/read
 wiring ×3, polling removal + hash unification, cross-client E2E). **Blocks:** nothing.

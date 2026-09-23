@@ -36,6 +36,7 @@ import {
 	handlePutRow,
 	handleDeleteRow,
 } from './row_level_staging';
+import { isStaleWrite, readCookieSeq } from './cookie_cas';
 
 // ── CORS headers ────────────────────────────────────────────────────────────
 // Applied to every response so browser-based clients (web app, Flutter
@@ -166,8 +167,53 @@ async function handlePut(
 		return new Response('Payload too large', { status: 413 });
 	}
 
+	// ADR-034 P1: stale-write CAS applies ONLY to the device-cookie blob.
+	if (path.endsWith(COOKIE_CAS_SUFFIX)) {
+		const casResponse = await checkCookieCas(env, path, body);
+		if (casResponse !== null) return casResponse;
+	}
+
 	await env.PHPOC_BUCKET.put(path, body);
 	return new Response('OK', { status: 200 });
+}
+
+// ── Device-cookie CAS guard (ADR-034 §3a / I8) ──────────────────────────────
+
+/** Suffix-matched path for the device cookie — the one blob the Worker inspects. */
+const COOKIE_CAS_SUFFIX = 'staging/blobs/device_cookie.bin';
+
+/**
+ * Apply the stale-write CAS rule to a device-cookie PUT. Returns a Response
+ * (409) when the incoming `seq` is stale, or null to proceed with the write.
+ *
+ * Backward-compat (D9): a body whose `seq` is absent or unparseable is treated
+ * as a legacy client write and always accepted (last-write-wins).
+ */
+async function checkCookieCas(
+	env: Env,
+	path: string,
+	body: ArrayBuffer,
+): Promise<Response | null> {
+	const incomingSeq = readCookieSeq(new TextDecoder().decode(body));
+	if (incomingSeq === undefined) {
+		return null; // legacy cookie (no/malformed seq) → last-write-wins (D9)
+	}
+
+	const existing = await env.PHPOC_BUCKET.get(path);
+	if (existing === null) {
+		return null; // nothing to beat — first seq-carrying write
+	}
+
+	const storedSeq = readCookieSeq(await existing.text());
+
+	if (isStaleWrite(incomingSeq, storedSeq)) {
+		return new Response(
+			JSON.stringify({ error: 'Conflict: seq is not newer than existing cookie' }),
+			{ status: 409, headers: { 'Content-Type': 'application/json' } }
+		);
+	}
+
+	return null;
 }
 
 async function handleDelete(

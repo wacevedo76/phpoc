@@ -7,8 +7,10 @@ import 'dart:typed_data';
 /// Port of web src/sync/cookie.js.
 ///
 /// The device cookie is an auth-gate mechanism for staging sync:
-/// - Remote cookie: {"device_uuid": "UUID", "device_specifier": "random"}
-/// - Local cookie:  {"device_specifier": "same random", "creation_time": epoch_ms}
+/// - Remote cookie: {"device_uuid": "UUID", "device_specifier": "random",
+///                  "staging_hash": "64-hex|null", "seq": int}
+/// - Local cookie:  {"device_specifier": "same random", "creation_time": epoch_ms,
+///                  "last_seen_hash": "64-hex|null", "last_seen_seq": int}
 class DeviceCookie {
   static const _cookieKey = 'cookie';
 
@@ -33,9 +35,11 @@ class DeviceCookie {
       final specifier = DeviceCookie._generateSpecifier();
       final epochMs = DateTime.now().millisecondsSinceEpoch;
 
-      final localCookie = {
+      final localCookie = <String, dynamic>{
         'device_specifier': specifier,
         'creation_time': epochMs,
+        'last_seen_hash': null,
+        'last_seen_seq': 0,
       };
 
       await storage.set(_cookieKey, localCookie);
@@ -43,6 +47,8 @@ class DeviceCookie {
       return {
         'device_uuid': deviceId,
         'device_specifier': specifier,
+        'staging_hash': null,
+        'seq': 0,
       };
     } catch (_) {
       return null;
@@ -53,8 +59,9 @@ class DeviceCookie {
 
   /// Check if a local device cookie exists and its TTL has not expired.
   ///
-  /// Returns the local cookie dict {device_specifier, creation_time}
-  /// if valid, null if missing or expired.
+  /// Returns the local cookie map (device_specifier, creation_time, plus any
+  /// extra keys such as last_seen_hash/last_seen_seq) if valid, null if
+  /// missing or expired.
   Future<Map<String, dynamic>?> isValidLocally(
     dynamic storage, {
     int ttlMinutes = 30,
@@ -63,8 +70,9 @@ class DeviceCookie {
       final localCookie = await storage.get(_cookieKey);
       if (localCookie == null) return null;
 
-      final specifier = localCookie['device_specifier'] as String?;
-      final createdAt = localCookie['creation_time'] as int?;
+      final map = Map<String, dynamic>.from(localCookie as Map);
+      final specifier = map['device_specifier'] as String?;
+      final createdAt = map['creation_time'] as int?;
 
       if (specifier == null || specifier.isEmpty || createdAt == null) {
         try {
@@ -83,7 +91,7 @@ class DeviceCookie {
         return null;
       }
 
-      return {'device_specifier': specifier, 'creation_time': createdAt};
+      return map;
     } catch (_) {
       return null;
     }
@@ -96,6 +104,12 @@ class DeviceCookie {
     final localSpec = (localCookie?['device_specifier'] as String?) ?? '';
     final remoteSpec = (remoteCookie?['device_specifier'] as String?) ?? '';
     return localSpec.isNotEmpty && remoteSpec.isNotEmpty && localSpec == remoteSpec;
+  }
+
+  /// Increment base for the next cookie seq (ADR-034 P1).
+  int nextSeq(int? lastSeenSeq) {
+    if (lastSeenSeq == null) return 1;
+    return lastSeenSeq + 1;
   }
 
   // ── Remote cookie parsing ─────────────────────────────────────

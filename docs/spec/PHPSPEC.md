@@ -1532,7 +1532,8 @@ ownership.
 {
   "device_uuid": "<UUID4>-<client>",
   "device_specifier": "<32-hex>",
-  "staging_hash": "<64-hex>"
+  "staging_hash": "<64-hex>",
+  "seq": 1
 }
 ```
 
@@ -1542,7 +1543,8 @@ ownership.
 {
   "device_specifier": "<32-hex>",
   "creation_time": 1714000000000,
-  "last_seen_hash": "<64-hex>"
+  "last_seen_hash": "<64-hex>",
+  "last_seen_seq": 1
 }
 ```
 
@@ -1551,6 +1553,16 @@ ownership.
   (treated as "changed"). It reveals only "content changed," never the content itself.
 - `last_seen_hash` = the remote `staging_hash` this device last reconciled to; the comparison
   baseline for "has remote changed since I last looked."
+- `seq` = monotonic write-arbitration counter on the cookie *object* (single-owner singleton).
+  On every cookie write the writer sets `seq = last_seen_seq + 1` (absent → 1). **Optional/absent**
+  on legacy clients (treated as 0).
+- `last_seen_seq` = the `seq` this device last wrote/observed — the increment base for the next
+  cookie write.
+
+**Worker CAS (§3a / I8):** the device-cookie PUT path applies a stale-write guard. A PUT whose
+`seq` is present and `<=` the stored `seq` is rejected with `409`; a legacy cookie (no `seq`) is
+accepted last-write-wins (D9) — CAS applies only when the incoming cookie carries `seq`, so old
+clients are never broken mid-migration. Every other blob PUT stays a blind pass-through.
 
 **Observe mode (C3):** read commands refresh local staging from remote without claiming
 ownership. `observe()` pulls the remote cookie, compares `staging_hash` against

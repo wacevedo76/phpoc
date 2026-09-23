@@ -117,5 +117,46 @@ void main() {
       );
       expect(a, isNot(b));
     });
+
+    // ── ADR-034 P1 — stagingHash/seq/lastSeenHash/lastSeenSeq ───────────
+
+    // E16 — toJson/fromJson round-trip the new schema fields
+    test('E16: toJson/fromJson round-trips stagingHash/seq/lastSeenHash/lastSeenSeq', () {
+      final cookie = DeviceCookie(
+        deviceUuid: 'u',
+        deviceSpecifier: 's',
+        creationTime: 100,
+        stagingHash: 'abc',
+        seq: 5,
+        lastSeenHash: 'def',
+        lastSeenSeq: 6,
+      );
+
+      final json = cookie.toJson();
+      expect(json['staging_hash'], 'abc');
+      expect(json['seq'], 5);
+      expect(json['last_seen_hash'], 'def');
+      expect(json['last_seen_seq'], 6);
+
+      final restored = DeviceCookie.fromJson(json);
+      expect(restored.stagingHash, 'abc');
+      expect(restored.seq, 5);
+      expect(restored.lastSeenHash, 'def');
+      expect(restored.lastSeenSeq, 6);
+      expect(restored, cookie);
+    });
+
+    // E17 — fromJson tolerates absent new fields (defaults null/0)
+    test('E17: fromJson tolerates absent new fields (defaults null/0)', () {
+      final cookie = DeviceCookie.fromJson({
+        'device_uuid': 'u',
+        'device_specifier': 's',
+        'creation_time': 100,
+      });
+      expect(cookie.stagingHash, isNull);
+      expect(cookie.seq, 0);
+      expect(cookie.lastSeenHash, isNull);
+      expect(cookie.lastSeenSeq, 0);
+    });
   });
 }
